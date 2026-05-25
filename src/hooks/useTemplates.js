@@ -6,22 +6,22 @@ export const useTemplates = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const fetchTemplates = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await api.getTemplates();
-        setTemplates(data.templates || []);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const fetchTemplates = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.getTemplates();
+      setTemplates(data.templates || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchTemplates();
   }, []);
 
-  return { templates, loading, error };
+  return { templates, loading, error, refetch: fetchTemplates };
 };

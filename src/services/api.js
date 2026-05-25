@@ -3,7 +3,7 @@
  * Base URL from environment: VITE_API_URL
  */
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://leados-api.abmgroups.org';
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 class LeadOSAPI {
   constructor() {
@@ -116,6 +116,17 @@ class LeadOSAPI {
     });
   }
 
+  async submitTemplate(id) {
+    return this.request(`/api/templates/${id}/submit`, {
+      method: 'POST',
+    });
+  }
+
+  // ─── INBOX ──────────────────────────────
+  async getInbox() {
+    return this.request('/api/inbox');
+  }
+
   // ─── CAMPAIGNS ──────────────────────────
   async getCampaigns() {
     return this.request('/api/campaigns');
@@ -125,6 +136,12 @@ class LeadOSAPI {
     return this.request('/api/campaigns', {
       method: 'POST',
       body: JSON.stringify(campaignData),
+    });
+  }
+
+  async executeCampaign(id) {
+    return this.request(`/api/campaigns/${id}/execute`, {
+      method: 'POST',
     });
   }
 

@@ -18,6 +18,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ── DB CONNECTION ─────────────────────────────────────────
+console.log('--- DB CONNECTION DEBUG ---');
+console.log('DB_HOST from env:', process.env.DB_HOST);
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 5432,
@@ -25,10 +27,13 @@ const pool = new Pool({
   user: process.env.DB_USER || 'leados_user',
   password: process.env.DB_PASS || 'LeadOS_DB@2026',
 });
+console.log('Pool config host:', pool.options.host);
+console.log('---------------------------');
 
 pool.on('error', (err) => console.error('DB error:', err));
 
 // ── MIDDLEWARE ────────────────────────────────────────────
+app.use(morgan('dev')); // ← must be first so every request is logged
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
   origin: [
@@ -41,7 +46,6 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
-app.use(morgan('combined'));
 
 // ── AUTH MIDDLEWARE ───────────────────────────────────────
 const auth = (req, res, next) => {
@@ -113,6 +117,36 @@ app.post('/api/auth/change-password', auth, async (req, res) => {
     await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
     res.json({ success: true });
   } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════
+// INBOX ROUTES
+// ══════════════════════════════════════════════════════════
+
+// GET /api/inbox
+app.get('/api/inbox', auth, async (req, res) => {
+  try {
+    // Fetch latest message per lead
+    const q = `
+      SELECT 
+        l.id, 
+        l.name, 
+        c.name as brand, 
+        l.status,
+        (SELECT message FROM conversations WHERE lead_id = l.id ORDER BY sent_at DESC LIMIT 1) as last,
+        (SELECT sent_at FROM conversations WHERE lead_id = l.id ORDER BY sent_at DESC LIMIT 1) as time,
+        0 as unread
+      FROM leads l
+      LEFT JOIN clients c ON l.client_id = c.id
+      WHERE EXISTS (SELECT 1 FROM conversations WHERE lead_id = l.id)
+      ORDER BY time DESC NULLS LAST
+    `;
+    const { rows } = await pool.query(q);
+    res.json(rows);
+  } catch (err) {
+    console.error('Inbox fetch error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -643,7 +677,6 @@ app.get('/api/campaigns', auth, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-``
 app.post('/api/campaigns', auth, async (req, res) => {
   try {
     const { name, client_id, template_id, target_status, scheduled_at } = req.body;
@@ -655,6 +688,88 @@ app.post('/api/campaigns', auth, async (req, res) => {
     res.status(201).json({ campaign: rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/campaigns/execute
+app.post('/api/campaigns/execute', auth, async (req, res) => {
+  try {
+    const { campaign_id } = req.body;
+    
+    // 1. Fetch Campaign and Template Details
+    const campRes = await pool.query(`
+      SELECT c.*, t.body as template_body, t.name as template_name, cl.wa_access_token, cl.phone_number_id
+      FROM campaigns c
+      JOIN templates t ON c.template_id = t.id
+      LEFT JOIN clients cl ON c.client_id = cl.id
+      WHERE c.id = $1
+    `, [campaign_id]);
+    
+    if (!campRes.rows.length) return res.status(404).json({ error: 'Campaign not found' });
+    const campaign = campRes.rows[0];
+
+    // 2. Update Campaign Status
+    await pool.query("UPDATE campaigns SET status = 'running' WHERE id = $1", [campaign_id]);
+
+    // 3. Fetch Target Leads
+    let leadsQuery = 'SELECT id, phone, name FROM leads WHERE client_id = $1';
+    const queryParams = [campaign.client_id];
+
+    if (campaign.target_status && campaign.target_status !== 'all') {
+      leadsQuery += ' AND status = $2';
+      queryParams.push(campaign.target_status);
+    }
+
+    const leadsRes = await pool.query(leadsQuery, queryParams);
+    const leads = leadsRes.rows;
+
+    let sentCount = 0;
+
+    // 4. Trigger WhatsApp Template Messages
+    for (const lead of leads) {
+      try {
+        const waToken = campaign.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+        const phoneId = campaign.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+
+        const waRes = await axios.post(
+          `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: lead.phone.replace(/\D/g, ''),
+            type: 'template',
+            template: {
+              name: campaign.template_name,
+              language: { code: 'en' }
+            }
+          },
+          { headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' } }
+        );
+
+        const waMessageId = waRes.data.messages?.[0]?.id;
+
+        // 5. Store Campaign Logs
+        await pool.query(`
+          INSERT INTO campaign_logs (campaign_id, lead_id, wa_message_id, status, sent_at)
+          VALUES ($1, $2, $3, 'sent', NOW())
+        `, [campaign_id, lead.id, waMessageId]);
+
+        sentCount++;
+      } catch (err) {
+        console.error(`Failed to send to ${lead.phone}:`, err.response?.data || err.message);
+        await pool.query(`
+          INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
+          VALUES ($1, $2, 'failed', $3, NOW())
+        `, [campaign_id, lead.id, err.message]);
+      }
+    }
+
+    // 6. Complete Campaign Execution
+    await pool.query("UPDATE campaigns SET status = 'completed' WHERE id = $1", [campaign_id]);
+
+    res.json({ success: true, total_sent: sentCount });
+  } catch (err) {
+    console.error('Campaign execution error:', err);
+    res.status(500).json({ error: 'Failed to execute campaign' });
   }
 });
 

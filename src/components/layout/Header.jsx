@@ -1,3 +1,4 @@
+import { useLocation } from 'react-router-dom';
 import { Search, Bell } from 'lucide-react';
 import { C } from '../../constants/theme.js';
 
@@ -13,7 +14,11 @@ const LABELS = {
   settings: 'Settings',
 };
 
-export const Header = ({active, user}) => {
+export const Header = ({user}) => {
+  const location = useLocation();
+  const activePath = location.pathname.substring(1) || 'dashboard';
+  const activeLabel = LABELS[activePath] || 'Dashboard';
+
   const initial = user?.name ? user.name[0].toUpperCase() : 'K';
   const roleLabel = user?.role ? (user.role.charAt(0).toUpperCase() + user.role.slice(1)) : 'Super Admin';
   const nameLabel = user?.name || 'Kamar';
@@ -21,7 +26,7 @@ export const Header = ({active, user}) => {
   return (
     <div style={{height:54,background:C.surface,borderBottom:'1px solid '+C.border,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 22px',flexShrink:0}}>
       <div>
-        <span style={{fontFamily:"'Syne',sans-serif",fontSize:13,fontWeight:700,color:C.text}}>{LABELS[active]}</span>
+        <span style={{fontFamily:"'Syne',sans-serif",fontSize:13,fontWeight:700,color:C.text}}>{activeLabel}</span>
         <span style={{color:C.dim,fontSize:12,marginLeft:7}}>- LeadOS by BM TechX</span>
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>

@@ -1,80 +1,917 @@
-import { Plus } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Plus, X, Trash2, Check, AlertCircle, Loader2, Smartphone, ChevronDown, Image, Video, FileText, Link, MessageSquare, Type } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { TBadge } from '../components/ui.jsx';
 import { useTemplates } from '../hooks/useTemplates.js';
 import { api } from '../services/api.js';
 
+// ── Toast Notification ────────────────────────────────────
+const Toast = ({ toast, onClose }) => {
+  if (!toast) return null;
+  const isError = toast.type === 'error';
+  return (
+    <div style={{
+      position: 'fixed', bottom: 28, right: 28, zIndex: 9999,
+      background: isError ? '#2d1010' : '#0a2018',
+      border: `1px solid ${isError ? '#7c2d12' : '#065f46'}`,
+      borderRadius: 12, padding: '14px 20px', minWidth: 300, maxWidth: 420,
+      display: 'flex', alignItems: 'flex-start', gap: 12,
+      boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+      animation: 'slideInUp 0.3s ease'
+    }}>
+      <style>{`@keyframes slideInUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
+      <div style={{
+        width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+        background: isError ? '#7c2d12' : '#065f46',
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }}>
+        {isError ? <AlertCircle size={14} color="#ef4444" /> : <Check size={14} color="#34d399" />}
+      </div>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: 13, fontWeight: 600, color: isError ? '#ef4444' : '#34d399', marginBottom: 2 }}>
+          {isError ? 'Error' : 'Success'}
+        </p>
+        <p style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.4 }}>{toast.message}</p>
+      </div>
+      <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#475569', padding: 0 }}>
+        <X size={14} />
+      </button>
+    </div>
+  );
+};
+
+// ── WhatsApp Live Preview ─────────────────────────────────
+const WaPreview = ({ form }) => {
+  const now = new Date();
+  const timeStr = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  const renderBody = (text) => {
+    if (!text) return <span style={{ color: '#667781' }}>Your message body will appear here...</span>;
+    return text.split(/(\{\{[^}]+\}\})/g).map((part, i) =>
+      /^\{\{[^}]+\}\}$/.test(part)
+        ? <span key={i} style={{ background: '#dcf8c6', color: '#075e54', borderRadius: 3, padding: '0 3px', fontWeight: 600 }}>{part}</span>
+        : part
+    );
+  };
+
+  const hasHeader = form.header_format !== 'NONE' && (form.header || form.header_format !== 'TEXT');
+  const hasButtons = form.buttons && form.buttons.length > 0;
+
+  return (
+    <div style={{
+      background: 'linear-gradient(180deg, #0d1b2a 0%, #1a2e4a 100%)',
+      borderRadius: 14, padding: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+      border: `1px solid ${C.border}`, position: 'sticky', top: 20
+    }}>
+      <p style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Live Preview</p>
+
+      {/* Phone frame */}
+      <div style={{
+        width: 260, background: '#111b21', borderRadius: 22, padding: '12px 6px',
+        boxShadow: '0 0 0 2px #1a2e4a, 0 30px 60px rgba(0,0,0,0.5)'
+      }}>
+        {/* Status bar */}
+        <div style={{ background: '#202c33', borderRadius: '16px 16px 0 0', padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#2a3942', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Smartphone size={14} color="#8696a0" />
+            </div>
+            <div>
+              <p style={{ fontSize: 10, color: '#e9edef', fontWeight: 600 }}>{form.name || 'Template Name'}</p>
+              <p style={{ fontSize: 8, color: '#8696a0' }}>Business Account</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Chat area */}
+        <div style={{
+          background: '#0b141a',
+          backgroundImage: 'radial-gradient(circle at 1px 1px, #1a2833 1px, transparent 0)',
+          backgroundSize: '20px 20px',
+          minHeight: 320, padding: '12px 8px', display: 'flex', flexDirection: 'column', gap: 8
+        }}>
+          {/* Date chip */}
+          <div style={{ textAlign: 'center' }}>
+            <span style={{ background: '#182229', color: '#8696a0', fontSize: 10, padding: '3px 10px', borderRadius: 8 }}>Today</span>
+          </div>
+
+          {/* Message bubble */}
+          <div style={{ alignSelf: 'flex-end', maxWidth: '90%' }}>
+            <div style={{ background: '#005c4b', borderRadius: '12px 12px 0 12px', overflow: 'hidden' }}>
+              {/* Header */}
+              {form.header_format === 'IMAGE' && (
+                <div style={{ background: '#0d2a25', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Image size={24} color="#34d399" />
+                  <span style={{ fontSize: 10, color: '#34d399', marginLeft: 6 }}>Image</span>
+                </div>
+              )}
+              {form.header_format === 'VIDEO' && (
+                <div style={{ background: '#1a1a2e', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Video size={24} color="#818cf8" />
+                  <span style={{ fontSize: 10, color: '#818cf8', marginLeft: 6 }}>Video</span>
+                </div>
+              )}
+              {form.header_format === 'DOCUMENT' && (
+                <div style={{ background: '#1e2a3a', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <FileText size={22} color="#60a5fa" />
+                  <span style={{ fontSize: 10, color: '#60a5fa', marginLeft: 6 }}>Document</span>
+                </div>
+              )}
+              {form.header_format === 'TEXT' && form.header && (
+                <div style={{ padding: '8px 10px 4px' }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: '#e9edef' }}>{form.header}</p>
+                </div>
+              )}
+
+              {/* Body */}
+              <div style={{ padding: '6px 10px 4px' }}>
+                <p style={{ fontSize: 11, color: '#e9edef', lineHeight: 1.5 }}>{renderBody(form.body)}</p>
+              </div>
+
+              {/* Footer */}
+              {form.footer && (
+                <div style={{ padding: '0 10px 6px' }}>
+                  <p style={{ fontSize: 9, color: '#8696a0' }}>{form.footer}</p>
+                </div>
+              )}
+
+              {/* Timestamp */}
+              <div style={{ padding: '0 10px 6px', textAlign: 'right' }}>
+                <span style={{ fontSize: 8, color: '#8696a0' }}>{timeStr} ✓✓</span>
+              </div>
+            </div>
+
+            {/* Buttons */}
+            {hasButtons && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
+                {form.buttons.map((btn, i) => (
+                  <div key={i} style={{
+                    background: '#005c4b', borderRadius: 8, padding: '7px 10px',
+                    textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5
+                  }}>
+                    {btn.type === 'URL' ? <Link size={10} color="#53bdeb" /> : <MessageSquare size={10} color="#53bdeb" />}
+                    <span style={{ fontSize: 11, color: '#53bdeb', fontWeight: 600 }}>{btn.text || 'Button'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Category badge */}
+      <div style={{
+        background: C.card, border: `1px solid ${C.border}`, borderRadius: 20,
+        padding: '4px 14px', fontSize: 10, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8
+      }}>
+        {form.category || 'No Category'}
+      </div>
+    </div>
+  );
+};
+
+// ── Category defaults ─────────────────────────────────────
+const CATEGORY_DEFAULTS = {
+  MARKETING: {
+    body: 'Hi {{1}}! 🎉 We have an exclusive offer just for you.\n\nGet {{2}} off on your next purchase. Use code: {{3}}\n\nOffer valid till {{4}}. Don\'t miss out!',
+    footer: 'Reply STOP to unsubscribe',
+    allowMedia: true,
+  },
+  UTILITY: {
+    body: 'Hello {{1}},\n\nYour order #{{2}} has been {{3}}.\n\nExpected delivery: {{4}}\nTracking: {{5}}\n\nThank you for choosing us!',
+    footer: 'For support, reply to this message.',
+    allowMedia: true,
+  },
+  AUTHENTICATION: {
+    body: '{{1}} is your verification code for {{2}}. This code expires in {{3}} minutes.\n\nDo not share this code with anyone.',
+    footer: 'If you didn\'t request this, please ignore.',
+    allowMedia: false,
+  },
+};
+
+const LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'en_US', label: 'English (US)' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'ar', label: 'Arabic' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'pt_BR', label: 'Portuguese (Brazil)' },
+  { code: 'fr', label: 'French' },
+  { code: 'de', label: 'German' },
+  { code: 'id', label: 'Indonesian' },
+];
+
+const HEADER_FORMATS = ['NONE', 'TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT'];
+
+// ── Input style helper ────────────────────────────────────
+const inp = (extra = {}) => ({
+  width: '100%', background: '#0c1525', border: `1px solid ${C.border}`,
+  borderRadius: 8, padding: '9px 12px', fontSize: 12, color: C.text,
+  outline: 'none', fontFamily: "'DM Sans', sans-serif",
+  ...extra
+});
+
+// ── Main Component ────────────────────────────────────────
 export const TemplatesView = () => {
-  const { templates: apiTemplates, loading, error } = useTemplates();
+  const { templates: apiTemplates, loading: tableLoading, error, refetch } = useTemplates();
   const templates = apiTemplates || [];
 
-  const handleTemplateSubmit = async (id) => {
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitLoading, setSubmitLoading] = useState(null); // id of template being submitted
+  const [syncLoading, setSyncLoading] = useState(null); // id of template being synced
+  const [toast, setToast] = useState(null);
+  const [clients, setClients] = useState([]);
+  const [previewTemplate, setPreviewTemplate] = useState(null); // template object to preview
+  const [templateToDelete, setTemplateToDelete] = useState(null); // template object to delete
+  const [deleteConfirmText, setDeleteConfirmText] = useState(''); // text for delete confirmation
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+
+  const defaultForm = {
+    name: '',
+    category: 'MARKETING',
+    language: 'en',
+    header_format: 'NONE',
+    header: '',
+    body: CATEGORY_DEFAULTS.MARKETING.body,
+    footer: CATEGORY_DEFAULTS.MARKETING.footer,
+    buttons: [],
+    client_id: '',
+  };
+  const [form, setForm] = useState(defaultForm);
+
+  const showToast = useCallback((message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4500);
+  }, []);
+
+  useEffect(() => {
+    api.getClients().then(d => setClients(d.clients || [])).catch(() => {});
+  }, []);
+
+  const handleCategoryChange = (cat) => {
+    const defaults = CATEGORY_DEFAULTS[cat] || {};
+    setForm(f => ({
+      ...f,
+      category: cat,
+      body: defaults.body || f.body,
+      footer: defaults.footer || f.footer,
+      header_format: defaults.allowMedia ? f.header_format : 'NONE',
+    }));
+  };
+
+  const addButton = (type) => {
+    if (form.buttons.length >= 3) return showToast('Maximum 3 buttons allowed', 'error');
+    setForm(f => ({
+      ...f,
+      buttons: [...f.buttons, { type, text: '', ...(type === 'URL' ? { url: '' } : {}) }]
+    }));
+  };
+
+  const removeButton = (i) => setForm(f => ({ ...f, buttons: f.buttons.filter((_, idx) => idx !== i) }));
+
+  const updateButton = (i, field, value) => {
+    setForm(f => ({
+      ...f,
+      buttons: f.buttons.map((b, idx) => idx === i ? { ...b, [field]: value } : b)
+    }));
+  };
+
+  const handleSubmitTemplate = async (id) => {
+    setSubmitLoading(id);
     try {
       await api.submitTemplate(id);
-      alert('Template submitted for Meta approval!');
-      window.location.reload();
+      showToast('Template submitted to Meta for approval! You\'ll be notified once reviewed.');
+      if (refetch) refetch();
     } catch (err) {
-      alert('Failed to submit template: ' + err.message);
+      // Detect expired / invalid Meta access token
+      const msg = err.message || '';
+      if (msg.includes('190') || msg.toLowerCase().includes('access token') || msg.toLowerCase().includes('oauth')) {
+        showToast('Meta access token is expired or invalid. Please update META_PAGE_ACCESS_TOKEN in your .env and restart the server.', 'error');
+      } else {
+        showToast('Submit failed: ' + msg, 'error');
+      }
+    } finally {
+      setSubmitLoading(null);
     }
   };
 
+  const handleSyncTemplate = async (id) => {
+    setSyncLoading(id);
+    try {
+      const res = await api.syncTemplate(id);
+      if (res.template.status !== 'pending') {
+        showToast(`Template is now ${res.template.status}!`);
+        if (refetch) refetch();
+      } else {
+        showToast('Template is still pending on Meta.');
+      }
+    } catch (err) {
+      showToast('Failed to check status: ' + err.message, 'error');
+    } finally {
+      setSyncLoading(null);
+    }
+  };
+
+  const handleCreateTemplate = async () => {
+    if (!form.name.trim()) return showToast('Template name is required', 'error');
+    if (!form.body.trim()) return showToast('Message body is required', 'error');
+    if (!/^[a-z0-9_]+$/.test(form.name)) return showToast('Template name must be lowercase letters, numbers, underscores only', 'error');
+    setSubmitting(true);
+    try {
+      const payload = {
+        name: form.name,
+        category: form.category,
+        language: form.language,
+        header_format: form.header_format !== 'NONE' ? form.header_format : 'TEXT',
+        header: form.header_format === 'NONE' ? null : form.header || null,
+        body: form.body,
+        footer: form.footer || null,
+        buttons: form.buttons,
+        client_id: form.client_id || null,
+      };
+      if (editingId) {
+        await api.updateTemplate(editingId, payload);
+        showToast(`Template "${form.name}" updated successfully!`);
+      } else {
+        await api.createTemplate(payload);
+        showToast(`Template "${form.name}" created successfully as a draft!`);
+      }
+      setShowBuilder(false);
+      setForm(defaultForm);
+      setEditingId(null);
+      if (refetch) refetch();
+    } catch (err) {
+      showToast(`Failed to ${editingId ? 'update' : 'create'} template: ` + err.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditTemplate = (t) => {
+    setForm({
+      name: t.name,
+      category: t.category,
+      language: t.language || 'en',
+      header_format: t.header_format || 'NONE',
+      header: t.header || '',
+      body: t.body,
+      footer: t.footer || '',
+      buttons: (() => { try { return typeof t.buttons === 'string' ? JSON.parse(t.buttons) : (t.buttons || []); } catch { return []; } })(),
+      client_id: t.client_id || '',
+    });
+    setEditingId(t.id);
+    setShowBuilder(true);
+  };
+
+  const handleOpenDeleteModal = (t) => {
+    setTemplateToDelete(t);
+    setDeleteConfirmText('');
+  };
+
+  const confirmDeleteTemplate = async () => {
+    if (!templateToDelete || deleteConfirmText !== 'delete-my-template' || deleteLoading) return;
+    setDeleteLoading(true);
+    try {
+      await api.deleteTemplate(templateToDelete.id);
+      showToast('Template deleted successfully');
+      setTemplateToDelete(null);
+      if (refetch) refetch();
+    } catch (err) {
+      showToast('Failed to delete: ' + err.message, 'error');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const allowMedia = CATEGORY_DEFAULTS[form.category]?.allowMedia ?? true;
+  const availableHeaderFormats = allowMedia ? HEADER_FORMATS : ['NONE', 'TEXT'];
+
+  // ── Render ─────────────────────────────────────────────
   return (
-    <div style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+    <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
+      <Toast toast={toast} onClose={() => setToast(null)} />
+
+      {/* Header */}
+      <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
         <div>
           <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text }}>Template Management</h1>
           <p style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>Create, submit and track Meta WhatsApp template approvals</p>
         </div>
-        <button style={{ background: C.accent, border: 'none', color: '#fff', padding: '8px 16px', borderRadius: 7, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}><Plus size={12} />Create Template</button>
+        <button
+          onClick={() => setShowBuilder(true)}
+          style={{ background: C.accent, border: 'none', color: '#fff', padding: '9px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, boxShadow: `0 4px 20px ${C.accent}40` }}
+        >
+          <Plus size={13} /> Create Template
+        </button>
       </div>
 
       {error && (
-        <div style={{ background: '#2d1010', border: '1px solid #7c2d12', borderRadius: 7, padding: 12, marginBottom: 18, color: '#ef4444', fontSize: 12 }}>
+        <div style={{ background: '#2d1010', border: '1px solid #7c2d12', borderRadius: 8, padding: 12, marginBottom: 18, color: '#ef4444', fontSize: 12 }}>
           Error loading templates: {error}
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 22 }}>
-        {[['Approved', templates.filter((t) => t.status === 'approved').length, C.green], ['Pending', templates.filter((t) => t.status === 'pending').length, C.accent], ['Rejected', templates.filter((t) => t.status === 'rejected').length, C.red], ['Draft', templates.filter((t) => t.status === 'draft').length, C.muted]].map(([l, v, col]) => (
-          <div key={l} style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 11, padding: '13px 18px', flex: 1 }}>
+      {/* Stats */}
+      <div className="grid-responsive" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 22 }}>
+        {[
+          ['Approved', templates.filter(t => t.status === 'approved').length, C.green],
+          ['Pending', templates.filter(t => t.status === 'pending').length, C.accent],
+          ['Rejected', templates.filter(t => t.status === 'rejected').length, C.red],
+          ['Draft', templates.filter(t => t.status === 'draft').length, C.muted],
+        ].map(([l, v, col]) => (
+          <div key={l} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 11, padding: '13px 18px', flex: 1 }}>
             <p style={{ fontSize: 10, color: C.muted, marginBottom: 5 }}>{l}</p>
             <p style={{ fontSize: 22, fontWeight: 700, color: col, fontFamily: "'Syne',sans-serif" }}>{v}</p>
           </div>
         ))}
       </div>
-      <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 14, overflow: 'hidden' }}>
+
+      {/* Table */}
+      <div className="table-responsive" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid ' + C.border }}>
-              {['Template Name', 'Category', 'Brand', 'Status', 'Submitted', 'Approved', 'Uses', 'Actions'].map((h) => (
+            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+              {['Template Name', 'Category', 'Brand', 'Status', 'Submitted', 'Approved', 'Uses', 'Actions'].map(h => (
                 <th key={h} style={{ padding: '11px 14px', fontSize: 9, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'left' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {templates.map((t) => (
-              <tr key={t.id} style={{ borderBottom: '1px solid ' + C.border }}>
-                <td style={{ padding: '13px 14px' }}><span style={{ fontFamily: 'monospace', fontSize: 11, color: C.accent, background: C.accent + '10', padding: '2px 7px', borderRadius: 5 }}>{t.name}</span></td>
-                <td style={{ padding: '13px 14px' }}><span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 7px', borderRadius: 10 }}>{t.category || t.cat}</span></td>
-                <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{t.brand_name || t.brand}</td>
+            {templates.map(t => (
+              <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                <td style={{ padding: '13px 14px' }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: 11, color: C.accent, background: C.accent + '10', padding: '2px 7px', borderRadius: 5 }}>{t.name}</span>
+                </td>
+                <td style={{ padding: '13px 14px' }}>
+                  <span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 7px', borderRadius: 10 }}>{t.category || t.cat}</span>
+                </td>
+                <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{t.brand_name || t.brand || '—'}</td>
                 <td style={{ padding: '13px 14px' }}><TBadge status={t.status} /></td>
-                <td style={{ padding: '13px 14px', fontSize: 10, color: C.dim }}>{t.submitted_at || t.sub || '—'}</td>
-                <td style={{ padding: '13px 14px', fontSize: 10, color: t.approved_at ? C.green : C.dim }}>{t.approved_at || t.apv || '—'}</td>
+                <td style={{ padding: '13px 14px', fontSize: 10, color: C.dim }}>{t.submitted_at ? new Date(t.submitted_at).toLocaleDateString() : '—'}</td>
+                <td style={{ padding: '13px 14px', fontSize: 10, color: t.approved_at ? C.green : C.dim }}>{t.approved_at ? new Date(t.approved_at).toLocaleDateString() : '—'}</td>
                 <td style={{ padding: '13px 14px', fontSize: 12, color: C.text, fontWeight: 600 }}>{t.uses || 0}</td>
                 <td style={{ padding: '13px 14px' }}>
                   <div style={{ display: 'flex', gap: 5 }}>
-                    <button style={{ background: 'transparent', border: '1px solid ' + C.border, borderRadius: 5, color: C.muted, padding: '3px 9px', fontSize: 9 }}>Preview</button>
-                    {t.status === 'rejected' && <button style={{ background: 'transparent', border: '1px solid ' + C.red + '40', borderRadius: 5, color: C.red, padding: '3px 9px', fontSize: 9 }}>Resubmit</button>}
-                    {t.status === 'draft' && <button onClick={() => handleTemplateSubmit(t.id)} style={{ background: C.accent + '20', border: '1px solid ' + C.accentDim, borderRadius: 5, color: C.accent, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}>Submit</button>}
+                    {t.status === 'draft' && (
+                      <button
+                        onClick={() => handleSubmitTemplate(t.id)}
+                        disabled={submitLoading === t.id}
+                        style={{ background: C.accent + '20', border: `1px solid ${C.accentDim}`, borderRadius: 5, color: C.accent, padding: '3px 9px', fontSize: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                      >
+                        {submitLoading === t.id ? <Loader2 size={9} style={{ animation: 'spin 1s linear infinite' }} /> : null}
+                        Submit
+                      </button>
+                    )}
+                    {t.status === 'rejected' && (
+                      <button onClick={() => handleEditTemplate(t)} style={{ background: 'transparent', border: `1px solid ${C.red}40`, borderRadius: 5, color: C.red, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}>Edit & Resubmit</button>
+                    )}
+                    {t.status !== 'draft' && (
+                      <button
+                        onClick={() => handleSyncTemplate(t.id)}
+                        disabled={syncLoading === t.id}
+                        style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 5, color: C.text, padding: '3px 9px', fontSize: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                      >
+                        {syncLoading === t.id ? <Loader2 size={9} style={{ animation: 'spin 1s linear infinite' }} /> : null}
+                        Check Status
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setPreviewTemplate(t)}
+                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.muted, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}
+                    >Preview</button>
+                    <button
+                      onClick={() => handleEditTemplate(t)}
+                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.blue, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}
+                    >Edit</button>
+                    <button
+                      onClick={() => handleOpenDeleteModal(t)}
+                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.red, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}
+                    >Delete</button>
                   </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {templates.length === 0 && !loading && <div style={{ textAlign: 'center', padding: 32, color: C.muted }}>No templates found</div>}
-        {loading && <div style={{ textAlign: 'center', padding: 32, color: C.muted }}>Loading templates...</div>}
+        {templates.length === 0 && !tableLoading && <div style={{ textAlign: 'center', padding: 32, color: C.muted }}>No templates found. Create your first one!</div>}
+        {tableLoading && (
+          <div style={{ textAlign: 'center', padding: 32, color: C.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Loading templates...
+          </div>
+        )}
       </div>
+
+      {/* ── DELETE CONFIRMATION MODAL ─────────────────────── */}
+      {templateToDelete && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          backdropFilter: 'blur(4px)'
+        }} onClick={() => setTemplateToDelete(null)}>
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#0c1525', border: `1px solid ${C.border}`, borderRadius: 14,
+              width: '100%', maxWidth: 400,
+              animation: 'fadeIn 0.2s ease', overflow: 'hidden'
+            }}
+          >
+            <div style={{ padding: '24px 24px 16px' }}>
+              <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Delete Template?</h3>
+              <p style={{ color: C.muted, fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
+                Are you sure you want to delete <strong style={{ color: C.accent }}>{templateToDelete.name}</strong>? This action cannot be undone.
+              </p>
+              <p style={{ color: C.muted, fontSize: 12, marginBottom: 8 }}>
+                Please type <strong style={{ color: C.text }}>delete-my-template</strong> to confirm.
+              </p>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="delete-my-template"
+                style={{
+                  width: '100%',
+                  background: 'rgba(0,0,0,0.2)',
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  color: C.text,
+                  fontSize: 13,
+                  outline: 'none',
+                }}
+              />
+            </div>
+            <div style={{ padding: '16px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button
+                onClick={() => setTemplateToDelete(null)}
+                style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteTemplate}
+                disabled={deleteConfirmText !== 'delete-my-template' || deleteLoading}
+                style={{ background: C.red, border: 'none', color: '#fff', padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: deleteConfirmText === 'delete-my-template' && !deleteLoading ? 'pointer' : 'not-allowed', opacity: deleteConfirmText === 'delete-my-template' && !deleteLoading ? 1 : 0.5, display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                {deleteLoading && <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />}
+                {deleteLoading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TEMPLATE PREVIEW MODAL ─────────────────────── */}
+      {previewTemplate && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          backdropFilter: 'blur(4px)'
+        }} onClick={() => setPreviewTemplate(null)}>
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#0c1525', border: `1px solid ${C.border}`, borderRadius: 18,
+              width: '100%', maxWidth: 520, maxHeight: '90vh',
+              animation: 'fadeIn 0.2s ease', overflowY: 'auto'
+            }}
+          >
+            {/* Modal header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: `1px solid ${C.border}` }}>
+              <div>
+                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 14, fontWeight: 700, color: C.text }}>
+                  <span style={{ fontFamily: 'monospace', color: C.accent }}>{previewTemplate.name}</span>
+                </h3>
+                <div style={{ display: 'flex', gap: 8, marginTop: 5 }}>
+                  <span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 8px', borderRadius: 10 }}>{previewTemplate.category}</span>
+                  <span style={{ fontSize: 10, color: C.muted, background: C.card, padding: '2px 8px', borderRadius: 10 }}>{previewTemplate.language || 'en'}</span>
+                  <TBadge status={previewTemplate.status} />
+                </div>
+              </div>
+              <button onClick={() => setPreviewTemplate(null)} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.muted, padding: '6px 10px' }}>
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Preview content */}
+            <div style={{ padding: 24, display: 'flex', justifyContent: 'center' }}>
+              <WaPreview form={{
+                name: previewTemplate.name,
+                category: previewTemplate.category,
+                header_format: previewTemplate.header_format || 'NONE',
+                header: previewTemplate.header || '',
+                body: previewTemplate.body || '',
+                footer: previewTemplate.footer || '',
+                buttons: (() => { try { return typeof previewTemplate.buttons === 'string' ? JSON.parse(previewTemplate.buttons) : (previewTemplate.buttons || []); } catch { return []; } })()
+              }} />
+            </div>
+
+            {/* Template details */}
+            <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {previewTemplate.brand_name && (
+                <div style={{ display: 'flex', gap: 8, fontSize: 11, alignItems: 'center' }}>
+                  <span style={{ color: C.muted, minWidth: 80 }}>Brand:</span>
+                  <span style={{ color: C.text }}>{previewTemplate.brand_name}</span>
+                </div>
+              )}
+              {previewTemplate.submitted_at && (
+                <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
+                  <span style={{ color: C.muted, minWidth: 80 }}>Submitted:</span>
+                  <span style={{ color: C.text }}>{new Date(previewTemplate.submitted_at).toLocaleString()}</span>
+                </div>
+              )}
+              {previewTemplate.approved_at && (
+                <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
+                  <span style={{ color: C.green, minWidth: 80 }}>Approved:</span>
+                  <span style={{ color: C.green }}>{new Date(previewTemplate.approved_at).toLocaleString()}</span>
+                </div>
+              )}
+              {previewTemplate.meta_template_id && (
+                <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
+                  <span style={{ color: C.muted, minWidth: 80 }}>Meta ID:</span>
+                  <span style={{ color: C.dim, fontFamily: 'monospace' }}>{previewTemplate.meta_template_id}</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '12px 20px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              {previewTemplate.status === 'draft' && (
+                <button
+                  onClick={() => { handleSubmitTemplate(previewTemplate.id); setPreviewTemplate(null); }}
+                  style={{ background: C.accent, border: 'none', color: '#fff', padding: '8px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  Submit to Meta
+                </button>
+              )}
+              <button
+                onClick={() => setPreviewTemplate(null)}
+                style={{ background: C.card, border: `1px solid ${C.border}`, color: C.muted, padding: '8px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600 }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── BUILDER MODAL ──────────────────────────────── */}
+      {showBuilder && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          backdropFilter: 'blur(4px)'
+        }}>
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeIn{from{opacity:0;transform:scale(0.97)}to{opacity:1;transform:scale(1)}}`}</style>
+          <div style={{
+            background: '#0c1525', border: `1px solid ${C.border}`, borderRadius: 18,
+            width: '100%', maxWidth: 1000, maxHeight: '92vh', overflow: 'hidden',
+            display: 'flex', flexDirection: 'column', animation: 'fadeIn 0.25s ease'
+          }}>
+            {/* Modal header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 24px', borderBottom: `1px solid ${C.border}` }}>
+              <div>
+                <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 800, color: C.text }}>Create WhatsApp Template</h2>
+                <p style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Build your template with live preview</p>
+              </div>
+              <button onClick={() => { setShowBuilder(false); setForm(defaultForm); setEditingId(null); }} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.muted, padding: '6px 10px' }}>
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Modal body — two columns */}
+            <div className="flex-col-mobile" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+
+              {/* LEFT: Builder */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+                {/* Category */}
+                <div>
+                  <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 10 }}>Category *</label>
+                  <div className="flex-col-mobile" style={{ display: 'flex', gap: 10 }}>
+                    {[
+                      { key: 'MARKETING', label: 'Marketing', desc: 'Promotions & offers', color: C.accent, icon: '📢' },
+                      { key: 'UTILITY', label: 'Utility', desc: 'Order & transactional', color: C.blue, icon: '🔔' },
+                      { key: 'AUTHENTICATION', label: 'Authentication', desc: 'OTP & verification', color: C.green, icon: '🔐' },
+                    ].map(({ key, label, desc, color, icon }) => {
+                      const active = form.category === key;
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => handleCategoryChange(key)}
+                          style={{
+                            flex: 1, padding: '12px 14px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                            background: active ? color + '15' : C.card,
+                            border: `1.5px solid ${active ? color : C.border}`,
+                            transition: 'all 0.15s'
+                          }}
+                        >
+                          <div style={{ fontSize: 18, marginBottom: 5 }}>{icon}</div>
+                          <p style={{ fontSize: 12, fontWeight: 700, color: active ? color : C.text }}>{label}</p>
+                          <p style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{desc}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Name & Language */}
+                <div className="flex-col-mobile" style={{ display: 'flex', gap: 14 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>Template Name *</label>
+                    <input
+                      style={inp()}
+                      placeholder="e.g. promo_offer_v1"
+                      value={form.name}
+                      onChange={e => setForm(f => ({ ...f, name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') }))}
+                    />
+                    <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>Lowercase letters, numbers, underscores only</p>
+                  </div>
+                  <div style={{ width: 160 }}>
+                    <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>Language *</label>
+                    <div style={{ position: 'relative' }}>
+                      <select
+                        style={{ ...inp(), appearance: 'none', paddingRight: 28 }}
+                        value={form.language}
+                        onChange={e => setForm(f => ({ ...f, language: e.target.value }))}
+                      >
+                        {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
+                      </select>
+                      <ChevronDown size={12} color={C.muted} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Brand */}
+                <div>
+                  <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>Brand (Optional)</label>
+                  <div style={{ position: 'relative' }}>
+                    <select
+                      style={{ ...inp(), appearance: 'none', paddingRight: 28 }}
+                      value={form.client_id}
+                      onChange={e => setForm(f => ({ ...f, client_id: e.target.value }))}
+                    >
+                      <option value="">— No specific brand —</option>
+                      {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <ChevronDown size={12} color={C.muted} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                  </div>
+                </div>
+
+                {/* Header */}
+                <div>
+                  <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 8 }}>Header (Optional)</label>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                    {availableHeaderFormats.map(fmt => {
+                      const active = form.header_format === fmt;
+                      const icons = { NONE: <X size={11} />, TEXT: <Type size={11} />, IMAGE: <Image size={11} />, VIDEO: <Video size={11} />, DOCUMENT: <FileText size={11} /> };
+                      return (
+                        <button
+                          key={fmt}
+                          onClick={() => setForm(f => ({ ...f, header_format: fmt, header: fmt === 'NONE' ? '' : f.header }))}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                            background: active ? C.accent + '20' : C.card,
+                            border: `1.5px solid ${active ? C.accent : C.border}`,
+                            color: active ? C.accent : C.muted, cursor: 'pointer', transition: 'all 0.15s'
+                          }}
+                        >
+                          {icons[fmt]} {fmt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {form.header_format === 'TEXT' && (
+                    <input
+                      style={inp()}
+                      placeholder="Enter header text (max 60 chars)"
+                      maxLength={60}
+                      value={form.header}
+                      onChange={e => setForm(f => ({ ...f, header: e.target.value }))}
+                    />
+                  )}
+                  {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(form.header_format) && (
+                    <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '14px', textAlign: 'center' }}>
+                      <p style={{ fontSize: 11, color: C.muted }}>
+                        {form.header_format === 'IMAGE' ? '🖼️ Image' : form.header_format === 'VIDEO' ? '🎬 Video' : '📄 Document'} will be uploaded when sending
+                      </p>
+                      <p style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Preview shows placeholder. Actual media is attached at send time.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Body */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8 }}>Message Body *</label>
+                    <span style={{ fontSize: 10, color: C.dim }}>{form.body.length}/1024</span>
+                  </div>
+                  <textarea
+                    style={{ ...inp(), resize: 'vertical', minHeight: 120, lineHeight: 1.6 }}
+                    placeholder="Enter your message. Use {{1}}, {{2}} for variables."
+                    maxLength={1024}
+                    value={form.body}
+                    onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
+                  />
+                  <p style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Use <code style={{ color: C.accent, background: C.accent + '10', padding: '1px 4px', borderRadius: 3 }}>{'{{1}}'}</code> for dynamic variables</p>
+                </div>
+
+                {/* Footer */}
+                <div>
+                  <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>Footer (Optional)</label>
+                  <input
+                    style={inp()}
+                    placeholder="e.g. Reply STOP to unsubscribe"
+                    maxLength={60}
+                    value={form.footer}
+                    onChange={e => setForm(f => ({ ...f, footer: e.target.value }))}
+                  />
+                </div>
+
+                {/* Buttons */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8 }}>Buttons (Optional, max 3)</label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        onClick={() => addButton('QUICK_REPLY')}
+                        disabled={form.buttons.length >= 3}
+                        style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.muted, padding: '4px 10px', fontSize: 10, display: 'flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <MessageSquare size={10} /> Quick Reply
+                      </button>
+                      <button
+                        onClick={() => addButton('URL')}
+                        disabled={form.buttons.length >= 3}
+                        style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.muted, padding: '4px 10px', fontSize: 10, display: 'flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <Link size={10} /> URL
+                      </button>
+                    </div>
+                  </div>
+                  {form.buttons.length === 0 && (
+                    <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '12px', textAlign: 'center', color: C.dim, fontSize: 11 }}>
+                      No buttons added. Click Quick Reply or URL to add.
+                    </div>
+                  )}
+                  {form.buttons.map((btn, i) => (
+                    <div key={i} style={{ background: '#0c1525', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', marginBottom: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontSize: 10, color: btn.type === 'URL' ? C.blue : C.green, fontWeight: 600 }}>
+                          {btn.type === 'URL' ? '🔗 URL Button' : '💬 Quick Reply'}
+                        </span>
+                        <button onClick={() => removeButton(i)} style={{ background: 'none', border: 'none', color: C.red, padding: 0 }}><Trash2 size={12} /></button>
+                      </div>
+                      <input
+                        style={{ ...inp(), marginBottom: btn.type === 'URL' ? 8 : 0 }}
+                        placeholder="Button label"
+                        value={btn.text}
+                        onChange={e => updateButton(i, 'text', e.target.value)}
+                      />
+                      {btn.type === 'URL' && (
+                        <input
+                          style={inp()}
+                          placeholder="https://example.com"
+                          value={btn.url || ''}
+                          onChange={e => updateButton(i, 'url', e.target.value)}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* RIGHT: Preview */}
+              <div style={{ width: 300, borderLeft: `1px solid ${C.border}`, padding: '20px 18px', overflowY: 'auto', background: '#090f1a' }}>
+                <WaPreview form={form} />
+              </div>
+            </div>
+
+            {/* Modal footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 24px', borderTop: `1px solid ${C.border}` }}>
+              <button
+                onClick={() => { setShowBuilder(false); setForm(defaultForm); setEditingId(null); }}
+                style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.muted, padding: '9px 18px', fontSize: 12, fontWeight: 600 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateTemplate}
+                disabled={submitting}
+                style={{
+                  background: submitting ? C.accentDim : C.accent, border: 'none', color: '#fff',
+                  padding: '9px 22px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                  display: 'flex', alignItems: 'center', gap: 7, cursor: submitting ? 'not-allowed' : 'pointer',
+                  boxShadow: submitting ? 'none' : `0 4px 16px ${C.accent}40`
+                }}
+              >
+                {submitting ? <><Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Saving...</> : <><Check size={13} /> {editingId ? 'Save Changes' : 'Save as Draft'}</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,0 +1,232 @@
+{
+  "name": "WF10 - Daily Morning Briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-morning-cron",
+      "name": "Daily 9 AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT COUNT(*) FROM leads WHERE DATE(created_at) = CURRENT_DATE) as leads_today, (SELECT COUNT(*) FROM leads WHERE status = 'hot') as hot_leads, (SELECT COUNT(*) FROM tasks WHERE status = 'pending' AND DATE(due_date) = CURRENT_DATE) as tasks_today, (SELECT COUNT(*) FROM leads WHERE status = 'converted' AND DATE(converted_at) = CURRENT_DATE) as converted_today, (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE DATE(paid_at) = CURRENT_DATE AND status = 'paid') as revenue_today, (SELECT COUNT(*) FROM conversations WHERE DATE(sent_at) = CURRENT_DATE AND direction = 'inbound') as messages_received",
+        "additionalFields": {}
+      },
+      "id": "node-get-morning-stats",
+      "name": "Get Today's Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.title, t.priority, tm.name as assigned_to, t.brand FROM tasks t LEFT JOIN team_members tm ON t.assigned_to = tm.id WHERE t.status = 'pending' AND DATE(t.due_date) = CURRENT_DATE ORDER BY CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END LIMIT 5",
+        "additionalFields": {}
+      },
+      "id": "node-get-tasks",
+      "name": "Get Today's Tasks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        400,
+        450
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT l.name, l.phone, l.brand, l.score, l.interest FROM leads l WHERE l.status = 'hot' AND (l.last_contacted_at IS NULL OR l.last_contacted_at < NOW() - INTERVAL '6 hours') ORDER BY l.score DESC LIMIT 3",
+        "additionalFields": {}
+      },
+      "id": "node-get-hot-leads",
+      "name": "Get Hot Leads Needing Attention",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        400,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT phone_number_id, wa_access_token FROM clients WHERE id = 1 AND phone_number_id IS NOT NULL LIMIT 1",
+        "additionalFields": {}
+      },
+      "id": "node-get-wa-creds",
+      "name": "Get WhatsApp Credentials",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        600,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const stats = $('Get Today's Stats').first().json;\nconst tasks = $('Get Today\\'s Tasks').all().map(t => t.json);\nconst hotLeads = $('Get Hot Leads Needing Attention').all().map(l => l.json);\nconst creds = $('Get WhatsApp Credentials').first().json;\n\nconst day = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });\n\nlet msg = `\ud83c\udf05 Good Morning, Kamar!\\n\\n\ud83d\udcc5 ${day}\\n\\n`;\nmsg += `\ud83d\udcca OVERNIGHT SUMMARY:\\n`;\nmsg += `\u2022 New leads: ${stats.leads_today || 0}\\n`;\nmsg += `\u2022 Hot leads: ${stats.hot_leads || 0}\\n`;\nmsg += `\u2022 Converted: ${stats.converted_today || 0}\\n`;\nmsg += `\u2022 Revenue: Rs ${parseInt(stats.revenue_today || 0).toLocaleString('en-IN')}\\n`;\nmsg += `\u2022 Messages received: ${stats.messages_received || 0}\\n\\n`;\n\nif (hotLeads.length > 0) {\n  msg += `\ud83d\udd25 HOT LEADS NEEDING YOUR ATTENTION:\\n`;\n  hotLeads.forEach((l, i) => {\n    msg += `${i+1}. ${l.name} (${l.brand}) \u2014 Score: ${l.score}\\n`;\n    msg += `   \ud83d\udcde ${l.phone} | ${l.interest}\\n`;\n  });\n  msg += `\\n`;\n}\n\nif (tasks.length > 0) {\n  msg += `\u2705 TODAY'S TASKS (${tasks.length}):\\n`;\n  tasks.forEach((t, i) => {\n    const p = t.priority === 'high' ? '\ud83d\udd34' : t.priority === 'medium' ? '\ud83d\udfe1' : '\ud83d\udfe2';\n    msg += `${p} ${t.title}\\n`;\n    if (t.assigned_to) msg += `   \u2192 ${t.assigned_to}\\n`;\n  });\n  msg += `\\n`;\n}\n\nmsg += `\ud83d\udcf1 Dashboard: https://leados-app.abmgroups.org`;\n\nreturn [{ json: { message: msg, phone_number_id: creds.phone_number_id, wa_access_token: creds.wa_access_token } }];"
+      },
+      "id": "node-build-briefing",
+      "name": "Build Morning Briefing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.phone_number_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.wa_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: '919403892971', type: 'text', text: { body: $json.message } }) }}"
+      },
+      "id": "node-send-briefing",
+      "name": "Send Morning Briefing to Kamar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1000,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 9 AM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Today's Stats",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Today's Tasks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Hot Leads Needing Attention",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Today's Stats": {
+      "main": [
+        [
+          {
+            "node": "Get WhatsApp Credentials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get WhatsApp Credentials": {
+      "main": [
+        [
+          {
+            "node": "Build Morning Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Today's Tasks": {
+      "main": [
+        [
+          {
+            "node": "Build Morning Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Hot Leads Needing Attention": {
+      "main": [
+        [
+          {
+            "node": "Build Morning Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Morning Briefing": {
+      "main": [
+        [
+          {
+            "node": "Send Morning Briefing to Kamar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "id": "wf10-morning-briefing"
+}

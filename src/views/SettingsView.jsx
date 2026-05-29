@@ -91,10 +91,10 @@ export const SettingsView = () => {
   };
 
   return (
-    <div style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
+    <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
       <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text, marginBottom: 22 }}>Settings</h1>
-      <div style={{ display: 'flex', gap: 18 }}>
-        <div style={{ width: 180 }}>
+      <div className="flex-col-mobile" style={{ display: 'flex', gap: 18 }}>
+        <div className="w-full-mobile" style={{ width: 180 }}>
           {[['account', 'Account'], ['whatsapp', 'WhatsApp API'], ['team', 'Team'], ['notifications', 'Alerts'], ['billing', 'Billing']].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{ width: '100%', textAlign: 'left', padding: '9px 13px', borderRadius: 7, border: 'none', background: tab === k ? C.accent + '20' : 'transparent', color: tab === k ? C.accent : C.muted, fontSize: 12, fontWeight: tab === k ? 600 : 400, marginBottom: 1, cursor: 'pointer' }}>
               {tab === k && <span style={{ marginRight: 5 }}>›</span>}{l}

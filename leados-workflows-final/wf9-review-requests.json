@@ -1,0 +1,108 @@
+{
+  "name": "WF9 - Weekly Review Requests to Converted Students",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 10 * * 2" }] }
+      },
+      "id": "node-review-cron",
+      "name": "Every Tuesday 10 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT l.id as lead_id, l.name, l.phone, l.brand, l.client_id, c.phone_number_id, c.wa_access_token FROM leads l JOIN clients c ON l.client_id = c.id WHERE l.status = 'converted' AND l.converted_at BETWEEN NOW() - INTERVAL '45 days' AND NOW() - INTERVAL '7 days' AND l.id NOT IN (SELECT CAST(action_data->>'lead_id' AS INTEGER) FROM sheriff_actions WHERE action_type = 'review_request' AND executed_at > NOW() - INTERVAL '30 days' AND action_data->>'lead_id' IS NOT NULL) AND l.phone IS NOT NULL AND c.phone_number_id IS NOT NULL LIMIT 20",
+        "additionalFields": {}
+      },
+      "id": "node-get-eligible",
+      "name": "Get Eligible Students (Not Asked in 30 Days)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [400, 300],
+      "credentials": { "postgres": { "id": "leados-db-credential", "name": "LeadOS DB" } }
+    },
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "node-loop-students",
+      "name": "Loop Each Student",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const student = $input.first().json;\n\n// Brand-specific review messages\nconst messages = {\n  'BM Academy': `Hi ${student.name}! 😊\n\nHope your digital marketing journey is going well!\n\nWe would love to hear about your experience at BM Academy. A 2-minute Google review from you helps other students like you find us.\n\n⭐ Leave a review here:\nhttps://g.page/r/BM_ACADEMY_REVIEW_LINK\n\nThank you so much! 🙏\n— BM Academy Team`,\n  'BM TechX': `Hi ${student.name}! 👋\n\nWe hope you are seeing great results from our digital marketing work for your business!\n\nWould you spare 2 minutes to share your experience on Google? It means the world to us.\n\n⭐ Google Review:\nhttps://g.page/r/BMTECHX_REVIEW_LINK\n\nThank you! 🙏\n— BM TechX Team`,\n  'EduConsultants': `Hi ${student.name}! 🌍\n\nHope your MBBS journey is going well!\n\nCould you take 2 minutes to leave us a Google review? It helps other students and parents find trusted guidance.\n\n⭐ Review us here:\nhttps://g.page/r/EDUCONSULTANTS_REVIEW_LINK\n\nThank you so much! 🙏`\n};\n\nconst msg = messages[student.brand] || `Hi ${student.name}! Would you leave us a Google review? It means a lot! https://g.page/r/ABM_REVIEW_LINK`;\n\nreturn [{ json: { ...student, message: msg } }];"
+      },
+      "id": "node-build-review-msg",
+      "name": "Build Review Request Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.phone_number_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $json.wa_access_token }}" }, { "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: '91' + $json.phone.replace(/^91/, '').replace(/^\\+91/, ''), type: 'text', text: { body: $json.message } }) }}"
+      },
+      "id": "node-send-review-req",
+      "name": "Send Review Request WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sheriff_actions (client_id, goal_type, action_type, action_description, action_data, status) VALUES ($1, 'reviews', 'review_request', $2, $3, 'executed')",
+        "additionalFields": { "queryParams": "={{ $json.client_id }},='Review request sent to '+ $json.name,={{ JSON.stringify({ lead_id: String($json.lead_id), phone: $json.phone }) }}" }
+      },
+      "id": "node-log-review",
+      "name": "Log Review Request",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1200, 300],
+      "credentials": { "postgres": { "id": "leados-db-credential", "name": "LeadOS DB" } }
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "seconds"
+      },
+      "id": "node-rate-limit-review",
+      "name": "Wait 3 Seconds (Rate Limit)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build summary after all students processed\nconst students = $('Get Eligible Students (Not Asked in 30 Days)').all();\nconst count = students.length;\nif (count === 0) return [{ json: { skip: true } }];\nreturn [{ json: { skip: false, count, summary: `⭐ Weekly Review Request Campaign\\n\\nSent to ${count} students today.\\n\\nStudents contacted this week will be checked next week for new reviews.\\n\\nCheck Google Business Profile in 3-4 days.` } }];"
+      },
+      "id": "node-build-summary",
+      "name": "Build Campaign Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 300]
+    }
+  ],
+  "connections": {
+    "Every Tuesday 10 AM": { "main": [[{ "node": "Get Eligible Students (Not Asked in 30 Days)", "type": "main", "index": 0 }]] },
+    "Get Eligible Students (Not Asked in 30 Days)": { "main": [[{ "node": "Loop Each Student", "type": "main", "index": 0 }]] },
+    "Loop Each Student": { "main": [[{ "node": "Build Review Request Message", "type": "main", "index": 0 }]] },
+    "Build Review Request Message": { "main": [[{ "node": "Send Review Request WhatsApp", "type": "main", "index": 0 }]] },
+    "Send Review Request WhatsApp": { "main": [[{ "node": "Log Review Request", "type": "main", "index": 0 }]] },
+    "Log Review Request": { "main": [[{ "node": "Wait 3 Seconds (Rate Limit)", "type": "main", "index": 0 }]] },
+    "Wait 3 Seconds (Rate Limit)": { "main": [[{ "node": "Loop Each Student", "type": "main", "index": 0 }, { "node": "Build Campaign Summary", "type": "main", "index": 0 }]] }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1", "timezone": "Asia/Kolkata" },
+  "id": "wf9-review-requests"
+}

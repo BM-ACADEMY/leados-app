@@ -1,0 +1,223 @@
+{
+  "name": "WF11 - Scheduled Content Auto-Publisher",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-content-cron",
+      "name": "Every Hour Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cp.*, c.phone_number_id, c.wa_access_token, c.name as client_name FROM content_posts cp JOIN clients c ON cp.client_id = c.id WHERE cp.status = 'scheduled' AND cp.scheduled_at <= NOW() AND cp.scheduled_at > NOW() - INTERVAL '2 hours' ORDER BY cp.scheduled_at ASC LIMIT 10",
+        "additionalFields": {}
+      },
+      "id": "node-get-due-posts",
+      "name": "Get Due Posts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $input.all().length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "node-has-posts",
+      "name": "Any Posts Due?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "node-loop-posts",
+      "name": "Loop Each Post",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const post = $input.first().json;\n\n// Determine publish method based on platform\nconst canAutoPublish = ['GMB', 'WhatsApp Status'].includes(post.platform);\n\nreturn [{ json: {\n  ...post,\n  can_auto_publish: canAutoPublish,\n  note: canAutoPublish\n    ? 'Will attempt auto-publish'\n    : `Manual action needed: Log in to ${post.platform} and publish post ID ${post.id}`\n}}];"
+      },
+      "id": "node-decide-publish",
+      "name": "Decide Publish Method",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE content_posts SET status = 'published', published_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryParams": "={{ $json.id }}"
+        }
+      },
+      "id": "node-mark-published",
+      "name": "Mark as Published",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notifications (recipient_id, client_id, type, title, message, priority, sent_at) SELECT tm.id, $1, 'content', 'Post Published', $2, 'normal', NOW() FROM team_members tm WHERE tm.role IN ('admin', 'super_admin') LIMIT 1",
+        "additionalFields": {
+          "queryParams": "={{ $json.client_id }},='Post published on '+ $json.platform +': '+ LEFT($json.content, 60)+'...'"
+        }
+      },
+      "id": "node-notify-published",
+      "name": "Notify Team of Published Post",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every Hour Check": {
+      "main": [
+        [
+          {
+            "node": "Get Due Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Due Posts": {
+      "main": [
+        [
+          {
+            "node": "Any Posts Due?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Posts Due?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Loop Each Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Each Post": {
+      "main": [
+        [
+          {
+            "node": "Decide Publish Method",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide Publish Method": {
+      "main": [
+        [
+          {
+            "node": "Mark as Published",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Published": {
+      "main": [
+        [
+          {
+            "node": "Notify Team of Published Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Team of Published Post": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "id": "wf11-content-publisher"
+}

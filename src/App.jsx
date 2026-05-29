@@ -79,14 +79,18 @@ function LoginPage({ login, authLoading, authError }) {
   );
 }
 
+import { Toaster } from 'react-hot-toast';
+
 function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, setLeadRefresh }) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   return (
     <>
       <style>{STYLE}</style>
+      <Toaster position="top-right" toastOptions={{ style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' } }} />
       <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-        <Sidebar onLogout={logout} />
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-          <Header user={user} />
+        <Sidebar onLogout={logout} mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', width: '100%' }}>
+          <Header user={user} onMenuClick={() => setMobileMenuOpen(true)} />
           <div style={{ flex: 1, overflow: 'hidden' }}>
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />

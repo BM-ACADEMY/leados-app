@@ -34,6 +34,10 @@ export const Dashboard = () => {
   const hotLeadsCount = stats ? stats.hot_leads : 0;
   const convertedToday = stats ? stats.converted_today : 0;
   const revenueMonth = stats ? stats.revenue_month : 0;
+  
+  const leadsChange = stats?.leads_yesterday ? Math.round(((stats.leads_today - stats.leads_yesterday) / stats.leads_yesterday) * 100) : 0;
+  const convertedChange = stats?.converted_yesterday ? Math.round(((stats.converted_today - stats.converted_yesterday) / stats.converted_yesterday) * 100) : 0;
+  const revenueChange = stats?.revenue_last_month ? Math.round(((stats.revenue_month - stats.revenue_last_month) / stats.revenue_last_month) * 100) : 0;
 
   const formatRevenue = (val) => {
     if (val >= 1000) {
@@ -46,9 +50,14 @@ export const Dashboard = () => {
     ? stats.weekly.map((w) => ({ d: w.day, l: parseInt(w.leads || 0), c: parseInt(w.converted || 0) }))
     : [];
 
+  const totalSources = stats?.sources ? stats.sources.reduce((sum, s) => sum + parseInt(s.count || 0), 0) : 1;
   const SOURCE_COLORS = ['#f97316', '#3b82f6', '#8b5cf6', '#ec4899', '#10b981', '#64748b'];
   const sourceData = stats?.sources && stats.sources.length > 0
-    ? stats.sources.map((s, i) => ({ name: s.source || 'Manual', v: parseInt(s.count || 0), c: SOURCE_COLORS[i % SOURCE_COLORS.length] }))
+    ? stats.sources.map((s, i) => ({ 
+        name: s.source || 'Manual', 
+        v: totalSources > 0 ? Math.round((parseInt(s.count || 0) / totalSources) * 100) : 0, 
+        c: SOURCE_COLORS[i % SOURCE_COLORS.length] 
+      }))
     : [];
 
   const funnelData = stats?.funnel
@@ -64,20 +73,20 @@ export const Dashboard = () => {
   const displayHotLeads = hotLeads && hotLeads.length > 0 ? hotLeads : [];
 
   return (
-    <div style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
+    <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
       <div style={{ marginBottom: 22 }}>
         <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text }}>Good morning, {user?.name?.split(' ')[0] || 'User'}</h1>
         <p style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {user?.brand_name || 'Brand'} Overview</p>
       </div>
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-        <Stat label="Leads Today" value={leadsToday.toString()} change={12} Icon={Users} color={C.accent} />
-        <Stat label="Hot Leads" value={hotLeadsCount.toString()} change={8} Icon={Target} color={C.red} />
-        <Stat label="Converted" value={convertedToday.toString()} change={-2} Icon={CheckCircle} color={C.green} />
-        <Stat label="Revenue This Month" value={formatRevenue(revenueMonth)} change={19} Icon={BarChart2} color={C.blue} />
+      <div className="grid-responsive" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+        <Stat label="Leads Today" value={leadsToday.toString()} change={leadsChange} Icon={Users} color={C.accent} />
+        <Stat label="Hot Leads" value={hotLeadsCount.toString()} change={undefined} Icon={Target} color={C.red} />
+        <Stat label="Converted" value={convertedToday.toString()} change={convertedChange} Icon={CheckCircle} color={C.green} />
+        <Stat label="Revenue This Month" value={formatRevenue(revenueMonth)} change={revenueChange} Icon={BarChart2} color={C.blue} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 16, marginBottom: 16 }}>
+      <div className="grid-responsive" style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 16, marginBottom: 16 }}>
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 14, padding: 20 }}>
           <SectionHeader title="Leads This Week" />
           <ResponsiveContainer width="100%" height={170}>
@@ -94,9 +103,9 @@ export const Dashboard = () => {
             </AreaChart>
           </ResponsiveContainer>
         </div>
-        <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 14, padding: 20 }}>
+        <div className="flex-col-mobile h-auto-mobile" style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 14, padding: 20 }}>
           <SectionHeader title="Lead Sources" />
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div className="flex-responsive" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <PieChart width={120} height={120}>
               <Pie data={sourceData} dataKey="v" cx={55} cy={55} innerRadius={30} outerRadius={52} paddingAngle={3}>
                 {sourceData.map((e, i) => <Cell key={i} fill={e.c} />)}
@@ -117,7 +126,7 @@ export const Dashboard = () => {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+      <div className="grid-responsive" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 14, padding: 20 }}>
           <SectionHeader title="Revenue Trend" />
           <ResponsiveContainer width="100%" height={140}>
@@ -149,9 +158,9 @@ export const Dashboard = () => {
           <AlertCircle size={15} color={C.accent} />
           <span style={{ fontFamily: "'Syne',sans-serif", fontSize: 12, fontWeight: 700, color: C.accent }}>HOT LEADS NEEDING ATTENTION</span>
         </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div className="grid-responsive" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
           {displayHotLeads.slice(0, 4).map((l) => (
-            <div key={l.id} style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 10, padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 9, minWidth: 190 }}>
+            <div key={l.id} style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 10, padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 9 }}>
               <div style={{ width: 30, height: 30, borderRadius: '50%', background: C.accent + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: C.accent }}>{l.name[0]}</div>
               <div>
                 <p style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{l.name}</p>

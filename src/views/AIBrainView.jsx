@@ -113,8 +113,8 @@ Please define your custom prompt here.`;
   };
 
   return (
-    <div style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+    <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
+      <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
         <div>
           <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text }}>AI Brain Configuration</h1>
           <p style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>Configure what each brand AI agent knows and how it closes</p>
@@ -128,12 +128,12 @@ Please define your custom prompt here.`;
         <div style={{ textAlign: 'center', padding: 40, color: C.muted }}>Loading AI Brain Configuration...</div>
       ) : (
         <>
-          <div style={{ background: C.accent + '10', border: '1px solid ' + C.accentDim, borderRadius: 11, padding: '11px 15px', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 9 }}>
+          <div className="flex-col-mobile" style={{ background: C.accent + '10', border: '1px solid ' + C.accentDim, borderRadius: 11, padding: '11px 15px', marginBottom: 18, display: 'flex', alignItems: 'flex-start', gap: 9 }}>
             <Brain size={15} color={C.accent} />
             <p style={{ fontSize: 12, color: C.accent }}>AI Agent for <strong>{selectedBrandName}</strong> is <strong>Active</strong> · Status: Connected to Postgres DB</p>
           </div>
 
-          <div style={{ display: 'flex', gap: 2, background: C.card, border: '1px solid ' + C.border, borderRadius: 9, overflow: 'hidden', marginBottom: 18, width: 'fit-content' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, background: C.card, border: '1px solid ' + C.border, borderRadius: 9, overflow: 'hidden', marginBottom: 18 }}>
             {['product', 'pricing', 'objections', 'proof', 'flow', 'prompt'].map((t) => (
               <button key={t} onClick={() => setTab(t)} style={{ padding: '7px 15px', fontSize: 11, fontWeight: 600, border: 'none', background: tab === t ? C.accent : 'transparent', color: tab === t ? '#fff' : C.muted, textTransform: 'capitalize' }}>{t === 'flow' ? 'Conv Flow' : t === 'prompt' ? 'System Prompt' : t.charAt(0).toUpperCase() + t.slice(1)}</button>
             ))}
@@ -151,7 +151,7 @@ Please define your custom prompt here.`;
               <div>
                 <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Pricing Table</h3>
                 {pricingList.map((p, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 11, marginBottom: 11, padding: 13, background: C.surface, borderRadius: 9, border: '1px solid ' + C.border, alignItems: 'center' }}>
+                  <div key={i} className="flex-col-mobile" style={{ display: 'flex', gap: 11, marginBottom: 11, padding: 13, background: C.surface, borderRadius: 9, border: '1px solid ' + C.border, alignItems: 'flex-start' }}>
                     <div style={{ flex: 1 }}>
                       <input value={p[0]} onChange={(e) => { const newList = [...pricingList]; newList[i][0] = e.target.value; setPricingList(newList); }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, fontWeight: 600, outline: 'none', width: '100%' }} />
                     </div>
@@ -180,13 +180,13 @@ Please define your custom prompt here.`;
                 {objectionsList.map((o, i) => (
                   <div key={i} style={{ marginBottom: 13, background: C.surface, border: '1px solid ' + C.border, borderRadius: 9, overflow: 'hidden' }}>
                     <div style={{ padding: '9px 13px', background: '#2d1010', borderBottom: '1px solid ' + C.border, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                      <div className="flex-col-mobile" style={{ display: 'flex', alignItems: 'flex-start', flex: 1 }}>
                         <span style={{ fontSize: 11, color: C.red, fontWeight: 700, marginRight: 5 }}>Objection:</span>
                         <input value={o[0]} onChange={(e) => { const newList = [...objectionsList]; newList[i][0] = e.target.value; setObjectionsList(newList); }} style={{ background: 'transparent', border: 'none', color: C.red, fontSize: 11, fontWeight: 700, outline: 'none', flex: 1 }} />
                       </div>
                       <button type="button" onClick={() => setObjectionsList(objectionsList.filter((_, idx) => idx !== i))} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer' }}>×</button>
                     </div>
-                    <div style={{ padding: '9px 13px', display: 'flex', alignItems: 'center' }}>
+                    <div className="flex-col-mobile" style={{ padding: '9px 13px', display: 'flex', alignItems: 'flex-start' }}>
                       <span style={{ fontSize: 12, color: C.green, fontWeight: 600, marginRight: 5 }}>AI Reply:</span>
                       <input value={o[1]} onChange={(e) => { const newList = [...objectionsList]; newList[i][1] = e.target.value; setObjectionsList(newList); }} style={{ background: 'transparent', border: 'none', color: C.green, fontSize: 12, outline: 'none', flex: 1 }} />
                     </div>
@@ -199,7 +199,7 @@ Please define your custom prompt here.`;
             {tab === 'proof' && (
               <div>
                 <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Proof Bank</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13, marginBottom: 13 }}>
+                <div className="grid-responsive" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13, marginBottom: 13 }}>
                   {proofList.map((p, i) => (
                     <div key={i} style={{ background: C.surface, border: '1px solid ' + C.border, borderRadius: 9, padding: 13, position: 'relative' }}>
                       <button type="button" onClick={() => setProofList(proofList.filter((_, idx) => idx !== i))} style={{ position: 'absolute', top: 8, right: 8, background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer' }}>×</button>
@@ -216,7 +216,7 @@ Please define your custom prompt here.`;
               <div>
                 <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Conversation Flow</h3>
                 {flowList.map((q, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 11, marginBottom: 13, alignItems: 'flex-start' }}>
+                  <div key={i} className="flex-col-mobile" style={{ display: 'flex', gap: 11, marginBottom: 13, alignItems: 'flex-start' }}>
                     <div style={{ width: 30, height: 30, borderRadius: '50%', background: C.accent + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: C.accent, flexShrink: 0 }}>{q[0]}</div>
                     <div style={{ flex: 1, background: C.surface, border: '1px solid ' + C.border, borderRadius: 9, padding: 13, position: 'relative' }}>
                       <button type="button" onClick={() => setFlowList(flowList.filter((_, idx) => idx !== i))} style={{ position: 'absolute', top: 8, right: 8, background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer' }}>×</button>

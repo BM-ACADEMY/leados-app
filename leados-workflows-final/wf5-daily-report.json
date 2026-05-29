@@ -1,0 +1,195 @@
+{
+  "name": "WF5 - Daily Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 21 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-report",
+      "name": "Daily 9PM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT COUNT(*) FROM leads WHERE DATE(created_at) = CURRENT_DATE) as new_today,\n  (SELECT COUNT(*) FROM leads WHERE status = 'hot') as total_hot,\n  (SELECT COUNT(*) FROM leads WHERE status = 'converted' AND DATE(updated_at) = CURRENT_DATE) as converted_today,\n  (SELECT COUNT(*) FROM conversations WHERE DATE(sent_at) = CURRENT_DATE) as messages_today,\n  (SELECT COUNT(*) FROM leads) as total_leads,\n  (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE status = 'captured' AND DATE(created_at) = CURRENT_DATE) as revenue_today,\n  (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE status = 'captured' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())) as revenue_month",
+        "options": {}
+      },
+      "id": "get-stats",
+      "name": "Get Daily Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT l.name, l.phone, l.score, l.status, c.name as brand\nFROM leads l\nLEFT JOIN clients c ON l.client_id = c.id\nWHERE l.status = 'hot'\nORDER BY l.score DESC\nLIMIT 5",
+        "options": {}
+      },
+      "id": "get-top-leads",
+      "name": "Get Top Hot Leads",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const stats = $('Get Daily Stats').first().json;\nconst topLeads = $('Get Top Hot Leads').all().map(i => i.json);\n\nconst today = new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });\n\nlet topLeadsText = '';\nif (topLeads.length > 0) {\n  topLeadsText = topLeads.map((l, i) => `  ${i+1}. ${l.name} (${l.brand}) - Score: ${l.score}`).join('\\n');\n} else {\n  topLeadsText = '  No hot leads today';\n}\n\nconst report = `\ud83d\udcca LEADOS DAILY REPORT\n${today}\n\n\ud83d\udcc8 TODAY'S ACTIVITY:\n\u2022 New Leads: ${stats.new_today || 0}\n\u2022 Messages Sent: ${stats.messages_today || 0}\n\u2022 Conversions: ${stats.converted_today || 0}\n\u2022 Revenue Today: Rs ${parseFloat(stats.revenue_today || 0).toFixed(0)}\n\n\ud83d\udd25 PIPELINE STATUS:\n\u2022 Total Hot Leads: ${stats.total_hot || 0}\n\u2022 Total Leads: ${stats.total_leads || 0}\n\u2022 Month Revenue: Rs ${parseFloat(stats.revenue_month || 0).toFixed(0)}\n\n\u2b50 TOP HOT LEADS:\n${topLeadsText}\n\n\ud83d\udd17 Portal: https://leados-app.abmgroups.org\n\n\u2014 LeadOS by ABM Groups`;\n\nreturn [{ json: { report, stats } }];"
+      },
+      "id": "build-report",
+      "name": "Build Daily Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.phone_number_id, c.wa_access_token\nFROM clients c\nWHERE c.wa_access_token IS NOT NULL\n  AND c.phone_number_id IS NOT NULL\nLIMIT 1",
+        "options": {}
+      },
+      "id": "get-wa-creds",
+      "name": "Get WA Credentials",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1120,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.phone_number_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $json.wa_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"919403892971\",\n  \"type\": \"text\",\n  \"text\": { \"body\": \"{{ $('Build Daily Report').first().json.report }}\" }\n}",
+        "options": {}
+      },
+      "id": "send-report",
+      "name": "Send Report to Admin",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1340,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 9PM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Daily Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Daily Stats": {
+      "main": [
+        [
+          {
+            "node": "Get Top Hot Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Top Hot Leads": {
+      "main": [
+        [
+          {
+            "node": "Build Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Daily Report": {
+      "main": [
+        [
+          {
+            "node": "Get WA Credentials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get WA Credentials": {
+      "main": [
+        [
+          {
+            "node": "Send Report to Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "LeadOS"
+    }
+  ]
+}

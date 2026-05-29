@@ -3,9 +3,10 @@ import { C } from '../constants/theme.js';
 
 export const Badge = ({status}) => {
   const M = {
+    new: {bg: '#0f1a2e', tc: '#60a5fa', l: 'New'},
     hot: {bg: '#2d1010', tc: '#ef4444', l: 'Hot'},
     warm: {bg: '#2d1f0a', tc: '#f97316', l: 'Warm'},
-    cold: {bg: '#0f1a2e', tc: '#60a5fa', l: 'Cold'},
+    cold: {bg: '#161b22', tc: '#9ca3af', l: 'Cold'},
     converted: {bg: '#0a2018', tc: '#34d399', l: 'Converted'},
     lost: {bg: '#1a0f2e', tc: '#a78bfa', l: 'Lost'},
   };

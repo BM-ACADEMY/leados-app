@@ -96,6 +96,12 @@ class LeadOSAPI {
     });
   }
 
+  async deleteLead(id) {
+    return this.request(`/api/leads/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   // ─── WHATSAPP ───────────────────────────
   async sendWhatsAppMessage(leadId, message) {
     return this.request('/api/whatsapp/send', {
@@ -122,6 +128,25 @@ class LeadOSAPI {
     });
   }
 
+  async syncTemplate(id) {
+    return this.request(`/api/templates/${id}/sync`, {
+      method: 'GET',
+    });
+  }
+
+  async updateTemplate(id, templateData) {
+    return this.request(`/api/templates/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(templateData),
+    });
+  }
+
+  async deleteTemplate(id) {
+    return this.request(`/api/templates/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   // ─── INBOX ──────────────────────────────
   async getInbox() {
     return this.request('/api/inbox');
@@ -139,15 +164,33 @@ class LeadOSAPI {
     });
   }
 
-  async executeCampaign(id) {
-    return this.request(`/api/campaigns/${id}/execute`, {
-      method: 'POST',
+  async deleteCampaign(id) {
+    return this.request(`/api/campaigns/${id}`, {
+      method: 'DELETE',
     });
+  }
+
+  async executeCampaign(id) {
+    return this.request(`/api/campaigns/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ campaign_id: id }),
+    });
+  }
+
+  async getCampaignLogs(id) {
+    return this.request(`/api/campaigns/${id}/logs`);
   }
 
   // ─── CLIENTS (Brands) ───────────────────
   async getClients() {
     return this.request('/api/clients');
+  }
+
+  async createClient(clientData) {
+    return this.request('/api/clients', {
+      method: 'POST',
+      body: JSON.stringify(clientData),
+    });
   }
 
   async getClient(id) {
@@ -159,6 +202,39 @@ class LeadOSAPI {
       method: 'PATCH',
       body: JSON.stringify(clientData),
     });
+  }
+
+  async setupClientWhatsApp(id) {
+    return this.request(`/api/clients/${id}/whatsapp-setup`, {
+      method: 'POST'
+    });
+  }
+
+  async importLeads(formData, forceStatus = null) {
+    const token = localStorage.getItem('leados_token');
+    if (!token) throw new Error('No authentication token found');
+    
+    if (forceStatus) {
+      formData.append('force_status', forceStatus);
+    }
+    
+    // FormData requires a direct fetch because our this.request stringifies the body
+    // if the body is an object, and FormData shouldn't be stringified, nor should the
+    // Content-Type be set to application/json (browser sets it to multipart/form-data with boundary)
+    const response = await fetch(`${API_URL}/api/leads/import`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
   }
 
   // ─── PAYMENTS ───────────────────────────

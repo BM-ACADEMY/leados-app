@@ -1,0 +1,268 @@
+{
+  "name": "WF12 - Monthly Performance Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 1 * *"
+            }
+          ]
+        }
+      },
+      "id": "node-monthly-cron",
+      "name": "1st of Every Month 8 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT brand, COUNT(*) as leads, COUNT(CASE WHEN status = 'converted' THEN 1 END) as converted, ROUND(COUNT(CASE WHEN status = 'converted' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1) as conv_rate FROM leads WHERE created_at >= DATE_TRUNC('month', NOW() - INTERVAL '1 month') AND created_at < DATE_TRUNC('month', NOW()) GROUP BY brand ORDER BY leads DESC",
+        "additionalFields": {}
+      },
+      "id": "node-brand-stats",
+      "name": "Get Last Month Brand Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        400,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(SUM(amount), 0) as total_revenue, COUNT(*) as total_transactions FROM payments WHERE paid_at >= DATE_TRUNC('month', NOW() - INTERVAL '1 month') AND paid_at < DATE_TRUNC('month', NOW()) AND status = 'paid'",
+        "additionalFields": {}
+      },
+      "id": "node-revenue-stats",
+      "name": "Get Last Month Revenue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        400,
+        350
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as new_reviews, ROUND(AVG(rating), 1) as avg_rating FROM google_reviews WHERE review_date >= DATE_TRUNC('month', NOW() - INTERVAL '1 month') AND review_date < DATE_TRUNC('month', NOW())",
+        "additionalFields": {}
+      },
+      "id": "node-review-stats",
+      "name": "Get Last Month Reviews",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        400,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as total_actions, COUNT(CASE WHEN status = 'executed' THEN 1 END) as executed FROM sheriff_actions WHERE executed_at >= DATE_TRUNC('month', NOW() - INTERVAL '1 month') AND executed_at < DATE_TRUNC('month', NOW())",
+        "additionalFields": {}
+      },
+      "id": "node-sheriff-stats",
+      "name": "Get Sheriff Actions Last Month",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        400,
+        650
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT phone_number_id, wa_access_token FROM clients WHERE id = 1 LIMIT 1",
+        "additionalFields": {}
+      },
+      "id": "node-get-creds-monthly",
+      "name": "Get WhatsApp Credentials",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        600,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const brands = $('Get Last Month Brand Stats').all().map(b => b.json);\nconst revenue = $('Get Last Month Revenue').first().json;\nconst reviews = $('Get Last Month Reviews').first().json;\nconst sheriff = $('Get Sheriff Actions Last Month').first().json;\nconst creds = $('Get WhatsApp Credentials').first().json;\n\nconst lastMonth = new Date();\nlastMonth.setMonth(lastMonth.getMonth() - 1);\nconst monthName = lastMonth.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });\n\nconst totalLeads = brands.reduce((a, b) => a + parseInt(b.leads || 0), 0);\nconst totalConverted = brands.reduce((a, b) => a + parseInt(b.converted || 0), 0);\nconst overallRate = totalLeads > 0 ? ((totalConverted / totalLeads) * 100).toFixed(1) : '0';\n\nlet msg = `\ud83d\udcca MONTHLY REPORT \u2014 ${monthName}\\n`;\nmsg += `${'='.repeat(30)}\\n\\n`;\nmsg += `\ud83d\udcbc OVERALL PERFORMANCE:\\n`;\nmsg += `\u2022 Total Leads: ${totalLeads}\\n`;\nmsg += `\u2022 Converted: ${totalConverted} (${overallRate}%)\\n`;\nmsg += `\u2022 Revenue: Rs ${parseInt(revenue.total_revenue || 0).toLocaleString('en-IN')}\\n`;\nmsg += `\u2022 Transactions: ${revenue.total_transactions || 0}\\n\\n`;\n\nif (brands.length > 0) {\n  msg += `\ud83c\udfe2 BRAND BREAKDOWN:\\n`;\n  brands.forEach(b => {\n    msg += `${b.brand}: ${b.leads} leads \u2192 ${b.converted} converted (${b.conv_rate}%)\\n`;\n  });\n  msg += `\\n`;\n}\n\nmsg += `\u2b50 GMB REVIEWS:\\n`;\nmsg += `\u2022 New reviews: ${reviews.new_reviews || 0}\\n`;\nmsg += `\u2022 Avg rating: ${reviews.avg_rating || 'N/A'} \u2605\\n\\n`;\n\nmsg += `\ud83e\udd16 AI SHERIFF:\\n`;\nmsg += `\u2022 Auto-actions taken: ${sheriff.executed || 0}\\n\\n`;\n\nmsg += `\ud83d\udcf1 Full report: https://leados-app.abmgroups.org`;\n\nreturn [{ json: { message: msg, phone_number_id: creds.phone_number_id, wa_access_token: creds.wa_access_token } }];"
+      },
+      "id": "node-build-monthly",
+      "name": "Build Monthly Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.phone_number_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.wa_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: '919403892971', type: 'text', text: { body: $json.message } }) }}"
+      },
+      "id": "node-send-monthly",
+      "name": "Send Monthly Report to Kamar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1000,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "1st of Every Month 8 AM": {
+      "main": [
+        [
+          {
+            "node": "Get Last Month Brand Stats",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Last Month Revenue",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Last Month Reviews",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Sheriff Actions Last Month",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Last Month Brand Stats": {
+      "main": [
+        [
+          {
+            "node": "Get WhatsApp Credentials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get WhatsApp Credentials": {
+      "main": [
+        [
+          {
+            "node": "Build Monthly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Last Month Revenue": {
+      "main": [
+        [
+          {
+            "node": "Build Monthly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Last Month Reviews": {
+      "main": [
+        [
+          {
+            "node": "Build Monthly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Sheriff Actions Last Month": {
+      "main": [
+        [
+          {
+            "node": "Build Monthly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Monthly Report": {
+      "main": [
+        [
+          {
+            "node": "Send Monthly Report to Kamar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "id": "wf12-monthly-report"
+}

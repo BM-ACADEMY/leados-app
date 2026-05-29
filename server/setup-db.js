@@ -60,7 +60,7 @@ async function setup() {
     CREATE TABLE IF NOT EXISTS leads (
       id SERIAL PRIMARY KEY,
       name VARCHAR(150) NOT NULL,
-      phone VARCHAR(20) NOT NULL,
+      phone VARCHAR(20) NOT NULL UNIQUE,
       email VARCHAR(150),
       source VARCHAR(50) DEFAULT 'WhatsApp',
       client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
@@ -102,14 +102,20 @@ async function setup() {
       id SERIAL PRIMARY KEY,
       name VARCHAR(100) UNIQUE NOT NULL,
       category VARCHAR(20) DEFAULT 'UTILITY' CHECK (category IN ('UTILITY', 'MARKETING', 'AUTHENTICATION')),
+      language VARCHAR(10) DEFAULT 'en',
+      header_format VARCHAR(20) DEFAULT 'TEXT',
+      header TEXT,
       body TEXT NOT NULL,
+      footer TEXT,
+      buttons JSONB DEFAULT '[]'::jsonb,
       client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
       status VARCHAR(20) DEFAULT 'draft' CHECK (status IN ('draft', 'pending', 'approved', 'rejected')),
       meta_template_id VARCHAR(100),
       submitted_at TIMESTAMP,
       approved_at TIMESTAMP,
       uses INTEGER DEFAULT 0,
-      created_at TIMESTAMP DEFAULT NOW()
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
     )
   `);
   console.log('✅ Table 5/9: templates');
@@ -143,6 +149,22 @@ async function setup() {
     )
   `);
   console.log('✅ Table 7/9: campaign_logs');
+
+  // ── 8. MESSAGES ────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY,
+      client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+      lead_id INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+      direction VARCHAR(20) CHECK (direction IN ('inbound', 'outbound')),
+      type VARCHAR(20) DEFAULT 'text',
+      content TEXT,
+      wa_message_id VARCHAR(100),
+      status VARCHAR(20) DEFAULT 'sent',
+      timestamp TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  console.log('✅ Table 8/10: messages');
 
   // ── 8. PAYMENTS ────────────────────────────────────────
   await pool.query(`

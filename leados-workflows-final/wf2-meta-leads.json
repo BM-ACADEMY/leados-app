@@ -1,0 +1,218 @@
+{
+  "name": "WF2 - Meta Ads Lead Receiver",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meta-leads-n8n",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-meta",
+      "name": "Meta Leads Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "meta-leads-n8n"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "OK",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [460, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst entries = body.entry || [];\n\nconst leads = [];\nfor (const entry of entries) {\n  for (const change of entry.changes || []) {\n    if (change.field === 'leadgen') {\n      leads.push({\n        leadgen_id: change.value.leadgen_id,\n        page_id: change.value.page_id,\n        form_id: change.value.form_id\n      });\n    }\n  }\n}\n\nif (leads.length === 0) throw new Error('No leadgen events');\nreturn leads.map(l => ({ json: l }));"
+      },
+      "id": "extract-leadgen",
+      "name": "Extract Leadgen IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.leadgen_id }}?fields=field_data,created_time",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer EAAWyZAZBial6QBRI1NEKcJa2iyoc9euRPLnwh42nkmahYY5g0veLTushc5Vchb0bUQ0ta482nMqqb1ZASh88tw"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-lead",
+      "name": "Fetch Lead from Meta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\nconst fields = {};\nfor (const f of data.field_data || []) {\n  fields[f.name] = f.values[0];\n}\n\nconst name = fields.full_name || fields.name || 'Unknown Lead';\nconst phone = (fields.phone_number || fields.phone || '').replace(/\\D/g, '');\nconst email = fields.email || null;\nconst interest = fields.course_interest || fields.interest || null;\n\nif (!phone) throw new Error('No phone in lead');\n\nreturn [{ json: { name, phone, email, interest, source: 'Meta Ads' } }];"
+      },
+      "id": "parse-lead",
+      "name": "Parse Lead Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM leads WHERE phone = '{{ $json.phone }}' LIMIT 1",
+        "options": {}
+      },
+      "id": "check-duplicate",
+      "name": "Check Duplicate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1120, 300],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "check-new",
+              "leftValue": "={{ $('Check Duplicate').first().json.id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "empty" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-new-lead",
+      "name": "Is New Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO leads (name, phone, email, source, interest, status, score, client_id, created_at, updated_at)\nVALUES (\n  '{{ $('Parse Lead Data').first().json.name.replace(/'/g, \"''\") }}',\n  '{{ $('Parse Lead Data').first().json.phone }}',\n  NULL,\n  'Meta Ads',\n  NULL,\n  'new', 20, 1, NOW(), NOW()\n)\nRETURNING id, name, phone",
+        "options": {}
+      },
+      "id": "insert-lead",
+      "name": "Insert New Lead",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1560, 200],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.phone_number_id, c.wa_access_token, c.name as brand_name FROM clients c WHERE c.id = 1 LIMIT 1",
+        "options": {}
+      },
+      "id": "get-wa-creds",
+      "name": "Get WA Credentials",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1780, 200],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.phone_number_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $json.wa_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('Insert New Lead').first().json.phone }}\",\n  \"type\": \"template\",\n  \"template\": {\n    \"name\": \"welcome_qualifier\",\n    \"language\": { \"code\": \"en\" },\n    \"components\": [{\n      \"type\": \"body\",\n      \"parameters\": [{ \"type\": \"text\", \"text\": \"={{ $('Insert New Lead').first().json.name }}\" }]\n    }]\n  }\n}",
+        "options": {}
+      },
+      "id": "send-welcome",
+      "name": "Send Welcome Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {},
+      "id": "no-op",
+      "name": "No Operation, do nothing",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1560, 400]
+    }
+  ],
+  "connections": {
+    "Meta Leads Webhook": {
+      "main": [
+        [
+          { "node": "Respond OK", "type": "main", "index": 0 },
+          { "node": "Extract Leadgen IDs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract Leadgen IDs": {
+      "main": [[{ "node": "Fetch Lead from Meta", "type": "main", "index": 0 }]]
+    },
+    "Fetch Lead from Meta": {
+      "main": [[{ "node": "Parse Lead Data", "type": "main", "index": 0 }]]
+    },
+    "Parse Lead Data": {
+      "main": [[{ "node": "Check Duplicate", "type": "main", "index": 0 }]]
+    },
+    "Check Duplicate": {
+      "main": [[{ "node": "Is New Lead?", "type": "main", "index": 0 }]]
+    },
+    "Is New Lead?": {
+      "main": [
+        [{ "node": "Insert New Lead", "type": "main", "index": 0 }],
+        [{ "node": "No Operation, do nothing", "type": "main", "index": 0 }]
+      ]
+    },
+    "Insert New Lead": {
+      "main": [[{ "node": "Get WA Credentials", "type": "main", "index": 0 }]]
+    },
+    "Get WA Credentials": {
+      "main": [[{ "node": "Send Welcome Template", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "LeadOS" }]
+}

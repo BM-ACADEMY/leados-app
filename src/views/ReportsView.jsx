@@ -37,15 +37,15 @@ export const ReportsView = () => {
   const colors = [C.accent, C.blue, C.purple, C.green, C.red];
 
   return (
-    <div style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+    <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
+      <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
         <div>
           <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text }}>Reports and Analytics</h1>
           <p style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>Full performance overview - all brands {loading && '(loading...)'}</p>
         </div>
         <button style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 13px', borderRadius: 7, fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }}><Download size={12} />Export PDF</button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+      <div className="grid-responsive" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
         <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 14, padding: 20 }}>
           <SectionHeader title="Weekly Lead Volume" />
           <ResponsiveContainer width="100%" height={180}>

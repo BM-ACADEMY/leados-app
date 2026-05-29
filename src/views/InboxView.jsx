@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Send } from 'lucide-react';
+import { Search, Send, ChevronLeft } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { useLeads, useLead } from '../hooks/useLeads.js';
 import { api } from '../services/api.js';
@@ -11,6 +11,7 @@ export const InboxView = () => {
   const { lead: activeLead, conversations, refetch: refetchLead, loading: loadingLead } = useLead(activeLeadId);
   const [msg, setMsg] = useState('');
   const [sending, setSending] = useState(false);
+  const [showChatOnMobile, setShowChatOnMobile] = useState(false);
 
   useEffect(() => {
     if (leads && leads.length > 0 && !activeLeadId) {
@@ -57,7 +58,7 @@ export const InboxView = () => {
 
   return (
     <div style={{ height: '100%', display: 'flex' }}>
-      <div style={{ width: 290, borderRight: '1px solid ' + C.border, display: 'flex', flexDirection: 'column' }}>
+      <div className={showChatOnMobile ? 'hide-mobile' : 'w-full-mobile'} style={{ width: 290, borderRight: '1px solid ' + C.border, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div style={{ padding: '18px 14px', borderBottom: '1px solid ' + C.border }}>
           <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 11 }}>WhatsApp Inbox</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: C.card, border: '1px solid ' + C.border, borderRadius: 7, padding: '7px 11px' }}>
@@ -67,7 +68,7 @@ export const InboxView = () => {
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {displayLeads.map((l) => (
-            <div key={l.id} onClick={() => setActiveLeadId(l.id)} style={{ padding: '13px 14px', borderBottom: '1px solid ' + C.border, cursor: 'pointer', background: activeLeadId === l.id ? C.accent + '10' : 'transparent', borderLeft: activeLeadId === l.id ? '3px solid ' + C.accent : '3px solid transparent' }}>
+            <div key={l.id} onClick={() => { setActiveLeadId(l.id); setShowChatOnMobile(true); }} style={{ padding: '13px 14px', borderBottom: '1px solid ' + C.border, cursor: 'pointer', background: activeLeadId === l.id ? C.accent + '10' : 'transparent', borderLeft: activeLeadId === l.id ? '3px solid ' + C.accent : '3px solid transparent' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 32, height: 32, borderRadius: '50%', background: C.accent + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: C.accent, flexShrink: 0 }}>{l.name[0]}</div>
@@ -85,9 +86,12 @@ export const InboxView = () => {
           ))}
         </div>
       </div>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div className={!showChatOnMobile ? 'hide-mobile' : 'w-full-mobile'} style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '13px 18px', borderBottom: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+            <button className="show-mobile" onClick={() => setShowChatOnMobile(false)} style={{ background: 'transparent', border: 'none', color: C.muted, display: 'none' }}>
+              <ChevronLeft size={20} />
+            </button>
             <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.accent + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: C.accent }}>{activeObj?.name[0]}</div>
             <div>
               <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{activeObj?.name}</p>

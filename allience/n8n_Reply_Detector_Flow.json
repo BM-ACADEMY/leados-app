@@ -1,0 +1,154 @@
+{
+  "name": "AllianceOS - Reply Detector (Gmail + WhatsApp)",
+  "nodes": [
+    {
+      "id": "gmail-trigger",
+      "name": "Gmail - New Email",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 15,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "filters": {}
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1",
+          "name": "Gmail admin@abmgroups.org"
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "extract-sender",
+      "name": "Extract Sender Email",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const email = items[0].json.from?.value?.[0]?.address || '';\nconst subject = items[0].json.subject || '';\nconst body = items[0].json.text || items[0].json.snippet || '';\nreturn [{ json: { sender_email: email, subject, preview: body.slice(0,200) } }];"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "lookup-org",
+      "name": "Lookup Org by Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.API_URL}}/api/leads/by-email?email={{$json.sender_email}}"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "if-found",
+      "name": "Org Found?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.id}}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "mark-replied",
+      "name": "Mark as Replied",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.API_URL}}/api/pipeline/{{$json.id}}/stage",
+        "bodyParametersJson": "{\"stage\":\"replied\",\"reply_text\":\"{{$json.preview}}\",\"channel\":\"email\"}"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "alert-satish",
+      "name": "Telegram Alert to Satish",
+      "type": "n8n-nodes-base.telegram",
+      "position": [
+        1440,
+        200
+      ],
+      "parameters": {
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "text": "=\ud83d\udce7 EMAIL REPLY RECEIVED\\n\\nFrom: {{$json.name}} ({{$json.type}})\\nDistrict: {{$json.district}}\\nContact: {{$json.contact_name}}\\nScore: {{$json.score}}\\n\\nPreview: {{$json.preview}}\\n\\nCheck AllianceOS \u2192 Replied stage NOW"
+      },
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Gmail - New Email": {
+      "main": [
+        [
+          "Extract Sender Email"
+        ]
+      ]
+    },
+    "Extract Sender Email": {
+      "main": [
+        [
+          "Lookup Org by Email"
+        ]
+      ]
+    },
+    "Lookup Org by Email": {
+      "main": [
+        [
+          "Org Found?"
+        ]
+      ]
+    },
+    "Org Found?": {
+      "main": [
+        [
+          "Mark as Replied"
+        ],
+        []
+      ]
+    },
+    "Mark as Replied": {
+      "main": [
+        [
+          "Telegram Alert to Satish"
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "meta": {
+    "description": "Monitors Gmail inbox. When a reply matches an organisation in AllianceOS, marks as replied and alerts Satish via Telegram."
+  }
+}

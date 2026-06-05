@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Save, Building, Smartphone, Key, Shield, AlertCircle } from 'lucide-react';
+import { X, Save, Building, Smartphone, Key, Shield, AlertCircle, Trash2 } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
 import toast from 'react-hot-toast';
@@ -25,6 +25,8 @@ export const ClientModal = ({ client, onClose, onUpdate }) => {
   });
   
   const [loading, setLoading] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -57,6 +59,25 @@ export const ClientModal = ({ client, onClose, onUpdate }) => {
       toast.success('WhatsApp Meta Setup completed! Dummy message sent.', { id: tId });
     } catch (err) {
       toast.error(err.message || 'Setup Failed', { id: tId });
+    }
+  };
+
+  const handleDeleteClick = () => {
+    setShowDeleteConfirm(true);
+    setDeleteConfirmText('');
+  };
+
+  const confirmDelete = async () => {
+    if (deleteConfirmText !== 'delete-account') return;
+    setLoading(true);
+    try {
+      await api.deleteClient(client.id);
+      toast.success('Client deleted successfully');
+      onUpdate();
+      onClose();
+    } catch (err) {
+      toast.error(err.message || 'Failed to delete client');
+      setLoading(false);
     }
   };
 
@@ -199,6 +220,12 @@ export const ClientModal = ({ client, onClose, onUpdate }) => {
               )}
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
+              {isEditing && (
+                <button type="button" onClick={handleDeleteClick} disabled={loading} style={{ background: '#ff444420', border: '1px solid #ff4444', color: '#ff4444', padding: '10px 20px', borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Trash2 size={16} />
+                  Delete
+                </button>
+              )}
               <button type="button" onClick={onClose} style={{ background: 'transparent', border: '1px solid ' + C.border, color: C.muted, padding: '10px 20px', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
               <button type="submit" disabled={loading} style={{ background: C.accent, border: 'none', color: '#fff', padding: '10px 24px', borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: loading ? 0.7 : 1 }}>
                 <Save size={16} />
@@ -209,6 +236,31 @@ export const ClientModal = ({ client, onClose, onUpdate }) => {
 
         </form>
         </div>
+
+        {showDeleteConfirm && (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 16 }}>
+            <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 12, padding: 24, width: '100%', maxWidth: 400, textAlign: 'center' }}>
+              <AlertCircle size={48} color={C.red} style={{ margin: '0 auto 16px' }} />
+              <h3 style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 8 }}>Delete Client?</h3>
+              <p style={{ fontSize: 13, color: C.muted, marginBottom: 16 }}>
+                This action cannot be undone. Please type <strong style={{ color: C.text }}>delete-account</strong> to confirm.
+              </p>
+              <input
+                value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value)}
+                style={{ ...inputStyle, textAlign: 'center', marginBottom: 16, border: '1px solid ' + C.red }}
+                placeholder="delete-account"
+              />
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button type="button" onClick={() => setShowDeleteConfirm(false)} style={{ flex: 1, background: 'transparent', border: '1px solid ' + C.border, color: C.muted, padding: '10px', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                <button type="button" onClick={confirmDelete} disabled={deleteConfirmText !== 'delete-account' || loading} style={{ flex: 1, background: C.red, border: 'none', color: '#fff', padding: '10px', borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: deleteConfirmText !== 'delete-account' || loading ? 'not-allowed' : 'pointer', opacity: deleteConfirmText !== 'delete-account' || loading ? 0.5 : 1 }}>
+                  {loading ? 'Deleting...' : 'Confirm Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>,
     document.body

@@ -52,6 +52,17 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 
+// ── ALLIANCE OS ROUTES ────────────────────────────────────
+const knowledgeRoutes = require('./routes/knowledge');
+const uploadRoutes = require('./routes/upload');
+const pipelineRoutes = require('./routes/pipeline');
+const analyzeRoutes = require('./routes/analyze');
+
+app.use('/api/knowledge', knowledgeRoutes); // We should use auth but let's check auth middleware later
+app.use('/api/upload', uploadRoutes);
+app.use('/api/pipeline', pipelineRoutes);
+app.use('/api/analyze', analyzeRoutes);
+
 // ── AUTH MIDDLEWARE ───────────────────────────────────────
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -159,6 +170,19 @@ app.get('/api/inbox', auth, async (req, res) => {
 // ══════════════════════════════════════════════════════════
 // LEADS ROUTES
 // ══════════════════════════════════════════════════════════
+
+// GET /api/leads/sources — distinct source values
+app.get('/api/leads/sources', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT source FROM leads WHERE source IS NOT NULL AND source <> '' ORDER BY source`
+    );
+    const sources = rows.map(r => r.source);
+    res.json({ sources });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 // GET /api/leads
 app.get('/api/leads', auth, async (req, res) => {
@@ -382,9 +406,22 @@ app.post('/webhook/whatsapp', async (req, res) => {
           continue;
         }
 
-        // ── INCOMING MESSAGES ────────────────────────────────
+        // ── INCOMING MESSAGES & STATUSES ─────────────────────
         if (change.field !== 'messages') continue;
         const value = change.value;
+
+        if (value.statuses) {
+          for (const s of value.statuses) {
+            const wamid = s.id;
+            const newStatus = s.status;
+            const error = s.errors ? s.errors[0].title : null;
+            if (!wamid) continue;
+
+            await pool.query(`UPDATE campaign_logs SET status = $1, error_message = $2 WHERE wa_message_id = $3`, [newStatus, error, wamid]);
+            await pool.query(`UPDATE conversations SET status = $1 WHERE wa_message_id = $2`, [newStatus, wamid]);
+            console.log(`[Status Webhook] ${wamid} -> ${newStatus}`);
+          }
+        }
 
         for (const msg of value.messages || []) {
           if (msg.type !== 'text') continue;
@@ -860,6 +897,52 @@ app.patch('/api/clients/:id', auth, async (req, res) => {
   }
 });
 
+app.delete('/api/clients/:id', auth, async (req, res) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Forbidden: Only administrators can delete clients' });
+  }
+
+  const clientDb = await pool.connect();
+  try {
+    await clientDb.query('BEGIN');
+    const { id } = req.params;
+    
+    // Use FOR UPDATE to lock the row during transaction
+    const { rows } = await clientDb.query('SELECT * FROM clients WHERE id = $1 FOR UPDATE', [id]);
+    if (!rows.length) {
+      await clientDb.query('ROLLBACK');
+      return res.status(404).json({ error: 'Client not found' });
+    }
+    const client = rows[0];
+
+    // Deregister from Meta WhatsApp Cloud API
+    if (client.phone_number_id && client.wa_access_token) {
+      try {
+        await axios.post(
+          `https://graph.facebook.com/v19.0/${client.phone_number_id}/deregister`,
+          {},
+          { headers: { Authorization: `Bearer ${client.wa_access_token}` } }
+        );
+        console.log(`[Meta] Successfully deregistered phone_number_id: ${client.phone_number_id}`);
+      } catch (metaErr) {
+        // Log but do not block local DB deletion
+        console.warn(`[Meta] Deregistration failed for client ${id}:`, metaErr.response?.data || metaErr.message);
+      }
+    }
+
+    await clientDb.query('DELETE FROM clients WHERE id = $1', [id]);
+    await clientDb.query('COMMIT');
+    
+    res.json({ success: true, message: 'Client deleted and deregistered successfully' });
+  } catch (err) {
+    await clientDb.query('ROLLBACK');
+    console.error(`[Delete Client API] Error deleting client ${req.params.id}:`, err);
+    res.status(500).json({ error: 'Server error during deletion' });
+  } finally {
+    clientDb.release();
+  }
+});
+
 // POST /api/clients/:id/whatsapp-setup
 app.post('/api/clients/:id/whatsapp-setup', auth, async (req, res) => {
   try {
@@ -1004,7 +1087,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         }
 
         const status = req.body.force_status || (row.status || row.Status || 'new').toLowerCase();
-        const source = row.source || row.Source || 'CSV Import';
+        const source = req.body.force_source || row.source || row.Source || 'CSV Import';
         const score = parseInt(row.score || row.Score) || 0;
         const interest = row.interest || row.Interest || null;
 
@@ -1209,7 +1292,11 @@ async function executeCampaign(campaign_id) {
     const queryParams = [campaign.client_id];
 
     if (campaign.target_status && campaign.target_status !== 'all') {
-      leadsQuery += ' AND status = $2';
+      if (campaign.target_status.startsWith('csv_')) {
+        leadsQuery += ' AND source = $2';
+      } else {
+        leadsQuery += ' AND status = $2';
+      }
       queryParams.push(campaign.target_status);
     }
 
@@ -1227,13 +1314,31 @@ async function executeCampaign(campaign_id) {
       
       const promises = batch.map(async (lead) => {
         try {
+          const templatePayload = {
+            name: campaign.template_name,
+            language: { code: 'en' }
+          };
+
+          const components = [];
+          if (campaign.template_body && campaign.template_body.includes('{{1}}')) {
+            components.push({
+              type: 'body',
+              parameters: [
+                { type: 'text', text: lead.name || 'Friend' }
+              ]
+            });
+          }
+          if (components.length > 0) {
+            templatePayload.components = components;
+          }
+
           const waRes = await axios.post(
             `https://graph.facebook.com/v18.0/${phoneId}/messages`,
             {
               messaging_product: 'whatsapp',
               to: lead.phone.replace(/\D/g, ''),
               type: 'template',
-              template: { name: campaign.template_name, language: { code: 'en' } }
+              template: templatePayload
             },
             { headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' } }
           );

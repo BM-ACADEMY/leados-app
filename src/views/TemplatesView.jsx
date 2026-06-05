@@ -125,7 +125,7 @@ const WaPreview = ({ form }) => {
 
               {/* Body */}
               <div style={{ padding: '6px 10px 4px' }}>
-                <p style={{ fontSize: 11, color: '#e9edef', lineHeight: 1.5 }}>{renderBody(form.body)}</p>
+                <p style={{ fontSize: 11, color: '#e9edef', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{renderBody(form.body)}</p>
               </div>
 
               {/* Footer */}

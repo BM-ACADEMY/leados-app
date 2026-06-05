@@ -15,6 +15,14 @@ import { ReportsView } from './views/ReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
 import { SettingsView } from './views/SettingsView.jsx';
 
+import { AllianceDashboard } from './views/AllianceDashboard.jsx';
+import { UploadLeads } from './views/UploadLeads.jsx';
+import { LeadList } from './views/LeadList.jsx';
+import { Pipeline } from './views/Pipeline.jsx';
+import { LeadProfile } from './views/LeadProfile.jsx';
+import { KnowledgeBase } from './views/KnowledgeBase.jsx';
+import { PromptManager } from './views/PromptManager.jsx';
+
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
   const [pass, setPass] = useState('');
@@ -103,6 +111,15 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
               <Route path="/reports" element={<ReportsView />} />
               <Route path="/clients" element={<ClientsView />} />
               <Route path="/settings" element={<SettingsView />} />
+              
+              <Route path="/alliance-dashboard" element={<AllianceDashboard />} />
+              <Route path="/upload-leads" element={<UploadLeads />} />
+              <Route path="/lead-list" element={<LeadList />} />
+              <Route path="/pipeline" element={<Pipeline />} />
+              <Route path="/lead-profile" element={<LeadProfile />} />
+              <Route path="/knowledge-base" element={<KnowledgeBase />} />
+              <Route path="/prompt-manager" element={<PromptManager />} />
+
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </div>

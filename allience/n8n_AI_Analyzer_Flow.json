@@ -1,0 +1,153 @@
+{
+  "name": "AllianceOS - AI Analyzer Trigger",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "CSV Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "allianceos-analyze-batch",
+        "responseMode": "onReceived"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "split-ids",
+      "name": "Split Org IDs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "call-analyzer",
+      "name": "Call AI Analyzer API",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.API_URL}}/api/analyze/one",
+        "bodyParametersJson": "={\"org_id\":\"{{$json.id}}\"}"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "check-score",
+      "name": "Score >= 85?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.score}}",
+              "value2": 85,
+              "operation": "largerEqual"
+            }
+          ]
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "hot-alert",
+      "name": "Telegram - HOT Lead Alert",
+      "type": "n8n-nodes-base.telegram",
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "chatId": "={{$env.TELEGRAM_CHAT_ID}}",
+        "text": "=\ud83d\udd25 HOT LEAD FOUND\\n\\nOrg: {{$json.name}}\\nScore: {{$json.score}}/100\\nType: {{$json.type}}\\nDistrict: {{$json.district}}\\n\\nOffer: {{$json.offer_recommended}}\\nHook: {{$json.personalisation_hook}}\\n\\nAction: Call this lead TODAY"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "rate-limit-wait",
+      "name": "Rate Limit Wait 1.5s",
+      "type": "n8n-nodes-base.wait",
+      "position": [
+        1200,
+        400
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "unit": "seconds",
+        "amount": 1.5
+      },
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "CSV Upload Webhook": {
+      "main": [
+        [
+          "Split Org IDs"
+        ]
+      ]
+    },
+    "Split Org IDs": {
+      "main": [
+        [
+          "Call AI Analyzer API"
+        ]
+      ]
+    },
+    "Call AI Analyzer API": {
+      "main": [
+        [
+          "Score >= 85?"
+        ]
+      ]
+    },
+    "Score >= 85?": {
+      "main": [
+        [
+          "Telegram - HOT Lead Alert"
+        ],
+        [
+          "Rate Limit Wait 1.5s"
+        ]
+      ]
+    },
+    "Telegram - HOT Lead Alert": {
+      "main": [
+        [
+          "Rate Limit Wait 1.5s"
+        ]
+      ]
+    },
+    "Rate Limit Wait 1.5s": {
+      "main": [
+        [
+          "Split Org IDs"
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "meta": {
+    "description": "Triggered after CSV upload. Analyzes each org with OpenAI+KB. Sends Telegram alert for score 85+."
+  }
+}

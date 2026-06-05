@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, Users, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Home, Users, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen } from 'lucide-react';
 import { C } from '../../constants/theme.js';
 
 const NAV = [
@@ -16,6 +16,7 @@ const NAV = [
 
 export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }) => {
   const [isExpanded, setIsExpanded] = useState(window.innerWidth > 768);
+  const [allianceOpen, setAllianceOpen] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -44,7 +45,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
       )}
       <div 
         className={`mobile-sidebar ${!mobileOpen ? 'closed' : ''}`} 
-        style={{ width: isExpanded ? 240 : 62, transition: 'width 0.2s, transform 0.3s', background: C.surface, borderRight: '1px solid ' + C.border, display: 'flex', flexDirection: 'column', alignItems: isExpanded ? 'flex-start' : 'center', padding: '14px 0', height: '100vh', flexShrink: 0 }}
+        style={{ width: isExpanded ? 240 : 62, transition: 'width 0.2s, transform 0.3s', background: C.surface, borderRight: '1px solid ' + C.border, display: 'flex', flexDirection: 'column', alignItems: isExpanded ? 'flex-start' : 'center', padding: '14px 0', height: '100vh', flexShrink: 0, overflowY: 'auto', overflowX: 'hidden' }}
       >
         
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: isExpanded ? 'space-between' : 'center', width: '100%', padding: isExpanded ? '0 18px' : '0', marginBottom: 22 }}>
@@ -100,6 +101,76 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
               </NavLink>
             );
           })}
+
+          {/* Alliance Parent Link with Nested Children */}
+          <div style={{ width: '100%', marginTop: 8 }}>
+            <button
+              onClick={() => {
+                setAllianceOpen(!allianceOpen);
+                if (!isExpanded) setIsExpanded(true); // Auto-expand sidebar if collapsed
+              }}
+              title={!isExpanded ? "AllianceOS" : undefined}
+              style={{
+                width: '100%',
+                height: 42,
+                borderRadius: 9,
+                border: 'none',
+                background: allianceOpen ? C.accent + '11' : 'transparent',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: isExpanded ? 'space-between' : 'center',
+                padding: isExpanded ? '0 12px' : '0',
+                cursor: 'pointer',
+                color: allianceOpen ? C.accent : C.muted,
+                transition: 'background 0.15s',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <Layers size={17} color={allianceOpen ? C.accent : C.muted} />
+                {isExpanded && <span style={{ marginLeft: 12, fontSize: 13, fontWeight: allianceOpen ? 600 : 500 }}>AllianceOS</span>}
+              </div>
+              {isExpanded && (
+                allianceOpen ? <ChevronUp size={14} color={C.muted} /> : <ChevronDown size={14} color={C.muted} />
+              )}
+            </button>
+
+            {/* Child Links */}
+            {isExpanded && allianceOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 24, marginTop: 4, position: 'relative' }}>
+                {/* Left indicator line */}
+                <div style={{ position: 'absolute', left: 20, top: 4, bottom: 10, width: 1, background: C.border }} />
+                
+                <NavLink to="/alliance-dashboard" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Home size={14} style={{ marginRight: 8 }} /> Dashboard
+                </NavLink>
+
+                <NavLink to="/upload-leads" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <UploadCloud size={14} style={{ marginRight: 8 }} /> Upload Leads
+                </NavLink>
+
+                <NavLink to="/lead-list" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <List size={14} style={{ marginRight: 8 }} /> Lead List
+                </NavLink>
+
+                <NavLink to="/pipeline" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Columns size={14} style={{ marginRight: 8 }} /> Pipeline
+                </NavLink>
+
+                <NavLink to="/lead-profile" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <User size={14} style={{ marginRight: 8 }} /> Lead Profile
+                </NavLink>
+
+                <NavLink to="/knowledge-base" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <BookOpen size={14} style={{ marginRight: 8 }} /> Knowledge Base
+                </NavLink>
+
+                <NavLink to="/prompt-manager" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Sparkles size={14} style={{ marginRight: 8 }} /> Prompt Manager
+                </NavLink>
+
+              </div>
+            )}
+          </div>
         </div>
 
         <div style={{ padding: isExpanded ? '0 12px' : '0 7px', display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>

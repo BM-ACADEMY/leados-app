@@ -102,6 +102,14 @@ class LeadOSAPI {
     });
   }
 
+  async getUsers() {
+    return this.request('/api/users');
+  }
+
+  async getSources() {
+    return this.request('/api/leads/sources');
+  }
+
   // ─── WHATSAPP ───────────────────────────
   async sendWhatsAppMessage(leadId, message) {
     return this.request('/api/whatsapp/send', {
@@ -204,6 +212,12 @@ class LeadOSAPI {
     });
   }
 
+  async deleteClient(id) {
+    return this.request(`/api/clients/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   async setupClientWhatsApp(id) {
     return this.request(`/api/clients/${id}/whatsapp-setup`, {
       method: 'POST'
@@ -270,6 +284,56 @@ class LeadOSAPI {
   // ─── DASHBOARD ──────────────────────────
   async getDashboardStats() {
     return this.request('/api/reports/summary');
+  }
+
+  // ─── ALLIANCE OS ────────────────────────
+  async uploadAllianceCSV(formData) {
+    const token = localStorage.getItem('leados_token');
+    if (!token) throw new Error('No authentication token found');
+    const response = await fetch(`${API_URL}/api/upload/csv`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async getPipeline(type = 'college') {
+    return this.request(`/api/pipeline?type=${type}`);
+  }
+
+  async analyzeBatch(orgIds) {
+    return this.request('/api/analyze/batch', {
+      method: 'POST',
+      body: JSON.stringify({ orgIds })
+    });
+  }
+
+  async getKnowledgeBase() {
+    return this.request('/api/knowledge');
+  }
+
+  async deleteKnowledgeDoc(id) {
+    return this.request(`/api/knowledge/${id}`, { method: 'DELETE' });
+  }
+
+  async uploadKnowledgeDoc(formData) {
+    const token = localStorage.getItem('leados_token');
+    if (!token) throw new Error('No authentication token found');
+    const response = await fetch(`${API_URL}/api/knowledge/upload`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+    }
+    return response.json();
   }
 }
 

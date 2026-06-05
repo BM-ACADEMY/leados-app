@@ -1,11 +1,218 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Upload, Download, Plus, Eye, Phone, Trash } from 'lucide-react';
+import { Search, Upload, Download, Plus, Eye, Phone, Trash, FileSpreadsheet, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { Badge, ScoreBar } from '../components/ui.jsx';
 import { useLeads } from '../hooks/useLeads.js';
 import { api } from '../services/api.js';
 
+// ─── Add Lead Modal ────────────────────────────────────────
+
+const inp = {
+  width: '100%', background: '#0d1117', border: '1px solid #2a2a3a',
+  borderRadius: 8, color: '#e2e8f0', fontSize: 13, padding: '9px 12px',
+  outline: 'none', boxSizing: 'border-box', transition: 'border-color .2s',
+};
+
+function AddLeadModal({ open, onClose, onSaved, clients, users, sources }) {
+  const [form, setForm] = useState({ name: '', phone: '', source: '', interest: '', client_id: '', assigned_to: '' });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) setForm({ name: '', phone: '', source: '', interest: '', client_id: '', assigned_to: '' });
+  }, [open]);
+
+  if (!open) return null;
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return toast.error('Name is required');
+    if (!form.phone.trim()) return toast.error('Phone is required');
+    setSaving(true);
+    try {
+      await api.createLead({
+        name: form.name.trim(),
+        phone: form.phone.trim(),
+        source: form.source || 'Manual',
+        interest: form.interest.trim() || null,
+        client_id: form.client_id || null,
+        assigned_to: form.assigned_to || null,
+      });
+      toast.success('Lead added successfully!');
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error('Failed to add lead: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const labelStyle = { fontSize: 11, fontWeight: 600, color: '#94a3b8', marginBottom: 5, display: 'block', letterSpacing: 0.4 };
+  const fieldStyle = { marginBottom: 16 };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16,
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'linear-gradient(145deg,#13151f,#0d0f18)',
+          border: '1px solid #2a2a3a', borderRadius: 16, padding: 28, width: '100%', maxWidth: 480,
+          boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+          animation: 'slideUp .22s ease',
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+          <div>
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>Add New Lead</h2>
+            <p style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>Fill in the details to create a lead</p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: '#1e2030', border: '1px solid #2a2a3a', borderRadius: 8, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+          >
+            <X size={14} color="#94a3b8" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          {/* Row: Name + Phone */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            <div>
+              <label style={labelStyle}>Full Name <span style={{ color: '#f87171' }}>*</span></label>
+              <input
+                style={inp}
+                placeholder="e.g. Rahul Sharma"
+                value={form.name}
+                onChange={e => set('name', e.target.value)}
+                onFocus={e => e.target.style.borderColor = C.accent}
+                onBlur={e => e.target.style.borderColor = '#2a2a3a'}
+                required
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Phone <span style={{ color: '#f87171' }}>*</span></label>
+              <input
+                style={inp}
+                placeholder="e.g. 9876543210"
+                value={form.phone}
+                onChange={e => set('phone', e.target.value)}
+                onFocus={e => e.target.style.borderColor = C.accent}
+                onBlur={e => e.target.style.borderColor = '#2a2a3a'}
+                required
+              />
+            </div>
+          </div>
+
+          {/* Interest */}
+          <div style={fieldStyle}>
+            <label style={labelStyle}>Interest / Course</label>
+            <input
+              style={inp}
+              placeholder="e.g. Web Development, MBA, Digital Marketing"
+              value={form.interest}
+              onChange={e => set('interest', e.target.value)}
+              onFocus={e => e.target.style.borderColor = C.accent}
+              onBlur={e => e.target.style.borderColor = '#2a2a3a'}
+            />
+          </div>
+
+          {/* Row: Source + Brand */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            <div>
+              <label style={labelStyle}>Source</label>
+              <select
+                style={{ ...inp, cursor: 'pointer' }}
+                value={form.source}
+                onChange={e => set('source', e.target.value)}
+                onFocus={e => e.target.style.borderColor = C.accent}
+                onBlur={e => e.target.style.borderColor = '#2a2a3a'}
+              >
+                <option value="">— Select Source —</option>
+                {sources.map(s => <option key={s} value={s}>{s}</option>)}
+                <option value="__custom__">+ Custom…</option>
+              </select>
+              {form.source === '__custom__' && (
+                <input
+                  style={{ ...inp, marginTop: 6 }}
+                  placeholder="Type custom source…"
+                  onChange={e => set('source', e.target.value || '__custom__')}
+                  onFocus={e => e.target.style.borderColor = C.accent}
+                  onBlur={e => e.target.style.borderColor = '#2a2a3a'}
+                  autoFocus
+                />
+              )}
+            </div>
+            <div>
+              <label style={labelStyle}>Brand</label>
+              <select
+                style={{ ...inp, cursor: 'pointer' }}
+                value={form.client_id}
+                onChange={e => set('client_id', e.target.value)}
+                onFocus={e => e.target.style.borderColor = C.accent}
+                onBlur={e => e.target.style.borderColor = '#2a2a3a'}
+              >
+                <option value="">— None —</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Assigned To */}
+          <div style={fieldStyle}>
+            <label style={labelStyle}>Assign To</label>
+            <select
+              style={{ ...inp, cursor: 'pointer' }}
+              value={form.assigned_to}
+              onChange={e => set('assigned_to', e.target.value)}
+              onFocus={e => e.target.style.borderColor = C.accent}
+              onBlur={e => e.target.style.borderColor = '#2a2a3a'}
+            >
+              <option value="">— Unassigned —</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
+            </select>
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ flex: 1, background: '#1e2030', border: '1px solid #2a2a3a', color: '#94a3b8', padding: '10px', borderRadius: 9, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              style={{
+                flex: 2, background: saving ? '#3a3a50' : `linear-gradient(135deg, ${C.accent}, #c2410c)`,
+                border: 'none', color: '#fff', padding: '10px', borderRadius: 9, fontSize: 13,
+                fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'opacity .2s',
+              }}
+            >
+              <Plus size={14} />{saving ? 'Saving...' : 'Add Lead'}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <style>{`@keyframes slideUp { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }`}</style>
+    </div>
+  );
+}
+
+// ─── Main View ─────────────────────────────────────────────
 export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -16,7 +223,8 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   }, [refreshTrigger]);
 
   const tabs = ['all', 'new', 'hot', 'warm', 'cold', 'converted'];
-  const leads = apiLeads || [];
+  // Deduplicate by id (safeguard against API returning duplicate rows)
+  const leads = Array.from(new Map((apiLeads || []).map(l => [l.id, l])).values());
   const filtered = leads.filter((l) => (filter === 'all' || l.status === filter) && (l.name.toLowerCase().includes(search.toLowerCase()) || l.phone.includes(search)));
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -31,6 +239,16 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
 
   const fileInputRef = useRef(null);
   const [importing, setImporting] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [modalClients, setModalClients] = useState([]);
+  const [modalUsers, setModalUsers]     = useState([]);
+  const [modalSources, setModalSources] = useState([]);
+
+  useEffect(() => {
+    api.getClients().then(d => setModalClients(Array.from(new Map((d.clients || []).map(c => [c.id, c])).values()))).catch(() => {});
+    api.getUsers().then(d => setModalUsers(Array.from(new Map((d.users || []).map(u => [u.id, u])).values()))).catch(() => {});
+    api.getSources().then(d => setModalSources([...new Set(d.sources || [])])).catch(() => {});
+  }, []);
 
   const handleExport = () => {
     if (!filtered || filtered.length === 0) return toast.error('No leads to export.');
@@ -58,6 +276,23 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleDownloadTemplate = () => {
+    // Columns must match exactly what the server import handler reads
+    const headers = ['Name', 'Phone', 'Country Code', 'Source', 'Brand', 'Status', 'Score', 'Interest', 'Assigned', 'Last Contact'];
+    const dummy  = ['Rahul Sharma', '9876543210', '91', 'WhatsApp', 'BM Academy', 'new', '75', 'Web Development', 'Admin', new Date().toISOString().split('T')[0]];
+    const csvContent = [headers.join(','), dummy.join(',')].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'leads_import_template.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success('Template downloaded! Fill in your leads and import.');
   };
 
   const handleImport = async (e) => {
@@ -101,16 +336,39 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
 
   return (
     <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
+      <AddLeadModal
+        open={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onSaved={() => { if (refetch) refetch(); }}
+        clients={modalClients}
+        users={modalUsers}
+        sources={modalSources}
+      />
+
       <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
         <div>
           <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text }}>Lead Management</h1>
           <p style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>{leads.length} total leads {loading && '(loading...)'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input type="file" accept=".csv" ref={fileInputRef} onChange={handleImport} style={{ display: 'none' }} />
+          <input type="file" accept=".csv,.xlsx,.xls" ref={fileInputRef} onChange={handleImport} style={{ display: 'none' }} />
+          <button
+            onClick={handleDownloadTemplate}
+            title="Download CSV template with sample data"
+            style={{ background: 'linear-gradient(135deg,#1a3a1a,#0d2b0d)', border: '1px solid #2d6a2d', color: '#4ade80', padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontWeight: 600, transition: 'opacity .2s' }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+          >
+            <FileSpreadsheet size={12} /> Template
+          </button>
           <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', opacity: importing ? 0.6 : 1 }}><Upload size={12} />{importing ? 'Importing...' : 'Import CSV'}</button>
           <button onClick={handleExport} style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}><Download size={12} />Export</button>
-          <button style={{ background: C.accent, border: 'none', color: '#fff', padding: '7px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}><Plus size={12} />Add Lead</button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            style={{ background: C.accent, border: 'none', color: '#fff', padding: '7px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}
+          >
+            <Plus size={12} />Add Lead
+          </button>
         </div>
       </div>
 
@@ -179,8 +437,8 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
           <div style={{ padding: '12px 14px', borderTop: '1px solid ' + C.border, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: C.muted }}>Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filtered.length)} of {filtered.length} entries</span>
             <div style={{ display: 'flex', gap: 6 }}>
-              <button 
-                disabled={currentPage === 1} 
+              <button
+                disabled={currentPage === 1}
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 style={{ background: 'transparent', border: '1px solid ' + C.border, color: currentPage === 1 ? C.dim : C.text, padding: '5px 10px', borderRadius: 6, fontSize: 11, cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
               >
@@ -189,8 +447,8 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px', fontSize: 11, fontWeight: 600, color: C.text }}>
                 Page {currentPage} of {totalPages > 0 ? totalPages : 1}
               </div>
-              <button 
-                disabled={currentPage === totalPages || totalPages === 0} 
+              <button
+                disabled={currentPage === totalPages || totalPages === 0}
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 style={{ background: 'transparent', border: '1px solid ' + C.border, color: currentPage === totalPages || totalPages === 0 ? C.dim : C.text, padding: '5px 10px', borderRadius: 6, fontSize: 11, cursor: currentPage === totalPages || totalPages === 0 ? 'not-allowed' : 'pointer' }}
               >

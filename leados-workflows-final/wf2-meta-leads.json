@@ -46,7 +46,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer EAAWyZAZBial6QBRI1NEKcJa2iyoc9euRPLnwh42nkmahYY5g0veLTushc5Vchb0bUQ0ta482nMqqb1ZASh88tw"
+              "value": "={{ 'Bearer ' + $env.META_PAGE_ACCESS_TOKEN }}"
             }
           ]
         },

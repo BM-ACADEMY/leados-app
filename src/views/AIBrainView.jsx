@@ -83,14 +83,19 @@ Please define your custom prompt here.`;
     setPromptText(promptVal);
   }, [docs, selectedClientId, selectedBrandName]);
 
-  const handleRegeneratePrompt = () => {
+  // Dynamically auto-compile the prompt whenever any feed data changes
+  useEffect(() => {
+    if (!selectedClientId) return;
+    
     const pricingStr = pricingList.map(p => `${p[0]}: ${p[2]} (orig ${p[1]}) - EMI: ${p[3]}`).join('\n');
     const objectionsStr = objectionsList.map(o => `Objection: ${o[0]} -> AI Reply: ${o[1]}`).join('\n');
     const proofStr = proofList.map(p => `${p[0]}: ${p[1]}`).join('\n');
     const flowStr = flowList.map((q, i) => `Step ${i + 1}: ${q[1]} [Options: ${q[2].join(', ')}]`).join('\n');
+    
     const generated = `You are a friendly WhatsApp sales assistant for ${selectedBrandName}.\n\nRULES:\n- Keep replies SHORT (max 4-5 lines)\n- Be warm and natural, not robotic\n- Always end with ONE question\n- Respond in same language as lead\n\nPRODUCT:\n${productText}\n\nPRICING:\n${pricingStr}\n\nOBJECTIONS:\n${objectionsStr}\n\nPROOF:\n${proofStr}\n\nQUALIFYING CONVERSATION FLOW:\n${flowStr}\n\nFLAGS:\n- PAYMENT_READY when lead agrees to pay\n- CALL_REQUESTED when lead wants call\n- LEAD_COLD after 3 failed attempts`;
+    
     setPromptText(generated);
-  };
+  }, [productText, pricingList, objectionsList, proofList, flowList, selectedBrandName, selectedClientId]);
 
   const handleSave = async () => {
     if (!selectedClientId) return;
@@ -143,7 +148,7 @@ Please define your custom prompt here.`;
             {tab === 'product' && (
               <div>
                 <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Product Info</h3>
-                <textarea value={productText} onChange={(e) => setProductText(e.target.value)} style={{ width: '100%', height: 180, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: 13, fontSize: 12, outline: 'none', resize: 'vertical', lineHeight: 1.7 }} />
+                <textarea placeholder="Enter detailed product information, features, and benefits here. E.g., 'We offer a 12-week Digital Marketing bootcamp with 100% placement assistance. Key modules include SEO, Performance Marketing...'" value={productText} onChange={(e) => setProductText(e.target.value)} style={{ width: '100%', height: 180, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: 13, fontSize: 12, outline: 'none', resize: 'vertical', lineHeight: 1.7 }} />
               </div>
             )}
 
@@ -153,24 +158,24 @@ Please define your custom prompt here.`;
                 {pricingList.map((p, i) => (
                   <div key={i} className="flex-col-mobile" style={{ display: 'flex', gap: 11, marginBottom: 11, padding: 13, background: C.surface, borderRadius: 9, border: '1px solid ' + C.border, alignItems: 'flex-start' }}>
                     <div style={{ flex: 1 }}>
-                      <input value={p[0]} onChange={(e) => { const newList = [...pricingList]; newList[i][0] = e.target.value; setPricingList(newList); }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, fontWeight: 600, outline: 'none', width: '100%' }} />
+                      <input placeholder="E.g. Full Stack Dev Course" value={p[0]} onChange={(e) => { const newList = [...pricingList]; newList[i][0] = e.target.value; setPricingList(newList); }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, fontWeight: 600, outline: 'none', width: '100%' }} />
                     </div>
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 9, color: C.muted }}>Original</p>
-                      <input value={p[1]} onChange={(e) => { const newList = [...pricingList]; newList[i][1] = e.target.value; setPricingList(newList); }} style={{ background: 'transparent', border: 'none', color: C.dim, fontSize: 12, outline: 'none', textAlign: 'center', width: 80 }} />
+                      <input placeholder="E.g. Rs 15,000" value={p[1]} onChange={(e) => { const newList = [...pricingList]; newList[i][1] = e.target.value; setPricingList(newList); }} style={{ background: 'transparent', border: 'none', color: C.dim, fontSize: 12, outline: 'none', textAlign: 'center', width: 80 }} />
                     </div>
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 9, color: C.muted }}>Offer</p>
-                      <input value={p[2]} onChange={(e) => { const newList = [...pricingList]; newList[i][2] = e.target.value; setPricingList(newList); }} style={{ background: 'transparent', border: 'none', color: C.green, fontWeight: 700, fontSize: 12, outline: 'none', textAlign: 'center', width: 80 }} />
+                      <input placeholder="E.g. Rs 9,999" value={p[2]} onChange={(e) => { const newList = [...pricingList]; newList[i][2] = e.target.value; setPricingList(newList); }} style={{ background: 'transparent', border: 'none', color: C.green, fontWeight: 700, fontSize: 12, outline: 'none', textAlign: 'center', width: 80 }} />
                     </div>
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 9, color: C.muted }}>EMI</p>
-                      <input value={p[3]} onChange={(e) => { const newList = [...pricingList]; newList[i][3] = e.target.value; setPricingList(newList); }} style={{ background: 'transparent', border: 'none', color: C.blue, fontSize: 11, outline: 'none', textAlign: 'center', width: 120 }} />
+                      <input placeholder="E.g. Rs 999/mo" value={p[3]} onChange={(e) => { const newList = [...pricingList]; newList[i][3] = e.target.value; setPricingList(newList); }} style={{ background: 'transparent', border: 'none', color: C.blue, fontSize: 11, outline: 'none', textAlign: 'center', width: 120 }} />
                     </div>
                     <button type="button" onClick={() => setPricingList(pricingList.filter((_, idx) => idx !== i))} style={{ background: 'transparent', border: 'none', color: C.red, cursor: 'pointer', fontSize: 12, padding: '0 4px' }}>×</button>
                   </div>
                 ))}
-                <button type="button" onClick={() => setPricingList([...pricingList, ['New Course', 'Rs 9,999', 'Rs 4,999', 'Rs 999']])} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 9, color: C.muted, padding: '9px', width: '100%', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}><Plus size={12} />Add Pricing Tier</button>
+                <button type="button" onClick={() => setPricingList([...pricingList, ['', '', '', '']])} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 9, color: C.muted, padding: '9px', width: '100%', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}><Plus size={12} />Add Pricing Tier</button>
               </div>
             )}
 
@@ -182,17 +187,17 @@ Please define your custom prompt here.`;
                     <div style={{ padding: '9px 13px', background: '#2d1010', borderBottom: '1px solid ' + C.border, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div className="flex-col-mobile" style={{ display: 'flex', alignItems: 'flex-start', flex: 1 }}>
                         <span style={{ fontSize: 11, color: C.red, fontWeight: 700, marginRight: 5 }}>Objection:</span>
-                        <input value={o[0]} onChange={(e) => { const newList = [...objectionsList]; newList[i][0] = e.target.value; setObjectionsList(newList); }} style={{ background: 'transparent', border: 'none', color: C.red, fontSize: 11, fontWeight: 700, outline: 'none', flex: 1 }} />
+                        <input placeholder="E.g. It's too expensive" value={o[0]} onChange={(e) => { const newList = [...objectionsList]; newList[i][0] = e.target.value; setObjectionsList(newList); }} style={{ background: 'transparent', border: 'none', color: C.red, fontSize: 11, fontWeight: 700, outline: 'none', flex: 1 }} />
                       </div>
                       <button type="button" onClick={() => setObjectionsList(objectionsList.filter((_, idx) => idx !== i))} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer' }}>×</button>
                     </div>
                     <div className="flex-col-mobile" style={{ padding: '9px 13px', display: 'flex', alignItems: 'flex-start' }}>
                       <span style={{ fontSize: 12, color: C.green, fontWeight: 600, marginRight: 5 }}>AI Reply:</span>
-                      <input value={o[1]} onChange={(e) => { const newList = [...objectionsList]; newList[i][1] = e.target.value; setObjectionsList(newList); }} style={{ background: 'transparent', border: 'none', color: C.green, fontSize: 12, outline: 'none', flex: 1 }} />
+                      <input placeholder="E.g. We offer flexible EMI starting at just Rs 999/mo." value={o[1]} onChange={(e) => { const newList = [...objectionsList]; newList[i][1] = e.target.value; setObjectionsList(newList); }} style={{ background: 'transparent', border: 'none', color: C.green, fontSize: 12, outline: 'none', flex: 1 }} />
                     </div>
                   </div>
                 ))}
-                <button type="button" onClick={() => setObjectionsList([...objectionsList, ['New Objection', 'AI Reply...']])} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 9, color: C.muted, padding: '9px', width: '100%', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}><Plus size={12} />Add Objection</button>
+                <button type="button" onClick={() => setObjectionsList([...objectionsList, ['', '']])} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 9, color: C.muted, padding: '9px', width: '100%', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}><Plus size={12} />Add Objection</button>
               </div>
             )}
 
@@ -203,12 +208,12 @@ Please define your custom prompt here.`;
                   {proofList.map((p, i) => (
                     <div key={i} style={{ background: C.surface, border: '1px solid ' + C.border, borderRadius: 9, padding: 13, position: 'relative' }}>
                       <button type="button" onClick={() => setProofList(proofList.filter((_, idx) => idx !== i))} style={{ position: 'absolute', top: 8, right: 8, background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer' }}>×</button>
-                      <input value={p[0]} onChange={(e) => { const newList = [...proofList]; newList[i][0] = e.target.value; setProofList(newList); }} style={{ background: 'transparent', border: 'none', color: C.accent, fontWeight: 700, fontSize: 10, letterSpacing: 0.8, outline: 'none', width: '85%', marginBottom: 5 }} />
-                      <textarea value={p[1]} onChange={(e) => { const newList = [...proofList]; newList[i][1] = e.target.value; setProofList(newList); }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, lineHeight: 1.6, outline: 'none', width: '100%', height: 60, resize: 'none' }} />
+                      <input placeholder="E.g. 500+ Placements" value={p[0]} onChange={(e) => { const newList = [...proofList]; newList[i][0] = e.target.value; setProofList(newList); }} style={{ background: 'transparent', border: 'none', color: C.accent, fontWeight: 700, fontSize: 10, letterSpacing: 0.8, outline: 'none', width: '85%', marginBottom: 5 }} />
+                      <textarea placeholder="E.g. Over 500 of our students have been successfully placed in top MNCs." value={p[1]} onChange={(e) => { const newList = [...proofList]; newList[i][1] = e.target.value; setProofList(newList); }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, lineHeight: 1.6, outline: 'none', width: '100%', height: 60, resize: 'none' }} />
                     </div>
                   ))}
                 </div>
-                <button type="button" onClick={() => setProofList([...proofList, ['New Proof Point', 'Proof value description...']])} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 9, color: C.muted, padding: '9px', width: '100%', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}><Plus size={12} />Add Proof Point</button>
+                <button type="button" onClick={() => setProofList([...proofList, ['', '']])} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 9, color: C.muted, padding: '9px', width: '100%', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}><Plus size={12} />Add Proof Point</button>
               </div>
             )}
 
@@ -220,20 +225,20 @@ Please define your custom prompt here.`;
                     <div style={{ width: 30, height: 30, borderRadius: '50%', background: C.accent + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: C.accent, flexShrink: 0 }}>{q[0]}</div>
                     <div style={{ flex: 1, background: C.surface, border: '1px solid ' + C.border, borderRadius: 9, padding: 13, position: 'relative' }}>
                       <button type="button" onClick={() => setFlowList(flowList.filter((_, idx) => idx !== i))} style={{ position: 'absolute', top: 8, right: 8, background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer' }}>×</button>
-                      <input value={q[1]} onChange={(e) => { const newList = [...flowList]; newList[i][1] = e.target.value; setFlowList(newList); }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', width: '90%', marginBottom: 7, fontWeight: 600 }} />
+                      <input placeholder="E.g. Are you a student or a working professional?" value={q[1]} onChange={(e) => { const newList = [...flowList]; newList[i][1] = e.target.value; setFlowList(newList); }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', width: '90%', marginBottom: 7, fontWeight: 600 }} />
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                         {q[2].map((o, j) => (
                           <span key={j} style={{ background: C.blue + '20', color: C.blue, padding: '2px 9px', borderRadius: 11, fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <input value={o} onChange={(e) => { const newList = [...flowList]; newList[i][2][j] = e.target.value; setFlowList(newList); }} style={{ background: 'transparent', border: 'none', color: C.blue, fontSize: 10, outline: 'none', width: 100 }} />
+                            <input placeholder={`Option ${j + 1}`} value={o} onChange={(e) => { const newList = [...flowList]; newList[i][2][j] = e.target.value; setFlowList(newList); }} style={{ background: 'transparent', border: 'none', color: C.blue, fontSize: 10, outline: 'none', width: 100 }} />
                             <button type="button" onClick={() => { const newList = [...flowList]; newList[i][2] = newList[i][2].filter((_, optionIdx) => optionIdx !== j); setFlowList(newList); }} style={{ background: 'transparent', border: 'none', color: C.blue, cursor: 'pointer', fontSize: 9, fontWeight: 700 }}>×</button>
                           </span>
                         ))}
-                        <button type="button" onClick={() => { const newList = [...flowList]; newList[i][2].push('New Option'); setFlowList(newList); }} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 11, color: C.muted, padding: '1px 7px', fontSize: 9, cursor: 'pointer' }}>+ Option</button>
+                        <button type="button" onClick={() => { const newList = [...flowList]; newList[i][2].push(''); setFlowList(newList); }} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 11, color: C.muted, padding: '1px 7px', fontSize: 9, cursor: 'pointer' }}>+ Option</button>
                       </div>
                     </div>
                   </div>
                 ))}
-                <button type="button" onClick={() => setFlowList([...flowList, [`Q${flowList.length + 1}`, 'New Question flow?', ['Option 1', 'Option 2']]])} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 9, color: C.muted, padding: '9px', width: '100%', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}><Plus size={12} />Add Question Flow</button>
+                <button type="button" onClick={() => setFlowList([...flowList, [`Q${flowList.length + 1}`, '', ['', '']]])} style={{ background: 'transparent', border: '1px dashed ' + C.border, borderRadius: 9, color: C.muted, padding: '9px', width: '100%', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}><Plus size={12} />Add Question Flow</button>
               </div>
             )}
 
@@ -241,8 +246,7 @@ Please define your custom prompt here.`;
               <div>
                 <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Generated System Prompt</h3>
                 <div style={{ background: C.accent + '08', border: '1px solid ' + C.accentDim, borderRadius: 7, padding: 11, marginBottom: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <p style={{ fontSize: 11, color: C.accent }}>Auto-compiled from your inputs. Used by GPT-4o for every conversation.</p>
-                  <button type="button" onClick={handleRegeneratePrompt} style={{ background: C.accent, border: 'none', borderRadius: 5, color: '#fff', padding: '5px 10px', fontSize: 10, fontWeight: 600, cursor: 'pointer' }}>Regenerate from other tabs</button>
+                  <p style={{ fontSize: 11, color: C.accent }}>Auto-compiled dynamically from your inputs. Used by Groq AI for every conversation.</p>
                 </div>
                 <textarea value={promptText} onChange={(e) => setPromptText(e.target.value)} style={{ width: '100%', height: 260, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#10b981', padding: 13, fontSize: 11, outline: 'none', fontFamily: 'monospace', lineHeight: 1.8, resize: 'none' }} />
               </div>

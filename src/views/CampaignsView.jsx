@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Upload, Send, Clock, Trash2 } from 'lucide-react';
+import { Plus, Upload, Send, Clock, Trash2, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
@@ -62,6 +62,18 @@ export const CampaignsView = () => {
     fetchFormMetadata();
   }, []);
 
+  const handleDownloadTemplate = () => {
+    const csvContent = "Name,Phone\nJohn Doe,919876543210\nJane Smith,919876543211";
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "leados_campaign_template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleCreateCampaign = async (e) => {
     e.preventDefault();
     if (!name || !clientId || !templateId) return toast.error('Please fill required fields');
@@ -76,14 +88,16 @@ export const CampaignsView = () => {
           setSubmitting(false);
           return toast.error('Please upload a CSV file');
         }
+        const batchId = `csv_${Date.now()}`;
         const formData = new FormData();
         formData.append('client_id', clientId);
         formData.append('file', importFile);
+        formData.append('force_source', batchId);
         
         const importRes = await api.importLeads(formData);
         toast.success(`Successfully imported ${importRes.imported} leads!`);
         
-        finalTargetStatus = 'new';
+        finalTargetStatus = batchId;
       }
 
       // 2. Create the Campaign
@@ -237,7 +251,12 @@ export const CampaignsView = () => {
             </div>
             {targetStatus === 'custom_csv' && (
               <div style={{ marginBottom: 14 }}>
-                <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Upload CSV File</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                  <label style={{ fontSize: 10, color: C.muted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Upload CSV File</label>
+                  <button type="button" onClick={handleDownloadTemplate} style={{ background: 'transparent', border: 'none', color: C.accent, fontSize: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Download size={12} /> Download Template
+                  </button>
+                </div>
                 <div style={{ background: C.surface, border: '1px dashed ' + C.border, borderRadius: 7, padding: 22, textAlign: 'center', cursor: 'pointer', position: 'relative' }}>
                   <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setImportFile(e.target.files[0])} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0, cursor: 'pointer' }} />
                   <Upload size={24} color={importFile ? C.green : C.muted} style={{ margin: '0 auto 10px' }} />

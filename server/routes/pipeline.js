@@ -7,22 +7,22 @@ router.get('/', async (req, res) => {
   const { type } = req.query;
   try {
     const { rows } = await db.query(`
-      SELECT o.id, o.name, o.district, o.status,
-             a.score, a.offer_recommended, a.personalisation_hook
-      FROM organisations o
-      LEFT JOIN ai_analysis a ON o.id = a.org_id
-      WHERE o.type = $1
-      ORDER BY COALESCE(a.score, 0) DESC, o.created_at DESC
-    `, [type]);
+      SELECT l.id, l.name, c.name as brand_name, l.status,
+             l.score, l.source as district
+      FROM leads l
+      LEFT JOIN clients c ON l.client_id = c.id
+      ORDER BY COALESCE(l.score, 0) DESC, l.created_at DESC
+    `);
     
-    // Group by status (new, analysed, contacted, meeting, closed)
+    // Group by status (new, analysed, contacted, meeting, negotiation, closed)
     const pipeline = {
-      new: [], analysed: [], contacted: [], meeting: [], closed: []
+      new: [], analysed: [], contacted: [], meeting: [], negotiation: [], closed: []
     };
     
     rows.forEach(r => {
-      if (pipeline[r.status]) {
-        pipeline[r.status].push(r);
+      const st = (r.status || 'new').toLowerCase();
+      if (pipeline[st]) {
+        pipeline[st].push(r);
       } else {
         pipeline['new'].push(r);
       }
@@ -38,7 +38,7 @@ router.get('/', async (req, res) => {
 router.patch('/:id/stage', async (req, res) => {
   const { status } = req.body;
   try {
-    await db.query(`UPDATE organisations SET status=$1, updated_at=NOW() WHERE id=$2`, [status, req.params.id]);
+    await db.query(`UPDATE leads SET status=$1, updated_at=NOW() WHERE id=$2`, [status, req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

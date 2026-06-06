@@ -168,6 +168,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                   <Sparkles size={14} style={{ marginRight: 8 }} /> Prompt Manager
                 </NavLink>
 
+                <NavLink to="/alliance-inbox" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Inbox size={14} style={{ marginRight: 8 }} /> Inbox
+                </NavLink>
+
               </div>
             )}
           </div>

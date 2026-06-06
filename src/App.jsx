@@ -22,6 +22,7 @@ import { Pipeline } from './views/Pipeline.jsx';
 import { LeadProfile } from './views/LeadProfile.jsx';
 import { KnowledgeBase } from './views/KnowledgeBase.jsx';
 import { PromptManager } from './views/PromptManager.jsx';
+import { AllianceInboxView } from './views/AllianceInboxView.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -119,6 +120,7 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
               <Route path="/lead-profile" element={<LeadProfile />} />
               <Route path="/knowledge-base" element={<KnowledgeBase />} />
               <Route path="/prompt-manager" element={<PromptManager />} />
+              <Route path="/alliance-inbox" element={<AllianceInboxView />} />
 
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>

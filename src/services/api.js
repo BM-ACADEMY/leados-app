@@ -335,6 +335,21 @@ class LeadOSAPI {
     }
     return response.json();
   }
+
+  async getAllianceInbox() {
+    return this.request('/api/alliance-inbox');
+  }
+
+  async getAllianceLead(id) {
+    return this.request(`/api/alliance-inbox/${id}`);
+  }
+
+  async sendAllianceMessage(orgId, message) {
+    return this.request(`/api/alliance-inbox/${orgId}/send`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    });
+  }
 }
 
 export const api = new LeadOSAPI();

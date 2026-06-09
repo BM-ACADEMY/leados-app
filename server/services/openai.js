@@ -30,7 +30,7 @@ async function scrapeWebsite(url) {
 
 // KNOWLEDGE BASE CONTEXT RETRIEVAL
 async function getKBContext(orgType) {
-  const brandFilter = orgType === 'college'
+  const brandFilter = orgType === 'college' || (orgType && orgType.includes('college'))
     ? ['BM Academy','Core Talents','BM TechX','All']
     : ['Core Talents','BM Academy','All'];
     
@@ -63,7 +63,7 @@ async function getKBContext(orgType) {
 async function buildPrompt(org, websiteText, kbContext) {
   const { rows } = await db.query(
     `SELECT prompt_text FROM prompt_templates WHERE name = $1 AND active = TRUE`,
-    [`${org.type}_analyzer`]
+    [org.type]
   );
   let prompt = rows[0]?.prompt_text || getHardcodedPrompt(org.type);
   
@@ -74,6 +74,64 @@ async function buildPrompt(org, websiteText, kbContext) {
     .replace('{{website_text}}', websiteText || '')
     .replace('{{kb_context}}', kbContext || '');
   return prompt;
+}
+
+// Outreach message generator using Groq
+async function generateOutreachMessage(org, result) {
+  try {
+    const prompt = `Write a short, highly professional, warm WhatsApp outreach message to a contact named ${org.contact_name || 'there'} at ${org.name} located in ${org.district || org.location || 'Tamil Nadu'}.
+The goal is to propose our offer: "${result.offer_recommended}".
+Use this personalization hook: "${result.personalisation_hook}".
+The message must be friendly, concise (max 3 sentences), and encourage a reply. Do not use placeholders like [Your Name] or [Insert Date] in the output.`;
+
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 150,
+      temperature: 0.7,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    return response.choices[0].message.content.trim();
+  } catch (err) {
+    console.error('Error generating WhatsApp message:', err.message);
+    return `Hi ${org.contact_name || 'Sir/Madam'}, I noticed ${org.name} in ${org.district || 'your area'}. We'd love to partner with you for our ${result.offer_recommended || 'placement training'}. Let us know if you're interested!`;
+  }
+}
+
+// Meta Cloud WhatsApp sender
+async function sendAutomatedWhatsApp(phone, message) {
+  const token = process.env.META_PAGE_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WA_PHONE_NUMBER_ID || '123456789012345';
+  if (!token || !phone) {
+    console.log('Skipping WhatsApp send: Meta credentials or phone missing.');
+    return null;
+  }
+
+  // If using placeholder ID, simulate/mock the WhatsApp request for testing
+  if (phoneNumberId === '123456789012345') {
+    const mockMsgId = 'mock_wa_msg_' + Math.random().toString(36).substr(2, 9);
+    console.log(`[TEST MOCK] Simulated WhatsApp sent to ${phone}: "${message}" (ID: ${mockMsgId})`);
+    return mockMsgId;
+  }
+
+  const cleanPhone = phone.replace(/\D/g, '');
+  try {
+    const waRes = await axios.post(
+      `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: cleanPhone,
+        type: 'text',
+        text: { body: message }
+      },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    console.log(`✅ WhatsApp message sent to ${cleanPhone}: ${waRes.data.messages?.[0]?.id}`);
+    return waRes.data.messages?.[0]?.id;
+  } catch (err) {
+    console.error('❌ Failed to send automated WhatsApp:', err.response?.data || err.message);
+    return null;
+  }
 }
 
 // MAIN ANALYZER
@@ -100,7 +158,6 @@ async function analyzeOrganisation(org) {
   } catch (err) {
     console.error('Groq parse error:', err.message);
     result = {
-      score: 50,
       offer_recommended: 'Standard MoU — manual review needed',
       reason: 'AI analysis failed. Review manually.',
       personalisation_hook: '',
@@ -119,11 +176,10 @@ async function analyzeOrganisation(org) {
      bm_course_match, core_talents_offer,
      personalisation_hook, hiring_potential,
      training_potential, raw_json)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8,$9)
     ON CONFLICT DO NOTHING
   `, [
     org.id,
-    result.score || 50,
     result.offer_recommended || '',
     result.reason || '',
     result.bm_course_match || result.skills_match || '',
@@ -139,18 +195,26 @@ async function analyzeOrganisation(org) {
     `UPDATE organisations SET status='analysed', updated_at=NOW() WHERE id=$1`,
     [org.id]
   );
-  
-  // Telegram alert for HOT leads (score >= 85)
-  if ((result.score || 0) >= 85) {
-    const msg =
-      `■ HOT LEAD\\n` +
-      `Org: ${org.name}\\n` +
-      `Score: ${result.score}/100\\n` +
-      `Offer: ${result.offer_recommended}\\n` +
-      `Hook: ${result.personalisation_hook}\\n` +
-      `District: ${org.district}`;
-    await sendTelegramAlert(msg);
+
+  // Generate and Send WhatsApp outreach
+  if (org.phone) {
+    const outreachMessage = await generateOutreachMessage(org, result);
+    const waMsgId = await sendAutomatedWhatsApp(org.phone, outreachMessage);
+    
+    await db.query(`
+      INSERT INTO outreach (org_id, channel, msg_type, content, sent_at, delivered)
+      VALUES ($1, 'whatsapp', 'text', $2, NOW(), $3)
+    `, [org.id, outreachMessage, waMsgId ? true : false]);
   }
+  
+  // Telegram alert for analyzed leads
+  const msg =
+    `■ LEAD ANALYZED\n` +
+    `Org: ${org.name}\n` +
+    `Offer: ${result.offer_recommended}\n` +
+    `Hook: ${result.personalisation_hook}\n` +
+    `District: ${org.district}`;
+  await sendTelegramAlert(msg);
   
   return result;
 }
@@ -185,13 +249,13 @@ async function sendTelegramAlert(message) {
 function getHardcodedPrompt(type) {
   return type === 'college'
     ? `Analyze this Tamil Nadu college. Return JSON with:
-score(0-100), offer_recommended, reason, bm_course_match,
+offer_recommended, reason, bm_course_match,
 core_talents_offer, training_potential(high/medium/low),
 placement_potential(high/medium/low), personalisation_hook.
 College: {{org_name}}. District: {{district}}.
 Website: {{website_text}}. Context: {{kb_context}}`
     : `Analyze this company for talent hiring partnership.
-Return JSON with: score(0-100), offer_recommended(Free/Growth/Partner),
+Return JSON with: offer_recommended(Free/Growth/Partner),
 reason, skills_match, hiring_potential(high/medium/low),
 personalisation_hook.
 Company: {{org_name}}. District: {{district}}.

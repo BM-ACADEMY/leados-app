@@ -120,7 +120,7 @@ async function setupAllianceDb() {
   const prompts = [
     {
       name: 'college_analyzer',
-      purpose: 'Analyze a college and score for Core Talents partnership',
+      purpose: 'Analyze a college and recommend Core Talents partnership',
       prompt_text: `You are an AI analyst for ABM Groups — BM Academy, Core Talents, and BM TechX in Pondicherry, Tamil Nadu.
 Analyze the following college using the scraped website data and our offerings context below.
 Return ONLY valid JSON. No markdown. No explanation outside the JSON.
@@ -131,9 +131,8 @@ Our Offerings:
 {{kb_context}}
 Return this exact JSON structure:
 {
- "score": <integer 0-100>,
  "offer_recommended": "<specific MoU type>",
- "reason": "<2 sentences why this score>",
+ "reason": "<2 sentences why this selection>",
  "bm_course_match": "<which BM Academy courses fit their students>",
  "core_talents_offer": "<what Core Talents can specifically offer>",
  "training_potential": "high|medium|low",
@@ -143,7 +142,7 @@ Return this exact JSON structure:
     },
     {
       name: 'company_analyzer',
-      purpose: 'Analyze a company and score for Core Talents hiring partnership',
+      purpose: 'Analyze a company and recommend Core Talents hiring partnership',
       prompt_text: `You are an AI analyst for Core Talents — the talent placement division of ABM Groups, Pondicherry.
 Analyze the following company using website data and our talent offerings below.
 Return ONLY valid JSON. No markdown. No explanation.
@@ -155,7 +154,6 @@ Our Talent Offerings:
 {{kb_context}}
 Return this exact JSON structure:
 {
- "score": <integer 0-100>,
  "offer_recommended": "<Free Tier | Growth Tier | Partner Retainer>",
  "reason": "<2 sentences why>",
  "skills_match": "<which of our trained skills fit this company>",

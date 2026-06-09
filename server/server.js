@@ -55,11 +55,13 @@ const knowledgeRoutes = require('./routes/knowledge');
 const uploadRoutes = require('./routes/upload');
 const pipelineRoutes = require('./routes/pipeline');
 const analyzeRoutes = require('./routes/analyze');
+const promptsRoutes = require('./routes/prompts');
 
 app.use('/api/knowledge', knowledgeRoutes); // We should use auth but let's check auth middleware later
 app.use('/api/upload', uploadRoutes);
 app.use('/api/pipeline', pipelineRoutes);
 app.use('/api/analyze', analyzeRoutes);
+app.use('/api/prompts', promptsRoutes);
 
 // ── AUTH MIDDLEWARE ───────────────────────────────────────
 const auth = (req, res, next) => {

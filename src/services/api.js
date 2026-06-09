@@ -335,6 +335,34 @@ class LeadOSAPI {
     }
     return response.json();
   }
+
+  // ─── PROMPT TEMPLATES ───────────────────
+  async getPrompts() {
+    return this.request('/api/prompts');
+  }
+
+  async createPrompt(promptData) {
+    return this.request('/api/prompts', {
+      method: 'POST',
+      body: JSON.stringify(promptData),
+    });
+  }
+
+  async updatePrompt(id, promptData) {
+    return this.request(`/api/prompts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(promptData),
+    });
+  }
+
+  async deletePrompt(id) {
+    return this.request(`/api/prompts/${id}`, {
+      method: 'DELETE',
+      // No body needed for DELETE
+      // Default method is GET so we must set DELETE method:
+      method: 'DELETE',
+    });
+  }
 }
 
 export const api = new LeadOSAPI();

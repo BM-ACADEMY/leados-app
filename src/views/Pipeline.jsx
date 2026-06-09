@@ -141,15 +141,12 @@ export const Pipeline = () => {
                   <div 
                     key={lead.id} 
                     className="board-card"
-                    style={isGreen ? { borderColor: '#4CAF50' } : lead.score >= 80 ? { borderColor: 'var(--hot)' } : {}}
+                    style={isGreen ? { borderColor: '#4CAF50' } : {}}
                     draggable
                     onDragStart={(e) => onDragStart(e, lead.id, stage.id)}
                   >
                     <div className="bc-title">{lead.name || 'Unknown Org'}</div>
                     <div className="bc-sub" style={isGreen ? { color: '#4CAF50' } : {}}>{lead.district || 'Location unknown'}</div>
-                    <div className={`bc-score ${isGreen ? 'green' : lead.score >= 80 ? 'hot' : lead.score >= 50 ? 'warm' : ''}`}>
-                      Score: {lead.score || 0}
-                    </div>
                   </div>
                 ))}
               </div>

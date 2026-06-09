@@ -2,12 +2,7 @@ import React from 'react';
 import './AllianceDashboard.css';
 export const AllianceDashboard = () => {
   return (
-    <div className="alliance-dashboard" style={{ height: '100%', overflowY: 'auto' }}>
-      <div className="alert-strip">
-        <div className="dot"></div>
-        <strong>7 Hot Leads</strong> scored 85+ — waiting for your action.
-        <button className="btn btn-sm" style={{ background: 'rgba(255,107,53,0.2)', color: 'var(--hot)', border: 'none', cursor: 'pointer' }}>View Hot Leads →</button>
-      </div>
+    <div className="alliance-dashboard" style={{ height: '100%', overflowY: 'auto', paddingTop: '16px' }}>
 
       <div className="stats-grid">
         <div className="stat-card">
@@ -22,7 +17,7 @@ export const AllianceDashboard = () => {
         </div>
         <div className="stat-card hot">
           <div className="stat-val">7</div>
-          <div className="stat-lbl">Hot Leads (85+)</div>
+          <div className="stat-lbl">High Potential Leads</div>
           <div className="stat-change up">↑ 4 new today</div>
         </div>
         <div className="stat-card green">
@@ -39,9 +34,9 @@ export const AllianceDashboard = () => {
 
       <div className="grid-2-1" style={{ marginBottom: '16px' }}>
         <div className="card">
-          <div className="card-title">Hot Leads — Action Required</div>
+          <div className="card-title">Leads — Action Required</div>
           <div className="hot-lead">
-            <div className="hot-score">92</div>
+            <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,107,53,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: 'var(--hot)', flexShrink: 0 }}>S</div>
             <div className="hot-info">
               <div className="hot-name">Sri Venkateswara Engg College · Villupuram</div>
               <div className="hot-hook">4,200 students, CSE dominant. Only 12% placed in tech roles — direct BM Academy Full Stack match.</div>
@@ -52,7 +47,7 @@ export const AllianceDashboard = () => {
             </div>
           </div>
           <div className="hot-lead">
-            <div className="hot-score">88</div>
+            <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(0,154,163,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: 'var(--teal2)', flexShrink: 0 }}>D</div>
             <div className="hot-info">
               <div className="hot-name">Digital Spark Agency · Pondicherry</div>
               <div className="hot-hook">Growing DM agency, 12 team members. Actively hiring DM executives. Free Tier → Growth Tier opportunity.</div>
@@ -63,7 +58,7 @@ export const AllianceDashboard = () => {
             </div>
           </div>
           <div className="hot-lead">
-            <div className="hot-score">87</div>
+            <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(228,165,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: 'var(--gold)', flexShrink: 0 }}>B</div>
             <div className="hot-info">
               <div className="hot-name">Bright Smile Dental · Anna Nagar, Pondicherry</div>
               <div className="hot-hook">Only 18 GMB reviews. No website. Last GMB post: 6 weeks ago. Missing 20+ patient enquiries/month.</div>
@@ -122,14 +117,14 @@ export const AllianceDashboard = () => {
               <div className="timeline-content">
                 <div className="timeline-label">Sri Venkateswara College replied via WhatsApp</div>
                 <div className="timeline-text">PO Rajan: "Can you visit campus next week?"</div>
-                <div className="timeline-time">2 hours ago · Score: 92</div>
+                <div className="timeline-time">2 hours ago</div>
               </div>
             </div>
             <div className="timeline-item">
               <div className="timeline-dot teal"></div>
               <div className="timeline-content">
-                <div className="timeline-label">AI Analysis completed — 15 new leads scored</div>
-                <div className="timeline-text">3 HOT, 8 Opportunity, 4 Skip</div>
+                <div className="timeline-label">AI Analysis completed — 15 new leads analyzed</div>
+                <div className="timeline-text">15 leads successfully processed</div>
                 <div className="timeline-time">4 hours ago</div>
               </div>
             </div>
@@ -138,7 +133,7 @@ export const AllianceDashboard = () => {
               <div className="timeline-content">
                 <div className="timeline-label">Bright Smile Dental replied via WhatsApp</div>
                 <div className="timeline-text">Dr. Ramesh: "Please share more details"</div>
-                <div className="timeline-time">5 hours ago · Score: 87</div>
+                <div className="timeline-time">5 hours ago</div>
               </div>
             </div>
             <div className="timeline-item">

@@ -252,7 +252,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
 
   const handleExport = () => {
     if (!filtered || filtered.length === 0) return toast.error('No leads to export.');
-    const headers = ['Name', 'Phone', 'Source', 'Brand', 'Status', 'Score', 'Assigned', 'Interest', 'Last Contact'];
+    const headers = ['Name', 'Phone', 'Source', 'Brand', 'Status', 'Assigned', 'Interest', 'Last Contact'];
     const csvContent = [
       headers.join(','),
       ...filtered.map(l => [
@@ -261,7 +261,6 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
         `"${l.source || ''}"`,
         `"${l.brand_name || ''}"`,
         `"${l.status || ''}"`,
-        `${l.score || 0}`,
         `"${l.assigned_name || ''}"`,
         `"${(l.interest || '').replace(/"/g, '""')}"`,
         `"${l.last_contact ? new Date(l.last_contact).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}"`
@@ -280,8 +279,8 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
 
   const handleDownloadTemplate = () => {
     // Columns must match exactly what the server import handler reads
-    const headers = ['Name', 'Phone', 'Country Code', 'Source', 'Brand', 'Status', 'Score', 'Interest', 'Assigned', 'Last Contact'];
-    const dummy  = ['Rahul Sharma', '9876543210', '91', 'WhatsApp', 'BM Academy', 'new', '75', 'Web Development', 'Admin', new Date().toISOString().split('T')[0]];
+    const headers = ['Name', 'Phone', 'Country Code', 'Source', 'Brand', 'Status', 'Interest', 'Assigned', 'Last Contact'];
+    const dummy  = ['Rahul Sharma', '9876543210', '91', 'WhatsApp', 'BM Academy', 'new', 'Web Development', 'Admin', new Date().toISOString().split('T')[0]];
     const csvContent = [headers.join(','), dummy.join(',')].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -396,7 +395,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid ' + C.border }}>
-              {['Lead', 'Phone', 'Source', 'Brand', 'Status', 'Score', 'Assigned', 'Last Contact', ''].map((h) => (
+              {['Lead', 'Phone', 'Source', 'Brand', 'Status', 'Assigned', 'Last Contact', ''].map((h) => (
                 <th key={h} style={{ padding: '11px 14px', fontSize: 9, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'left' }}>{h}</th>
               ))}
             </tr>
@@ -417,7 +416,6 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
                 <td style={{ padding: '13px 14px' }}><span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 7px', borderRadius: 10 }}>{l.source || 'Manual'}</span></td>
                 <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{l.brand_name || 'N/A'}</td>
                 <td style={{ padding: '13px 14px' }}><Badge status={l.status} /></td>
-                <td style={{ padding: '13px 14px' }}><ScoreBar score={l.score || 0} /></td>
                 <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{l.assigned_name || 'Unassigned'}</td>
                 <td style={{ padding: '13px 14px', fontSize: 10, color: C.dim }}>{l.last_contact || 'N/A'}</td>
                 <td style={{ padding: '13px 14px' }}>

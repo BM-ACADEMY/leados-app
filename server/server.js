@@ -41,14 +41,12 @@ pool.on('error', (err) => console.error('DB error:', err));
 app.use(morgan('dev')); // ← must be first so every request is logged
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
-  origin: [
-    process.env.PORTAL_URL,
-    'https://leados-app.abmgroups.org',
-    'http://localhost:5173',
-    'http://localhost:3001',
-    'http://localhost:3000'
-  ].filter(Boolean),
+  origin: function(origin, callback) {
+    callback(null, origin || true);
+  },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-internal-key']
 }));
 app.use(express.json({ limit: '10mb' }));
 
@@ -299,10 +297,10 @@ app.delete('/api/leads/:id', auth, async (req, res) => {
     await pool.query('DELETE FROM conversations WHERE lead_id = $1', [id]);
     await pool.query('DELETE FROM messages WHERE lead_id = $1', [id]);
     await pool.query('DELETE FROM payments WHERE lead_id = $1', [id]);
-    
+
     const { rowCount } = await pool.query('DELETE FROM leads WHERE id = $1', [id]);
     if (rowCount === 0) return res.status(404).json({ error: 'Lead not found' });
-    
+
     res.json({ success: true, message: 'Lead deleted successfully' });
   } catch (err) {
     console.error('Delete lead error:', err);
@@ -906,7 +904,7 @@ app.delete('/api/clients/:id', auth, async (req, res) => {
   try {
     await clientDb.query('BEGIN');
     const { id } = req.params;
-    
+
     // Use FOR UPDATE to lock the row during transaction
     const { rows } = await clientDb.query('SELECT * FROM clients WHERE id = $1 FOR UPDATE', [id]);
     if (!rows.length) {
@@ -932,7 +930,7 @@ app.delete('/api/clients/:id', auth, async (req, res) => {
 
     await clientDb.query('DELETE FROM clients WHERE id = $1', [id]);
     await clientDb.query('COMMIT');
-    
+
     res.json({ success: true, message: 'Client deleted and deregistered successfully' });
   } catch (err) {
     await clientDb.query('ROLLBACK');
@@ -949,7 +947,7 @@ app.post('/api/clients/:id/whatsapp-setup', auth, async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     const client = rows[0];
     if (!client) return res.status(404).json({ error: 'Client not found' });
-    
+
     if (!client.phone_number_id || !client.wa_access_token || !client.whatsapp_number) {
       return res.status(400).json({ error: 'Missing WhatsApp API credentials' });
     }
@@ -963,7 +961,7 @@ app.post('/api/clients/:id/whatsapp-setup', auth, async (req, res) => {
     if (client.wa_description) profileData.description = client.wa_description;
     if (client.wa_email) profileData.email = client.wa_email;
     if (client.wa_website) profileData.websites = [client.wa_website];
-    
+
     try {
       await axios.post(
         `https://graph.facebook.com/v19.0/${client.phone_number_id}/whatsapp_business_profile`,
@@ -1092,7 +1090,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         const interest = row.interest || row.Interest || null;
 
         // Brand
-        let rowClientId = client_id || null; 
+        let rowClientId = client_id || null;
         if (!rowClientId) {
           const brandName = row.brand || row.Brand;
           if (brandName && clientsMap[brandName.toLowerCase()]) {
@@ -1131,7 +1129,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
               last_contact = COALESCE(EXCLUDED.last_contact, leads.last_contact),
               updated_at = NOW()
         `, [rowClientId, name, phone, status, source, score, interest, assignedTo, lastContact]);
-        
+
         imported++;
       } catch (e) {
         console.error('Row import error for', row, e.message);
@@ -1174,19 +1172,19 @@ app.get('/api/webhooks/meta', (req, res) => {
 app.post('/api/webhooks/meta', async (req, res) => {
   try {
     const { object, entry } = req.body;
-    
+
     if (object === 'whatsapp_business_account' && entry && entry[0].changes) {
       const value = entry[0].changes[0].value;
-      
+
       // Handle message statuses (Delivered, Read, Failed)
       if (value.statuses && value.statuses.length > 0) {
         const statusObj = value.statuses[0];
         const wamid = statusObj.id;
         const newStatus = statusObj.status; // 'delivered', 'read', 'failed'
         const error = statusObj.errors ? statusObj.errors[0].title : null;
-        
+
         console.log(`[Webhook] Update: ${wamid} -> ${newStatus}`);
-        
+
         // Update campaign_logs directly
         await pool.query(`
           UPDATE campaign_logs 
@@ -1194,14 +1192,14 @@ app.post('/api/webhooks/meta', async (req, res) => {
           WHERE wa_message_id = $3
         `, [newStatus, error, wamid]);
       }
-      
+
       // Handle incoming replied messages
       if (value.messages && value.messages.length > 0) {
         const msg = value.messages[0];
         const incomingPhone = msg.from;
         const msgId = msg.id;
         const text = msg.text ? msg.text.body : '';
-        
+
         // Find if this user was part of a campaign
         const { rowCount } = await pool.query(`
           UPDATE campaign_logs 
@@ -1217,7 +1215,7 @@ app.post('/api/webhooks/meta', async (req, res) => {
         `, [text, msgId, incomingPhone.substring(incomingPhone.length - 10)]);
       }
     }
-    
+
     // Always return 200 OK to Meta
     res.status(200).send('EVENT_RECEIVED');
   } catch (err) {
@@ -1311,7 +1309,7 @@ async function executeCampaign(campaign_id) {
     const BATCH_SIZE = 50;
     for (let i = 0; i < leads.length; i += BATCH_SIZE) {
       const batch = leads.slice(i, i + BATCH_SIZE);
-      
+
       const promises = batch.map(async (lead) => {
         try {
           const templatePayload = {
@@ -1342,7 +1340,7 @@ async function executeCampaign(campaign_id) {
             },
             { headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' } }
           );
-          
+
           return {
             lead_id: lead.id,
             wa_message_id: waRes.data.messages?.[0]?.id,
@@ -1360,7 +1358,7 @@ async function executeCampaign(campaign_id) {
       });
 
       const results = await Promise.all(promises);
-      
+
       // Bulk Insert Logs
       for (const res of results) {
         if (res.status === 'sent') {
@@ -1373,7 +1371,7 @@ async function executeCampaign(campaign_id) {
             INSERT INTO messages (client_id, lead_id, direction, type, content, wa_message_id, status, timestamp)
             VALUES ($1, $2, 'outbound', 'template', $3, $4, 'sent', NOW())
           `, [campaign.client_id, res.lead_id, campaign.template_body, res.wa_message_id]);
-          
+
           sentCount++;
         } else {
           await pool.query(`
@@ -1382,7 +1380,7 @@ async function executeCampaign(campaign_id) {
           `, [campaign_id, res.lead_id, res.error]);
         }
       }
-      
+
       // Respect Meta rate limits between batches
       if (i + BATCH_SIZE < leads.length) {
         await new Promise(res => setTimeout(res, 500));

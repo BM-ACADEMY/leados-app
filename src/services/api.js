@@ -350,6 +350,41 @@ class LeadOSAPI {
       body: JSON.stringify({ message }),
     });
   }
+
+  // ─── CONTENT OS ─────────────────────────
+  async getSocialAccounts() {
+    return this.request('/api/content-os/social-accounts');
+  }
+
+  async getContentQueue(filters = {}) {
+    const query = new URLSearchParams();
+    if (filters.status && filters.status !== 'all') query.append('status', filters.status);
+    if (filters.search) query.append('search', filters.search);
+    if (filters.startDate) query.append('startDate', filters.startDate);
+    if (filters.endDate) query.append('endDate', filters.endDate);
+    
+    return this.request(`/api/content-os/content-queue?${query.toString()}`);
+  }
+
+  async updateContent(id, updates) {
+    return this.request(`/api/content-os/content/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  async approveContent(id) {
+    return this.request(`/api/content-os/content/${id}/approve`, {
+      method: 'POST',
+    });
+  }
+
+  async rejectContent(id, reason) {
+    return this.request(`/api/content-os/content/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
 }
 
 export const api = new LeadOSAPI();

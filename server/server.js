@@ -55,6 +55,7 @@ const knowledgeRoutes = require('./routes/knowledge');
 const uploadRoutes = require('./routes/upload');
 const pipelineRoutes = require('./routes/pipeline');
 const analyzeRoutes = require('./routes/analyze');
+const contentOsRoutes = require('./routes/contentos');
 
 app.use('/api/knowledge', knowledgeRoutes); // We should use auth but let's check auth middleware later
 app.use('/api/upload', uploadRoutes);
@@ -77,6 +78,9 @@ const internalAuth = (req, res, next) => {
   if (req.headers['x-internal-key'] === process.env.INTERNAL_API_KEY) return next();
   return auth(req, res, next);
 };
+
+// ── CONTENT OS ROUTES ─────────────────────────────────────
+app.use('/api/content-os', auth, contentOsRoutes);
 
 // ══════════════════════════════════════════════════════════
 // HEALTH

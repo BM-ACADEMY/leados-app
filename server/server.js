@@ -18,9 +18,104 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
 const app = express();
 const PORT = process.env.PORT || 3500;
+
+app.use(passport.initialize());
+
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID || 'dummy-id',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'dummy-secret',
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3500/api/auth/google/callback',
+    passReqToCallback: true
+  },
+  async function(req, accessToken, refreshToken, profile, done) {
+    try {
+      const clientId = req.query.state;
+      if (!clientId) {
+        return done(new Error('State parameter (client_id) is missing'));
+      }
+      
+      const email = profile.emails && profile.emails[0] ? profile.emails[0].value : null;
+
+      // 1. Log Token Info and Scopes
+      try {
+        const tokenInfoRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?access_token=${accessToken}`);
+        console.log('--- Google OAuth Token Scopes Log ---');
+        console.log('Granted Scopes:', tokenInfoRes.data.scope);
+        console.log('Token Info Data:', tokenInfoRes.data);
+        console.log('-------------------------------------');
+      } catch (tokenErr) {
+        console.error('Failed to get Google token info:', tokenErr.response?.data || tokenErr.message);
+      }
+
+      // 2. Test GMB API Calls (GET Accounts, GET Locations, GET Reviews)
+      console.log('--- Starting GMB API Test Calls ---');
+      try {
+        console.log('GET Accounts: Requesting https://mybusinessbusinessinformation.googleapis.com/v1/accounts...');
+        const accountsRes = await axios.get('https://mybusinessbusinessinformation.googleapis.com/v1/accounts', {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        console.log('GET Accounts Response Status:', accountsRes.status);
+        console.log('GET Accounts Response Data:', JSON.stringify(accountsRes.data, null, 2));
+
+        const accounts = accountsRes.data.accounts || [];
+        if (accounts.length > 0) {
+          const accountName = accounts[0].name; // e.g. "accounts/12345"
+          console.log(`GET Locations: Requesting https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations...`);
+          const locationsRes = await axios.get(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+          console.log('GET Locations Response Status:', locationsRes.status);
+          console.log('GET Locations Response Data:', JSON.stringify(locationsRes.data, null, 2));
+
+          const locations = locationsRes.data.locations || [];
+          if (locations.length > 0) {
+            const locationName = locations[0].name; // e.g. "locations/67890"
+            const locationId = locationName.split('/')[1];
+            console.log(`GET Reviews: Requesting https://mybusiness.googleapis.com/v4/${accountName}/locations/${locationId}/reviews...`);
+            const reviewsRes = await axios.get(`https://mybusiness.googleapis.com/v4/${accountName}/locations/${locationId}/reviews`, {
+              headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            console.log('GET Reviews Response Status:', reviewsRes.status);
+            console.log('GET Reviews Response Data:', JSON.stringify(reviewsRes.data, null, 2));
+          } else {
+            console.log('No locations found for this account.');
+          }
+        } else {
+          console.log('No accounts found.');
+        }
+      } catch (gmbErr) {
+        console.error('GMB API Test call failed:', gmbErr.response?.data || gmbErr.message);
+      }
+      console.log('--- Finished GMB API Test Calls ---');
+
+      const query = `
+        UPDATE clients 
+        SET google_email = $1,
+            access_token = $2,
+            refresh_token = $3,
+            oauth_status = 'Connected',
+            oauth_connected_at = NOW()
+        WHERE id = $4
+        RETURNING *
+      `;
+      const values = [email, accessToken, refreshToken || null, clientId];
+      const { rows } = await pool.query(query, values);
+      
+      if (!rows.length) {
+        return done(new Error(`Client with ID ${clientId} not found`));
+      }
+      
+      return done(null, rows[0]);
+    } catch (err) {
+      return done(err);
+    }
+  }
+));
 
 // ── DB CONNECTION ─────────────────────────────────────────
 console.log('--- DB CONNECTION DEBUG ---');
@@ -51,6 +146,7 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 
 // ── ALLIANCE OS ROUTES ────────────────────────────────────
+const { sendOAuthEmail } = require('./services/email');
 const knowledgeRoutes = require('./routes/knowledge');
 const uploadRoutes = require('./routes/upload');
 const pipelineRoutes = require('./routes/pipeline');
@@ -135,6 +231,37 @@ app.post('/api/auth/change-password', auth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+// GET /api/auth/google — Starts Google OAuth flow
+app.get('/api/auth/google', (req, res, next) => {
+  const { client_id } = req.query;
+  if (!client_id) {
+    return res.status(400).json({ error: 'client_id query parameter is required' });
+  }
+
+  passport.authenticate('google', {
+    scope: ['profile', 'email', 'https://www.googleapis.com/auth/business.manage'],
+    accessType: 'offline',
+    prompt: 'consent',
+    state: client_id,
+    session: false
+  })(req, res, next);
+});
+
+// GET /api/auth/google/callback — Google Callback URL
+app.get('/api/auth/google/callback', (req, res, next) => {
+  passport.authenticate('google', { session: false }, (err, client, info) => {
+    const frontendUrl = process.env.PORTAL_URL || 'http://localhost:5173';
+    if (err) {
+      console.error('Google OAuth Callback Error:', err);
+      return res.redirect(`${frontendUrl}/gmb/add-client?oauth=error&message=${encodeURIComponent(err.message)}`);
+    }
+    if (!client) {
+      return res.redirect(`${frontendUrl}/gmb/add-client?oauth=failed`);
+    }
+    return res.redirect(`${frontendUrl}/gmb/add-client?oauth=success&client_name=${encodeURIComponent(client.name)}`);
+  })(req, res, next);
 });
 
 // ══════════════════════════════════════════════════════════
@@ -586,6 +713,103 @@ app.post('/api/payments/create-link', auth, async (req, res) => {
   }
 });
 
+app.post('/api/payments/create-client-link', auth, async (req, res) => {
+  try {
+    const { client_id, amount, description } = req.body;
+    const clientRes = await pool.query('SELECT * FROM clients WHERE id = $1', [client_id]);
+    if (!clientRes.rows.length) return res.status(404).json({ error: 'Client not found' });
+    const client = clientRes.rows[0];
+
+    // Sanitize phone number to a valid 10-digit number for Razorpay
+    const cleanPhone = (client.phone || '').replace(/[^0-9]/g, '');
+    const finalPhone = cleanPhone.length >= 10 ? cleanPhone.slice(-10) : '9999999999';
+
+    const rzpRes = await axios.post(
+      'https://api.razorpay.com/v1/payment_links',
+      {
+        amount: Math.round(parseFloat(amount) * 100),
+        currency: 'INR',
+        description: description || `Payment for plan ${client.plan} of ${client.name}`,
+        customer: {
+          name: client.contact_person || client.name,
+          contact: finalPhone,
+          email: client.google_email || client.wa_email || 'client@example.com',
+        },
+        notes: { client_id: client_id.toString() },
+        callback_url: `${process.env.PORTAL_URL || 'http://localhost:5173'}/gmb/add-client?payment=success&client_name=${encodeURIComponent(client.name)}`,
+        callback_method: 'get',
+      },
+      {
+        auth: { username: process.env.RAZORPAY_KEY_ID, password: process.env.RAZORPAY_SECRET }
+      }
+    );
+
+    res.json({ payment_link: rzpRes.data.short_url, link_id: rzpRes.data.id });
+  } catch (err) {
+    const errorDetails = err.response?.data?.error?.description || err.response?.data?.error || err.message;
+    console.error('Client payment link error:', errorDetails);
+    res.status(500).json({ error: `Razorpay: ${errorDetails}` });
+  }
+});
+
+app.get('/api/payments/check-link/:link_id', auth, async (req, res) => {
+  try {
+    const { link_id } = req.params;
+    const rzpRes = await axios.get(
+      `https://api.razorpay.com/v1/payment_links/${link_id}`,
+      {
+        auth: { username: process.env.RAZORPAY_KEY_ID, password: process.env.RAZORPAY_SECRET }
+      }
+    );
+    res.json({ status: rzpRes.data.status, payment_link: rzpRes.data });
+  } catch (err) {
+    console.error('Check payment link error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to verify payment status' });
+  }
+});
+
+app.post('/api/payments/create-client-order', auth, async (req, res) => {
+  try {
+    const { client_id, amount } = req.body;
+    const clientRes = await pool.query('SELECT * FROM clients WHERE id = $1', [client_id]);
+    if (!clientRes.rows.length) return res.status(404).json({ error: 'Client not found' });
+    const client = clientRes.rows[0];
+
+    // Sanitize phone number to a valid 10-digit number for Razorpay prefill
+    const cleanPhone = (client.phone || '').replace(/[^0-9]/g, '');
+    const finalPhone = cleanPhone.length >= 10 ? cleanPhone.slice(-10) : '9999999999';
+
+    const rzpRes = await axios.post(
+      'https://api.razorpay.com/v1/orders',
+      {
+        amount: Math.round(parseFloat(amount) * 100),
+        currency: 'INR',
+        receipt: `receipt_client_${client_id}`,
+        notes: { client_id: client_id.toString() }
+      },
+      {
+        auth: { username: process.env.RAZORPAY_KEY_ID, password: process.env.RAZORPAY_SECRET }
+      }
+    );
+
+    res.json({
+      order_id: rzpRes.data.id,
+      amount: rzpRes.data.amount,
+      key: process.env.RAZORPAY_KEY_ID,
+      client: {
+        name: client.name,
+        contact_person: client.contact_person || client.name,
+        phone: finalPhone,
+        email: client.google_email || client.wa_email || 'client@example.com'
+      }
+    });
+  } catch (err) {
+    const errorDetails = err.response?.data?.error?.description || err.response?.data?.error || err.message;
+    console.error('Client order error:', errorDetails);
+    res.status(500).json({ error: `Razorpay Order Error: ${errorDetails}` });
+  }
+});
+
 app.get('/api/payments', auth, async (req, res) => {
   try {
     const { lead_id } = req.query;
@@ -859,23 +1083,149 @@ app.get('/api/clients', auth, async (req, res) => {
   }
 });
 
+// GET /api/clients/:id/reviews
+app.get('/api/clients/:id/reviews', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query('SELECT * FROM clients WHERE id = $1', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Client not found' });
+    const client = rows[0];
+
+    // If GMB OAuth is connected, attempt to fetch real reviews from Google API
+    if (client.oauth_status === 'Connected' && client.access_token) {
+      try {
+        let token = client.access_token;
+        
+        // Fetch accounts
+        let accountsRes;
+        try {
+          accountsRes = await axios.get('https://mybusinessbusinessinformation.googleapis.com/v1/accounts', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+        } catch (err) {
+          if (err.response?.status === 401 && client.refresh_token) {
+            // Refresh token
+            const refreshRes = await axios.post('https://oauth2.googleapis.com/token', {
+              client_id: process.env.GOOGLE_CLIENT_ID || 'dummy-id',
+              client_secret: process.env.GOOGLE_CLIENT_SECRET || 'dummy-secret',
+              refresh_token: client.refresh_token,
+              grant_type: 'refresh_token'
+            });
+            token = refreshRes.data.access_token;
+            // Update token in DB
+            await pool.query('UPDATE clients SET access_token = $1 WHERE id = $2', [token, id]);
+            // Retry
+            accountsRes = await axios.get('https://mybusinessbusinessinformation.googleapis.com/v1/accounts', {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+          } else {
+            throw err;
+          }
+        }
+
+        const accounts = accountsRes.data.accounts || [];
+        if (accounts.length > 0) {
+          const accountName = accounts[0].name; // e.g. "accounts/12345"
+          // List Locations
+          const locationsRes = await axios.get(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountName}/locations`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const locations = locationsRes.data.locations || [];
+          if (locations.length > 0) {
+            const locationName = locations[0].name; // e.g. "locations/67890"
+            // List Reviews (using accounts/{accountId}/locations/{locationId}/reviews)
+            const reviewsRes = await axios.get(`https://mybusiness.googleapis.com/v4/${accountName}/${locationName}/reviews`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            
+            // Format Google reviews to match our frontend schema
+            const googleReviews = (reviewsRes.data.reviews || []).map((r, idx) => {
+              const rating = r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1;
+              return {
+                id: idx + 1,
+                author: r.reviewer?.displayName || 'Google Reviewer',
+                time: r.createTime ? new Date(r.createTime).toLocaleDateString() : 'Recently',
+                source: 'Google',
+                business: client.name,
+                rating,
+                text: r.comment || 'No comment left.',
+                draftReply: r.reviewReply?.comment 
+                  ? `Reply posted: "${r.reviewReply.comment}"` 
+                  : `Draft reply: "Dear ${r.reviewer?.displayName || 'Customer'}, thank you for sharing your experience. We appreciate your feedback. — Team ${client.name}"`,
+                badge: rating === 1 ? 'Betrayal - URGENT' : 'Loyalty Confirmed',
+                badgeColor: rating === 1 ? '#ef4444' : '#10b981',
+                hasEscalate: rating === 1
+              };
+            });
+            return res.json({ reviews: googleReviews });
+          }
+        }
+      } catch (googleErr) {
+        console.error('Failed to fetch from Google API, falling back to mock:', googleErr.response?.data || googleErr.message);
+      }
+    }
+
+    // Fallback: Return empty array if not connected or Google API fails
+    const reviewsList = [];
+    res.json({ reviews: reviewsList });
+  } catch (err) {
+    console.error('Get reviews error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.post('/api/clients', auth, async (req, res) => {
   try {
-    const { name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website } = req.body;
+    const { 
+      name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, 
+      wa_category, wa_description, wa_address, wa_email, wa_website,
+      city, phone, contact_person, agreed_price, start_date, gmb_url, google_email, oauth_status, connectedDate
+    } = req.body;
+
     const { rows } = await pool.query(`
-      INSERT INTO clients (name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active', NOW())
+      INSERT INTO clients (
+        name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, 
+        wa_category, wa_description, wa_address, wa_email, wa_website, status,
+        city, phone, contact_person, agreed_price, start_date, gmb_url, google_email, oauth_status, oauth_connected_at, created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active', $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())
       RETURNING *
-    `, [name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website]);
-    res.status(201).json({ client: rows[0] });
+    `, [
+      name, type, plan, phone_number_id || null, wa_access_token || null, wa_business_id || null, whatsapp_number || null, 
+      wa_category || null, wa_description || null, wa_address || null, wa_email || null, wa_website || null,
+      city || null, phone || null, contact_person || null, parseFloat(agreed_price) || 0, start_date || null, gmb_url || null,
+      google_email || null, oauth_status || 'Not Connected', connectedDate || null
+    ]);
+
+    const client = rows[0];
+
+    // Automatically send GMB OAuth connection email if google_email is provided
+    if (google_email) {
+      try {
+        await sendOAuthEmail(name, google_email, client.id);
+      } catch (emailErr) {
+        console.error('Error sending GMB OAuth email during onboarding:', emailErr.message);
+      }
+    }
+
+    res.status(201).json({ client });
   } catch (err) {
+    console.error('Create client error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 app.patch('/api/clients/:id', auth, async (req, res) => {
   try {
-    const { phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status } = req.body;
+    const { 
+      phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status,
+      city, phone, contact_person, agreed_price, start_date, gmb_url, google_email, oauth_status, oauth_connected_at
+    } = req.body;
+
+    const existingRes = await pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+    if (!existingRes.rows.length) return res.status(404).json({ error: 'Client not found' });
+    const existingClient = existingRes.rows[0];
+
     await pool.query(`
       UPDATE clients SET
         phone_number_id = COALESCE($1, phone_number_id),
@@ -888,11 +1238,61 @@ app.patch('/api/clients/:id', auth, async (req, res) => {
         wa_email = COALESCE($8, wa_email),
         wa_website = COALESCE($9, wa_website),
         status = COALESCE($10, status),
+        city = COALESCE($11, city),
+        phone = COALESCE($12, phone),
+        contact_person = COALESCE($13, contact_person),
+        agreed_price = COALESCE($14, agreed_price),
+        start_date = COALESCE($15, start_date),
+        gmb_url = COALESCE($16, gmb_url),
+        google_email = COALESCE($17, google_email),
+        oauth_status = COALESCE($18, oauth_status),
+        oauth_connected_at = COALESCE($19, oauth_connected_at),
         updated_at = NOW()
-      WHERE id = $11
-    `, [phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status, req.params.id]);
+      WHERE id = $20
+    `, [
+      phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status,
+      city, phone, contact_person, agreed_price !== undefined ? parseFloat(agreed_price) : undefined, start_date, gmb_url, google_email, oauth_status, oauth_connected_at,
+      req.params.id
+    ]);
+
+    // Send OAuth connection email if a new/different google_email is saved
+    if (google_email && google_email !== existingClient.google_email) {
+      try {
+        await sendOAuthEmail(existingClient.name, google_email, existingClient.id);
+        console.log(`Sent GMB OAuth email to ${google_email} for client ${existingClient.name}`);
+      } catch (emailErr) {
+        console.error('Error sending GMB OAuth email during client update:', emailErr.message);
+      }
+    }
+
     res.json({ success: true });
   } catch (err) {
+    console.error('Update client error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/clients/:id/disconnect — Disconnect Google Business Profile OAuth
+app.post('/api/clients/:id/disconnect', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query('SELECT * FROM clients WHERE id = $1', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Client not found' });
+
+    await pool.query(`
+      UPDATE clients 
+      SET google_email = NULL,
+          access_token = NULL,
+          refresh_token = NULL,
+          oauth_status = 'Not Connected',
+          oauth_connected_at = NULL,
+          updated_at = NOW()
+      WHERE id = $1
+    `, [id]);
+
+    res.json({ success: true, message: 'Google Business Profile connection disconnected' });
+  } catch (err) {
+    console.error('Disconnect client error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -1626,3 +2026,4 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+// Force nodemon restart to load new Gmail SMTP environment variables from .env

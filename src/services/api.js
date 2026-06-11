@@ -205,6 +205,10 @@ class LeadOSAPI {
     return this.request(`/api/clients/${id}`);
   }
 
+  async getClientReviews(id) {
+    return this.request(`/api/clients/${id}/reviews`);
+  }
+
   async updateClient(id, clientData) {
     return this.request(`/api/clients/${id}`, {
       method: 'PATCH',
@@ -220,6 +224,12 @@ class LeadOSAPI {
 
   async setupClientWhatsApp(id) {
     return this.request(`/api/clients/${id}/whatsapp-setup`, {
+      method: 'POST'
+    });
+  }
+
+  async disconnectClientGmb(id) {
+    return this.request(`/api/clients/${id}/disconnect`, {
       method: 'POST'
     });
   }
@@ -256,6 +266,24 @@ class LeadOSAPI {
     return this.request('/api/payments/create-link', {
       method: 'POST',
       body: JSON.stringify({ lead_id: leadId, amount, description }),
+    });
+  }
+
+  async createClientPaymentLink(clientId, amount, description) {
+    return this.request('/api/payments/create-client-link', {
+      method: 'POST',
+      body: JSON.stringify({ client_id: clientId, amount, description }),
+    });
+  }
+
+  async checkPaymentLinkStatus(linkId) {
+    return this.request(`/api/payments/check-link/${linkId}`);
+  }
+
+  async createClientOrder(clientId, amount) {
+    return this.request('/api/payments/create-client-order', {
+      method: 'POST',
+      body: JSON.stringify({ client_id: clientId, amount }),
     });
   }
 

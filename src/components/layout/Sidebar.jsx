@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, Users, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen } from 'lucide-react';
+import { Home, Users, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, Plus, Globe, Star } from 'lucide-react';
 import { C } from '../../constants/theme.js';
 
 const NAV = [
@@ -17,6 +17,7 @@ const NAV = [
 export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }) => {
   const [isExpanded, setIsExpanded] = useState(window.innerWidth > 768);
   const [allianceOpen, setAllianceOpen] = useState(false);
+  const [gmbOpen, setGmbOpen] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -168,6 +169,55 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                   <Sparkles size={14} style={{ marginRight: 8 }} /> Prompt Manager
                 </NavLink>
 
+              </div>
+            )}
+          </div>
+
+          {/* GMB Mafiya Parent Link with Nested Children */}
+          <div style={{ width: '100%', marginTop: 8 }}>
+            <button
+              onClick={() => {
+                setGmbOpen(!gmbOpen);
+                if (!isExpanded) setIsExpanded(true); // Auto-expand sidebar if collapsed
+              }}
+              title={!isExpanded ? "GMB Mafiya" : undefined}
+              style={{
+                width: '100%',
+                height: 42,
+                borderRadius: 9,
+                border: 'none',
+                background: gmbOpen ? C.accent + '11' : 'transparent',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: isExpanded ? 'space-between' : 'center',
+                padding: isExpanded ? '0 12px' : '0',
+                cursor: 'pointer',
+                color: gmbOpen ? C.accent : C.muted,
+                transition: 'background 0.15s',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <Globe size={17} color={gmbOpen ? C.accent : C.muted} />
+                {isExpanded && <span style={{ marginLeft: 12, fontSize: 13, fontWeight: gmbOpen ? 600 : 500 }}>GMB Mafiya</span>}
+              </div>
+              {isExpanded && (
+                gmbOpen ? <ChevronUp size={14} color={C.muted} /> : <ChevronDown size={14} color={C.muted} />
+              )}
+            </button>
+
+            {/* Child Links */}
+            {isExpanded && gmbOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 24, marginTop: 4, position: 'relative' }}>
+                {/* Left indicator line */}
+                <div style={{ position: 'absolute', left: 20, top: 4, bottom: 10, width: 1, background: C.border }} />
+                
+                <NavLink to="/gmb/add-client" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Plus size={14} style={{ marginRight: 8 }} /> Add client
+                </NavLink>
+
+                <NavLink to="/gmb/loyalty" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Star size={14} style={{ marginRight: 8 }} /> Loyalty
+                </NavLink>
               </div>
             )}
           </div>

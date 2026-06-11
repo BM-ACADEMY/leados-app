@@ -18,7 +18,7 @@ export const C = {
 export const STYLE = [
   "@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap');",
   "*, *::before, *::after { box-sizing: border-box; margin:0; padding:0; }",
-  "body { font-family:'DM Sans',sans-serif; background:#060c17; color:#e2e8f0; }",
+  "html, body { font-family:'DM Sans',sans-serif; background:#060c17 !important; color:#e2e8f0; color-scheme: dark !important; }",
   "::-webkit-scrollbar{width:4px;height:4px}",
   "::-webkit-scrollbar-track{background:#0b1322}",
   "::-webkit-scrollbar-thumb{background:#1e3050;border-radius:4px}",
@@ -43,5 +43,8 @@ export const STYLE = [
   "  .flex-col-mobile { flex-direction: column !important; align-items: stretch !important; }",
   "  .flex-col-mobile > * { min-width: 0; }",
   "  .w-full-mobile { width: 100% !important; }",
-  "}"
+  "}",
+  "/* Intercept layout rendering frame from white-flashing completely */",
+  "iframe.razorpay-checkout-frame, .razorpay-checkout-frame, iframe[src*='razorpay'] { background: transparent !important; background-color: transparent !important; color-scheme: light !important; }",
+  ".razorpay-container { background: rgba(6, 12, 23, 0.1) !important; color-scheme: light !important; }"
 ].join("\n");

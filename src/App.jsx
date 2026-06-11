@@ -22,6 +22,8 @@ import { Pipeline } from './views/Pipeline.jsx';
 import { LeadProfile } from './views/LeadProfile.jsx';
 import { KnowledgeBase } from './views/KnowledgeBase.jsx';
 import { PromptManager } from './views/PromptManager.jsx';
+import { GmbAddClient } from './views/GmbAddClient.jsx';
+import { GmbLoyalty } from './views/GmbLoyalty.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -95,7 +97,7 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
     <>
       <style>{STYLE}</style>
       <Toaster position="top-right" toastOptions={{ style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' } }} />
-      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#060c17' }}>
         <Sidebar onLogout={logout} mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', width: '100%' }}>
           <Header user={user} onMenuClick={() => setMobileMenuOpen(true)} />
@@ -119,6 +121,8 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
               <Route path="/lead-profile" element={<LeadProfile />} />
               <Route path="/knowledge-base" element={<KnowledgeBase />} />
               <Route path="/prompt-manager" element={<PromptManager />} />
+              <Route path="/gmb/add-client" element={<GmbAddClient />} />
+              <Route path="/gmb/loyalty" element={<GmbLoyalty />} />
 
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>

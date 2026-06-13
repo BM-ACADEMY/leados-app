@@ -11,7 +11,7 @@ const pool = new Pool({
 });
 
 async function run() {
-  const { rows } = await pool.query('SELECT id, name, google_email, oauth_status, access_token, refresh_token FROM clients WHERE id = 52');
+  const { rows } = await pool.query('SELECT id, name, google_email, oauth_status, access_token, refresh_token FROM clients WHERE id = 53');
   if (rows.length === 0) {
     console.log('Client 52 not found');
     await pool.end();

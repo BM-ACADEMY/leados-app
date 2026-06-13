@@ -1,8 +1,12 @@
 // backend/services/openai.js
 const Groq = require('groq-sdk');
+const OpenAI = require('openai');
 const axios = require('axios');
 const db = require('../db/connection');
-const groq = new Groq({ apiKey: process.env.OPENAI_API_KEY || 'dummy_key' });
+
+const apiKey = process.env.OPENAI_API_KEY || 'dummy_key';
+const groq = new Groq({ apiKey });
+const openai = new OpenAI({ apiKey });
 
 // WEBSITE SCRAPER
 async function scrapeWebsite(url) {
@@ -262,4 +266,56 @@ Company: {{org_name}}. District: {{district}}.
 Website: {{website_text}}. Context: {{kb_context}}`;
 }
 
-module.exports = { analyzeOrganisation, analyzeBatch, getKBContext };
+async function suggestKeywords(clientName, clientType, clientCity) {
+  try {
+    const prompt = `Suggest exactly 4 highly relevant local SEO Google Maps search keywords for a business named "${clientName}" of type/category "${clientType || 'business'}" located in the city "${clientCity || 'Tamil Nadu'}".
+For each keyword, also suggest a realistic monthly search volume (e.g., "~200/mo").
+Return the result in JSON format only, structured as:
+{
+  "suggestions": [
+    { "text": "keyword 1", "searchVolume": "200/mo" },
+    { "text": "keyword 2", "searchVolume": "90/mo" }
+  ]
+}`;
+
+    let raw;
+    if (apiKey.startsWith('sk-')) {
+      console.log('Using OpenAI (gpt-4o-mini) to suggest keywords...');
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        max_tokens: 300,
+        temperature: 0.7,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: prompt }]
+      });
+      raw = response.choices[0].message.content.trim();
+    } else {
+      console.log('Using Groq (llama-3.3-70b-versatile) to suggest keywords...');
+      const response = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 300,
+        temperature: 0.7,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: prompt }]
+      });
+      raw = response.choices[0].message.content.trim();
+    }
+
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('Error suggesting GMB keywords:', err.message);
+    const city = clientCity || 'Pondicherry';
+    const type = clientType || 'Digital Marketing';
+    return {
+      suggestions: [
+        { text: `${type} course ${city}`, searchVolume: '250/mo' },
+        { text: `best ${type.toLowerCase()} training in ${city}`, searchVolume: '120/mo' },
+        { text: `${type} services near me`, searchVolume: '180/mo' },
+        { text: `${type} agency ${city}`, searchVolume: '90/mo' }
+      ]
+    };
+  }
+}
+
+module.exports = { analyzeOrganisation, analyzeBatch, getKBContext, suggestKeywords };
+

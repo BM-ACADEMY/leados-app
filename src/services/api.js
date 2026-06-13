@@ -209,6 +209,10 @@ class LeadOSAPI {
     return this.request(`/api/clients/${id}/reviews`);
   }
 
+  async getGmbProfile(id) {
+    return this.request(`/api/clients/${id}/gmb-profile`);
+  }
+
   async updateClient(id, clientData) {
     return this.request(`/api/clients/${id}`, {
       method: 'PATCH',
@@ -386,10 +390,39 @@ class LeadOSAPI {
   async deletePrompt(id) {
     return this.request(`/api/prompts/${id}`, {
       method: 'DELETE',
-      // No body needed for DELETE
-      // Default method is GET so we must set DELETE method:
+    });
+  }
+
+  // ─── GMB KEYWORD RANKINGS (TURF CONTROL) ──
+  async getGmbKeywords(clientId) {
+    return this.request(`/api/gmb/keywords?client_id=${clientId}`);
+  }
+
+  async addGmbKeyword(clientId, keyword, initialRank, packStatus) {
+    return this.request('/api/gmb/keywords', {
+      method: 'POST',
+      body: JSON.stringify({ client_id: clientId, keyword, initial_rank: initialRank, pack_status: packStatus }),
+    });
+  }
+
+  async checkGmbKeyword(id) {
+    return this.request(`/api/gmb/keywords/${id}/check`, {
+      method: 'POST',
+    });
+  }
+
+  async deleteGmbKeyword(id) {
+    return this.request(`/api/gmb/keywords/${id}`, {
       method: 'DELETE',
     });
+  }
+
+  async getGmbKeywordSuggestions(clientId) {
+    return this.request(`/api/gmb/keywords/suggest?client_id=${clientId}`);
+  }
+
+  async getGmbPageSpeed(clientId) {
+    return this.request(`/api/gmb/pagespeed?client_id=${clientId}`);
   }
 }
 

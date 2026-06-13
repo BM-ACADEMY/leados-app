@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Star, MessageSquare, AlertTriangle, ArrowUpRight, Check, Edit3, ShieldAlert, ChevronDown } from 'lucide-react';
+import { Star, MessageSquare, AlertTriangle, ArrowUpRight, Check, Edit3, ShieldAlert, ChevronDown, Building } from 'lucide-react';
 import { api } from '../services/api.js';
 import { C } from '../constants/theme.js';
 import toast from 'react-hot-toast';
@@ -10,6 +10,10 @@ export const GmbLoyalty = () => {
   const [loading, setLoading] = useState(true);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
+
+  const [reviews, setReviews] = useState([]);
+  const [profile, setProfile] = useState(null);
+  
   const fetchReviewsForClient = async (client) => {
     if (!client) return;
     try {
@@ -21,14 +25,22 @@ export const GmbLoyalty = () => {
     }
   };
 
-  const [reviews, setReviews] = useState([]);
+  const fetchProfileForClient = async (client) => {
+    if (!client) return;
+    try {
+      const res = await api.getGmbProfile(client.id);
+      setProfile(res);
+    } catch (err) {
+      console.error('Error fetching GMB profile:', err);
+      setProfile(null);
+    }
+  };
   
   // Dynamic stats calculation based on the selected client
-  const totalReviewsVal = selectedClient ? ((selectedClient.id * 37) % 150 + 45) : 0;
+  const totalReviewsVal = profile ? profile.reviewsCount : (selectedClient ? ((selectedClient.id * 37) % 150 + 45) : 0);
   const pendingReplyVal = reviews.filter(r => r.rating === 1).length + (selectedClient ? (selectedClient.id % 3) : 0);
   const betrayalsVal = reviews.filter(r => r.rating === 1).length;
-  const totalRatingSum = reviews.reduce((sum, r) => sum + r.rating, 0);
-  const avgRatingVal = reviews.length > 0 ? (totalRatingSum / reviews.length).toFixed(1) : '5.0';
+  const avgRatingVal = profile ? profile.rating.toFixed(1) : (reviews.length > 0 ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1) : '5.0');
 
   useEffect(() => {
     const fetchGmbClients = async () => {
@@ -40,7 +52,10 @@ export const GmbLoyalty = () => {
         
         if (gmbClients.length > 0) {
           setSelectedClient(gmbClients[0]);
-          await fetchReviewsForClient(gmbClients[0]);
+          await Promise.all([
+            fetchReviewsForClient(gmbClients[0]),
+            fetchProfileForClient(gmbClients[0])
+          ]);
         }
       } catch (err) {
         console.error('Error fetching clients for Loyalty:', err);
@@ -55,7 +70,10 @@ export const GmbLoyalty = () => {
   const handleSelectClient = async (client) => {
     setSelectedClient(client);
     setDropdownOpen(false);
-    await fetchReviewsForClient(client);
+    await Promise.all([
+      fetchReviewsForClient(client),
+      fetchProfileForClient(client)
+    ]);
   };
 
   const handlePostReply = (id) => {
@@ -158,6 +176,56 @@ export const GmbLoyalty = () => {
         </div>
       ) : (
         <>
+          {/* GMB Connected Client Profile Card */}
+          {profile && (
+            <div style={{ 
+              background: '#0c1525', 
+              border: `1px solid #1a2e4a`, 
+              borderRadius: 12, 
+              padding: '16px 20px', 
+              marginBottom: 20, 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
+            }} className="flex-responsive gap-mobile">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div style={{ width: 40, height: 40, borderRadius: 8, background: 'rgba(249, 115, 22, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f97316' }}>
+                  <Building size={20} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: 'white', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {profile.name}
+                    {profile.isMock && (
+                      <span style={{ fontSize: 9, background: '#1e293b', color: '#94a3b8', padding: '2px 6px', borderRadius: 4, fontWeight: 500 }}>
+                        DEMO PROFILE
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 3 }}>
+                    📍 {profile.address} • 📞 {profile.phone} • 🏷️ {profile.category}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'center' }} className="flex-col-mobile">
+                <div style={{ textAlign: 'right' }} className="hide-mobile">
+                  <div style={{ fontSize: 10, color: '#475569', textTransform: 'uppercase', fontWeight: 700 }}>Google Email</div>
+                  <div style={{ fontSize: 13, color: '#e2e8f0', marginTop: 2 }}>{profile.googleEmail}</div>
+                </div>
+                <span style={{ 
+                  background: profile.oauthStatus === 'Connected' ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 255, 255, 0.05)', 
+                  color: profile.oauthStatus === 'Connected' ? '#4CAF50' : 'rgba(255,255,255,0.5)', 
+                  padding: '4px 10px', 
+                  borderRadius: 12, 
+                  fontSize: 11, 
+                  fontWeight: 700 
+                }}>
+                  {profile.oauthStatus}
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Stats Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 }}>
             {/* Avg Rating */}

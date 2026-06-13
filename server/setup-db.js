@@ -1,7 +1,7 @@
 /**
  * LeadOS — Database Setup
  * Run once: node setup-db.js
- * Creates 9 tables + seeds 7 ABM brands + 1 admin user
+ * Creates 11 tables + seeds 7 ABM brands + 1 admin user
  */
 
 const { Pool } = require('pg');
@@ -194,7 +194,37 @@ async function setup() {
       UNIQUE(client_id, doc_type)
     )
   `);
-  console.log('✅ Table 9/9: brain_docs\n');
+  console.log('✅ Table 9/11: brain_docs');
+
+  // ── 10. GMB KEYWORDS ───────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gmb_keywords (
+      id SERIAL PRIMARY KEY,
+      client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      keyword VARCHAR(255) NOT NULL,
+      rank INTEGER,
+      previous_rank INTEGER,
+      pack_status VARCHAR(20) DEFAULT 'Not in Pack' CHECK (pack_status IN ('In Pack', 'Near Pack', 'Not in Pack')),
+      checked_at TIMESTAMP DEFAULT NOW(),
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_gmb_keywords_client ON gmb_keywords(client_id)');
+  console.log('✅ Table 10/11: gmb_keywords');
+
+  // ── 11. GMB KEYWORD HISTORY ───────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gmb_keyword_history (
+      id SERIAL PRIMARY KEY,
+      keyword_id INTEGER NOT NULL REFERENCES gmb_keywords(id) ON DELETE CASCADE,
+      rank INTEGER,
+      checked_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_gmb_keyword_history_keyword ON gmb_keyword_history(keyword_id)');
+  console.log('✅ Table 11/11: gmb_keyword_history\n');
+
 
   // ══════════════════════════════════════════════════════
   // SEED: 7 ABM BRANDS (clients)
@@ -322,7 +352,7 @@ async function setup() {
   console.log(`  Leads:     ${counts[2].rows[0].count}`);
   console.log(`  Templates: ${counts[3].rows[0].count}`);
   console.log('─────────────────────────────');
-  console.log('  9 tables created ✓');
+  console.log('  11 tables created ✓');
   console.log('  7 brands seeded ✓');
   console.log('  1 admin user created ✓');
   console.log('\nLogin: kamar@abmgroups.org / Admin@1234');

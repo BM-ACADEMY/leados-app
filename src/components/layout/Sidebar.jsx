@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, Users, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, Plus, Globe, Star } from 'lucide-react';
+import { Home, Users, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, Plus, Globe, Star, Target } from 'lucide-react';
 import { C } from '../../constants/theme.js';
 
 const NAV = [
@@ -211,12 +211,16 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                 {/* Left indicator line */}
                 <div style={{ position: 'absolute', left: 20, top: 4, bottom: 10, width: 1, background: C.border }} />
                 
-                <NavLink to="/gmb/add-client" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                 <NavLink to="/gmb/add-client" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
                   <Plus size={14} style={{ marginRight: 8 }} /> Add client
                 </NavLink>
 
                 <NavLink to="/gmb/loyalty" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
                   <Star size={14} style={{ marginRight: 8 }} /> Loyalty
+                </NavLink>
+
+                <NavLink to="/gmb/rankings" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Target size={14} style={{ marginRight: 8 }} /> Turf Control
                 </NavLink>
               </div>
             )}

@@ -9,3 +9,5 @@ export { ReportsView } from './ReportsView.jsx';
 export { ClientsView } from './ClientsView.jsx';
 export { SettingsView } from './SettingsView.jsx';
 export { GmbAddClient } from './GmbAddClient.jsx';
+export { GmbLoyalty } from './GmbLoyalty.jsx';
+export { GmbRankings } from './GmbRankings.jsx';

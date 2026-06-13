@@ -24,6 +24,7 @@ import { KnowledgeBase } from './views/KnowledgeBase.jsx';
 import { PromptManager } from './views/PromptManager.jsx';
 import { GmbAddClient } from './views/GmbAddClient.jsx';
 import { GmbLoyalty } from './views/GmbLoyalty.jsx';
+import { GmbRankings } from './views/GmbRankings.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -123,6 +124,7 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
               <Route path="/prompt-manager" element={<PromptManager />} />
               <Route path="/gmb/add-client" element={<GmbAddClient />} />
               <Route path="/gmb/loyalty" element={<GmbLoyalty />} />
+              <Route path="/gmb/rankings" element={<GmbRankings />} />
 
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
@@ -145,7 +147,19 @@ export default function App() {
   const [selectedLead, setSelectedLead] = useState(null);
   const [leadRefresh, setLeadRefresh] = useState(0);
 
+  const isPublicPath = window.location.pathname === '/gmb/add-client';
+
   if (!user) {
+    if (isPublicPath) {
+      return (
+        <BrowserRouter>
+          <Routes>
+            <Route path="/gmb/add-client" element={<GmbAddClient isPublic={true} />} />
+            <Route path="*" element={<Navigate to="/gmb/add-client" replace />} />
+          </Routes>
+        </BrowserRouter>
+      );
+    }
     return <LoginPage login={login} authLoading={authLoading} authError={authError} />;
   }
 

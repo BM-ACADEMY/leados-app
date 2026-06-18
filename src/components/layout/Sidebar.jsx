@@ -1,23 +1,27 @@
 import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, Users, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, CheckSquare, MonitorPlay } from 'lucide-react';
+import { Home, Users, LineChart, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, CheckSquare, MonitorPlay, Search, Activity, FileSearch, ShieldAlert, FileOutput, MapPin, Share2, Eye, FileJson, GitPullRequest, Link as LinkIcon, Target } from 'lucide-react';
 import { C } from '../../constants/theme.js';
+import { useClient } from '../../contexts/ClientContext.jsx';
 
 const NAV = [
-  { path: '/dashboard', Icon: Home,      label: 'Dashboard' },
-  { path: '/leads',     Icon: Users,     label: 'Leads' },
-  { path: '/inbox',     Icon: Inbox,     label: 'Inbox', showBadge: true },
-  { path: '/campaigns', Icon: Zap,       label: 'Campaigns' },
-  { path: '/templates', Icon: FileText,  label: 'Templates' },
-  { path: '/brain',     Icon: Brain,     label: 'AI Brain' },
-  { path: '/reports',   Icon: BarChart2, label: 'Reports' },
-  { path: '/clients',   Icon: Building2, label: 'Clients' },
+  { path: '/dashboard', Icon: Home, label: 'Dashboard' },
+  { path: '/leads', Icon: Users, label: 'Leads' },
+  { path: '/inbox', Icon: Inbox, label: 'Inbox', showBadge: true },
+  { path: '/campaigns', Icon: Zap, label: 'Campaigns' },
+  { path: '/templates', Icon: FileText, label: 'Templates' },
+  { path: '/brain', Icon: Brain, label: 'AI Brain' },
+  { path: '/reports', Icon: BarChart2, label: 'Reports' },
+  { path: '/clients', Icon: Building2, label: 'Clients' },
 ];
 
 export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }) => {
   const [isExpanded, setIsExpanded] = useState(window.innerWidth > 768);
   const [allianceOpen, setAllianceOpen] = useState(false);
   const [contentOsOpen, setContentOsOpen] = useState(false);
+  const [thedalOsOpen, setThedalOsOpen] = useState(false);
+  
+  const { clients, plans, activeClient, setActiveClient } = useClient();
 
   useEffect(() => {
     const handleResize = () => {
@@ -35,20 +39,48 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
     }
   };
 
+  const isFeatureEnabled = (featureName) => {
+    if (!activeClient) return true; // Enable all if no client selected
+    
+    const plan = plans.find(p => p.name === activeClient.plan);
+    if (!plan || !plan.features) return false;
+    
+    return plan.features.some(f => f.feature_name === featureName);
+  };
+
+  const getLinkStyle = (isActive, featureName = null) => {
+    const enabled = featureName ? isFeatureEnabled(featureName) : true;
+    return {
+      width: '100%',
+      height: 36,
+      borderRadius: 6,
+      display: 'flex',
+      alignItems: 'center',
+      padding: '0 10px',
+      fontSize: 13,
+      color: isActive ? C.accent : C.muted,
+      background: isActive ? C.accent + '11' : 'transparent',
+      textDecoration: 'none',
+      fontWeight: 500,
+      opacity: enabled ? 1 : 0.3,
+      pointerEvents: enabled ? 'auto' : 'none'
+    };
+  };
+
   return (
     <>
       {mobileOpen && (
-        <div 
-          className="mobile-overlay show-mobile" 
-          onClick={() => setMobileOpen(false)} 
-          style={{ display: 'none' }} 
+        <div
+          className="mobile-overlay show-mobile"
+          onClick={() => setMobileOpen(false)}
+          style={{ display: 'none' }}
         />
       )}
-      <div 
-        className={`mobile-sidebar ${!mobileOpen ? 'closed' : ''}`} 
+      <div
+        className={`mobile-sidebar ${!mobileOpen ? 'closed' : ''}`}
         style={{ width: isExpanded ? 240 : 62, transition: 'width 0.2s, transform 0.3s', background: C.surface, borderRight: '1px solid ' + C.border, display: 'flex', flexDirection: 'column', alignItems: isExpanded ? 'flex-start' : 'center', padding: '14px 0', height: '100vh', flexShrink: 0, overflowY: 'auto', overflowX: 'hidden' }}
       >
-        
+
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: isExpanded ? 'space-between' : 'center', width: '100%', padding: isExpanded ? '0 18px' : '0', marginBottom: 22 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 38, height: 38, background: 'linear-gradient(135deg,' + C.accent + ',#ea580c)', borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 800, color: '#fff' }}>L</div>
@@ -140,7 +172,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 24, marginTop: 4, position: 'relative' }}>
                 {/* Left indicator line */}
                 <div style={{ position: 'absolute', left: 20, top: 4, bottom: 10, width: 1, background: C.border }} />
-                
+
                 <NavLink to="/alliance-dashboard" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
                   <Home size={14} style={{ marginRight: 8 }} /> Dashboard
                 </NavLink>
@@ -214,9 +246,138 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 24, marginTop: 4, position: 'relative' }}>
                 {/* Left indicator line */}
                 <div style={{ position: 'absolute', left: 20, top: 4, bottom: 10, width: 1, background: C.border }} />
-                
+
                 <NavLink to="/admin/content-os/approval" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
                   <CheckSquare size={14} style={{ marginRight: 8 }} /> Approval Dashboard
+                </NavLink>
+              </div>
+            )}
+          </div>
+
+          {/* Thedal OS Parent Link */}
+          <div style={{ width: '100%', marginTop: 8 }}>
+            <button
+              onClick={() => {
+                setThedalOsOpen(!thedalOsOpen);
+                if (!isExpanded) setIsExpanded(true);
+              }}
+              title={!isExpanded ? "Thedal OS" : undefined}
+              style={{
+                width: '100%',
+                height: 42,
+                borderRadius: 9,
+                border: 'none',
+                background: thedalOsOpen ? C.accent + '11' : 'transparent',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: isExpanded ? 'space-between' : 'center',
+                padding: isExpanded ? '0 12px' : '0',
+                cursor: 'pointer',
+                color: thedalOsOpen ? C.accent : C.muted,
+                transition: 'background 0.15s',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <Search size={17} color={thedalOsOpen ? C.accent : C.muted} />
+                {isExpanded && <span style={{ marginLeft: 12, fontSize: 13, fontWeight: thedalOsOpen ? 600 : 500 }}>Thedal OS</span>}
+              </div>
+              {isExpanded && (
+                thedalOsOpen ? <ChevronUp size={14} color={C.muted} /> : <ChevronDown size={14} color={C.muted} />
+              )}
+            </button>
+
+            {/* Child Links */}
+            {isExpanded && thedalOsOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 24, marginTop: 4, position: 'relative' }}>
+                <div style={{ position: 'absolute', left: 20, top: 4, bottom: 10, width: 1, background: C.border }} />
+
+                {/* Client Selector Dropdown */}
+                <div style={{ padding: '8px 10px 12px 0' }}>
+                  <select
+                    value={activeClient ? activeClient.id : ''}
+                    onChange={(e) => {
+                      const client = clients.find(c => c.id === parseInt(e.target.value));
+                      setActiveClient(client || null);
+                    }}
+                    style={{ width: '100%', background: '#0f172a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', color: '#e2e8f0', fontSize: 12, outline: 'none', cursor: 'pointer', appearance: 'none' }}
+                  >
+                    <option value="" style={{ background: '#0f172a', color: '#fff' }}>All Clients (No Selection)</option>
+                    {clients.map(c => (
+                      <option key={c.id} value={c.id} style={{ background: '#0f172a', color: '#fff' }}>
+                        {c.business_name && c.client_name && c.business_name !== c.client_name 
+                          ? `${c.business_name} (${c.client_name})` 
+                          : c.business_name || c.client_name} - {c.plan}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <NavLink to="/thedal/keyword-tracking" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Keyword Tracking Limit')}>
+                  <Activity size={14} style={{ marginRight: 8 }} /> Keyword Tracking
+                </NavLink>
+
+                <NavLink to="/thedal/gsc-intel" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GSC Intel Access')}>
+                  <LineChart size={14} style={{ marginRight: 8 }} /> GSC Intel
+                </NavLink>
+
+                <NavLink to="/thedal/on-page-audit" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'On-Page Audit Scans/mo')}>
+                  <FileSearch size={14} style={{ marginRight: 8 }} /> On-Page Audit
+                </NavLink>
+
+                <NavLink to="/thedal/content-factory" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Content Factory Drafts/mo')}>
+                  <Brain size={14} style={{ marginRight: 8 }} /> Content Factory
+                </NavLink>
+
+                <NavLink to="/thedal/monthly-report" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Monthly PDF Report')}>
+                  <FileOutput size={14} style={{ marginRight: 8 }} /> Monthly PDF Report
+                </NavLink>
+
+                <NavLink to="/thedal/rank-drop-alert" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Rank Drop Alert')}>
+                  <ShieldAlert size={14} style={{ marginRight: 8 }} /> Rank Drop Alert
+                </NavLink>
+
+                <NavLink to="/thedal/client-onboard" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Client Onboard Profile')}>
+                  <User size={14} style={{ marginRight: 8 }} /> Client Onboard
+                </NavLink>
+
+                <div style={{ margin: '16px 0 8px 10px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Manage</div>
+                
+                <NavLink to="/thedal/clients" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive)}>
+                  <Target size={14} style={{ marginRight: 8 }} /> Clients
+                </NavLink>
+                
+                <NavLink to="/thedal/plans" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive)}>
+                  <Activity size={14} style={{ marginRight: 8 }} /> Plans & Pricing
+                </NavLink>
+
+                <div style={{ margin: '16px 0 8px 10px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Intelligence</div>
+
+                <NavLink to="/thedal/serp-radar" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'SERP Radar Access')}>
+                  <Eye size={14} style={{ marginRight: 8 }} /> SERP Radar
+                </NavLink>
+
+                <NavLink to="/thedal/gap-hunter" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Gap Hunter Access')}>
+                  <Target size={14} style={{ marginRight: 8 }} /> Gap Hunter
+                </NavLink>
+
+                <NavLink to="/thedal/schema-library" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Schema Library Builder')}>
+                  <FileJson size={14} style={{ marginRight: 8 }} /> Schema Library
+                </NavLink>
+
+                <NavLink to="/thedal/competitor-spy" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Competitor Spy Limit')}>
+                  <GitPullRequest size={14} style={{ marginRight: 8 }} /> Competitor Spy
+                </NavLink>
+
+                <NavLink to="/thedal/backlink-tracker" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Backlink Tracker CRM')}>
+                  <LinkIcon size={14} style={{ marginRight: 8 }} /> Backlink Tracker
+                </NavLink>
+
+                <NavLink to="/thedal/local-citations" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Local Citations')}>
+                  <MapPin size={14} style={{ marginRight: 8 }} /> Local Citations
+                </NavLink>
+
+                <NavLink to="/thedal/local-seo-bridge" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Local SEO Bridge (GMB)')}>
+                  <Share2 size={14} style={{ marginRight: 8 }} /> Local SEO Bridge
                 </NavLink>
               </div>
             )}

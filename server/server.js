@@ -56,6 +56,11 @@ const uploadRoutes = require('./routes/upload');
 const pipelineRoutes = require('./routes/pipeline');
 const analyzeRoutes = require('./routes/analyze');
 const contentOsRoutes = require('./routes/contentos');
+const thedalRoutes = require('./routes/thedal');
+const thedalClientsRoutes = require('./routes/thedal-clients');
+const thedalPlansRoutes = require('./routes/thedal-plans');
+const thedalAuditRoutes = require('./routes/thedal-audit');
+const thedalSeoAuditRoutes = require('./routes/thedal-seo-audit');
 
 app.use('/api/knowledge', knowledgeRoutes); // We should use auth but let's check auth middleware later
 app.use('/api/upload', uploadRoutes);
@@ -81,6 +86,13 @@ const internalAuth = (req, res, next) => {
 
 // ── CONTENT OS ROUTES ─────────────────────────────────────
 app.use('/api/content-os', auth, contentOsRoutes);
+
+// Thedal OS Routes
+app.use('/api/thedal/audit', auth, thedalAuditRoutes);
+app.use('/api/thedal/plans', auth, thedalPlansRoutes);
+app.use('/api/thedal/seo-audit', auth, thedalSeoAuditRoutes);
+app.use('/api/thedal/clients', auth, thedalClientsRoutes);
+app.use('/api/thedal', auth, thedalRoutes);
 
 // ══════════════════════════════════════════════════════════
 // HEALTH

@@ -49,6 +49,36 @@ class LeadOSAPI {
     return data;
   }
 
+  async get(endpoint, options = {}) {
+    return this.request(`/api${endpoint}`, {
+      method: 'GET',
+      ...options,
+    });
+  }
+
+  async post(endpoint, body, options = {}) {
+    return this.request(`/api${endpoint}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      ...options,
+    });
+  }
+
+  async put(endpoint, body, options = {}) {
+    return this.request(`/api${endpoint}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      ...options,
+    });
+  }
+
+  async delete(endpoint, options = {}) {
+    return this.request(`/api${endpoint}`, {
+      method: 'DELETE',
+      ...options,
+    });
+  }
+
   // ─── AUTH ───────────────────────────────
   async login(email, password) {
     const data = await this.request('/api/auth/login', {

@@ -1,0 +1,599 @@
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  GOOGLE THEDAL  
+Organic Search Domination Engine  
+PROJECT DOCUMENT  
+LeadOS Platform  |  ABM Groups  |  BM TechX  
+Module  
+Google Thedal v1.0  Platform  
+LeadOS — app.abmgroups.org  Status  
+Active Build  
+ 
+ 
+ 
+1.  Executive Summary  
+ 
+Google Thedal is the organic search intelligence module inside the LeadOS platform, built for BM TechX to 
+deliver SEO -as-a-service to Tamil Nadu SMEs. While GMB Mafia controls Google Maps rankings, Thedal controls 
+organic web search rankings — together for ming a full Google domination stack.  
+ 
+Thedal = Search (Tamil)  
+When a business in Pondicherry or Tamil Nadu searches for their name, competitor, or service on Google — 
+Thedal makes sure our clients appear first. We find them before they find us.  
+This is not a reporting tool. It is an automated SEO engine that tracks, alerts, generates content, audits, and 
+delivers branded PDF reports — all without manual work.  
+ 
+STRATEGIC POSITION  
+Problem it solves  Tamil Nadu SMEs spend on ads but have zero visibility into why competitors 
+outrank them organically on Google  
+Solution  Automated daily rank tracking + GSC data + AI content + technical audit + 
+monthly branded PDF report — all in one LeadOS module  
+Who pays for it  BM TechX charges clients ₹3,999 –₹11,999/month. They get a full SEO team 
+in a dashboard.  
+Revenue target  ₹30,000 MRR in Month 1 from 5 clients → ₹85,000 Month 3 → ₹2.2 lakh 
+Month 12  
+First client  Raahath Dental Care — generate free audit PDF, close on Growth plan 
+₹6,999/month  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  Competitive advantage  Only platform in Tamil Nadu that combines local language support 
+(Tamil/Tanglish), WhatsApp rank alerts, and done -for-you content 
+generation  
+ 
+ 
+2.  What Thedal Does — Feature Map  
+ 
+# Feature  What It Does  Automation  
+1 Keyword Rank Tracking  Daily rank check for every keyword via ValueSERP. 
+Tracks position 1 –100, rank change, SERP features 
+(featured snippet, PAA, local pack)  n8n WF1 — 6 AM daily  
+2 GSC Intel  Pulls Google Search Console data: impressions, clicks, 
+CTR, avg position, top queries, top pages, index 
+coverage  n8n WF2 — Monday 5 AM  
+3 On-Page Audit  12-point technical SEO audit: H1, meta tags, HTTPS, 
+page speed, image alt, schema, mobile -friendliness, 
+robots.txt, sitemap, thin content, canonicals, broken 
+links n8n WF3 — Sunday 2 AM  
+4 Content Factory  AI-generated blog posts (English/Tamil/Tanglish), 
+meta tag rewrites, topic calendar ideas, and JSON -LD 
+schema markup via GPT -4o or Grok 3  On-demand in UI  
+5 Monthly PDF Report  Branded PDF with rank data, GSC metrics, audit 
+score, top wins — auto -generated on 1st of every 
+month for every client  n8n WF4 — 1st of month  
+6 Rank Drop Alert  WhatsApp alert to Kamar when any keyword drops > 
+5 positions or enters Top 10  n8n WF6 — after WF1  
+7 Client Onboard  First rank scan + first audit fires automatically when 
+new client is added  n8n WF5 — webhook  
+8 SERP Radar  Live dashboard widget showing all clients' rank 
+health at a glance  Real -time in UI  
+9 Gap Hunter  AI keyword opportunities — 15 high -value keywords 
+the client should target  On-demand in UI  
+10 Schema Library  6 schema types (LocalBusiness, FAQPage, etc.) 
+generated and ready to paste into client websites  On-demand in UI  
+11 Competitor Spy  Add rival domains, track their keywords, spot 
+content gaps  Manual entry  
+12 Backlink Tracker  Log backlinks — source, anchor, DA, 
+dofollow/nofollow, new/lost/toxic  Manual + Ahrefs Phase 2  
+13 Local Citations  Directory tracker — Justdial, Sulekha, Practo etc — 
+track listed/pending/missing  Manual tracking  
+14 Local SEO Bridge  Correlation view: GMB Mafia Maps signals vs Thedal 
+organic signals — Bundle clients only  Shared DB join  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX   
+ 
+3.  Technology Stack  
+ 
+FRONTEND  
+Framework  Next.js 14 — App Router  
+Styling  Tailwind CSS — teal (#0D9488) primary color throughout  
+Charts  Recharts — rank trend lines, GSC line charts, audit score radial  
+Tables  TanStack Table v8 — keyword table with sort, filter, pagination  
+Animation  Framer Motion — SERP Radar pulse, rank change badges  
+Icons  Lucide React  
+State  Zustand — global client selection state  
+Auth  NextAuth.js JWT — shared session with LeadOS / GMB Mafia  
+ 
+BACKEND  
+Runtime  Node.js 20 LTS + Express.js  
+ORM  Prisma 5 — type -safe queries to PostgreSQL 16  
+Database  PostgreSQL 16 — same DB as LeadOS/GMB Mafia (15 new thedal_* tables)  
+Cache  Redis 7 — rank results cached 20 hours, GSC data 1 hour  
+PDF PDFKit — branded A4 monthly reports with rank table, GSC section  
+HTML Parser  Cheerio — homepage crawl for audit checks  
+Auth  JWT Bearer token — same middleware as LeadOS  
+ 
+EXTERNAL APIs  
+ValueSERP  Keyword rank checking — same API key as GMB Mafia, one account covers both  
+Google Search Console 
+API Clicks, impressions, CTR, position, index coverage — OAuth2 per client  
+Google PageSpeed 
+Insights  Core Web Vitals for audit — free API, no billing  
+OpenAI GPT -4o Blog posts, meta rewrites, topic ideas, schema generation  
+Grok 3 (optional)  Swap in for Tamil/Tanglish content — change 2 lines in contentService.js  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  Meta WhatsApp Cloud 
+API Rank drop alerts — same integration as GMB Mafia  
+Ahrefs API  Backlinks — skip Phase 1, add Phase 2  
+ 
+AUTOMATION  
+n8n (self -hosted)  6 automated workflows — same instance as GMB Mafia  
+WF1 — Daily Rank  Runs 6:00 AM IST daily — ValueSERP rank check for all active keywords  
+WF2 — GSC Sync  Runs Monday 5:00 AM IST — pulls GSC data for all connected clients  
+WF3 — Weekly Audit  Runs Sunday 2:00 AM IST — 12-point SEO audit for all clients  
+WF4 — Monthly Report  Runs 1st of month 7:00 AM IST — generates PDFs for all clients  
+WF5 — New Client  Webhook trigger — fires first scan + audit when new client added  
+WF6 — Rank Alerts  After WF1 — WhatsApp alert if rank drops > 5 or enters Top 10  
+ 
+ 
+4.  Database Schema — 15 Tables  
+ 
+All tables use the thedal_ prefix. They live in the same PostgreSQL 16 database as LeadOS and GMB Mafia. No 
+separate database required.  
+ 
+# Table  Purpose  Key Fields  
+1 thedal_clients  Master client record — one row per 
+website  domain, plan, gsc_connected, 
+gmb_client_id  
+2 thedal_keywords  Keywords tracked per client  keyword, device, location, 
+current_rank, best_rank  
+3 thedal_rank_history  Daily rank snapshots — timeseries data  keyword_id, checked_date, rank, 
+serp_features  
+4 thedal_gsc_tokens  Google OAuth tokens per client (AES -
+256 encrypted)  access_token, refresh_token, 
+expires_at  
+5 thedal_gsc_snapshots  Weekly GSC aggregate metrics  total_clicks, total_impressions, 
+avg_ctr, avg_position  
+6 thedal_gsc_queries  Top search queries per client per sync  query, clicks, impressions, ctr, 
+position  
+7 thedal_gsc_pages  Top pages per client per sync  page_url, clicks, impressions, ctr, 
+position  
+8 thedal_gsc_coverage  Index coverage data  indexed_count, error_count, 
+excluded_count  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  9 thedal_audits  Technical SEO audit runs  overall_score, pass_count, 
+warn_count, fail_count  
+10 thedal_audit_items  Individual check results (12 per audit)  check_key, status, score, message, 
+fix_guide  
+11 thedal_content  AI-generated content drafts  content_type, title, body, 
+target_keyword, status  
+12 thedal_schema_library  Saved JSON -LD schema records  schema_type, schema_json, 
+target_page, is_deployed  
+13 thedal_backlinks  Backlink records per client  source_domain, anchor_text, 
+link_type, is_toxic  
+14 thedal_rivals  Competitor domains tracked  rival_domain, shared_keywords, 
+content_gap_json  
+15 thedal_reports  Generated PDF report metadata  report_month, file_url, 
+keywords_tracked, avg_rank  
+ 
+ 
+5.  API Endpoints — Complete Map  
+ 
+Base: /api/thedal  |  Auth: JWT Bearer token (user routes) or x -n8n-secret header (n8n routes)  
+ 
+CLIENTS  
+Method  Endpoint  Purpose  Auth  
+GET 
+/clients  List all clients with KPIs  JWT  
+POST 
+/clients  Create client — triggers onboard 
+webhook  JWT  
+GET 
+/clients/:id  Single client full data  JWT  
+PUT 
+/clients/:id  Update settings  JWT  
+DELETE 
+/clients/:id  Soft delete  JWT  
+ 
+KEYWORDS  
+Method  Endpoint  Purpose  Auth  
+GET /keywords/:clientId  All keywords with rank  JWT  
+POST /keywords/:clientId  Add keyword  JWT  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  DELETE /keywords/:clientId/:id  Remove keyword  JWT  
+POST /keywords/bulk -check  Bulk rank scan — n8n 
+WF1/WF5  n8n  
+GET /keywords/:clientId/:id/history  Rank history for chart  JWT  
+POST /keywords/:clientId/suggest  AI keyword suggestions  JWT  
+GET 
+/keywords/:clientId/cannibalization  Detect keyword 
+cannibalization  JWT  
+ 
+AUDIT  
+Method  Endpoint  Purpose  Auth  
+GET /audit/:clientId  Latest audit with 12 items  JWT  
+GET 
+/audit/:clientId/history  Audit score history  JWT  
+POST 
+/audit/run/:clientId  Trigger audit (async)  JWT  
+POST /audit/score  Score raw data — n8n WF3  n8n  
+ 
+CONTENT  
+Method  Endpoint  Purpose  Auth  
+GET /content/:clientId  Content calendar list  JWT  
+POST 
+/content/:clientId/generate -
+blog AI blog post  JWT  
+POST 
+/content/:clientId/rewrite -
+meta  AI meta rewrite  JWT  
+POST 
+/content/:clientId/topic -
+ideas  8 topic ideas  JWT  
+POST 
+/content/:clientId/schema  JSON -LD schema  JWT  
+PATCH 
+/content/:clientId/:id/status  Publish/schedule  JWT  
+ 
+REPORTS  
+Method  Endpoint  Purpose  Auth  
+GET /reports/:clientId  List reports  JWT  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  POST 
+/reports/generate/:clientId  Generate PDF — n8n WF4  n8n  
+GET 
+/reports/:clientId/:id/download  Download PDF  JWT  
+ 
+GSC  
+Method  Endpoint  Purpose  Auth  
+GET 
+/gsc/connect/:clientId  Get Google OAuth URL  JWT  
+GET /gsc/callback  OAuth redirect from Google  None   
+GET 
+/gsc/:clientId/summary  Clicks, impressions, CTR, 
+position  JWT  
+GET 
+/gsc/:clientId/queries  Top 50 search queries  JWT  
+GET 
+/gsc/:clientId/pages  Top 20 pages  JWT  
+GET 
+/gsc/:clientId/coverage  Index coverage status  JWT  
+POST 
+/gsc/:clientId/sync  Manual GSC sync  JWT  
+ 
+ 
+ 
+6.  n8n Automation Workflows  
+ 
+WF Name  Trigger  Cron (UTC)  Cron (IST)  What It Does  
+01 Daily Rank Check  Cron 30 0 * * *  6:00 AM daily  ValueSERP rank check all 
+active keywords → update 
+thedal_keywords + insert 
+thedal_rank_history → 
+trigger WF06  
+02 Weekly GSC Sync  Cron 30 23 * * 0  Monday 5:00 
+AM Pull GSC data for all GSC -
+connected clients → upsert 
+snapshots + queries + pages 
+tables  
+03 Weekly Audit  Cron 30 20 * * 6  Sunday 2:00 
+AM PageSpeed + HTML crawl + 
+robots.txt for all clients → 
+POST 
+/api/thedal/audit/score → 
+save 12 audit items  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  04 Monthly Reports  Cron 30 1 1 * *  1st 7:00 AM  POST 
+/api/thedal/reports/generate 
+for all clients → save PDF → 
+WhatsApp Kamar when done  
+05 New Client 
+Onboard  Webhook  POST 
+/webhook/thedal/new -
+client  Instant  First rank scan + first audit → 
+WhatsApp team: 'New client 
+added, scans running'  
+06 Rank Drop Alert  Execute WF  After WF01  After 6 AM  Find drops > 5 positions + 
+new Top 10 entries → 
+WhatsApp Kamar with 
+summary  
+ 
+n8n Credentials Required  
+1. LeadOS Postgres — same as GMB Mafia (skip if exists)  
+2. ValueSERP API — HTTP Header Auth | Header: Authorization | Value: Bearer YOUR_KEY  
+3. Meta WhatsApp — HTTP Header Auth (skip if exists from GMB Mafia)  
+4. Google GSC OAuth — Google OAuth2 Client ID +  Secret  
+n8n Variables: N8N_INTERNAL_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, 
+GOOGLE_PAGESPEED_API_KEY, WHATSAPP_PHONE_NUMBER_ID, META_WA_TOKEN, 
+KAMAR_PHONE=9944309441  
+ 
+ 
+7.  Frontend — 15 Screens  
+ 
+# Screen  Route  What User Sees  Key Components  
+1 Thedal HQ  /thedal  Dashboard — all clients rank 
+health, KPI cards, SERP Radar 
+widget  ThedalHQ.jsx, 
+SerpRadar.jsx  
+2 Clients  /thedal/clients  Client list — add new client 
+modal, plan badge, keyword 
+count  Clients.jsx  
+3 Keyword Map  /thedal/clients/:id/keywords  Keyword table with rank, delta, 
+history chart sparkline, 
+cannibalization tab  KeywordMap.jsx, 
+Recharts  
+4 SERP Radar  /thedal/clients/:id/serp  All ranked keywords with rank 
+badges, up/down indicators  SerpRadar.jsx  
+5 GSC Intel  /thedal/clients/:id/gsc  4 tabs: Overview metrics, Top 
+Queries table, Top Pages table, 
+Index Coverage  GscIntel.jsx, Recharts  
+6 Content Factory  /thedal/clients/:id/content  4 tabs: Blog Drafts generator, 
+Meta Rewriter, Topic Ideas, 
+Schema Library  ContentFactory.jsx  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  7 On-Page Audit  /thedal/clients/:id/audit  Score circle 0 –100, 12 -check 
+accordion with fix guides, 
+history chart  OnPageAudit.jsx  
+8 Schema Library  /thedal/clients/:id/schema  6 schema types, generate 
+JSON -LD, copy -paste to 
+website  SchemaLibrary.jsx  
+9 Backlink Tracker  /thedal/clients/:id/backlinks  Add/view backlinks — source, 
+anchor, DA, type, 
+new/lost/toxic  BacklinkTracker.jsx  
+10 Competitor Spy  /thedal/clients/:id/rivals  Add rival domains, view list, 
+link to their sites  CompetitorSpy.jsx  
+11 Local Citations  /thedal/clients/:id/citations  10 major directories — track 
+listed/pending/missing status  LocalCitations.jsx  
+12 Gap Hunter  /thedal/gap -hunter  AI keyword opportunity finder 
+— select client, get 15 
+suggestions by difficulty  GapHunter.jsx  
+13 Reports  /thedal/reports  Monthly PDF list, generate 
+button, download links  Reports.jsx  
+14 Settings  /thedal/settings  System status, workflow 
+schedules, pricing plan 
+reference  Settings.jsx  
+15 Layout  /thedal  Sidebar nav, teal color theme, 
+active client sub -nav ThedalLayout.jsx  
+ 
+ 
+8.  Pricing Plans & Client Limits  
+ 
+Feature  Starter  
+₹3,999/mo  Growth  
+₹6,999/mo  Pro  ₹11,999/mo  Bundle  
+₹10,999/mo  
+Keywords Tracked  5 15 30 15 (GMB+SEO)  
+Rank Check Frequency  Daily  Daily  Daily  Daily  
+GSC Integration  Basic  Full Full Full 
+Keyword History  30 days  60 days  90 days  60 days  
+Competitor Tracking  1 rival  3 rivals  5 rivals  3 rivals  
+Blog Drafts/month  2 4 8 4 
+Meta Rewrites/month  5 15 Unlimited  15 
+Technical Audit  Monthly  Bi-weekly  Weekly  Bi-weekly  
+Schema Library  3 types  All types  All types  All types  
+Local SEO Bridge  No No Yes Yes (Bundle)  
+Gap Hunter  No Yes Yes Yes 
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  Branded PDF Report  Monthly  Monthly  Monthly  Monthly (both 
+modules)  
+WhatsApp Rank Alerts  Weekly digest  Daily digest  Real -time Daily digest  
+Support  Email  WhatsApp  WhatsApp Priority  WhatsApp  
+Includes GMB Mafia  No No No Yes (saves ₹3,000)  
+ 
+ 
+9.  Revenue Model & Projections  
+ 
+REVENUE TARGETS  
+Month 1 — 5 clients  ₹30,000+ MRR | Raahath Dental (Growth) + 4 existing BM TechX clients  
+Month 3 — 15 clients  ₹85,000 MRR | 5 Starter + 7 Growth + 3 Pro  
+Month 6 — 22 clients  ₹1,40,000 MRR | Scaling through referrals + campus network  
+Month 12 — 30+ clients  ₹2,20,000 MRR | 20 GMB Mafia + 10 Thedal only + bundle clients  
+Year 1 Total Revenue  ₹18–22 lakh/year from Thedal alone (stacks with GMB Mafia revenue)  
+ 
+IMMEDIATE CONVERSION TARGETS (Month 1)  
+Raahath Dental Care  Growth plan — ₹6,999/mo | Hook: free audit PDF showing 52/100 score  
+Ramya Agencies  Starter plan — ₹3,999/mo | Already a BM TechX client  
+Vajra Doors  Growth plan — ₹6,999/mo | Already a BM TechX client  
+CMI Pondicherry  Pro plan — ₹11,999/mo | High -value local institution  
+Mishi Sambrani  Starter plan — ₹3,999/mo | Low -effort conversion  
+Total Day 1 MRR  ₹30,999/month from existing relationships alone  
+ 
+Sales Hook Script for Raahath Dental  
+Step 1: Run audit from Thedal UI → generates PDF with score (likely 40 –65/100)  
+Step 2: WhatsApp PDF to Dr. Raahath: 'We ran a free SEO audit — your score is X/100. Competitors are at 
+75+' 
+Step 3: Call: 'Doctor, right now when someone searches dentist pondicherry — you're on page 2. They call 
+your competitor.'  
+Step 4: 'Growth plan ₹6, 999/month. We fix all 12 issues in 30 days. First month — no improvement = no 
+charge for month 2.'  
+Close rate with this script: 80%+ (Kamar closes personally for first 5 clients)  
+ 
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX   
+10.  External API Dependencies  
+ 
+API Used For  Setup Time  Cost Shared with 
+GMB Mafia?  
+ValueSERP  Keyword rank checking 
+(positions 1 –100 in organic 
+search)  5 min — signup only  ~$12/mo 
+Starter plan  YES — same API 
+key 
+Google PageSpeed  Core Web Vitals in audit 
+(mobile score, LCP)  10 min — Cloud 
+Console  Free — no 
+charge  No — new key  
+Google Search 
+Console  GSC clicks, impressions, CTR, 
+queries — OAuth per client  20 min — Cloud 
+setup  Free No — new OAuth  
+OpenAI / GPT -4o Blog generation, meta 
+rewrite, topic ideas, schema  5 min — 
+platform.openai.com  ~$5–20/mo 
+usage  No — new key  
+Meta WhatsApp  Rank drop alerts, monthly 
+report notification to Kamar  Already set up  Already paying  YES — same 
+token  
+Ahrefs API  Backlink data (Phase 2 only — 
+skip now)  Phase 2  $99/mo (skip 
+Phase 1)  No 
+ 
+ValueSERP — One Key for Both GMB Mafia and Thedal  
+GMB Mafia uses ValueSERP to check if client is in Google Maps 3 -pack (local pack position #1, #2, #3)  
+Thedal uses ValueSERP to check if client is in organic search results (position 1 –100 in web results)  
+Same API key. Different search parameters. Cost at Month 1 (5 clients): ~$2 –5/month total  
+Buy: trajectdata.com/serp/value -serp -api — Start Free Trial (100 free searches for dev testing)  
+ 
+ 
+11.  Deployment Overview  
+ 
+INFRASTRUCTURE  
+Server  Existing VPS (Ubuntu 24.04) — same server as LeadOS and GMB Mafia  
+Domain  app.abmgroups.org — Thedal routes as /thedal/* and /api/thedal/*  
+Database  PostgreSQL 16 — existing LeadOS DB + 15 new thedal_* tables  
+Node.js  v20 LTS — already installed  
+Redis  Already running — Thedal adds thedal: prefix to avoid GMB Mafia key collision  
+n8n Already running — 6 new Thedal workflows added to same instance  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  Nginx  Already configured — add /api/thedal/ proxy block  
+SSL Let's Encrypt already active — no new cert needed  
+Reports directory  Create: /var/leados/reports/thedal/  
+ 
+Step Task  Time  How  
+1 VPS prerequisites check  15 min  Verify Node 20, Redis, PM2, n8n all running  
+2 Add .env variables  10 min  Append 10 new variables to existing .env  
+3 Prisma migration  10 min  npx prisma db push — creates 15 thedal_* tables  
+4 npm install  5 min  npm install axios redis cheerio googleapis openai pdfkit  
+5 Copy backend files  15 min  5 services + 7 routes + 1 middleware into correct folders  
+6 Mount router in server.js  2 min  Add 2 lines: import + app.use('/api/thedal', 
+thedalRouter)  
+7 Nginx update  10 min  Add /api/thedal/ proxy block (may already work)  
+8 PM2 restart + test  10 min  pm2 restart leados -backend | curl /api/thedal/health  
+9 Import n8n workflows  30 min  Import 6 JSON files in correct order, set credentials  
+10 Deploy frontend  30 min  Copy 15 JSX screens, add routes to App.jsx, npm run 
+build  
+11 Smoke test  30 min  Backend + n8n + frontend checklist — 25 items  
+TOTAL   ~2.5 hours  For an experienced full -stack developer  
+ 
+ 
+12.  File Delivery Structure  
+ 
+All 57 files are delivered in the GOOGLE -THEDAL -DELIVERY.zip package, organised into folders ready to copy into 
+the LeadOS codebase.  
+ 
+GOOGLE-THEDAL-DELIVERY/  
+├── README.md                    ← Developer reads this first — step-by-step guide  
+│ 
+├── 00_READ_FIRST/  
+│   └── THEDAL_DEV_HANDOFF.docx  ← Complete step -by-step with all commands  
+│ 
+├── 01_database/  
+│   ├── schema_thedal_addition.prisma  ← Append to prisma/schema.prisma  
+│   ├── seed_thedal_clients.sql        ← Run once — 7 ABM brands seeded  
+│   └── prisma.js                      ← lib/prisma.js singleton (if missing)  
+│ 
+├── 02_backend/  
+│   ├── services/  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  │   │   ├── serpService.js       ← ValueSERP rank checking  
+│   │   ├── gscService.js        ← GSC OAuth + data fetching  
+│   │   ├── auditServ ice.js      ← 12 -point SEO audit scorer  
+│   │   ├── contentService.js    ← GPT -4o content generation  
+│   │   └── reportService.js     ← PDFKit monthly reports  
+│   ├── routes/thedal/  
+│   │   ├── index.js  clients.js  keywords.js  audit.js  
+│   │   ├── conten t.js  reports.js  gsc.js  
+│   ├── middleware/  
+│   │   ├── n8nAuth.js           ← x -n8n-secret header protection  
+│   │   └── auth.js              ← JWT middleware (if missing in LeadOS)  
+│   └── config/  
+│       ├── .env.example         ← All 10 new variables with descriptions  
+│       ├── server_mount_snippet.js  ← 2 lines to add to server.js  
+│       └── package_additions.json  ← npm install command  
+│ 
+├── 03_frontend/  
+│   ├── pages/thedal/            ← 15 JSX screen files  
+│   │   ├── ThedalLayout.jsx  ThedalHQ.jsx  Clients.jsx  
+│   │   ├── KeywordMap.jsx  SerpRadar.jsx  GscIntel.jsx  
+│   │   ├── ContentFactory.jsx  OnPageAudit.jsx  SchemaLibrary.jsx  
+│   │   ├── BacklinkTracker.jsx  CompetitorSpy.jsx  LocalCitations.jsx  
+│   │   ├── GapHunter.jsx  Reports.jsx  Settings.jsx  
+│   ├── lib/thedal/api.js        ← All 35+ API calls  
+│   └── config/  
+│       ├── thedal_routes.jsx    ← Add to App.jsx router  
+│       └── tailwind_thedal_colors.js  ← Add to tailwind.config.js  
+│ 
+├── 04_n 8n_workflows/            ← 6 JSON files, import into n8n in order shown  
+│   ├── 05_new_client_onboard.json    ← Import FIRST (get webhook URL)  
+│   ├── 06_rank_alert_whatsapp.json   ← Import 2nd (note workflow ID)  
+│   ├── 01_daily_rank_check.json      ← Imp ort 3rd (link to WF06)  
+│   ├── 02_weekly_gsc_sync.json  
+│   ├── 03_weekly_audit.json  
+│   └── 04_monthly_report.json        ← Import last  
+│ 
+└── 05_reference_docs/           ← Deep docs — read only if stuck  
+    ├── Part1_Architecture.docx  
+    ├── Part2_Databa se.docx  
+    ├── Part3_Frontend.docx  
+    ├── Part4_n8n_Workflows.docx  
+    ├── Part5_AI_Agents.docx  
+    └── Part6_Deployment.docx  
+ 
+ 
+13.  First Client — Raahath Dental Care  
+ 
+ONBOARDING SEQUENCE (Day of Go -Live)  
+Step 1 — Add client  Thedal UI → Clients → + New Client | Business: Raahath Dental Care | Domain: 
+raahathdentalcare.in | Type: Dental Clinic | Plan: Growth  
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  Step 2 — Add 5 
+keywords  dentist pondicherry | dental clinic near me pondicherry | teeth whitening 
+pondicherry | best dentist pondy | dental implants pondicherry  
+Step 3 — Run rank check  Click Run Rank Check → wait 60 seconds → positions appear for all 5 keywords  
+Step 4 — Run audit  On-Page Audit tab → Run Audit → wait 3 minutes → score circle appears (likely 
+40–65/100)  
+Step 5 — Connect GSC  GSC Intel tab → Connect Google Search Console → Dr. Raahath logs into his 
+Google account → authorises  
+Step 6 — Generate PDF  Reports tab → Generate Report → download branded PDF with rank data + audit 
+score  
+Step 7 — WhatsApp PDF  Send PDF to Dr. Raahath: 'Doctor, we ran a free SEO audit — your score is X/100. 
+Competitors at 75+'  
+Step 8 — Close the deal  Call: 'Growth plan ₹6,999/month. We fix all issues in 30 days. No results = no 
+charge month 2.'  
+ 
+ 
+14.  Common Errors & Fixes  
+ 
+Error Message  Root Cause  Fix 
+Cannot find module 'cheerio'  Package not installed  npm install cheerio in backend folder  
+TOKEN_ENCRYPTION_KEY must 
+be 32 bytes  Wrong .env value length  openssl rand -hex 32 → must be exactly 64 hex 
+chars  
+Prisma model ThedalClient not 
+found  Client not generated  npx prisma generate  
+thedal_clients table doesn't exist  Migration not run  npx prisma db push  
+n8n route returns 401  Secret mismatch  N8N_INTERNAL_SECRET in .env must match n8n 
+Variables  
+GSC OAuth redirect_uri mismatch  Wrong redirect URI  Must be: 
+https://app.abmgroups.org/api/thedal/gsc/callback  
+WF01 ValueSERP 401 error  Wrong or expired API key  Check VALUESERP_API_KEY in .env and n8n 
+Variables  
+/thedal returns 404  Routes not added  Add thedal routes to App.jsx — see 
+thedal_routes.jsx  
+PDF not generating  Permissions issue  mkdir -p /var/leados/reports/thedal && chown -R 
+$USER .  
+GSC shows 0 data  Client not connected  Client must complete OAuth via GSC Intel tab  
+ 
+ 
+GOOGLE THEDAL — Project Document  LeadOS | ABM Groups / BM TechX  
+Confidential — ABM Groups / BM TechX  15.  Key Contacts & Reference  
+ 
+CONTACTS  
+Kamar (Founder, ABM 
+Groups)  WhatsApp: +91 99442 88271 | admin@abmgroups.org  
+Satish (Ops / Dev delivery)  Execution and delivery coordination  
+Dev questions  WhatsApp Kamar before 10 PM — responds within 1 hour  
+VPS / Server access  Kamar provides SSH credentials to dev directly  
+Google Cloud account  Kamar shares access credentials for Cloud Console setup  
+ 
+KEY URLS & CREDENTIALS  
+Live platform  https://app.abmgroups.org  
+n8n dashboard  https://app.abmgroups.org:5678  
+Health check endpoint  https://app.abmgroups.org/api/thedal/health  
+Thedal module (after deploy)  https://app.abmgroups.org/thedal  
+ValueSERP signup  trajectdata.com/serp/value -serp -api 
+Google Cloud Console  console.cloud.google.com  
+OpenAI API keys  platform.openai.com/api -keys 
+Reports storage path  /var/leados/reports/thedal/  
+n8n webhook path  https://app.abmgroups.org/n8n/webhook/thedal/new -client  
+ 
+Build it. Ship it. Dominate Tamil Nadu Google search.  
+ABM Groups  |  BM TechX  |  LeadOS  |  app.abmgroups.org  
+ 

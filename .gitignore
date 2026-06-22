@@ -23,3 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 server/env.example
+
+
+
+# Google credentials
+server/credentials/*.json

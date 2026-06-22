@@ -22,6 +22,21 @@ export const SettingsView = () => {
   const [saving, setSaving] = useState(false);
   const [savingPass, setSavingPass] = useState(false);
 
+  const [discoveredAccounts, setDiscoveredAccounts] = useState([]);
+  const [loadingMeta, setLoadingMeta] = useState(false);
+  const [linkingBrand, setLinkingBrand] = useState(false);
+  const [metaAppId, setMetaAppId] = useState('');
+  const [connectedAccounts, setConnectedAccounts] = useState([]);
+
+  const loadConnectedAccounts = async () => {
+    try {
+      const res = await api.get('/api/content/social-accounts');
+      setConnectedAccounts(res || []);
+    } catch (err) {
+      console.error('Error loading connected accounts:', err);
+    }
+  };
+
   useEffect(() => {
     const loadClients = async () => {
       try {
@@ -34,7 +49,17 @@ export const SettingsView = () => {
         console.error('Error loading clients in settings:', err);
       }
     };
+    const loadConfig = async () => {
+      try {
+        const res = await api.get('/api/content/config');
+        setMetaAppId(res.appId || '');
+      } catch (err) {
+        console.error('Error loading meta config in settings:', err);
+      }
+    };
     loadClients();
+    loadConfig();
+    loadConnectedAccounts();
   }, []);
 
   useEffect(() => {
@@ -48,6 +73,70 @@ export const SettingsView = () => {
       setStatus(client.status || 'active');
     }
   }, [selectedClientId, clients]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    if (code) {
+      setTab('social');
+      setLoadingMeta(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      const exchangeCode = async () => {
+        try {
+          const res = await api.post('/api/content/meta/callback', { code });
+          if (res.success && res.accounts) {
+            setDiscoveredAccounts(res.accounts);
+            alert(`Successfully authenticated with Meta! Discovered ${res.accounts.length} page(s).`);
+          } else {
+            alert('Meta connection succeeded, but no pages were found.');
+          }
+        } catch (err) {
+          console.error('Meta OAuth Callback exchange failed:', err);
+          alert('Failed to connect to Meta: ' + err.message);
+        } finally {
+          setLoadingMeta(false);
+        }
+      };
+      exchangeCode();
+    }
+  }, []);
+
+  const handleConnectMeta = () => {
+    if (!metaAppId) {
+      alert('Meta App ID is not configured on the backend. Please add META_APP_ID to your server .env file.');
+      return;
+    }
+    const redirectUri = window.location.origin + '/settings';
+    const fbUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${metaAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,business_management,public_profile&response_type=code`;
+    window.location.href = fbUrl;
+  };
+
+  const handleLinkToBrand = async (brandName, platform, accountName, accountId, facebookPageId, instagramBusinessId, accessToken, expiresAt) => {
+    setLinkingBrand(true);
+    try {
+      const res = await api.post('/api/content/meta/link-account', {
+        brand_name: brandName,
+        platform,
+        account_name: accountName,
+        account_id: accountId,
+        facebook_page_id: facebookPageId,
+        instagram_business_id: instagramBusinessId,
+        access_token: accessToken,
+        expires_at: expiresAt
+      });
+      if (res.success) {
+        alert(`Successfully linked ${platform} (${accountName}) to brand "${brandName}"!`);
+        loadConnectedAccounts();
+      } else {
+        alert('Failed to link account to brand');
+      }
+    } catch (err) {
+      alert('Linking brand account failed: ' + err.message);
+    } finally {
+      setLinkingBrand(false);
+    }
+  };
 
   const handleSaveWhatsApp = async (e) => {
     e.preventDefault();
@@ -95,7 +184,7 @@ export const SettingsView = () => {
       <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text, marginBottom: 22 }}>Settings</h1>
       <div className="flex-col-mobile" style={{ display: 'flex', gap: 18 }}>
         <div className="w-full-mobile" style={{ width: 180 }}>
-          {[['account', 'Account'], ['whatsapp', 'WhatsApp API'], ['team', 'Team'], ['notifications', 'Alerts'], ['billing', 'Billing']].map(([k, l]) => (
+          {[['account', 'Account'], ['whatsapp', 'WhatsApp API'], ['social', 'Social Accounts'], ['team', 'Team'], ['notifications', 'Alerts'], ['billing', 'Billing']].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{ width: '100%', textAlign: 'left', padding: '9px 13px', borderRadius: 7, border: 'none', background: tab === k ? C.accent + '20' : 'transparent', color: tab === k ? C.accent : C.muted, fontSize: 12, fontWeight: tab === k ? 600 : 400, marginBottom: 1, cursor: 'pointer' }}>
               {tab === k && <span style={{ marginRight: 5 }}>›</span>}{l}
             </button>
@@ -174,6 +263,140 @@ export const SettingsView = () => {
                 </button>
               </div>
             </form>
+          )}
+
+          {tab === 'social' && (
+            <div>
+              <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Social Accounts Connection</h3>
+              <p style={{ fontSize: 11, color: C.muted, marginBottom: 18 }}>
+                Connect your Facebook Pages and Instagram Business Accounts to enable automated content auto-publishing.
+              </p>
+
+              <div style={{ marginBottom: 20 }}>
+                <button
+                  type="button"
+                  onClick={handleConnectMeta}
+                  disabled={loadingMeta}
+                  style={{
+                    background: '#1877F2',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 7,
+                    padding: '10px 16px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    opacity: loadingMeta ? 0.6 : 1,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8
+                  }}
+                >
+                  <span>👍</span> {loadingMeta ? 'Connecting...' : 'Connect with Facebook & Instagram'}
+                </button>
+              </div>
+
+              {loadingMeta && <p style={{ fontSize: 11, color: C.muted }}>Processing Meta OAuth callback. Please wait...</p>}
+
+              {discoveredAccounts.length > 0 && (
+                <div style={{ marginTop: 22 }}>
+                  <h4 style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>Discovered Assets:</h4>
+                  {discoveredAccounts.map((item, idx) => (
+                    <div key={idx} style={{ background: C.surface, border: '1px solid ' + C.border, borderRadius: 9, padding: 14, marginBottom: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                        <div>
+                          <p style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>{item.facebook.name}</p>
+                          <p style={{ fontSize: 10, color: C.muted }}>FB Page ID: {item.facebook.page_id}</p>
+                          {item.instagram ? (
+                            <p style={{ fontSize: 10, color: C.green, marginTop: 4 }}>
+                              🔗 Connected IG: <strong>@{item.instagram.username}</strong> ({item.instagram.name})
+                            </p>
+                          ) : (
+                            <p style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>
+                              ⚠️ No connected Instagram Business Account found for this page.
+                            </p>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <select 
+                            disabled={linkingBrand}
+                            onChange={(e) => {
+                              const brand = e.target.value;
+                              if (!brand) return;
+                              handleLinkToBrand(brand, 'facebook', item.facebook.name, item.facebook.page_id, item.facebook.page_id, null, item.facebook.access_token, item.expires_at);
+                              if (item.instagram) {
+                                handleLinkToBrand(brand, 'instagram', item.instagram.username, item.instagram.business_id, item.facebook.page_id, item.instagram.business_id, item.instagram.access_token, item.expires_at);
+                              }
+                            }}
+                            defaultValue=""
+                            style={{ background: C.card, color: C.text, border: '1px solid ' + C.border, padding: '6px 10px', borderRadius: 6, fontSize: 11, outline: 'none' }}
+                          >
+                            <option value="" disabled>Link to Brand...</option>
+                            <option value="BM Academy">BM Academy</option>
+                            <option value="BM TechX">BM TechX</option>
+                            <option value="Namma Pondy Properties">Namma Pondy Properties</option>
+                            <option value="Dada's Kitchen">Dada's Kitchen</option>
+                            <option value="ABM Groups">ABM Groups</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Connected Accounts List */}
+              {connectedAccounts.filter(acc => acc.access_token).length > 0 && (
+                <div style={{ marginTop: 26, borderTop: '1px solid ' + C.border, paddingTop: 20 }}>
+                  <h4 style={{ fontFamily: "'Syne',sans-serif", fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 12 }}>
+                    Currently Connected Accounts
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {connectedAccounts.filter(acc => acc.access_token).map((acc, index) => (
+                      <div 
+                        key={index} 
+                        style={{ 
+                          background: C.surface, 
+                          border: '1px solid ' + C.border, 
+                          borderRadius: 8, 
+                          padding: '10px 14px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center'
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
+                              {acc.account_name}
+                            </span>
+                            <span 
+                              style={{ 
+                                background: acc.platform === 'facebook' ? '#1877F220' : '#E1306C20', 
+                                color: acc.platform === 'facebook' ? '#1877F2' : '#E1306C', 
+                                padding: '2px 6px', 
+                                borderRadius: 4, 
+                                fontSize: 9, 
+                                fontWeight: 700,
+                                textTransform: 'uppercase'
+                              }}
+                            >
+                              {acc.platform}
+                            </span>
+                          </div>
+                          <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>
+                            Brand: <strong>{acc.brand_name}</strong> | ID: {acc.platform === 'facebook' ? acc.facebook_page_id : acc.instagram_business_id}
+                          </p>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: C.green, fontSize: 11, fontWeight: 600 }}>● Connected</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {tab === 'notifications' && (

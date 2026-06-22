@@ -1,15 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { Pool } = require('pg');
-require('dotenv').config();
+const pool = require('../db/connection');
+const ctrl = require('../controllers/contentController');
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'leados_db',
-  user: process.env.DB_USER || 'leados_user',
-  password: process.env.DB_PASS || 'LeadOS_DB@2026',
-});
 
 // GET /api/content-os/social-accounts
 router.get('/social-accounts', async (req, res) => {
@@ -143,6 +136,8 @@ router.put('/content/:id', async (req, res) => {
   }
 });
 
+router.put('/content/:id/edit', ctrl.updateContent);
+
 // POST /api/content-os/content/:id/approve
 router.post('/content/:id/approve', async (req, res) => {
   try {
@@ -188,7 +183,7 @@ router.post('/content/:id/publish-success', async (req, res) => {
     const { platform_post_ids } = req.body;
     const { rows } = await pool.query(`
       UPDATE content_queue 
-      SET status = 'PUBLISHED', published_at = NOW(), platform_post_ids = $2, updated_at = NOW() 
+      SET status = 'published', published_at = NOW(), platform_post_ids = $2, updated_at = NOW() 
       WHERE id = $1 RETURNING *
     `, [req.params.id, platform_post_ids ? JSON.stringify(platform_post_ids) : '[]']);
 
@@ -206,7 +201,7 @@ router.post('/content/:id/publish-fail', async (req, res) => {
     const { error_message, error_response } = req.body;
     const { rows } = await pool.query(`
       UPDATE content_queue 
-      SET status = 'FAILED', failed_at = NOW(), error_message = $2, error_response = $3, updated_at = NOW() 
+      SET status = 'failed', failed_at = NOW(), error_message = $2, error_response = $3, updated_at = NOW() 
       WHERE id = $1 RETURNING *
     `, [req.params.id, error_message, error_response ? JSON.stringify(error_response) : '{}']);
 
@@ -217,5 +212,9 @@ router.post('/content/:id/publish-fail', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// Folders API for Google Drive Folder Monitors
+router.get('/folders', ctrl.getFolderMonitors);
+router.post('/folders', ctrl.upsertFolderMonitor);
 
 module.exports = router;

@@ -441,6 +441,13 @@ class LeadOSAPI {
       body: JSON.stringify({ tone })
     });
   }
+
+  async getAiStorySuggestions(id, tone = 'engaging') {
+    return this.request(`/api/content/${id}/suggest-stories`, {
+      method: 'POST',
+      body: JSON.stringify({ tone })
+    });
+  }
 }
 
 export const api = new LeadOSAPI();

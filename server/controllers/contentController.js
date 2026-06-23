@@ -9,6 +9,7 @@ const axios = require("axios");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const Jimp = require("jimp");
 const { google } = require("googleapis");
 const cryptoHelper = require("../utils/crypto");
 const ffmpeg = require("fluent-ffmpeg");
@@ -753,7 +754,7 @@ ${brandInfo.voice}
 Spoken Video Transcript to analyze:
 "${transcript || "No speech detected in this video. Generate brand promotion metadata based on the brand voice guide."}"
 
-Generate Title/Caption, Detailed Social Description, Hashtags, 3 Key Moments/Highlights, and 3 creative Thumbnail layout/overlay design text descriptions.
+Generate Title/Caption, Detailed Social Description, Hashtags, 3 Key Moments/Highlights, 3 creative Thumbnail layout/overlay design text descriptions, and 3 Instagram Story slides text (story_1, story_2, story_3) for promoting this video.
 Match the brand voice guides exactly (e.g., Tanglish mix for BM Academy).
 
 Respond ONLY with a valid JSON object matching this exact format:
@@ -772,7 +773,10 @@ Respond ONLY with a valid JSON object matching this exact format:
     { "time": "00:05", "title": "Moment Hook", "desc": "Hook description" },
     { "time": "00:20", "title": "Key Feature", "desc": "Feature description" },
     { "time": "00:45", "title": "Call to Action", "desc": "CTA description" }
-  ]
+  ],
+  "story_1": "Slide 1 text: Engaging hook for Instagram Story",
+  "story_2": "Slide 2 text: Key value point or highlight for Instagram Story",
+  "story_3": "Slide 3 text: Strong Call to Action (CTA) or next steps for Instagram Story"
 }`;
 
         try {
@@ -796,8 +800,8 @@ Respond ONLY with a valid JSON object matching this exact format:
               brand_name, file_name, video_url, public_video_url, drive_file_id,
               caption, x_caption, linkedin_caption, description, hashtags,
               thumbnail_options, key_moments, status, thumbnail_title, platforms,
-              brand_id, video_name, thumbnail_url
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending_approval', $13, $14, $15, $16, $17)
+              brand_id, video_name, thumbnail_url, story_1, story_2, story_3
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending_approval', $13, $14, $15, $16, $17, $18, $19, $20)
           `, [
             brand_name,
             file.name,
@@ -815,7 +819,10 @@ Respond ONLY with a valid JSON object matching this exact format:
             JSON.stringify(defaultPlatforms),
             brand_slug,
             file.name,
-            publicThumbnailUrl
+            publicThumbnailUrl,
+            meta.story_1 || "",
+            meta.story_2 || "",
+            meta.story_3 || ""
           ]);
 
           console.log(`DrivePoller: Successfully ingested and staged video: ${file.name}`);
@@ -829,6 +836,118 @@ Respond ONLY with a valid JSON object matching this exact format:
     }
   } catch (err) {
     console.error("DrivePoller: Ingestion cron check error:", err.message);
+  }
+}
+
+function getBrandGradient(brandName) {
+  const name = (brandName || "").toLowerCase().trim();
+  if (name.includes("academy")) {
+    return {
+      start: { r: 109, g: 40, b: 217 }, // #6D28D9
+      end: { r: 10, g: 5, b: 27 } // #0A051B
+    };
+  }
+  if (name.includes("techx")) {
+    return {
+      start: { r: 8, g: 145, b: 178 }, // #0891B2
+      end: { r: 2, g: 31, b: 40 } // #021F28
+    };
+  }
+  if (name.includes("pondy") || name.includes("properties")) {
+    return {
+      start: { r: 220, g: 38, b: 38 }, // #DC2626
+      end: { r: 36, g: 4, b: 4 } // #240404
+    };
+  }
+  if (name.includes("kitchen") || name.includes("dada")) {
+    return {
+      start: { r: 217, g: 119, b: 6 }, // #D97706
+      end: { r: 39, g: 18, b: 1 } // #271201
+    };
+  }
+  if (name.includes("abm")) {
+    return {
+      start: { r: 124, g: 58, b: 237 }, // #7C3AED
+      end: { r: 13, g: 6, b: 36 } // #0D0624
+    };
+  }
+  return {
+    start: { r: 59, g: 130, b: 246 }, // #3B82F6
+    end: { r: 5, g: 22, b: 48 } // #051630
+  };
+}
+
+async function generateStoryCard(postId, slideNum, brandName, slideText) {
+  try {
+    const image = new Jimp(1080, 1920, 0x000000FF);
+    const colors = getBrandGradient(brandName);
+
+    // Vertical linear gradient
+    for (let y = 0; y < 1920; y++) {
+      const ratio = y / 1919;
+      const r = Math.round(colors.start.r + (colors.end.r - colors.start.r) * ratio);
+      const g = Math.round(colors.start.g + (colors.end.g - colors.start.g) * ratio);
+      const b = Math.round(colors.start.b + (colors.end.b - colors.start.b) * ratio);
+      const color = Jimp.rgbaToInt(r, g, b, 255);
+      for (let x = 0; x < 1080; x++) {
+        image.setPixelColor(color, x, y);
+      }
+    }
+
+    // Semi-transparent line
+    const lineColor = Jimp.rgbaToInt(255, 255, 255, 60);
+    for (let x = 400; x <= 680; x++) {
+      image.setPixelColor(lineColor, x, 220);
+      image.setPixelColor(lineColor, x, 221);
+    }
+
+    // Fonts
+    const fontHeader = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
+    const fontBody = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
+
+    // Header brand name
+    const displayBrand = (brandName || 'LEADOS').toUpperCase();
+    image.print(
+      fontHeader,
+      0,
+      140,
+      {
+        text: displayBrand,
+        alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+        alignmentY: Jimp.VERTICAL_ALIGN_TOP
+      },
+      1080,
+      100
+    );
+
+    // Main text
+    image.print(
+      fontBody,
+      80,
+      300,
+      {
+        text: slideText || '',
+        alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+        alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE
+      },
+      920,
+      1200
+    );
+
+    const uploadsDir = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    const filename = `story_${postId}_${slideNum}.jpg`;
+    const outputPath = path.join(uploadsDir, filename);
+    await image.writeAsync(outputPath);
+
+    const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+    return `${baseUrl}/uploads/${filename}`;
+  } catch (err) {
+    console.error('generateStoryCard error:', err);
+    throw err;
   }
 }
 
@@ -1172,11 +1291,56 @@ async function publishPost(req, res) {
           if (!account.instagram_business_id) {
             throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
           }
-          publishRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
-            caption: '', // Instagram Story API does not support captions/text overlays
-            videoUrl: publicUrl,
-            isStory: true
-          });
+          const slides = [];
+          if (post.story_1 && post.story_1.trim()) slides.push({ num: 1, text: post.story_1.trim() });
+          if (post.story_2 && post.story_2.trim()) slides.push({ num: 2, text: post.story_2.trim() });
+          if (post.story_3 && post.story_3.trim()) slides.push({ num: 3, text: post.story_3.trim() });
+
+          if (slides.length > 0) {
+            const slidePostIds = [];
+            const slideErrors = [];
+            
+            for (const slide of slides) {
+              try {
+                console.log(`Generating card for story slide ${slide.num}: "${slide.text}"`);
+                const cardUrl = await generateStoryCard(post.id, slide.num, post.brand_name, slide.text);
+                console.log(`Story slide ${slide.num} card URL: ${cardUrl}`);
+                
+                console.log(`Publishing slide ${slide.num} to Instagram Story...`);
+                const slideRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
+                  caption: '',
+                  videoUrl: cardUrl,
+                  isStory: true
+                });
+                
+                if (slideRes && slideRes.success) {
+                  slidePostIds.push(slideRes.post_id);
+                }
+              } catch (slideErr) {
+                console.error(`Failed to publish story slide ${slide.num}:`, slideErr.message);
+                slideErrors.push(`Slide ${slide.num}: ${slideErr.message}`);
+              }
+            }
+            
+            if (slidePostIds.length > 0) {
+              publishRes = {
+                success: true,
+                post_id: slidePostIds.join(',')
+              };
+              if (slideErrors.length > 0) {
+                publishRes.warning = `Partial success. Failed slides: ${slideErrors.join('; ')}`;
+              }
+            } else {
+              throw new Error(`All story slides failed to publish: ${slideErrors.join('; ')}`);
+            }
+          } else {
+            console.log(`No story text slides found. Falling back to video story for post ID ${post.id}`);
+            publishRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
+              caption: '',
+              videoUrl: publicUrl,
+              isStory: true
+            });
+          }
         } else if (lowerPlatform === 'facebook_story') {
           // Stub Facebook Story publishing for Phase 2
           console.log(`Facebook Story selected for post ID ${post.id}. Facebook Story publishing is planned for Phase 2.`);
@@ -1186,14 +1350,28 @@ async function publishPost(req, res) {
         }
 
         if (publishRes && publishRes.success) {
-          console.log(`Successfully published to ${platform}! Post ID: ${publishRes.post_id}`);
+          const isWarning = !!publishRes.warning;
+          const statusVal = isWarning ? 'partial' : 'success';
+          console.log(`Successfully published to ${platform} (${statusVal})! Post ID: ${publishRes.post_id}`);
           platformPostIds.push({ platform, post_id: publishRes.post_id });
-          results.push({ platform, status: 'success', post_id: publishRes.post_id });
+          results.push({ 
+            platform, 
+            status: statusVal, 
+            post_id: publishRes.post_id,
+            error: isWarning ? publishRes.warning : undefined
+          });
 
           await pool.query(
             `INSERT INTO publishing_logs (content_id, brand_name, platform, post_id, status, published_at, metadata)
-             VALUES ($1, $2, $3, $4, 'success', NOW(), $5)`,
-            [post.id, post.brand_name, platform, publishRes.post_id, JSON.stringify({ account_id: account.account_id, response: publishRes })]
+             VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+            [
+              post.id, 
+              post.brand_name, 
+              platform, 
+              publishRes.post_id, 
+              statusVal, 
+              JSON.stringify({ account_id: account.account_id, response: publishRes })
+            ]
           );
         }
       } catch (pubErr) {
@@ -1203,8 +1381,8 @@ async function publishPost(req, res) {
       }
     }
 
-    const hasSuccess = results.some(r => r.status === 'success');
-    const hasFail = results.some(r => r.status === 'failed') || errors.length > 0;
+    const hasSuccess = results.some(r => r.status === 'success' || r.status === 'partial');
+    const hasFail = results.some(r => r.status === 'failed' || r.status === 'partial') || errors.length > 0;
 
     let finalStatus = 'PUBLISHED';
     let errorMessage = null;
@@ -1212,7 +1390,11 @@ async function publishPost(req, res) {
     if (hasFail) {
       if (hasSuccess) {
         finalStatus = 'PARTIAL';
-        errorMessage = 'Some platforms failed: ' + errors.join('; ');
+        const allWarnings = results
+          .filter(r => r.status === 'partial')
+          .map(r => r.error)
+          .concat(errors);
+        errorMessage = 'Some platforms failed: ' + allWarnings.join('; ');
       } else {
         finalStatus = 'FAILED';
         errorMessage = errors.join('; ');
@@ -1223,6 +1405,7 @@ async function publishPost(req, res) {
       `UPDATE content_queue 
        SET status = $1, 
            published_at = CASE WHEN UPPER($5::text) IN ('PUBLISHED', 'PARTIAL') THEN NOW() ELSE published_at END,
+           failed_at = CASE WHEN UPPER($5::text) IN ('FAILED', 'PARTIAL') THEN NOW() ELSE failed_at END,
            platform_post_ids = $2,
            error_message = $3,
            updated_at = NOW()
@@ -1371,6 +1554,96 @@ Do not write any introductory or explanatory text. Return ONLY the valid JSON ob
   }
 }
 
+// POST /api/content/:id/suggest-stories
+async function suggestStories(req, res) {
+  const { id } = req.params;
+  const tone = req.body.tone || "engaging";
+
+  if (!checkRateLimit(id)) {
+    return res.status(429).json({ success: false, error: "Too many requests. Limit is 5 requests per content item per minute." });
+  }
+
+  try {
+    const postRes = await pool.query('SELECT * FROM content_queue WHERE id = $1', [id]);
+    if (!postRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Content queue item not found' });
+    }
+    const post = postRes.rows[0];
+
+    const brandDetail = BRAND_DETAILS[post.brand_name] || {
+      industry: "Social Media / Business",
+      targetAudience: "General social media audience"
+    };
+    const brandVoice = BRAND_VOICES[post.brand_name]?.voice || "Professional and engaging";
+
+    let prompt = `You are an expert social media copywriter. Generate 5 unique Instagram Story sets (each set consisting of 3 slides: story_1, story_2, and story_3) to promote a video post based on the following details:
+- Brand Name: ${post.brand_name}
+- Industry: ${brandDetail.industry}
+- Target Audience: ${brandDetail.targetAudience}
+- Brand Voice Guidelines: ${brandVoice}
+- Video Title/File Name: ${post.file_name}
+- Video Description: ${post.description || "Not provided"}
+- Existing Caption: ${post.caption || "Not provided"}
+- Existing Hashtags: ${post.hashtags || ""}
+
+CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
+- Do NOT generate stories in formal Tamil script unless specified.
+- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters) mixed with English.
+- Across the 5 suggestions, provide a variety of language splits:
+  - 1 or 2 options should be in pure conversational English.
+  - 2 or 3 options should be in English letters expressing Tanglish / local slang.
+  - 1 option can include short Tamil script words mixed with English, but keep it informal.
+- The tone must be energetic, direct, and conversational.
+`;
+
+    if (tone === "engaging") {
+      prompt += `\nGenerate exactly 5 UNIQUE story sets, each matching one of these distinct styles:
+1. Professional (authoritative, informative, clear)
+2. Educational (informative, teaching value, tips/tricks)
+3. Motivational (inspirational, energetic, inspiring action)
+4. Sales-Oriented (persuasive, highlights product/service benefits, & has clear CTA)
+5. Social Media Viral (highly engaging hook, uses modern social media slang/style, emojis)
+
+For each story set, output its category style.
+`;
+    } else {
+      prompt += `\nGenerate exactly 5 UNIQUE story sets, all written in a "${tone}" tone.
+`;
+    }
+
+    prompt += `\nReturn the response ONLY as a JSON object matching this schema:
+{
+  "suggestions": [
+    {
+      "id": 1,
+      "tone": "viral",
+      "story_1": "Slide 1 text...",
+      "story_2": "Slide 2 text...",
+      "story_3": "Slide 3 text..."
+    },
+    ...
+  ]
+}
+Do not write any introductory or explanatory text. Return ONLY the valid JSON object.`;
+
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 1800,
+      temperature: 0.8,
+      response_format: { type: 'json_object' },
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    const content = response.choices[0].message.content.trim();
+    const result = JSON.parse(content);
+
+    res.json({ success: true, suggestions: result.suggestions });
+  } catch (err) {
+    console.error("suggestStories error:", err);
+    res.status(500).json({ success: false, error: "Failed to generate suggestions: " + err.message });
+  }
+}
+
 module.exports = { 
   getContent, 
   getStats, 
@@ -1386,5 +1659,7 @@ module.exports = {
   handleMetaCallback,
   linkBrandAccount,
   publishPost,
-  suggestCaptions
+  suggestCaptions,
+  suggestStories,
+  generateStoryCard
 };

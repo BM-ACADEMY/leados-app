@@ -94,6 +94,7 @@ export default function ApprovalDashboard() {
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [suggestionsError, setSuggestionsError] = useState(null);
   const [selectedTone, setSelectedTone] = useState("engaging");
+  const [suggestionType, setSuggestionType] = useState("caption");
 
   async function fetchMonitors() {
     setLoadingMonitors(true);
@@ -390,26 +391,29 @@ export default function ApprovalDashboard() {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  const handleOpenAiSuggestions = (forceTone = null) => {
+  const handleOpenAiSuggestions = (type = "caption", forceTone = null) => {
     if (!selected) return;
     const toneToUse = forceTone || selectedTone;
+    setSuggestionType(type);
     setIsSuggestModalOpen(true);
     
-    const cacheKey = `${selected.id}_${toneToUse}`;
+    const cacheKey = `${selected.id}_${toneToUse}_${type}`;
     if (suggestCache[cacheKey]) {
       return;
     }
     
-    fetchAiSuggestions(selected.id, toneToUse);
+    fetchAiSuggestions(selected.id, toneToUse, type);
   };
 
-  const fetchAiSuggestions = async (itemId, tone) => {
+  const fetchAiSuggestions = async (itemId, tone, type = "caption") => {
     setLoadingSuggestions(true);
     setSuggestionsError(null);
     try {
-      const res = await api.getAiCaptionSuggestions(itemId, tone);
+      const res = type === "story"
+        ? await api.getAiStorySuggestions(itemId, tone)
+        : await api.getAiCaptionSuggestions(itemId, tone);
       if (res.success && res.suggestions) {
-        const cacheKey = `${itemId}_${tone}`;
+        const cacheKey = `${itemId}_${tone}_${type}`;
         setSuggestCache(prev => ({
           ...prev,
           [cacheKey]: res.suggestions
@@ -1055,21 +1059,45 @@ export default function ApprovalDashboard() {
                   <div style={{ padding: "12px 16px", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", letterSpacing: 0.5 }}>
                     📱 Instagram Stories
                   </div>
-                  <div style={{ padding: 16, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12 }}>
-                    {["story_1","story_2","story_3"].map((s, i) => (
-                      <div key={s} style={{ background: "#F8F7FF", borderRadius: 8, padding: 12, border: "1px solid #E5E4F0" }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", marginBottom: 6, textTransform: "uppercase" }}>Slide {i+1}</div>
-                        {editMode ? (
-                          <textarea 
-                            value={editValues[s] || ""}
-                            onChange={e => setEditValues(prev => ({ ...prev, [s]: e.target.value }))}
-                            style={{ width: "100%", fontSize: 12, border: "1px solid #7C3AED44", borderRadius: 4, padding: 6, boxSizing: "border-box", minHeight: 80, outline: "none", resize: "vertical", background: "#FAFAFF", color: "#1A1A2E", fontFamily: "inherit" }}
-                          />
-                        ) : (
-                          <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5 }}>{selected[s]}</div>
-                        )}
-                      </div>
-                    ))}
+                  <div style={{ padding: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+                      {["story_1","story_2","story_3"].map((s, i) => (
+                        <div key={s} style={{ background: "#F8F7FF", borderRadius: 8, padding: 12, border: "1px solid #E5E4F0" }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", marginBottom: 6, textTransform: "uppercase" }}>Slide {i+1}</div>
+                          {editMode ? (
+                            <textarea 
+                              value={editValues[s] || ""}
+                              onChange={e => setEditValues(prev => ({ ...prev, [s]: e.target.value }))}
+                              style={{ width: "100%", fontSize: 12, border: "1px solid #7C3AED44", borderRadius: 4, padding: 6, boxSizing: "border-box", minHeight: 80, outline: "none", resize: "vertical", background: "#FAFAFF", color: "#1A1A2E", fontFamily: "inherit" }}
+                            />
+                          ) : (
+                            <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5 }}>{selected[s]}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAiSuggestions("story")}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "6px 12px",
+                        borderRadius: 6,
+                        border: "1px solid #7C3AED",
+                        background: "#F5F3FF",
+                        color: "#7C3AED",
+                        fontSize: "11px",
+                        fontWeight: "700",
+                        cursor: "pointer",
+                        transition: "all 0.15s",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "#7C3AED"; e.currentTarget.style.color = "#fff"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; e.currentTarget.style.color = "#7C3AED"; }}
+                    >
+                      ✨ AI Suggestions
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1366,7 +1394,9 @@ export default function ApprovalDashboard() {
               }
             `}</style>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>✨ AI Caption Suggestions</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>
+                {suggestionType === "story" ? "✨ AI Story Suggestions" : "✨ AI Caption Suggestions"}
+              </div>
               <button 
                 onClick={() => setIsSuggestModalOpen(false)}
                 style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#6B6B80" }}
@@ -1390,7 +1420,7 @@ export default function ApprovalDashboard() {
                     key={t.value}
                     onClick={() => {
                       setSelectedTone(t.value);
-                      handleOpenAiSuggestions(t.value);
+                      handleOpenAiSuggestions(suggestionType, t.value);
                     }}
                     style={{
                       padding: "5px 10px", borderRadius: 20, border: `1px solid ${isActive ? "#7C3AED" : "#E5E4F0"}`,
@@ -1409,18 +1439,20 @@ export default function ApprovalDashboard() {
               {loadingSuggestions ? (
                 <div style={{ padding: "40px 0", textAlign: "center", color: "#6B6B80" }}>
                   <div style={{ fontSize: 24, animation: "spin 1s linear infinite", display: "inline-block", marginBottom: 8 }}>🌀</div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>Analyzing brand & generating creative copy...</div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {suggestionType === "story" ? "Analyzing brand & generating story slides..." : "Analyzing brand & generating creative copy..."}
+                  </div>
                 </div>
               ) : suggestionsError ? (
                 <div style={{ padding: "30px 20px", textAlign: "center", background: "#FEF2F2", borderRadius: 8, border: "1px solid #EF444444" }}>
                   <div style={{ fontSize: 13, color: "#EF4444", marginBottom: 12 }}>{suggestionsError}</div>
                   <button 
-                    onClick={() => fetchAiSuggestions(selected.id, selectedTone)}
+                    onClick={() => fetchAiSuggestions(selected.id, selectedTone, suggestionType)}
                     style={{ padding: "6px 16px", background: "#EF4444", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
                   >Retry</button>
                 </div>
               ) : (
-                (suggestCache[`${selected.id}_${selectedTone}`] || []).map((s, idx) => {
+                (suggestCache[`${selected.id}_${selectedTone}_${suggestionType}`] || []).map((s, idx) => {
                   const toneLabel = s.tone ? s.tone.charAt(0).toUpperCase() + s.tone.slice(1) : "AI Suggestions";
                   return (
                     <div 
@@ -1438,13 +1470,36 @@ export default function ApprovalDashboard() {
                           ✨ Suggestion #{idx + 1} ({toneLabel} Style)
                         </span>
                       </div>
-                      <div style={{ fontSize: 12, lineHeight: 1.6, color: "#1A1A2E", whiteSpace: "pre-wrap" }}>
-                        {s.caption}
-                      </div>
+                      
+                      {suggestionType === "story" ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "#fff", padding: 12, borderRadius: 8, border: "1px solid #E5E4F0" }}>
+                          <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", display: "block", marginBottom: 2 }}>SLIDE 1</span>
+                            {s.story_1}
+                          </div>
+                          <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5, borderTop: "1px solid #F0EFF8", paddingTop: 8 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", display: "block", marginBottom: 2 }}>SLIDE 2</span>
+                            {s.story_2}
+                          </div>
+                          <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5, borderTop: "1px solid #F0EFF8", paddingTop: 8 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", display: "block", marginBottom: 2 }}>SLIDE 3</span>
+                            {s.story_3}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, lineHeight: 1.6, color: "#1A1A2E", whiteSpace: "pre-wrap" }}>
+                          {s.caption}
+                        </div>
+                      )}
+
                       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, borderTop: "1px dashed #E5E4F0", paddingTop: 10 }}>
                         <button
                           onClick={() => {
-                            navigator.clipboard.writeText(s.caption);
+                            if (suggestionType === "story") {
+                              navigator.clipboard.writeText(`Slide 1: ${s.story_1}\n\nSlide 2: ${s.story_2}\n\nSlide 3: ${s.story_3}`);
+                            } else {
+                              navigator.clipboard.writeText(s.caption);
+                            }
                             showToast("Copied to clipboard!");
                           }}
                           style={{
@@ -1457,32 +1512,65 @@ export default function ApprovalDashboard() {
                         </button>
                         <button
                           onClick={() => {
-                            if (!editMode) {
-                              setEditMode(true);
-                              setEditValues({
-                                caption: s.caption,
-                                x_caption: selected.x_caption,
-                                linkedin_caption: selected.linkedin_caption,
-                                thumbnail_title: selected.thumbnail_title,
-                                scheduled_at: selected.scheduled_at,
-                                platforms: [...(selected.platforms || [])],
-                                selected_accounts: selected.selected_accounts ? { ...selected.selected_accounts } : {},
-                                video_url: selected.video_url || "",
-                                public_video_url: selected.public_video_url || "",
-                                description: selected.description || "",
-                                hashtags: selected.hashtags || "",
-                                thumbnail_options: selected.thumbnail_options || [],
-                                key_moments: selected.key_moments || [],
-                                thumbnail_url: selected.thumbnail_url || "",
-                                story_1: selected.story_1 || "",
-                                story_2: selected.story_2 || "",
-                                story_3: selected.story_3 || "",
-                              });
+                            if (suggestionType === "story") {
+                              if (!editMode) {
+                                setEditMode(true);
+                                setEditValues({
+                                  caption: selected.caption,
+                                  x_caption: selected.x_caption,
+                                  linkedin_caption: selected.linkedin_caption,
+                                  thumbnail_title: selected.thumbnail_title,
+                                  scheduled_at: selected.scheduled_at,
+                                  platforms: [...(selected.platforms || [])],
+                                  selected_accounts: selected.selected_accounts ? { ...selected.selected_accounts } : {},
+                                  video_url: selected.video_url || "",
+                                  public_video_url: selected.public_video_url || "",
+                                  description: selected.description || "",
+                                  hashtags: selected.hashtags || "",
+                                  thumbnail_options: selected.thumbnail_options || [],
+                                  key_moments: selected.key_moments || [],
+                                  thumbnail_url: selected.thumbnail_url || "",
+                                  story_1: s.story_1,
+                                  story_2: s.story_2,
+                                  story_3: s.story_3,
+                                });
+                              } else {
+                                setEditValues(prev => ({ 
+                                  ...prev, 
+                                  story_1: s.story_1,
+                                  story_2: s.story_2,
+                                  story_3: s.story_3,
+                                }));
+                              }
+                              showToast("Applied stories!");
                             } else {
-                              setEditValues(prev => ({ ...prev, caption: s.caption }));
+                              if (!editMode) {
+                                setEditMode(true);
+                                setEditValues({
+                                  caption: s.caption,
+                                  x_caption: selected.x_caption,
+                                  linkedin_caption: selected.linkedin_caption,
+                                  thumbnail_title: selected.thumbnail_title,
+                                  scheduled_at: selected.scheduled_at,
+                                  platforms: [...(selected.platforms || [])],
+                                  selected_accounts: selected.selected_accounts ? { ...selected.selected_accounts } : {},
+                                  video_url: selected.video_url || "",
+                                  public_video_url: selected.public_video_url || "",
+                                  description: selected.description || "",
+                                  hashtags: selected.hashtags || "",
+                                  thumbnail_options: selected.thumbnail_options || [],
+                                  key_moments: selected.key_moments || [],
+                                  thumbnail_url: selected.thumbnail_url || "",
+                                  story_1: selected.story_1 || "",
+                                  story_2: selected.story_2 || "",
+                                  story_3: selected.story_3 || "",
+                                });
+                              } else {
+                                setEditValues(prev => ({ ...prev, caption: s.caption }));
+                              }
+                              showToast("Applied caption!");
                             }
                             setIsSuggestModalOpen(false);
-                            showToast("Applied caption!");
                           }}
                           style={{
                             padding: "6px 14px", borderRadius: 6, border: "none",
@@ -1490,7 +1578,7 @@ export default function ApprovalDashboard() {
                             cursor: "pointer", boxShadow: "0 2px 6px rgba(124,90,237,0.2)"
                           }}
                         >
-                          ✓ Use Caption
+                          {suggestionType === "story" ? "✓ Use Stories" : "✓ Use Caption"}
                         </button>
                       </div>
                     </div>
@@ -1503,13 +1591,13 @@ export default function ApprovalDashboard() {
               <button
                 disabled={loadingSuggestions}
                 onClick={() => {
-                  const cacheKey = `${selected.id}_${selectedTone}`;
+                  const cacheKey = `${selected.id}_${selectedTone}_${suggestionType}`;
                   setSuggestCache(prev => {
                     const newCache = { ...prev };
                     delete newCache[cacheKey];
                     return newCache;
                   });
-                  fetchAiSuggestions(selected.id, selectedTone);
+                  fetchAiSuggestions(selected.id, selectedTone, suggestionType);
                 }}
                 style={{
                   padding: "8px 16px", borderRadius: 8, border: "1px solid #7C3AED",

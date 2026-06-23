@@ -125,6 +125,9 @@ export default function ApprovalDashboard() {
       scheduled_at: item.scheduled_at,
       platforms: [...(item.platforms || [])],
       selected_accounts: item.selected_accounts ? { ...item.selected_accounts } : {},
+      story_1: item.story_1 || "",
+      story_2: item.story_2 || "",
+      story_3: item.story_3 || "",
     });
   }
 

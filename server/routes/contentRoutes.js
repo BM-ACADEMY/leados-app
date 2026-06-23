@@ -24,6 +24,9 @@ router.post("/:id/reject", ctrl.rejectContent);
 // AI caption suggestions
 router.post("/:id/suggest-captions", ctrl.suggestCaptions);
 
+// AI story suggestions
+router.post("/:id/suggest-stories", ctrl.suggestStories);
+
 // Save edits (caption, schedule, platforms)
 router.patch("/:id", ctrl.updateContent);
 router.put("/:id/edit", ctrl.updateContent);

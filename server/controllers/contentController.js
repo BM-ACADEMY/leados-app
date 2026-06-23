@@ -877,7 +877,7 @@ function getBrandGradient(brandName) {
   };
 }
 
-async function generateStoryCard(postId, slideNum, brandName, slideText) {
+async function generateStoryCard(postId, slideNum, brandName, slideText, req = null) {
   try {
     const image = new Jimp(1080, 1920, 0x000000FF);
     const colors = getBrandGradient(brandName);
@@ -943,7 +943,14 @@ async function generateStoryCard(postId, slideNum, brandName, slideText) {
     const outputPath = path.join(uploadsDir, filename);
     await image.writeAsync(outputPath);
 
-    const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+    let baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+    if (req) {
+      const host = req.get('host');
+      if (host && !host.includes('localhost')) {
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+        baseUrl = `${protocol}://${host}`;
+      }
+    }
     return `${baseUrl}/uploads/${filename}`;
   } catch (err) {
     console.error('generateStoryCard error:', err);
@@ -1219,7 +1226,31 @@ async function publishPost(req, res) {
       return res.status(400).json({ success: false, error: 'No platforms selected for this post' });
     }
 
-    const publicUrl = getPublicMediaUrl(post.video_url || post.public_video_url);
+    let publicUrl = null;
+    let baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+    if (req) {
+      const host = req.get('host');
+      if (host && !host.includes('localhost')) {
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+        baseUrl = `${protocol}://${host}`;
+      }
+    }
+
+    if (post.public_video_url) {
+      if (post.public_video_url.includes('localhost')) {
+        const parts = post.public_video_url.split('/uploads/');
+        if (parts.length > 1) {
+          publicUrl = `${baseUrl}/uploads/${parts[1]}`;
+        } else {
+          publicUrl = post.public_video_url;
+        }
+      } else {
+        publicUrl = post.public_video_url;
+      }
+    } else {
+      publicUrl = getPublicMediaUrl(post.video_url);
+    }
+
     if (!publicUrl) {
       return res.status(400).json({ success: false, error: 'No video or media URL found for this post' });
     }
@@ -1303,7 +1334,7 @@ async function publishPost(req, res) {
             for (const slide of slides) {
               try {
                 console.log(`Generating card for story slide ${slide.num}: "${slide.text}"`);
-                const cardUrl = await generateStoryCard(post.id, slide.num, post.brand_name, slide.text);
+                const cardUrl = await generateStoryCard(post.id, slide.num, post.brand_name, slide.text, req);
                 console.log(`Story slide ${slide.num} card URL: ${cardUrl}`);
                 
                 console.log(`Publishing slide ${slide.num} to Instagram Story...`);

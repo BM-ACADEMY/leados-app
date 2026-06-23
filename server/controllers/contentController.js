@@ -943,29 +943,53 @@ async function generateStoryCard(postId, slideNum, brandName, slideText, req = n
     const outputPath = path.join(uploadsDir, filename);
     await image.writeAsync(outputPath);
 
-    let baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
-    if (req) {
-      const host = req.get('host');
-      if (host && !host.includes('localhost')) {
-        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
-        baseUrl = `${protocol}://${host}`;
-      }
-    }
-    return `${baseUrl}/uploads/${filename}`;
+    return resolvePublicUrl(`http://localhost:3500/uploads/${filename}`, req);
   } catch (err) {
     console.error('generateStoryCard error:', err);
     throw err;
   }
 }
 
-// Helper to extract Drive ID and build direct download URL
-function getPublicMediaUrl(url) {
+function resolvePublicUrl(url, req = null) {
   if (!url) return null;
+
+  // 1. Google Drive direct link extraction
   const fileId = extractDriveFileId(url);
   if (fileId) {
     return `https://drive.google.com/uc?export=download&id=${fileId}`;
   }
+
+  // 2. Determine base URL
+  let baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+  
+  // Self-healing: if baseUrl is localhost, but portal is live
+  if (baseUrl.includes('localhost') && process.env.PORTAL_URL && process.env.PORTAL_URL.includes('abmgroups.org')) {
+    baseUrl = 'https://leados-api.abmgroups.org';
+  }
+
+  // Dynamic host overriding if headers contain a public domain
+  if (req) {
+    const host = req.headers['x-forwarded-host'] || req.headers['host'] || req.get('host');
+    if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+      baseUrl = `${protocol}://${host}`;
+    }
+  }
+
+  // 3. Rewrite localhost paths
+  if (url.includes('localhost') || url.includes('127.0.0.1')) {
+    const parts = url.split('/uploads/');
+    if (parts.length > 1) {
+      return `${baseUrl}/uploads/${parts[1]}`;
+    }
+  }
+
   return url;
+}
+
+// Keep getPublicMediaUrl for backwards compatibility if needed
+function getPublicMediaUrl(url) {
+  return resolvePublicUrl(url);
 }
 
 // Facebook Page Publishing
@@ -1226,31 +1250,7 @@ async function publishPost(req, res) {
       return res.status(400).json({ success: false, error: 'No platforms selected for this post' });
     }
 
-    let publicUrl = null;
-    let baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
-    if (req) {
-      const host = req.get('host');
-      if (host && !host.includes('localhost')) {
-        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
-        baseUrl = `${protocol}://${host}`;
-      }
-    }
-
-    if (post.public_video_url) {
-      if (post.public_video_url.includes('localhost')) {
-        const parts = post.public_video_url.split('/uploads/');
-        if (parts.length > 1) {
-          publicUrl = `${baseUrl}/uploads/${parts[1]}`;
-        } else {
-          publicUrl = post.public_video_url;
-        }
-      } else {
-        publicUrl = post.public_video_url;
-      }
-    } else {
-      publicUrl = getPublicMediaUrl(post.video_url);
-    }
-
+    const publicUrl = resolvePublicUrl(post.public_video_url || post.video_url, req);
     if (!publicUrl) {
       return res.status(400).json({ success: false, error: 'No video or media URL found for this post' });
     }

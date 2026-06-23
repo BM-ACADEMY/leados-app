@@ -37,7 +37,7 @@ function getPlatformConfig(platform) {
 
 export default function ApprovalDashboard() {
   const { user } = useAuth();
-  const canApprove = !user || !user.role || ['Super Admin', 'Marketing Admin'].includes(user.role);
+  const canApprove = !user || !user.role || ['Super Admin', 'Marketing Admin', 'super_admin', 'admin', 'founder', 'Founder'].includes(user.role);
 
   const [items, setItems] = useState([]);
   const [stats, setStats] = useState({ PENDING: 0, APPROVED: 0, REJECTED: 0, PUBLISHED: 0, FAILED: 0 });
@@ -66,8 +66,8 @@ export default function ApprovalDashboard() {
     fetchAccounts();
   }, []);
 
-  async function fetchData() {
-    setLoading(true);
+  async function fetchData(showLoading = true) {
+    if (showLoading) setLoading(true);
     try {
       const res = await api.getContentQueue({ 
         status: filter === "ALL" ? "all" : filter,
@@ -95,7 +95,7 @@ export default function ApprovalDashboard() {
     } catch(e) {
       showToast("Error loading data", "error");
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }
 
@@ -131,10 +131,15 @@ export default function ApprovalDashboard() {
   async function handleApprove(id) {
     try {
       await api.approveContent(id);
-      setItems(prev => prev.map(i => i.id === id ? { ...i, status: "APPROVED" } : i));
-      setStats(prev => ({ ...prev, PENDING: prev.PENDING - 1, APPROVED: prev.APPROVED + 1 }));
+      if (filter !== "ALL" && filter !== "APPROVED") {
+        setItems(prev => prev.filter(i => i.id !== id));
+      } else {
+        setItems(prev => prev.map(i => i.id === id ? { ...i, status: "APPROVED" } : i));
+      }
+      setStats(prev => ({ ...prev, PENDING: Math.max(0, prev.PENDING - 1), APPROVED: prev.APPROVED + 1 }));
       setSelected(null);
       showToast("Content approved — publishing queue updated ✅");
+      fetchData(false);
     } catch(e) {
       showToast("Approval failed", "error");
     }
@@ -143,12 +148,17 @@ export default function ApprovalDashboard() {
   async function handleReject(id, reason) {
     try {
       await api.rejectContent(id, reason);
-      setItems(prev => prev.map(i => i.id === id ? { ...i, status: "REJECTED" } : i));
-      setStats(prev => ({ ...prev, PENDING: prev.PENDING - 1, REJECTED: prev.REJECTED + 1 }));
+      if (filter !== "ALL" && filter !== "REJECTED") {
+        setItems(prev => prev.filter(i => i.id !== id));
+      } else {
+        setItems(prev => prev.map(i => i.id === id ? { ...i, status: "REJECTED" } : i));
+      }
+      setStats(prev => ({ ...prev, PENDING: Math.max(0, prev.PENDING - 1), REJECTED: prev.REJECTED + 1 }));
       setSelected(null);
       showToast("Content rejected", "error");
       setConfirmAction(null);
       setRejectionReason("");
+      fetchData(false);
     } catch(e) {
       showToast("Rejection failed", "error");
     }

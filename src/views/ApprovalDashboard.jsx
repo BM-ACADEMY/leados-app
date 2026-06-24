@@ -22,10 +22,12 @@ function getPlatformConfig(platform) {
   if (!platform) return { label: "Unknown", icon: "🌐", color: "#6B6B80" };
   const p = platform.toLowerCase();
   const known = {
-    instagram:       { label: "Instagram Feed",  icon: "📸", color: "#E1306C" },
+    instagram:       { label: "Instagram Post",  icon: "📸", color: "#E1306C" },
+    instagram_post:  { label: "Instagram Post",  icon: "📸", color: "#E1306C" },
     instagram_story: { label: "Instagram Story", icon: "📱", color: "#D3006A" },
     youtube:         { label: "YouTube",         icon: "▶️", color: "#FF0000" },
-    facebook:        { label: "Facebook Feed",   icon: "👍", color: "#1877F2" },
+    facebook:        { label: "Facebook Post",   icon: "👍", color: "#1877F2" },
+    facebook_post:   { label: "Facebook Post",   icon: "👍", color: "#1877F2" },
     facebook_story:  { label: "Facebook Story",  icon: "📱", color: "#1565C0" },
     x_twitter:       { label: "X",               icon: "𝕏", color: "#000000" },
     linkedin:        { label: "LinkedIn",        icon: "in", color: "#0A66C2" },
@@ -299,7 +301,44 @@ export default function ApprovalDashboard() {
     });
   }
 
+  function getApprovalValidationError() {
+    if (!selected) return null;
+    
+    // Determine active selected channels
+    const channels = editMode ? (editValues.platforms || []) : (selected.platforms || []);
+    
+    if (!channels || channels.length === 0) {
+      return "Please select at least one publishing channel.";
+    }
+
+    // Check connected accounts for this brand
+    const connectedPlatforms = new Set(
+      (socialAccounts || [])
+        .filter(s => s.brand_name === selected.brand_name && s.is_active !== false)
+        .map(s => s.platform.toLowerCase())
+    );
+
+    for (const channel of channels) {
+      let requiredPlatform = channel.toLowerCase();
+      if (requiredPlatform.includes('instagram')) requiredPlatform = 'instagram';
+      if (requiredPlatform.includes('facebook')) requiredPlatform = 'facebook';
+      if (requiredPlatform === 'x_twitter') requiredPlatform = 'x_twitter';
+
+      if (!connectedPlatforms.has(requiredPlatform)) {
+        const displayPlat = requiredPlatform === 'instagram' ? 'Instagram' : 'Facebook';
+        return `${displayPlat} account is not connected for this brand.`;
+      }
+    }
+
+    return null;
+  }
+
   async function handleApprove(id) {
+    const valError = getApprovalValidationError();
+    if (valError) {
+      showToast(valError, "error");
+      return;
+    }
     try {
       await api.approveContent(id);
       if (filter !== "ALL" && filter !== "APPROVED") {
@@ -348,12 +387,28 @@ export default function ApprovalDashboard() {
   }
 
   function togglePlatform(p) {
-    setEditValues(prev => ({
-      ...prev,
-      platforms: prev.platforms.includes(p)
-        ? prev.platforms.filter(x => x !== p)
-        : [...prev.platforms, p]
-    }));
+    setEditValues(prev => {
+      const exists = prev.platforms.includes(p) || 
+        (p === 'instagram_post' && prev.platforms.includes('instagram')) ||
+        (p === 'facebook_post' && prev.platforms.includes('facebook'));
+
+      let nextPlatforms;
+      if (exists) {
+        nextPlatforms = prev.platforms.filter(x => {
+          if (p === 'instagram_post' && (x === 'instagram' || x === 'instagram_post')) return false;
+          if (p === 'facebook_post' && (x === 'facebook' || x === 'facebook_post')) return false;
+          return x !== p;
+        });
+      } else {
+        nextPlatforms = [...prev.platforms, p];
+      }
+
+      return {
+        ...prev,
+        platforms: nextPlatforms,
+        selected_channels: nextPlatforms
+      };
+    });
   }
 
   function toggleAccount(platform, accountId) {
@@ -429,6 +484,7 @@ export default function ApprovalDashboard() {
   };
 
   const brandConf = selected ? getBrandConfig(selected.brand_name) : null;
+  const validationError = getApprovalValidationError();
 
   return (
     <div style={{ fontFamily: "'Inter', -apple-system, sans-serif", background: "#F8F7FF", height: "100%", color: "#1A1A2E", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -719,11 +775,20 @@ export default function ApprovalDashboard() {
                       padding: "8px 16px", borderRadius: 8, border: "1px solid #EF444444",
                       background: "#FEF2F2", color: "#EF4444", fontWeight: 600, fontSize: 13, cursor: "pointer"
                     }}>✕ Reject</button>
-                    <button onClick={() => handleApprove(selected.id)} style={{
-                      padding: "8px 20px", borderRadius: 8, border: "none",
-                      background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer",
-                      boxShadow: "0 2px 8px #10B98133"
-                    }}>✓ Approve</button>
+                    <button 
+                      disabled={!!validationError}
+                      onClick={() => handleApprove(selected.id)} 
+                      style={{
+                        padding: "8px 20px", borderRadius: 8, border: "none",
+                        background: validationError ? "#9CA3AF" : "#10B981", 
+                        color: "#fff", fontWeight: 700, fontSize: 13, 
+                        cursor: validationError ? "not-allowed" : "pointer",
+                        boxShadow: validationError ? "none" : "0 2px 8px #10B98133",
+                        opacity: validationError ? 0.7 : 1
+                      }}
+                    >
+                      ✓ Approve
+                    </button>
                   </>
                 )}
                 {canApprove && ["approved", "APPROVED"].includes(selected.status) && (
@@ -1199,16 +1264,38 @@ export default function ApprovalDashboard() {
                   </div>
                   <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
                     {Array.from(new Set([
-                      ...(socialAccounts.map(s => s.platform) || []),
-                      ...((socialAccounts.map(s => s.platform) || []).map(plat => plat + '_story').filter(plat => ['instagram_story', 'facebook_story'].includes(plat))),
-                      ...(selected.platforms || [])
+                      ...((socialAccounts.filter(s => s.brand_name === selected.brand_name).map(s => s.platform) || []).map(plat => {
+                        if (plat === 'instagram') return 'instagram_post';
+                        if (plat === 'facebook') return 'facebook_post';
+                        return plat;
+                      })),
+                      ...((socialAccounts.filter(s => s.brand_name === selected.brand_name).map(s => s.platform) || []).map(plat => plat + '_story').filter(plat => ['instagram_story', 'facebook_story'].includes(plat))),
+                      ...((selected.platforms || []).map(plat => {
+                        if (plat === 'instagram') return 'instagram_post';
+                        if (plat === 'facebook') return 'facebook_post';
+                        return plat;
+                      })),
+                      ...((selected.selected_channels || []).map(plat => {
+                        if (plat === 'instagram') return 'instagram_post';
+                        if (plat === 'facebook') return 'facebook_post';
+                        return plat;
+                      }))
                     ])).map(key => {
                       const p = getPlatformConfig(key);
+                      const checkActive = (arr) => {
+                        if (!arr) return false;
+                        if (arr.includes(key)) return true;
+                        if (key === 'instagram_post' && (arr.includes('instagram') || arr.includes('instagram_post'))) return true;
+                        if (key === 'facebook_post' && (arr.includes('facebook') || arr.includes('facebook_post'))) return true;
+                        return false;
+                      };
                       const active = editMode
-                        ? editValues.platforms?.includes(key)
-                        : selected.platforms?.includes(key);
+                        ? checkActive(editValues.platforms)
+                        : checkActive(selected.platforms);
                       
-                      const accountPlatform = key.endsWith('_story') ? key.replace('_story', '') : key;
+                      let accountPlatform = key.endsWith('_story') ? key.replace('_story', '') : key;
+                      if (accountPlatform === 'instagram_post') accountPlatform = 'instagram';
+                      if (accountPlatform === 'facebook_post') accountPlatform = 'facebook';
                       const brandAccounts = socialAccounts.filter(s => s.brand_name === selected.brand_name && s.platform === accountPlatform);
 
                       return (
@@ -1240,8 +1327,8 @@ export default function ApprovalDashboard() {
                               <div style={{ fontSize: 10, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase" }}>Select Accounts</div>
                               {brandAccounts.map(acc => {
                                 const isAccSelected = editMode 
-                                  ? (editValues.selected_accounts?.[key] || []).includes(acc.account_id)
-                                  : (selected.selected_accounts?.[key] || []).includes(acc.account_id);
+                                  ? ((editValues.selected_accounts?.[key] || []).includes(acc.account_id) || (key === 'instagram_post' && (editValues.selected_accounts?.['instagram'] || []).includes(acc.account_id)) || (key === 'facebook_post' && (editValues.selected_accounts?.['facebook'] || []).includes(acc.account_id)))
+                                  : ((selected.selected_accounts?.[key] || []).includes(acc.account_id) || (key === 'instagram_post' && (selected.selected_accounts?.['instagram'] || []).includes(acc.account_id)) || (key === 'facebook_post' && (selected.selected_accounts?.['facebook'] || []).includes(acc.account_id)));
                                 
                                 return (
                                   <div key={acc.account_id} 
@@ -1300,11 +1387,20 @@ export default function ApprovalDashboard() {
                       padding: "12px", borderRadius: 10, border: "1px solid #EF444444",
                       background: "#FEF2F2", color: "#EF4444", fontWeight: 700, fontSize: 13, cursor: "pointer"
                     }}>✕ Reject</button>
-                    <button onClick={() => handleApprove(selected.id)} style={{
-                      padding: "12px", borderRadius: 10, border: "none",
-                      background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer",
-                      boxShadow: "0 2px 8px #10B98133"
-                    }}>✓ Approve</button>
+                    <button 
+                      disabled={!!validationError}
+                      onClick={() => handleApprove(selected.id)} 
+                      style={{
+                        padding: "12px", borderRadius: 10, border: "none",
+                        background: validationError ? "#9CA3AF" : "#10B981", 
+                        color: "#fff", fontWeight: 700, fontSize: 13, 
+                        cursor: validationError ? "not-allowed" : "pointer",
+                        boxShadow: validationError ? "none" : "0 2px 8px #10B98133",
+                        opacity: validationError ? 0.7 : 1
+                      }}
+                    >
+                      ✓ Approve
+                    </button>
                   </div>
                 )}
                 {canApprove && ["approved", "APPROVED"].includes(selected.status) && (

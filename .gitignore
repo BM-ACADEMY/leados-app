@@ -28,3 +28,7 @@ server/env.example
 
 # Google credentials
 server/credentials/*.json
+
+# Environment files and uploads
+server/.env
+server/uploads/

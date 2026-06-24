@@ -342,7 +342,13 @@ async function updateContent(req, res) {
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
       const isJson = ["platforms", "selected_channels", "thumbnail_options", "key_moments"].includes(key);
-      const val = isJson ? JSON.stringify(req.body[key]) : req.body[key];
+      let val = isJson ? JSON.stringify(req.body[key]) : req.body[key];
+      
+      // Convert empty timestamp string to null
+      if (key === "scheduled_at" && val === "") {
+        val = null;
+      }
+      
       sets.push(`${key} = $${i}${isJson ? "::jsonb" : ""}`);
       params.push(val);
       i++;

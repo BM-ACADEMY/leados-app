@@ -194,7 +194,15 @@ async function getContent(req, res) {
     params.push(parseInt(limit), parseInt(offset));
 
     const { rows } = await pool.query(query, params);
-    res.json({ success: true, items: rows });
+    
+    // Dynamically resolve localhost/relative paths to the current public base URL of the incoming request
+    const resolvedItems = rows.map(item => ({
+      ...item,
+      public_video_url: resolvePublicUrl(item.public_video_url, req),
+      thumbnail_url: resolvePublicUrl(item.thumbnail_url, req)
+    }));
+
+    res.json({ success: true, items: resolvedItems });
   } catch (err) {
     console.error("getContent error:", err);
     res.status(500).json({ success: false, error: "Failed to load content" });
@@ -318,7 +326,16 @@ async function updateContent(req, res) {
       params
     );
     if (rows.length === 0) return res.status(404).json({ success: false, error: "Item not found" });
-    res.json({ success: true, item: rows[0] });
+    
+    // Dynamically resolve localhost/relative paths to the current public base URL of the incoming request
+    const item = rows[0];
+    const resolvedItem = {
+      ...item,
+      public_video_url: resolvePublicUrl(item.public_video_url, req),
+      thumbnail_url: resolvePublicUrl(item.thumbnail_url, req)
+    };
+
+    res.json({ success: true, item: resolvedItem });
   } catch (err) {
     console.error("updateContent error:", err);
     res.status(500).json({ success: false, error: "Failed to update" });

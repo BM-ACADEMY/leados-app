@@ -1111,7 +1111,11 @@ function resolvePublicUrl(url, req = null) {
   if (req) {
     const host = req.headers['x-forwarded-host'] || req.headers['host'] || req.get('host');
     if (host) {
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+      let protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+      // Force https for production domain to prevent Mixed Content blocks
+      if (host.includes('abmgroups.org')) {
+        protocol = 'https';
+      }
       baseUrl = `${protocol}://${host}`;
     }
   }

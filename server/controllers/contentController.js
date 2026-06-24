@@ -332,6 +332,13 @@ async function updateContent(req, res) {
   const params = [id];
   let i = 2;
 
+  // Keep platforms and selected_channels in sync
+  if (req.body.platforms !== undefined && req.body.selected_channels === undefined) {
+    req.body.selected_channels = req.body.platforms;
+  } else if (req.body.selected_channels !== undefined && req.body.platforms === undefined) {
+    req.body.platforms = req.body.selected_channels;
+  }
+
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
       const isJson = ["platforms", "selected_channels", "thumbnail_options", "key_moments"].includes(key);
@@ -339,11 +346,6 @@ async function updateContent(req, res) {
       sets.push(`${key} = $${i}${isJson ? "::jsonb" : ""}`);
       params.push(val);
       i++;
-      if (key === "platforms") {
-        sets.push(`selected_channels = $${i}::jsonb`);
-        params.push(val);
-        i++;
-      }
     }
   }
 

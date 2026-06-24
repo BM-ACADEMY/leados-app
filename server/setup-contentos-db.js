@@ -199,8 +199,8 @@ async function setupContentOS() {
   for (const acc of accounts) {
     // Check if the record already exists in the table to prevent duplicates
     const { rows } = await pool.query(
-      'SELECT id FROM brand_social_accounts WHERE brand_name = $1 AND platform = $2 AND account_name = $3',
-      [acc.brand_name, acc.platform, acc.account_name]
+      'SELECT id FROM brand_social_accounts WHERE brand_name = $1 AND platform = $2',
+      [acc.brand_name, acc.platform]
     );
 
     if (rows.length === 0) {
@@ -212,7 +212,7 @@ async function setupContentOS() {
       console.log(`  ✓ ${acc.brand_name} - ${acc.platform} (${acc.account_name}) seeded`);
       seededCount++;
     } else {
-      console.log(`  - ${acc.brand_name} - ${acc.platform} (${acc.account_name}) already exists (skipped)`);
+      console.log(`  - ${acc.brand_name} - ${acc.platform} already exists (skipped)`);
     }
   }
 

@@ -298,7 +298,7 @@ async function updateContent(req, res) {
   const { id } = req.params;
   const allowed = [
     "caption", "x_caption", "linkedin_caption", "thumbnail_title", "scheduled_at", 
-    "platforms", "video_url", "public_video_url", "description", "hashtags", 
+    "platforms", "selected_channels", "video_url", "public_video_url", "description", "hashtags", 
     "thumbnail_options", "key_moments", "thumbnail_url", "brand_id", "video_name", "status",
     "story_1", "story_2", "story_3"
   ];
@@ -308,11 +308,16 @@ async function updateContent(req, res) {
 
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
-      const isJson = ["platforms", "thumbnail_options", "key_moments"].includes(key);
+      const isJson = ["platforms", "selected_channels", "thumbnail_options", "key_moments"].includes(key);
       const val = isJson ? JSON.stringify(req.body[key]) : req.body[key];
       sets.push(`${key} = $${i}${isJson ? "::jsonb" : ""}`);
       params.push(val);
       i++;
+      if (key === "platforms") {
+        sets.push(`selected_channels = $${i}::jsonb`);
+        params.push(val);
+        i++;
+      }
     }
   }
 
@@ -666,13 +671,37 @@ async function checkNewDriveVideos() {
 
       console.log(`DrivePoller: Found ${files.length} videos in folder.`);
 
+      // Soft-delete: check for files deleted from Google Drive
+      const currentDriveFileIds = new Set(files.map(f => f.id));
+      const { rows: dbPendingFiles } = await pool.query(
+        "SELECT id, drive_file_id, file_name FROM content_queue WHERE brand_id = $1 AND drive_file_id IS NOT NULL AND status IN ('pending_approval', 'draft')",
+        [brand_slug]
+      );
+      for (const dbFile of dbPendingFiles) {
+        if (!currentDriveFileIds.has(dbFile.drive_file_id)) {
+          console.log(`DrivePoller: File ${dbFile.file_name} (ID: ${dbFile.drive_file_id}) was deleted from Google Drive. Marking status as 'deleted_from_drive'.`);
+          await pool.query(
+            "UPDATE content_queue SET status = 'deleted_from_drive', updated_at = NOW() WHERE id = $1",
+            [dbFile.id]
+          );
+        }
+      }
+
       for (const file of files) {
         // Check if already ingested
         const { rows: existing } = await pool.query(
-          "SELECT id FROM content_queue WHERE drive_file_id = $1",
+          "SELECT id, status FROM content_queue WHERE drive_file_id = $1",
           [file.id]
         );
         if (existing.length > 0) {
+          const dbItem = existing[0];
+          if (dbItem.status === 'deleted_from_drive') {
+            console.log(`DrivePoller: File ${file.name} (ID: ${file.id}) was restored in Google Drive. Re-activating as 'pending_approval'.`);
+            await pool.query(
+              "UPDATE content_queue SET status = 'pending_approval', updated_at = NOW() WHERE id = $1",
+              [dbItem.id]
+            );
+          }
           continue; // Already processed
         }
 
@@ -979,25 +1008,26 @@ function resolvePublicUrl(url, req = null) {
   // 2. Determine base URL
   let baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
   
-  // Self-healing: if baseUrl is localhost, but portal is live
-  if (baseUrl.includes('localhost') && process.env.PORTAL_URL && process.env.PORTAL_URL.includes('abmgroups.org')) {
+  // Self-healing: if baseUrl is localhost, but portal is live (only when no request context exists)
+  if (!req && baseUrl.includes('localhost') && process.env.PORTAL_URL && process.env.PORTAL_URL.includes('abmgroups.org')) {
     baseUrl = 'https://leados-api.abmgroups.org';
   }
 
-  // Dynamic host overriding if headers contain a public domain
+  // Dynamic host overriding if headers contain request context
   if (req) {
     const host = req.headers['x-forwarded-host'] || req.headers['host'] || req.get('host');
-    if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    if (host) {
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
       baseUrl = `${protocol}://${host}`;
     }
   }
 
-  // 3. Rewrite localhost paths
-  if (url.includes('localhost') || url.includes('127.0.0.1')) {
+  // 3. Rewrite any path containing '/uploads/' to use the determined baseUrl
+  if (url.includes('/uploads/')) {
     const parts = url.split('/uploads/');
     if (parts.length > 1) {
-      return `${baseUrl}/uploads/${parts[1]}`;
+      const cleanBase = baseUrl.replace(/\/+$/, '');
+      return `${cleanBase}/uploads/${parts[1]}`;
     }
   }
 
@@ -1007,6 +1037,69 @@ function resolvePublicUrl(url, req = null) {
 // Keep getPublicMediaUrl for backwards compatibility if needed
 function getPublicMediaUrl(url) {
   return resolvePublicUrl(url);
+}
+
+// Facebook Photo Story Publishing
+async function publishPhotoStoryToFacebook(pageId, pageAccessToken, { imageUrl }) {
+  try {
+    const uploadUrl = `https://graph.facebook.com/v19.0/${pageId}/photos`;
+    const uploadRes = await axios.post(uploadUrl, {
+      url: imageUrl,
+      published: false,
+      access_token: pageAccessToken
+    });
+    const photoId = uploadRes.data.id;
+    if (!photoId) {
+      throw new Error("Failed to upload photo story container: no ID returned.");
+    }
+    console.log(`Facebook photo story upload success: photoId = ${photoId}`);
+
+    const publishUrl = `https://graph.facebook.com/v19.0/${pageId}/photo_stories`;
+    const publishRes = await axios.post(publishUrl, {
+      photo_id: photoId,
+      access_token: pageAccessToken
+    });
+    return { success: true, post_id: publishRes.data.id || photoId };
+  } catch (err) {
+    console.error('Facebook photo story publishing failed:', err.response?.data || err.message);
+    throw new Error(err.response?.data?.error?.message || err.message);
+  }
+}
+
+// Facebook Video Story Publishing
+async function publishVideoStoryToFacebook(pageId, pageAccessToken, { videoUrl }) {
+  try {
+    const initRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, {
+      upload_phase: 'start',
+      access_token: pageAccessToken
+    });
+    const { video_id, upload_url } = initRes.data;
+    if (!video_id || !upload_url) {
+      throw new Error("Failed to initialize Facebook video story session.");
+    }
+    console.log(`Facebook video story session initialized: video_id = ${video_id}`);
+
+    await axios.post(upload_url, null, {
+      headers: {
+        'file_url': videoUrl,
+        'Authorization': `OAuth ${pageAccessToken}`
+      }
+    });
+    console.log(`Facebook video story upload completed for video_id = ${video_id}`);
+
+    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, null, {
+      params: {
+        upload_phase: 'finish',
+        video_id: video_id,
+        access_token: pageAccessToken
+      }
+    });
+
+    return { success: true, post_id: finishRes.data.id || video_id };
+  } catch (err) {
+    console.error('Facebook video story publishing failed:', err.response?.data || err.message);
+    throw new Error(err.response?.data?.error?.message || err.message);
+  }
 }
 
 // Facebook Page Publishing
@@ -1252,18 +1345,45 @@ async function publishPost(req, res) {
     }
     const post = postRes.rows[0];
 
-    let platforms = [];
-    if (Array.isArray(post.platforms)) {
-      platforms = post.platforms;
-    } else if (typeof post.platforms === 'string') {
-      try {
-        platforms = JSON.parse(post.platforms);
-      } catch (e) {
-        platforms = [];
+    // Fetch or seed publish_queue jobs
+    let { rows: jobs } = await pool.query(
+      "SELECT * FROM publish_queue WHERE content_id = $1 AND status IN ('pending', 'failed')",
+      [post.id]
+    );
+
+    if (jobs.length === 0) {
+      console.log(`No jobs found in publish_queue for post ID ${post.id}. Initializing from platforms...`);
+      let platforms = [];
+      if (Array.isArray(post.selected_channels)) {
+        platforms = post.selected_channels;
+      } else if (Array.isArray(post.platforms)) {
+        platforms = post.platforms;
+      } else if (typeof post.platforms === 'string') {
+        try {
+          platforms = JSON.parse(post.platforms);
+        } catch (e) {
+          platforms = [];
+        }
       }
+      for (const platform of platforms) {
+        let normalizedChannel = platform.toLowerCase();
+        if (normalizedChannel === 'instagram') normalizedChannel = 'instagram_post';
+        if (normalizedChannel === 'facebook') normalizedChannel = 'facebook_post';
+
+        await pool.query(`
+          INSERT INTO publish_queue (content_id, brand_name, channel, status)
+          VALUES ($1, $2, $3, 'pending')
+          ON CONFLICT (content_id, channel) DO NOTHING
+        `, [post.id, post.brand_name, normalizedChannel]);
+      }
+      const refetch = await pool.query(
+        "SELECT * FROM publish_queue WHERE content_id = $1 AND status IN ('pending', 'failed')",
+        [post.id]
+      );
+      jobs = refetch.rows;
     }
 
-    if (!platforms || platforms.length === 0) {
+    if (!jobs || jobs.length === 0) {
       return res.status(400).json({ success: false, error: 'No platforms selected for this post' });
     }
 
@@ -1282,22 +1402,85 @@ async function publishPost(req, res) {
     const errors = [];
     const platformPostIds = [];
 
-    for (const platform of platforms) {
-      const lowerPlatform = platform.toLowerCase();
-      if (
-        lowerPlatform !== 'facebook' &&
-        lowerPlatform !== 'instagram' &&
-        lowerPlatform !== 'instagram_story' &&
-        lowerPlatform !== 'facebook_story'
-      ) {
-        console.log(`Skipping auto-publish for platform ${platform} (manual or unsupported)`);
+    for (const job of jobs) {
+      const channel = job.channel.toLowerCase();
+      
+      // Update job status to 'publishing'
+      await pool.query("UPDATE publish_queue SET status = 'publishing', updated_at = NOW() WHERE id = $1", [job.id]);
+
+      // Normalize channel name to look up account platform
+      let accountPlatform;
+      if (channel.includes('instagram')) {
+        accountPlatform = 'instagram';
+      } else if (channel.includes('facebook')) {
+        accountPlatform = 'facebook';
+      } else {
+        accountPlatform = channel;
+      }
+      // Parse selected accounts
+      let selectedAccIds = null;
+      if (post.selected_accounts) {
+        try {
+          const sel = typeof post.selected_accounts === 'string'
+            ? JSON.parse(post.selected_accounts)
+            : post.selected_accounts;
+          
+          if (sel[channel] !== undefined) {
+            selectedAccIds = sel[channel];
+          } else if (sel[accountPlatform] !== undefined) {
+            selectedAccIds = sel[accountPlatform];
+          }
+        } catch (e) {
+          console.warn("Failed to parse selected_accounts JSON:", e.message);
+        }
+      }
+
+      // If explicitly unchecked (empty array), skip and fail publishing for this channel
+      if (selectedAccIds !== null && Array.isArray(selectedAccIds) && selectedAccIds.length === 0) {
+        const errMsg = `No accounts were selected for publishing on channel ${channel}`;
+        errors.push(errMsg);
+        results.push({ platform: channel, status: 'failed', error: errMsg });
+
+        await pool.query(
+          "UPDATE publish_queue SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2",
+          [errMsg, job.id]
+        );
+
+        await pool.query(
+          `INSERT INTO publishing_logs (content_id, brand_name, platform, post_id, status, published_at, metadata)
+           VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+          [post.id, post.brand_name, channel, null, 'failed', JSON.stringify({ error: errMsg })]
+        );
         continue;
       }
 
-      const accountPlatform = lowerPlatform.endsWith('_story') ? lowerPlatform.replace('_story', '') : lowerPlatform;
-      const account = accounts.find(acc => acc.platform.toLowerCase() === accountPlatform && acc.access_token);
+      const account = accounts.find(acc => {
+        const isPlatMatch = acc.platform.toLowerCase() === accountPlatform;
+        if (!isPlatMatch || !acc.access_token) return false;
+        
+        if (selectedAccIds && Array.isArray(selectedAccIds) && selectedAccIds.length > 0) {
+          return selectedAccIds.includes(acc.account_id) || selectedAccIds.includes(String(acc.account_id));
+        }
+        return true;
+      });
+
       if (!account) {
-        errors.push(`No active account or access token found for brand ${post.brand_name} on platform ${platform}`);
+        const errMsg = selectedAccIds && Array.isArray(selectedAccIds) && selectedAccIds.length > 0
+          ? `Selected social account(s) not found or inactive for brand ${post.brand_name} on platform ${channel}`
+          : `No active account or access token found for brand ${post.brand_name} on platform ${channel}`;
+        errors.push(errMsg);
+        results.push({ platform: channel, status: 'failed', error: errMsg });
+
+        await pool.query(
+          "UPDATE publish_queue SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2",
+          [errMsg, job.id]
+        );
+
+        await pool.query(
+          `INSERT INTO publishing_logs (content_id, brand_name, platform, post_id, status, published_at, metadata)
+           VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+          [post.id, post.brand_name, channel, null, 'failed', JSON.stringify({ error: errMsg })]
+        );
         continue;
       }
 
@@ -1305,11 +1488,24 @@ async function publishPost(req, res) {
       try {
         decryptedToken = cryptoHelper.decrypt(account.access_token);
       } catch (decErr) {
-        errors.push(`Token decryption failed for platform ${platform}: ${decErr.message}`);
+        const errMsg = `Token decryption failed for platform ${channel}: ${decErr.message}`;
+        errors.push(errMsg);
+        results.push({ platform: channel, status: 'failed', error: errMsg });
+
+        await pool.query(
+          "UPDATE publish_queue SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2",
+          [errMsg, job.id]
+        );
+
+        await pool.query(
+          `INSERT INTO publishing_logs (content_id, brand_name, platform, post_id, status, published_at, metadata)
+           VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+          [post.id, post.brand_name, channel, null, 'failed', JSON.stringify({ error: errMsg })]
+        );
         continue;
       }
 
-      console.log(`Starting publish to ${platform} for brand ${post.brand_name}...`);
+      console.log(`Starting publish to ${channel} for brand ${post.brand_name}...`);
 
       try {
         let publishRes;
@@ -1318,7 +1514,7 @@ async function publishPost(req, res) {
         const hashtags = post.hashtags ? `\n\n${post.hashtags}` : '';
         const finalCaption = `${post.caption || post.description || ''}${hashtags}`.trim();
 
-        if (lowerPlatform === 'facebook') {
+        if (channel === 'facebook' || channel === 'facebook_post') {
           if (!account.facebook_page_id) {
             throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
           }
@@ -1326,7 +1522,7 @@ async function publishPost(req, res) {
             caption: finalCaption,
             videoUrl: publicUrl
           });
-        } else if (lowerPlatform === 'instagram') {
+        } else if (channel === 'instagram' || channel === 'instagram_post') {
           if (!account.instagram_business_id) {
             throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
           }
@@ -1335,7 +1531,7 @@ async function publishPost(req, res) {
             videoUrl: publicUrl,
             isStory: false
           });
-        } else if (lowerPlatform === 'instagram_story') {
+        } else if (channel === 'instagram_story') {
           if (!account.instagram_business_id) {
             throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
           }
@@ -1389,25 +1585,73 @@ async function publishPost(req, res) {
               isStory: true
             });
           }
-        } else if (lowerPlatform === 'facebook_story') {
-          // Stub Facebook Story publishing for Phase 2
-          console.log(`Facebook Story selected for post ID ${post.id}. Facebook Story publishing is planned for Phase 2.`);
-          errors.push("Facebook Story publishing is not implemented yet (coming in Phase 2).");
-          results.push({ platform, status: 'failed', error: "Facebook Story publishing is not implemented yet (coming in Phase 2)." });
-          continue;
+        } else if (channel === 'facebook_story') {
+          if (!account.facebook_page_id) {
+            throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
+          }
+          const slides = [];
+          if (post.story_1 && post.story_1.trim()) slides.push({ num: 1, text: post.story_1.trim() });
+          if (post.story_2 && post.story_2.trim()) slides.push({ num: 2, text: post.story_2.trim() });
+          if (post.story_3 && post.story_3.trim()) slides.push({ num: 3, text: post.story_3.trim() });
+
+          if (slides.length > 0) {
+            const slidePostIds = [];
+            const slideErrors = [];
+            
+            for (const slide of slides) {
+              try {
+                console.log(`Generating card for Facebook story slide ${slide.num}: "${slide.text}"`);
+                const cardUrl = await generateStoryCard(post.id, slide.num, post.brand_name, slide.text, req);
+                console.log(`Facebook Story slide ${slide.num} card URL: ${cardUrl}`);
+                
+                console.log(`Publishing slide ${slide.num} to Facebook Page Story...`);
+                const slideRes = await publishPhotoStoryToFacebook(account.facebook_page_id, decryptedToken, { imageUrl: cardUrl });
+                
+                if (slideRes && slideRes.success) {
+                  slidePostIds.push(slideRes.post_id);
+                }
+              } catch (slideErr) {
+                console.error(`Failed to publish Facebook story slide ${slide.num}:`, slideErr.message);
+                slideErrors.push(`Slide ${slide.num}: ${slideErr.message}`);
+              }
+            }
+            
+            if (slidePostIds.length > 0) {
+              publishRes = {
+                success: true,
+                post_id: slidePostIds.join(',')
+              };
+              if (slideErrors.length > 0) {
+                publishRes.warning = `Partial success. Failed slides: ${slideErrors.join('; ')}`;
+              }
+            } else {
+              throw new Error(`All Facebook story slides failed to publish: ${slideErrors.join('; ')}`);
+            }
+          } else {
+            console.log(`No story text slides found. Falling back to video story for Facebook Page post ID ${post.id}`);
+            publishRes = await publishVideoStoryToFacebook(account.facebook_page_id, decryptedToken, {
+              videoUrl: publicUrl
+            });
+          }
         }
 
         if (publishRes && publishRes.success) {
           const isWarning = !!publishRes.warning;
           const statusVal = isWarning ? 'partial' : 'success';
-          console.log(`Successfully published to ${platform} (${statusVal})! Post ID: ${publishRes.post_id}`);
-          platformPostIds.push({ platform, post_id: publishRes.post_id });
+          console.log(`Successfully published to ${channel} (${statusVal})! Post ID: ${publishRes.post_id}`);
+          platformPostIds.push({ platform: channel, post_id: publishRes.post_id });
           results.push({ 
-            platform, 
+            platform: channel, 
             status: statusVal, 
             post_id: publishRes.post_id,
             error: isWarning ? publishRes.warning : undefined
           });
+
+          // Update job status to success
+          await pool.query(
+            "UPDATE publish_queue SET status = 'success', post_id = $1, published_at = NOW(), error_message = NULL, updated_at = NOW() WHERE id = $2",
+            [publishRes.post_id, job.id]
+          );
 
           await pool.query(
             `INSERT INTO publishing_logs (content_id, brand_name, platform, post_id, status, published_at, metadata)
@@ -1415,7 +1659,7 @@ async function publishPost(req, res) {
             [
               post.id, 
               post.brand_name, 
-              platform, 
+              channel, 
               publishRes.post_id, 
               statusVal, 
               JSON.stringify({ account_id: account.account_id, response: publishRes })
@@ -1423,47 +1667,92 @@ async function publishPost(req, res) {
           );
         }
       } catch (pubErr) {
-        console.error(`Publishing to ${platform} failed:`, pubErr.message);
-        errors.push(`Failed to publish to ${platform}: ${pubErr.message}`);
-        results.push({ platform, status: 'failed', error: pubErr.message });
+        console.error(`Publishing to ${channel} failed:`, pubErr.message);
+        errors.push(`Failed to publish to ${channel}: ${pubErr.message}`);
+        results.push({ platform: channel, status: 'failed', error: pubErr.message });
+
+        // Update job status to failed
+        await pool.query(
+          "UPDATE publish_queue SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2",
+          [pubErr.message, job.id]
+        );
+
+        await pool.query(
+          `INSERT INTO publishing_logs (content_id, brand_name, platform, post_id, status, published_at, metadata)
+           VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+          [
+            post.id,
+            post.brand_name,
+            channel,
+            null,
+            'failed',
+            JSON.stringify({ error: pubErr.message })
+          ]
+        );
       }
     }
 
-    const hasSuccess = results.some(r => r.status === 'success' || r.status === 'partial');
-    const hasFail = results.some(r => r.status === 'failed' || r.status === 'partial') || errors.length > 0;
+    // Determine final status from all jobs
+    const allJobsRes = await pool.query("SELECT status FROM publish_queue WHERE content_id = $1", [post.id]);
+    const allJobs = allJobsRes.rows;
 
-    let finalStatus = 'PUBLISHED';
+    let finalStatus = 'published';
     let errorMessage = null;
 
-    if (hasFail) {
+    const hasFailed = allJobs.some(j => j.status === 'failed');
+    const hasPending = allJobs.some(j => j.status === 'pending' || j.status === 'publishing');
+    const hasSuccess = allJobs.some(j => j.status === 'success');
+
+    if (hasFailed) {
       if (hasSuccess) {
-        finalStatus = 'PARTIAL';
-        const allWarnings = results
-          .filter(r => r.status === 'partial')
-          .map(r => r.error)
-          .concat(errors);
-        errorMessage = 'Some platforms failed: ' + allWarnings.join('; ');
+        finalStatus = 'partial';
+        errorMessage = 'Some platforms failed: ' + errors.join('; ');
       } else {
-        finalStatus = 'FAILED';
+        finalStatus = 'failed';
         errorMessage = errors.join('; ');
+      }
+    } else if (hasPending) {
+      finalStatus = 'approved';
+    } else {
+      finalStatus = 'published';
+    }
+
+    // Load existing platform_post_ids to merge
+    let mergedPostIds = [];
+    if (Array.isArray(post.platform_post_ids)) {
+      mergedPostIds = post.platform_post_ids;
+    } else if (typeof post.platform_post_ids === 'string') {
+      try {
+        mergedPostIds = JSON.parse(post.platform_post_ids);
+      } catch (e) {
+        mergedPostIds = [];
+      }
+    }
+
+    for (const newId of platformPostIds) {
+      const idx = mergedPostIds.findIndex(m => m.platform === newId.platform);
+      if (idx !== -1) {
+        mergedPostIds[idx] = newId;
+      } else {
+        mergedPostIds.push(newId);
       }
     }
 
     await pool.query(
       `UPDATE content_queue 
-       SET status = $1, 
-           published_at = CASE WHEN UPPER($5::text) IN ('PUBLISHED', 'PARTIAL') THEN NOW() ELSE published_at END,
-           failed_at = CASE WHEN UPPER($5::text) IN ('FAILED', 'PARTIAL') THEN NOW() ELSE failed_at END,
+       SET status = $1::varchar, 
+           published_at = CASE WHEN $1::varchar IN ('PUBLISHED', 'PARTIAL', 'published', 'partial') THEN NOW() ELSE published_at END,
+           failed_at = CASE WHEN $1::varchar IN ('FAILED', 'failed') THEN NOW() ELSE failed_at END,
            platform_post_ids = $2,
            error_message = $3,
            updated_at = NOW()
        WHERE id = $4`,
-      [finalStatus.toUpperCase(), JSON.stringify(platformPostIds), errorMessage, post.id, finalStatus.toUpperCase()]
+      [finalStatus.toUpperCase(), JSON.stringify(mergedPostIds), errorMessage, post.id]
     );
 
     res.json({
-      success: !hasFail || hasSuccess,
-      status: finalStatus,
+      success: !hasFailed || hasSuccess,
+      status: finalStatus.toUpperCase(),
       results,
       errors: errors.length > 0 ? errors : null
     });

@@ -25,6 +25,8 @@ router.get('/content-queue', async (req, res) => {
     if (status && status !== 'all') {
       params.push(status);
       q += ` AND status = $${params.length}`;
+    } else {
+      q += " AND status != 'deleted_from_drive'";
     }
     
     if (brand && brand !== 'All Brands') {
@@ -116,6 +118,7 @@ router.put('/content/:id', async (req, res) => {
         story_3 = COALESCE($7, story_3),
         scheduled_at = COALESCE($8, scheduled_at),
         platforms = COALESCE($9, platforms),
+        selected_channels = COALESCE($9, selected_channels),
         selected_accounts = COALESCE($10, selected_accounts),
         updated_at = NOW()
       WHERE id = $11
@@ -139,20 +142,98 @@ router.put('/content/:id', async (req, res) => {
 router.put('/content/:id/edit', ctrl.updateContent);
 
 // POST /api/content-os/content/:id/approve
+// POST /api/content/:id/approve
 router.post('/content/:id/approve', async (req, res) => {
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+
+    // 1. Fetch post to validate before approving
+    const postRes = await client.query(`
+      SELECT id, brand_name, platforms, selected_channels 
+      FROM content_queue 
+      WHERE id = $1
+    `, [req.params.id]);
+
+    if (!postRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Content not found' });
+    }
+
+    const post = postRes.rows[0];
+
+    // Determine channels
+    let channels = [];
+    if (Array.isArray(post.selected_channels)) {
+      channels = post.selected_channels;
+    } else if (Array.isArray(post.platforms)) {
+      channels = post.platforms;
+    } else if (typeof post.platforms === 'string') {
+      try {
+        channels = JSON.parse(post.platforms);
+      } catch (e) {
+        channels = [];
+      }
+    }
+
+    if (!channels || channels.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Cannot approve content. No publishing channels are selected.' });
+    }
+
+    // 2. Fetch connected social accounts for this brand
+    const accsRes = await client.query(`
+      SELECT platform 
+      FROM brand_social_accounts 
+      WHERE brand_name = $1 AND is_active = true
+    `, [post.brand_name]);
+    
+    const connectedPlatforms = new Set(accsRes.rows.map(r => r.platform.toLowerCase()));
+
+    // 3. Validate accounts for each selected channel
+    for (const channel of channels) {
+      let requiredPlatform = channel.toLowerCase();
+      if (requiredPlatform.includes('instagram')) requiredPlatform = 'instagram';
+      if (requiredPlatform.includes('facebook')) requiredPlatform = 'facebook';
+      if (requiredPlatform === 'x_twitter') requiredPlatform = 'x_twitter';
+
+      if (!connectedPlatforms.has(requiredPlatform)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ 
+          error: `Cannot approve content. No valid publishing channels are configured for this brand. Missing account for ${channel}.` 
+        });
+      }
+    }
+
+    // 4. Update status and approve
     const approver = req.user?.name || req.user?.email || 'Admin';
-    const { rows } = await pool.query(`
+    const { rows } = await client.query(`
       UPDATE content_queue 
       SET status = 'APPROVED', approved_by = $2, approved_at = NOW(), updated_at = NOW() 
       WHERE id = $1 RETURNING *
     `, [req.params.id, approver]);
 
-    if (!rows.length) return res.status(404).json({ error: 'Content not found' });
+    // Insert pending publishing jobs for each channel
+    for (const channel of channels) {
+      let normalizedChannel = channel.toLowerCase();
+      if (normalizedChannel === 'instagram') normalizedChannel = 'instagram_post';
+      if (normalizedChannel === 'facebook') normalizedChannel = 'facebook_post';
+
+      await client.query(`
+        INSERT INTO publish_queue (content_id, brand_name, channel, status)
+        VALUES ($1, $2, $3, 'pending')
+        ON CONFLICT (content_id, channel) DO UPDATE SET status = 'pending', updated_at = NOW()
+      `, [post.id, post.brand_name, normalizedChannel]);
+    }
+
+    await client.query('COMMIT');
     res.json(rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Approve content error:', err);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

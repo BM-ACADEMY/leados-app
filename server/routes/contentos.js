@@ -69,8 +69,19 @@ router.get('/content-queue', async (req, res) => {
     const todayStats = { PUBLISHED: 0, FAILED: 0 };
     todayRes.rows.forEach(r => { todayStats[r.status] = parseInt(r.count); });
 
+    const resolvedRows = rows.map(item => {
+      if (ctrl.resolvePublicUrl) {
+        return {
+          ...item,
+          public_video_url: ctrl.resolvePublicUrl(item.public_video_url, req),
+          thumbnail_url: ctrl.resolvePublicUrl(item.thumbnail_url, req)
+        };
+      }
+      return item;
+    });
+
     res.json({ 
-      data: rows, 
+      data: resolvedRows, 
       stats, 
       analytics: {
         total: Object.values(stats).reduce((a, b) => a + b, 0),
@@ -90,7 +101,12 @@ router.get('/content/:id', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM content_queue WHERE id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Content not found' });
-    res.json(rows[0]);
+    const item = rows[0];
+    if (ctrl.resolvePublicUrl) {
+      item.public_video_url = ctrl.resolvePublicUrl(item.public_video_url, req);
+      item.thumbnail_url = ctrl.resolvePublicUrl(item.thumbnail_url, req);
+    }
+    res.json(item);
   } catch (err) {
     console.error('Fetch single content error:', err);
     res.status(500).json({ error: 'Server error' });

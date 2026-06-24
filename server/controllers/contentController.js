@@ -996,6 +996,70 @@ async function generateStoryCard(postId, slideNum, brandName, slideText, req = n
   }
 }
 
+const healingJobs = new Set();
+
+async function healMissingMedia(driveFileId) {
+  if (!driveFileId || healingJobs.has(driveFileId)) return;
+  
+  healingJobs.add(driveFileId);
+  console.log(`[SelfHealing] Initiating media recovery for Drive File ID: ${driveFileId}`);
+  
+  const tempFilePath = path.join(os.tmpdir(), `heal_video_${driveFileId}.mp4`);
+  
+  try {
+    const uploadsDir = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+    
+    const transcodedPath = path.join(uploadsDir, `transcoded_${driveFileId}.mp4`);
+    const thumbnailPath = path.join(uploadsDir, `thumbnail_${driveFileId}.jpg`);
+    
+    const transcodeExists = fs.existsSync(transcodedPath);
+    const thumbnailExists = fs.existsSync(thumbnailPath);
+    
+    if (transcodeExists && thumbnailExists) {
+      console.log(`[SelfHealing] Both transcoded video and thumbnail already exist on disk for ${driveFileId}.`);
+      healingJobs.delete(driveFileId);
+      return;
+    }
+    
+    const credPath = path.join(__dirname, '../credentials/jobportal-492311-465d0e8c2633.json');
+    if (!fs.existsSync(credPath)) {
+      console.warn(`[SelfHealing] Service account credentials missing at ${credPath}. Ingestion skipped.`);
+      healingJobs.delete(driveFileId);
+      return;
+    }
+    
+    console.log(`[SelfHealing] Downloading video from Drive: ${driveFileId}...`);
+    await downloadDriveFileServiceAccount(driveFileId, tempFilePath);
+    
+    if (!transcodeExists) {
+      console.log(`[SelfHealing] Transcoding video to ${transcodedPath}...`);
+      await transcodeVideo(tempFilePath, transcodedPath);
+      console.log(`[SelfHealing] Transcoding completed for ${driveFileId}`);
+    }
+    
+    if (!thumbnailExists) {
+      console.log(`[SelfHealing] Generating thumbnail to ${thumbnailPath}...`);
+      const sourceVideo = fs.existsSync(transcodedPath) ? transcodedPath : tempFilePath;
+      await generateThumbnail(sourceVideo, thumbnailPath);
+      console.log(`[SelfHealing] Thumbnail generated for ${driveFileId}`);
+    }
+  } catch (err) {
+    console.error(`[SelfHealing] Failed to heal missing media for ${driveFileId}:`, err.message);
+  } finally {
+    if (fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (err) {
+        console.error(`[SelfHealing] Failed to clean up temp file ${tempFilePath}:`, err.message);
+      }
+    }
+    healingJobs.delete(driveFileId);
+  }
+}
+
 function resolvePublicUrl(url, req = null) {
   if (!url) return null;
 
@@ -1026,8 +1090,25 @@ function resolvePublicUrl(url, req = null) {
   if (url.includes('/uploads/')) {
     const parts = url.split('/uploads/');
     if (parts.length > 1) {
+      const filename = parts[1];
+      
+      // Auto-heal missing media if transcoded or thumbnail is requested but not on disk
+      const transcodedMatch = filename.match(/^transcoded_([a-zA-Z0-9_-]+)\.mp4$/);
+      const thumbnailMatch = filename.match(/^thumbnail_([a-zA-Z0-9_-]+)\.jpg$/);
+      const healFileId = (transcodedMatch && transcodedMatch[1]) || (thumbnailMatch && thumbnailMatch[1]);
+      if (healFileId) {
+        const uploadsDir = path.join(__dirname, '../uploads');
+        const transcodedPath = path.join(uploadsDir, `transcoded_${healFileId}.mp4`);
+        const thumbnailPath = path.join(uploadsDir, `thumbnail_${healFileId}.jpg`);
+        if (!fs.existsSync(transcodedPath) || !fs.existsSync(thumbnailPath)) {
+          healMissingMedia(healFileId).catch(err => {
+            console.error("[SelfHealing] Background healing error:", err);
+          });
+        }
+      }
+
       const cleanBase = baseUrl.replace(/\/+$/, '');
-      return `${cleanBase}/uploads/${parts[1]}`;
+      return `${cleanBase}/uploads/${filename}`;
     }
   }
 
@@ -1998,5 +2079,6 @@ module.exports = {
   publishPost,
   suggestCaptions,
   suggestStories,
-  generateStoryCard
+  generateStoryCard,
+  resolvePublicUrl
 };

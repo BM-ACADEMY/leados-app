@@ -31,11 +31,37 @@ function extractDriveFileId(url) {
   return null;
 }
 
+function getGoogleAuth(scopes = ['https://www.googleapis.com/auth/drive.readonly']) {
+  const credPath = path.join(__dirname, '../credentials/jobportal-492311-465d0e8c2633.json');
+  
+  if (fs.existsSync(credPath)) {
+    return new google.auth.GoogleAuth({
+      keyFile: credPath,
+      scopes
+    });
+  }
+  
+  const envCreds = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_CREDS_JSON;
+  if (envCreds) {
+    try {
+      const credentials = typeof envCreds === 'string' ? JSON.parse(envCreds) : envCreds;
+      return new google.auth.GoogleAuth({
+        credentials,
+        scopes
+      });
+    } catch (e) {
+      console.error("Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON from environment:", e.message);
+    }
+  }
+  
+  return null;
+}
+
 async function downloadDriveFileServiceAccount(fileId, destPath) {
-  const auth = new google.auth.GoogleAuth({
-    keyFile: path.join(__dirname, '../credentials/jobportal-492311-465d0e8c2633.json'),
-    scopes: ['https://www.googleapis.com/auth/drive.readonly']
-  });
+  const auth = getGoogleAuth();
+  if (!auth) {
+    throw new Error('Google Drive credentials are not available (neither credentials file nor environment variable is set).');
+  }
   const drive = google.drive({ version: 'v3', auth });
   
   const response = await drive.files.get(
@@ -120,10 +146,10 @@ async function fetchDriveVideoName(url) {
   const fileId = extractDriveFileId(url);
   if (!fileId) return "Social Media Video";
   try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: path.join(__dirname, '../credentials/jobportal-492311-465d0e8c2633.json'),
-      scopes: ['https://www.googleapis.com/auth/drive.readonly']
-    });
+    const auth = getGoogleAuth();
+    if (!auth) {
+      throw new Error('Google Drive credentials are not available.');
+    }
     const drive = google.drive({ version: 'v3', auth });
     const res = await drive.files.get({
       fileId,
@@ -620,17 +646,13 @@ async function upsertFolderMonitor(req, res) {
 
 async function checkNewDriveVideos() {
   console.log("DrivePoller: Checking Google Drive folders for new videos...");
-  const credPath = path.join(__dirname, '../credentials/jobportal-492311-465d0e8c2633.json');
-  if (!fs.existsSync(credPath)) {
-    console.warn(`DrivePoller: Service account credentials missing at ${credPath}. Ingestion skipped.`);
+  const auth = getGoogleAuth();
+  if (!auth) {
+    console.warn(`DrivePoller: Google Drive credentials not found. Ingestion skipped.`);
     return;
   }
 
   try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: credPath,
-      scopes: ['https://www.googleapis.com/auth/drive.readonly']
-    });
     const drive = google.drive({ version: 'v3', auth });
 
     const { rows: monitors } = await pool.query("SELECT brand_slug, folder_id FROM drive_folder_monitors WHERE is_active = true");
@@ -1024,9 +1046,9 @@ async function healMissingMedia(driveFileId) {
       return;
     }
     
-    const credPath = path.join(__dirname, '../credentials/jobportal-492311-465d0e8c2633.json');
-    if (!fs.existsSync(credPath)) {
-      console.warn(`[SelfHealing] Service account credentials missing at ${credPath}. Ingestion skipped.`);
+    const auth = getGoogleAuth();
+    if (!auth) {
+      console.warn(`[SelfHealing] Service account credentials not found. Recovery skipped.`);
       healingJobs.delete(driveFileId);
       return;
     }

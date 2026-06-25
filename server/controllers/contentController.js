@@ -324,7 +324,7 @@ async function updateContent(req, res) {
   const { id } = req.params;
   const allowed = [
     "caption", "x_caption", "linkedin_caption", "thumbnail_title", "scheduled_at", 
-    "platforms", "selected_channels", "video_url", "public_video_url", "description", "hashtags", 
+    "platforms", "selected_channels", "selected_accounts", "video_url", "public_video_url", "description", "hashtags", 
     "thumbnail_options", "key_moments", "thumbnail_url", "brand_id", "video_name", "status",
     "story_1", "story_2", "story_3"
   ];
@@ -341,7 +341,7 @@ async function updateContent(req, res) {
 
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
-      const isJson = ["platforms", "selected_channels", "thumbnail_options", "key_moments"].includes(key);
+      const isJson = ["platforms", "selected_channels", "selected_accounts", "thumbnail_options", "key_moments"].includes(key);
       let val = isJson ? JSON.stringify(req.body[key]) : req.body[key];
       
       // Convert empty timestamp string to null

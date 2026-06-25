@@ -1134,10 +1134,24 @@ function resolvePublicUrl(url, req = null) {
         const uploadsDir = path.join(__dirname, '../uploads');
         const transcodedPath = path.join(uploadsDir, `transcoded_${healFileId}.mp4`);
         const thumbnailPath = path.join(uploadsDir, `thumbnail_${healFileId}.jpg`);
-        if (!fs.existsSync(transcodedPath) || !fs.existsSync(thumbnailPath)) {
+        
+        const transcodedExists = fs.existsSync(transcodedPath);
+        const thumbnailExists = fs.existsSync(thumbnailPath);
+
+        if (!transcodedExists || !thumbnailExists) {
           healMissingMedia(healFileId).catch(err => {
             console.error("[SelfHealing] Background healing error:", err);
           });
+        }
+
+        // Fallbacks to prevent broken links on the frontend
+        if (transcodedMatch && !transcodedExists) {
+          // Return the Google Drive link so the dashboard can render it in the iframe preview
+          return `https://drive.google.com/file/d/${healFileId}/view`;
+        }
+        if (thumbnailMatch && !thumbnailExists) {
+          // Return a premium abstract placeholder image
+          return `https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=600&q=80`;
         }
       }
 

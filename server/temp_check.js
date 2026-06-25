@@ -9,7 +9,7 @@ const pool = new Pool({
 
 async function run() {
   try {
-    const res = await pool.query("SELECT id, thumbnail_title, status, scheduled_at, publish_flow, platforms FROM content_queue ORDER BY id DESC LIMIT 5");
+    const res = await pool.query("SELECT id, brand_name, thumbnail_title, status, scheduled_at, platforms, file_name, video_url, public_video_url, thumbnail_url FROM content_queue ORDER BY id DESC LIMIT 5");
     console.log(JSON.stringify(res.rows, null, 2));
   } catch (e) {
     console.error('Error:', e.message);

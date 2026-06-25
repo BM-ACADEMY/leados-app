@@ -1483,17 +1483,31 @@ async function publishPost(req, res) {
     if (jobs.length === 0) {
       console.log(`No jobs found in publish_queue for post ID ${post.id}. Initializing from platforms...`);
       let platforms = [];
-      if (Array.isArray(post.selected_channels)) {
+      
+      if (Array.isArray(post.selected_channels) && post.selected_channels.length > 0) {
         platforms = post.selected_channels;
-      } else if (Array.isArray(post.platforms)) {
-        platforms = post.platforms;
-      } else if (typeof post.platforms === 'string') {
+      } else if (typeof post.selected_channels === 'string' && post.selected_channels.trim()) {
         try {
-          platforms = JSON.parse(post.platforms);
-        } catch (e) {
-          platforms = [];
+          const parsed = JSON.parse(post.selected_channels);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            platforms = parsed;
+          }
+        } catch (e) {}
+      }
+
+      if (platforms.length === 0) {
+        if (Array.isArray(post.platforms) && post.platforms.length > 0) {
+          platforms = post.platforms;
+        } else if (typeof post.platforms === 'string' && post.platforms.trim()) {
+          try {
+            const parsed = JSON.parse(post.platforms);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              platforms = parsed;
+            }
+          } catch (e) {}
         }
       }
+
       for (const platform of platforms) {
         let normalizedChannel = platform.toLowerCase();
         if (normalizedChannel === 'instagram') normalizedChannel = 'instagram_post';

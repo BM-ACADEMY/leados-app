@@ -1618,13 +1618,17 @@ cron.schedule('* * * * *', async () => {
 });
 
 // Run every 1 minute to poll Google Drive folders for new videos
-cron.schedule('* * * * *', async () => {
-  try {
-    await checkNewDriveVideos();
-  } catch (err) {
-    console.error('Cron checkNewDriveVideos error:', err);
-  }
-});
+if (process.env.DISABLE_DRIVE_POLLER !== 'true') {
+  cron.schedule('* * * * *', async () => {
+    try {
+      await checkNewDriveVideos();
+    } catch (err) {
+      console.error('Cron checkNewDriveVideos error:', err);
+    }
+  });
+} else {
+  console.log('DrivePoller: Polling disabled via DISABLE_DRIVE_POLLER=true environment variable.');
+}
 
 // Run every 5 minutes to auto-publish scheduled approved posts (acting as a fallback for n8n)
 cron.schedule('*/5 * * * *', async () => {

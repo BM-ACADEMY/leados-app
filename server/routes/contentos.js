@@ -3,6 +3,17 @@ const router = express.Router();
 const pool = require('../db/connection');
 const ctrl = require('../controllers/contentController');
 
+function safeJsonValue(val) {
+  if (typeof val === 'string') {
+    try {
+      return JSON.parse(val);
+    } catch (e) {
+      return val;
+    }
+  }
+  return val;
+}
+
 
 // GET /api/content-os/social-accounts
 router.get('/social-accounts', async (req, res) => {
@@ -142,8 +153,8 @@ router.put('/content/:id', async (req, res) => {
     `, [
       caption, x_caption, linkedin_caption, thumbnail_title, 
       story_1, story_2, story_3, scheduled_at, 
-      platforms ? JSON.stringify(platforms) : null,
-      selected_accounts ? JSON.stringify(selected_accounts) : null,
+      platforms ? JSON.stringify(safeJsonValue(platforms)) : null,
+      selected_accounts ? JSON.stringify(safeJsonValue(selected_accounts)) : null,
       id
     ]);
 

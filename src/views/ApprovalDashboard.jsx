@@ -277,27 +277,7 @@ export default function ApprovalDashboard() {
   }
 
   function openItem(item) {
-    // Automatically pre-populate selected_accounts with connected brand accounts by default
     let initialSelectedAccounts = item.selected_accounts ? { ...item.selected_accounts } : {};
-    const activePlatforms = item.platforms || [];
-    
-    for (const plat of activePlatforms) {
-      let accountPlatform = plat.endsWith('_story') ? plat.replace('_story', '') : plat;
-      if (accountPlatform === 'instagram_post') accountPlatform = 'instagram';
-      if (accountPlatform === 'facebook_post') accountPlatform = 'facebook';
-      
-      const currentSelected = initialSelectedAccounts[plat] || initialSelectedAccounts[accountPlatform] || [];
-      if (currentSelected.length === 0) {
-        const brandAccounts = (socialAccounts || [])
-          .filter(s => s.brand_name === item.brand_name && s.platform === accountPlatform && s.is_active !== false);
-        if (brandAccounts.length > 0) {
-          const accountIds = brandAccounts.map(s => s.account_id).filter(Boolean);
-          if (accountIds.length > 0) {
-            initialSelectedAccounts[plat] = accountIds;
-          }
-        }
-      }
-    }
 
     const resolvedItem = {
       ...item,
@@ -367,9 +347,22 @@ export default function ApprovalDashboard() {
       // Check if at least one account is selected for this platform
       const brandPlatAccounts = connectedAccounts.filter(s => s.platform === requiredPlatform);
       if (brandPlatAccounts.length > 0) {
+        const getSelectedAccs = (accsObj) => {
+          if (!accsObj) return [];
+          const direct = accsObj[channel] || accsObj[requiredPlatform] || [];
+          if (direct.length > 0) return direct;
+          
+          if (channel === 'instagram') return accsObj['instagram_post'] || [];
+          if (channel === 'facebook') return accsObj['facebook_post'] || [];
+          if (channel === 'instagram_post') return accsObj['instagram'] || [];
+          if (channel === 'facebook_post') return accsObj['facebook'] || [];
+          
+          return [];
+        };
+
         const selectedAccs = editMode
-          ? (editValues.selected_accounts?.[channel] || editValues.selected_accounts?.[requiredPlatform] || [])
-          : (selected.selected_accounts?.[channel] || selected.selected_accounts?.[requiredPlatform] || []);
+          ? getSelectedAccs(editValues.selected_accounts)
+          : getSelectedAccs(selected.selected_accounts);
         
         if (!selectedAccs || selectedAccs.length === 0) {
           return `Please select at least one account for ${displayPlat}.`;

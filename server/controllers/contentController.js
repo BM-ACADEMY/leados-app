@@ -868,7 +868,7 @@ Respond ONLY with a valid JSON object matching this exact format:
           const meta = JSON.parse(content);
 
           const videoUrl = `https://drive.google.com/file/d/${file.id}/view`;
-          const defaultPlatforms = ['instagram', 'facebook', 'youtube'];
+          const defaultPlatforms = [];
 
           // Insert into database
           await pool.query(`
@@ -1019,7 +1019,7 @@ async function generateStoryCard(postId, slideNum, brandName, slideText, req = n
     const outputPath = path.join(uploadsDir, filename);
     await image.writeAsync(outputPath);
 
-    return resolvePublicUrl(`http://localhost:3500/uploads/${filename}`, req);
+    return resolvePublicUrl(`http://localhost:3500/uploads/${filename}`, req, true);
   } catch (err) {
     console.error('generateStoryCard error:', err);
     throw err;
@@ -1090,7 +1090,7 @@ async function healMissingMedia(driveFileId) {
   }
 }
 
-function resolvePublicUrl(url, req = null) {
+function resolvePublicUrl(url, req = null, forcePublic = false) {
   if (!url) return null;
 
   // 1. Google Drive direct link extraction
@@ -1118,6 +1118,11 @@ function resolvePublicUrl(url, req = null) {
       }
       baseUrl = `${protocol}://${host}`;
     }
+  }
+
+  // Fallback to production API URL if forcePublic is true and baseUrl resolved to localhost/127.0.0.1 (so Facebook/Instagram crawler can access it)
+  if (forcePublic && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
+    baseUrl = 'https://leados-api.abmgroups.org';
   }
 
   // 3. Rewrite any path containing '/uploads/' to use the determined baseUrl
@@ -1530,7 +1535,7 @@ async function publishPost(req, res) {
       return res.status(400).json({ success: false, error: 'No platforms selected for this post' });
     }
 
-    const publicUrl = resolvePublicUrl(post.public_video_url || post.video_url, req);
+    const publicUrl = resolvePublicUrl(post.public_video_url || post.video_url, req, true);
     if (!publicUrl) {
       return res.status(400).json({ success: false, error: 'No video or media URL found for this post' });
     }

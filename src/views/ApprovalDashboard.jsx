@@ -53,6 +53,30 @@ function extractDriveFileId(url) {
   return null;
 }
 
+function parseItemJsonFields(item) {
+  if (!item) return item;
+  const parsed = { ...item };
+  const jsonFields = ["platforms", "selected_accounts", "thumbnail_options", "key_moments"];
+  for (const field of jsonFields) {
+    if (parsed[field] !== undefined && parsed[field] !== null) {
+      if (typeof parsed[field] === 'string') {
+        try {
+          parsed[field] = JSON.parse(parsed[field]);
+        } catch (e) {
+          console.error(`Failed to parse field ${field} for item ${item.id}:`, e);
+        }
+      }
+    }
+  }
+  if (!parsed.selected_accounts || typeof parsed.selected_accounts !== 'object') {
+    parsed.selected_accounts = {};
+  }
+  if (!parsed.platforms || !Array.isArray(parsed.platforms)) {
+    parsed.platforms = [];
+  }
+  return parsed;
+}
+
 export default function ApprovalDashboard() {
   const { user } = useAuth();
   const canApprove = !user || !user.role || ['Super Admin', 'Marketing Admin', 'super_admin', 'admin', 'founder', 'Founder'].includes(user.role);
@@ -236,7 +260,7 @@ export default function ApprovalDashboard() {
         status: apiStatus,
         search, startDate, endDate
       });
-      setItems(res.items || []);
+      setItems((res.items || []).map(parseItemJsonFields));
 
       const statsRes = await api.getContentStats();
       if (statsRes.success) {
@@ -277,10 +301,11 @@ export default function ApprovalDashboard() {
   }
 
   function openItem(item) {
-    let initialSelectedAccounts = item.selected_accounts ? { ...item.selected_accounts } : {};
+    const parsedItem = parseItemJsonFields(item);
+    let initialSelectedAccounts = { ...parsedItem.selected_accounts };
 
     const resolvedItem = {
-      ...item,
+      ...parsedItem,
       selected_accounts: initialSelectedAccounts
     };
 
@@ -417,8 +442,9 @@ export default function ApprovalDashboard() {
   async function handleSaveEdit(id) {
     try {
       const updated = await api.updateContent(id, editValues);
-      setItems(prev => prev.map(i => i.id === id ? { ...i, ...updated.item } : i));
-      if (selected?.id === id) setSelected(prev => ({ ...prev, ...updated.item }));
+      const parsedItem = parseItemJsonFields(updated.item);
+      setItems(prev => prev.map(i => i.id === id ? parsedItem : i));
+      if (selected?.id === id) setSelected(parsedItem);
       setEditMode(false);
       showToast("Changes saved");
     } catch(e) {

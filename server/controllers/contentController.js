@@ -316,6 +316,17 @@ async function rejectContent(req, res) {
   }
 }
 
+function safeJsonValue(val) {
+  if (typeof val === 'string') {
+    try {
+      return JSON.parse(val);
+    } catch (e) {
+      return val;
+    }
+  }
+  return val;
+}
+
 // ---------------------------------------------------------------
 // PATCH /api/content/:id
 // Saves caption/schedule/platform edits from the dashboard edit mode.
@@ -342,7 +353,7 @@ async function updateContent(req, res) {
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
       const isJson = ["platforms", "selected_channels", "selected_accounts", "thumbnail_options", "key_moments"].includes(key);
-      let val = isJson ? JSON.stringify(req.body[key]) : req.body[key];
+      let val = isJson ? JSON.stringify(safeJsonValue(req.body[key])) : req.body[key];
       
       // Convert empty timestamp string to null
       if (key === "scheduled_at" && val === "") {
@@ -594,8 +605,8 @@ async function createBatchContent(req, res) {
         RETURNING *
       `, [
         brand_name,
-        platforms ? JSON.stringify(platforms) : '[]',
-        selected_accounts ? JSON.stringify(selected_accounts) : '{}',
+        platforms ? JSON.stringify(safeJsonValue(platforms)) : '[]',
+        selected_accounts ? JSON.stringify(safeJsonValue(selected_accounts)) : '{}',
         caption || '',
         x_caption || '',
         linkedin_caption || '',
@@ -889,10 +900,10 @@ Respond ONLY with a valid JSON object matching this exact format:
             meta.linkedin_caption || "",
             meta.description || "",
             meta.hashtags || "",
-            JSON.stringify(meta.thumbnail_options || []),
-            JSON.stringify(meta.key_moments || []),
+            JSON.stringify(safeJsonValue(meta.thumbnail_options || [])),
+            JSON.stringify(safeJsonValue(meta.key_moments || [])),
             meta.thumbnail_options?.[0]?.title || file.name.replace(/\.[^/.]+$/, ""),
-            JSON.stringify(defaultPlatforms),
+            JSON.stringify(safeJsonValue(defaultPlatforms)),
             brand_slug,
             file.name,
             publicThumbnailUrl,

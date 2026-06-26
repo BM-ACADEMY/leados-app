@@ -94,40 +94,40 @@ router.post('/', async (req, res) => {
     };
 
     // On-Page Checks
-    if (!title) categories.onPage.failed.push('Missing Title Tag');
-    else if (title.length < 30 || title.length > 60) categories.onPage.failed.push(`Title tag length (${title.length}) is sub-optimal (Recommended: 30-60 chars).`);
-    else categories.onPage.passed.push('Optimal Title Tag');
+    if (!title) categories.onPage.failed.push({ title: 'Missing Title Tag', description: 'The SEO title is missing. Ensure your page\'s title includes your target keywords, and design it to encourage users to click.' });
+    else if (title.length < 30 || title.length > 60) categories.onPage.failed.push({ title: `Title tag length (${title.length}) is sub-optimal.`, description: 'Ensure your page\'s title is an optimal length (Recommended: 30-60 chars). Writing compelling titles is both a science and an art. Automated tools can analyze your title against known metrics for readability and click-worthiness.' });
+    else categories.onPage.passed.push({ title: 'Optimal Title Tag', description: 'Your page title is a great length and likely includes your target keywords. This encourages users to click.' });
 
-    if (!metaDescription) categories.onPage.failed.push('Missing Meta Description');
-    else if (metaDescription.length < 120 || metaDescription.length > 160) categories.onPage.failed.push(`Meta Description length (${metaDescription.length}) is sub-optimal.`);
-    else categories.onPage.passed.push('Optimal Meta Description');
+    if (!metaDescription) categories.onPage.failed.push({ title: 'Missing Meta Description', description: 'Write a meta description for your page. Use your target keywords in a natural way and write with human readers in mind. Summarize the content and stimulate reader interest.' });
+    else if (metaDescription.length < 120 || metaDescription.length > 160) categories.onPage.failed.push({ title: `Meta Description length (${metaDescription.length}) is sub-optimal.`, description: 'Your description should ideally be between 120 and 160 characters to avoid truncation in search results while providing enough detail to stimulate reader interest.' });
+    else categories.onPage.passed.push({ title: 'Optimal Meta Description', description: 'Your meta description has a good length and summarizes the content effectively.' });
 
-    if (h1s.length === 0) categories.onPage.failed.push('Missing H1 Tag');
-    else if (h1s.length > 1) categories.onPage.failed.push(`Multiple H1 Tags (${h1s.length}). There should only be one.`);
-    else categories.onPage.passed.push('Exactly one H1 Tag');
+    if (h1s.length === 0) categories.onPage.failed.push({ title: 'Missing H1 Tag', description: 'No H1 tag was found. For the best SEO results there should be exactly one H1 tag on each page. Ensure your most important keywords appear in the H1 tag.' });
+    else if (h1s.length > 1) categories.onPage.failed.push({ title: `Multiple H1 Tags (${h1s.length}).`, description: 'Search engines use the H1 tag to understand the main topic of your page. Having multiple H1s can confuse them. Keep it to exactly one H1 tag per page.' });
+    else categories.onPage.passed.push({ title: 'Exactly one H1 Tag', description: 'Great! You have exactly one H1 tag, making it clear to search engines what the main topic of the page is.' });
 
-    if (h2s === 0) categories.onPage.failed.push('Missing H2 tags. Subheadings break up content.');
-    else categories.onPage.passed.push(`Found ${h2s} H2 tags`);
+    if (h2s === 0) categories.onPage.failed.push({ title: 'Missing H2 tags.', description: 'Make sure you have a good balance of H2 tags to plain text in your content. Break the content down into logical sections, and use headings to introduce each new topic.' });
+    else categories.onPage.passed.push({ title: `Found ${h2s} H2 tags`, description: 'Excellent. Breaking down content into logical sections with H2 tags makes it easier for users to read and for search engines to understand the structure.' });
 
-    if (wordCount < 300) categories.onPage.failed.push(`Thin content warning: Only ${wordCount} words.`);
-    else categories.onPage.passed.push(`Good content depth (${wordCount} words)`);
+    if (wordCount < 300) categories.onPage.failed.push({ title: `Thin content warning: Only ${wordCount} words.`, description: 'Search engines favor pages with substantial content. Try to aim for at least 300 words to provide enough depth and context for your topic.' });
+    else categories.onPage.passed.push({ title: `Good content depth (${wordCount} words)`, description: 'Your page has sufficient content depth, which helps search engines understand the topic and rank it for relevant queries.' });
 
     // Technical Checks
-    if (imagesWithoutAlt > 0) categories.technical.failed.push(`${imagesWithoutAlt} images are missing 'alt' attributes.`);
-    else categories.technical.passed.push('All images have alt attributes.');
+    if (imagesWithoutAlt > 0) categories.technical.failed.push({ title: `${imagesWithoutAlt} images are missing 'alt' attributes.`, description: 'Make sure every image has an alt tag, and add useful descriptions to each image. Add your keywords or synonyms - but do it in a natural way.' });
+    else categories.technical.passed.push({ title: 'All images have alt attributes.', description: 'Every image on the page has an alt tag. This is great for accessibility and helps search engines understand the content of the images.' });
 
-    if (!hasCanonical) categories.technical.failed.push('Missing Canonical Link tag.');
-    else categories.technical.passed.push('Canonical Link tag exists.');
+    if (!hasCanonical) categories.technical.failed.push({ title: 'Missing Canonical Link tag.', description: 'Every page on your site should have a link with a rel="canonical" attribute. This helps prevent duplicate content issues by specifying the "correct" URL.' });
+    else categories.technical.passed.push({ title: 'Canonical Link tag exists.', description: 'The page is using the canonical link tag, properly specifying the preferred version of the URL.' });
 
-    if (!hasFavicon) categories.technical.failed.push('Missing Favicon.');
-    else categories.technical.passed.push('Favicon is configured.');
+    if (!hasFavicon) categories.technical.failed.push({ title: 'Missing Favicon.', description: 'A favicon enhances your site\'s branding and visibility in browser tabs and bookmarks. Ensure you have a favicon configured.' });
+    else categories.technical.passed.push({ title: 'Favicon is configured.', description: 'Your site properly defines a favicon for browsers and search engines to display.' });
 
-    if (!hasLang) categories.technical.failed.push('Missing HTML lang attribute.');
-    else categories.technical.passed.push('HTML lang attribute exists.');
+    if (!hasLang) categories.technical.failed.push({ title: 'Missing HTML lang attribute.', description: 'The lang attribute specifies the language of the page content. This is important for screen readers and search engines to provide language-specific results.' });
+    else categories.technical.passed.push({ title: 'HTML lang attribute exists.', description: 'The page properly declares its language, aiding in accessibility and international SEO.' });
 
     // Social Checks
-    if (!hasOgTitle || !hasOgImage) categories.social.failed.push('Missing Open Graph tags (og:title / og:image).');
-    else categories.social.passed.push('Open Graph tags are properly configured.');
+    if (!hasOgTitle || !hasOgImage) categories.social.failed.push({ title: 'Missing Open Graph tags (og:title / og:image).', description: 'Insert customized Open Graph meta tags for each important page on your site. This controls how your page appears when shared on social networks like Facebook and LinkedIn.' });
+    else categories.social.passed.push({ title: 'Open Graph tags are properly configured.', description: 'Your page has the necessary Open Graph tags, ensuring it looks great when shared on social media platforms.' });
 
     // Calculate Sub-Scores
     categories.onPage.score = Math.max(0, 100 - (categories.onPage.failed.length * 20));

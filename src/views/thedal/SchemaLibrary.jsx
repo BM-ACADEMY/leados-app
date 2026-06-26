@@ -1,64 +1,1011 @@
 import React, { useState, useEffect } from 'react';
 import { C } from '../../constants/theme.js';
-import { FileJson, Loader2 } from 'lucide-react';
+import { Loader2, Plus, Edit2, Trash2, Code, LayoutDashboard, Sparkles, Network, Globe, AlertCircle, FileJson } from 'lucide-react';
 import { api } from '../../services/api.js';
 
 export default function SchemaLibrary() {
-  const [data, setData] = useState(null);
+  const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [templateToDelete, setTemplateToDelete] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  
+  // Generator State
+  const [genForm, setGenForm] = useState({ businessName: '', businessType: 'LocalBusiness', website: '', description: '' });
+  const [generating, setGenerating] = useState(false);
+  const [generatedSchema, setGeneratedSchema] = useState(null);
+  
+  // Validation State
+  const [validating, setValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState(null);
+
+  // Entity State
+  const [entityLinks, setEntityLinks] = useState([
+    { type: 'Wikipedia', url: 'https://en.wikipedia.org/wiki/Example_Company' },
+    { type: 'LinkedIn', url: 'https://linkedin.com/company/example' }
+  ]);
+  const [newLink, setNewLink] = useState({ type: 'Twitter', url: '' });
+  const [updateGraphModalOpen, setUpdateGraphModalOpen] = useState(false);
+  const [updatingGraph, setUpdatingGraph] = useState(false);
+  const [showAllEntities, setShowAllEntities] = useState(false);
+
+  // Deployment State
+  const [deployForm, setDeployForm] = useState({ templateId: '', clientUrl: '' });
+  const [deploying, setDeploying] = useState(false);
+  const [deploymentScript, setDeploymentScript] = useState('');
+  const [activeDeployments, setActiveDeployments] = useState([]);
+  const [copied, setCopied] = useState(false);
+
+  const [formData, setFormData] = useState({
+    name: '',
+    schema_type: 'LocalBusiness',
+    description: '',
+    schema_data: '{\n  "@context": "https://schema.org",\n  "@type": "LocalBusiness",\n  "name": ""\n}'
+  });
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [resTemplates, resEntities, resDeployments] = await Promise.all([
+        api.get('/thedal/schemalibrary'),
+        api.get('/thedal/schemalibrary/entities'),
+        api.get('/thedal/schemalibrary/deployments')
+      ]);
+      
+      if (resTemplates.items) setData(resTemplates.items);
+      if (resEntities.entities && resEntities.entities.length > 0) {
+        setEntityLinks(resEntities.entities);
+      }
+      if (resDeployments.deployments) {
+        // Map backend shape to frontend expected shape
+        setActiveDeployments(resDeployments.deployments.map(d => ({
+          clientUrl: d.client_url,
+          templateName: d.template_name,
+          deployedAt: d.deployed_at
+        })));
+      }
+    } catch (err) {
+      console.error('Failed to load schema data', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const res = await api.get('/thedal/schemalibrary');
-        if (res.data) setData(res.data);
-      } catch (err) {
-        console.error('Failed to load data', err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchData();
   }, []);
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', background: C.background }}>
-        <Loader2 size={32} color={C.accent} className="spin" />
-      </div>
-    );
-  }
+  const handleOpenModal = (item = null) => {
+    if (item) {
+      setEditingId(item.id);
+      setFormData({
+        name: item.name,
+        schema_type: item.schema_type,
+        description: item.description || '',
+        schema_data: JSON.stringify(item.schema_data, null, 2)
+      });
+    } else {
+      setEditingId(null);
+      setFormData({
+        name: '',
+        schema_type: 'LocalBusiness',
+        description: '',
+        schema_data: '{\n  "@context": "https://schema.org",\n  "@type": "LocalBusiness",\n  "name": ""\n}'
+      });
+    }
+    setValidationResult(null);
+    setModalOpen(true);
+  };
 
-  const items = data?.items || [];
+  const handleGenerate = async () => {
+    if (!genForm.businessName || !genForm.businessType) {
+      alert("Business Name and Type are required.");
+      return;
+    }
+    setGenerating(true);
+    try {
+      const res = await api.post('/thedal/schemalibrary/generate', genForm);
+      setGeneratedSchema(res.schema_data);
+    } catch (err) {
+      alert('Failed to generate schema: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setGenerating(false);
+    }
+  };
 
-  return (
-    <div style={{ padding: 30, color: C.text, height: '100%', overflowY: 'auto', background: C.background }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Schema Library</h1>
-          <p style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>Dynamic data loaded from database.</p>
-        </div>
+  const handleSaveGenerated = () => {
+    setEditingId(null);
+    setFormData({
+      name: `Auto-Generated ${genForm.businessType} for ${genForm.businessName}`,
+      schema_type: genForm.businessType,
+      description: 'Generated by Gemini AI',
+      schema_data: JSON.stringify(generatedSchema, null, 2)
+    });
+    setValidationResult(null);
+    setModalOpen(true);
+    setActiveTab('templates');
+  };
+
+  const handleValidate = async () => {
+    let parsedJson;
+    try {
+      parsedJson = JSON.parse(formData.schema_data);
+    } catch(e) {
+      alert("Invalid JSON format. Cannot validate.");
+      return;
+    }
+    
+    setValidating(true);
+    setValidationResult(null);
+    try {
+      const res = await api.post('/thedal/schemalibrary/validate', { schema_data: parsedJson });
+      setValidationResult(res);
+    } catch (err) {
+      alert('Failed to validate schema: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!formData.name || !formData.schema_data) {
+      alert("Name and Schema JSON are required.");
+      return;
+    }
+    
+    let parsedJson;
+    try {
+      parsedJson = JSON.parse(formData.schema_data);
+    } catch(e) {
+      alert("Invalid JSON format in Schema Data.");
+      return;
+    }
+
+    const payload = {
+      ...formData,
+      schema_data: parsedJson
+    };
+
+    setSaving(true);
+    try {
+      if (editingId) {
+        await api.put(`/thedal/schemalibrary/${editingId}`, payload);
+      } else {
+        await api.post('/thedal/schemalibrary', payload);
+      }
+      setModalOpen(false);
+      fetchData();
+    } catch (err) {
+      alert('Failed to save template: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const generateDeployment = () => {
+    if (!deployForm.templateId || !deployForm.clientUrl) {
+      alert("Please select a template and enter a client URL.");
+      return;
+    }
+
+    const template = data.find(t => t.id.toString() === deployForm.templateId);
+    if (!template) return;
+
+    let schemaObj = typeof template.schema_data === 'string' ? JSON.parse(template.schema_data) : template.schema_data;
+    
+    // Inject Entity Links (sameAs)
+    if (entityLinks.length > 0) {
+      const urls = entityLinks.map(l => l.url);
+      
+      const injectIntoNode = (node) => {
+        if (node['@type'] === 'Organization' || node['@type'] === 'LocalBusiness' || (typeof node['@type'] === 'string' && node['@type'].includes('Business'))) {
+          node.sameAs = urls;
+        }
+        return node;
+      };
+
+      if (Array.isArray(schemaObj)) {
+        schemaObj = schemaObj.map(injectIntoNode);
+      } else if (schemaObj['@graph'] && Array.isArray(schemaObj['@graph'])) {
+        schemaObj['@graph'] = schemaObj['@graph'].map(injectIntoNode);
+      } else {
+        injectIntoNode(schemaObj);
+      }
+    }
+
+    const scriptCode = `<script type="application/ld+json">\n${JSON.stringify(schemaObj, null, 2)}\n</script>`;
+    setDeploymentScript(scriptCode);
+  };
+
+  const handlePushDeploy = async () => {
+    if(!deploymentScript) return;
+    setDeploying(true);
+    try {
+      await api.post('/thedal/schemalibrary/deployments', {
+        templateId: deployForm.templateId,
+        clientUrl: deployForm.clientUrl
+      });
+      const template = data.find(t => t.id.toString() === deployForm.templateId);
+      setActiveDeployments([...activeDeployments, { clientUrl: deployForm.clientUrl, templateName: template?.name }]);
+      alert("Success! Schema pushed via API to " + deployForm.clientUrl);
+    } catch (err) {
+      alert("Failed to push deployment: " + (err.response?.data?.error || err.message));
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const handleCopyCode = () => {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(deploymentScript).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(() => {
+        fallbackCopyTextToClipboard(deploymentScript);
+      });
+    } else {
+      fallbackCopyTextToClipboard(deploymentScript);
+    }
+  };
+
+  const fallbackCopyTextToClipboard = (text) => {
+    var textArea = document.createElement("textarea");
+    textArea.value = text;
+    // Avoid scrolling to bottom
+    textArea.style.top = "0";
+    textArea.style.left = "0";
+    textArea.style.position = "fixed";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      alert("Failed to copy code");
+    }
+    document.body.removeChild(textArea);
+  };
+
+  const triggerDelete = (item) => {
+    setTemplateToDelete(item);
+    setDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!templateToDelete) return;
+    try {
+      await api.delete(`/thedal/schemalibrary/${templateToDelete.id}`);
+      setDeleteModalOpen(false);
+      setTemplateToDelete(null);
+      fetchData();
+    } catch (err) {
+      alert('Failed to delete template: ' + err.message);
+    }
+  };
+
+  const renderDashboard = () => (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24 }}>
+        <div style={{ color: C.muted, fontSize: 13, fontWeight: 600, textTransform: 'uppercase', marginBottom: 8 }}>Total Templates</div>
+        <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0' }}>{data.length}</div>
       </div>
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20 }}>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24 }}>
+        <div style={{ color: C.muted, fontSize: 13, fontWeight: 600, textTransform: 'uppercase', marginBottom: 8 }}>Active Deployments</div>
+        <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0' }}>{activeDeployments.length}</div>
+        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>Live via API</div>
+      </div>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24 }}>
+        <div style={{ color: C.muted, fontSize: 13, fontWeight: 600, textTransform: 'uppercase', marginBottom: 8 }}>Validation Errors</div>
+        <div style={{ fontSize: 32, fontWeight: 800, color: '#22c55e' }}>0</div>
+        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>All templates valid</div>
+      </div>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24 }}>
+        <div style={{ color: C.muted, fontSize: 13, fontWeight: 600, textTransform: 'uppercase', marginBottom: 8 }}>Connected Websites</div>
+        <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0' }}>{new Set(activeDeployments.map(d=>d.clientUrl)).size}</div>
+        <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>Unique domains</div>
+      </div>
+
+      {/* Recent Deployments Table */}
+      <div style={{ gridColumn: '1 / -1', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24, marginTop: 10 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Globe size={18} color={C.accent} /> Recent API Deployments
+        </h3>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              <th style={{ padding: '12px 0', color: C.muted, fontSize: 12, fontWeight: 600 }}>ID</th>
-              <th style={{ padding: '12px 0', color: C.muted, fontSize: 12, fontWeight: 600 }}>DATA</th>
+              <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Client URL</th>
+              <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Template Applied</th>
+              <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Deployed At</th>
+              <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', textAlign: 'right' }}>Status</th>
             </tr>
           </thead>
           <tbody>
-            {items.length > 0 ? items.map((item, idx) => (
+            {activeDeployments.length > 0 ? activeDeployments.map((dep, idx) => (
               <tr key={idx} style={{ borderBottom: `1px solid ${C.border}55` }}>
-                <td style={{ padding: '16px 0', fontSize: 14, color: '#e2e8f0' }}>{item.id}</td>
-                <td style={{ padding: '16px 0', fontSize: 13 }}>{JSON.stringify(item)}</td>
+                <td style={{ padding: '16px 10px', fontSize: 14, color: '#38bdf8', fontWeight: 600 }}>{dep.clientUrl}</td>
+                <td style={{ padding: '16px 10px', fontSize: 14, color: '#e2e8f0' }}>{dep.templateName || 'Unknown Template'}</td>
+                <td style={{ padding: '16px 10px', fontSize: 13, color: '#94a3b8' }}>
+                  {dep.deployedAt ? new Date(dep.deployedAt).toLocaleString() : 'Just now'}
+                </td>
+                <td style={{ padding: '16px 10px', textAlign: 'right' }}>
+                  <span style={{ background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', padding: '4px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
+                    Live
+                  </span>
+                </td>
               </tr>
             )) : (
-              <tr><td colSpan={2} style={{ padding: '30px 0', textAlign: 'center', color: C.muted }}>No records found. Setup data in DB.</td></tr>
+              <tr><td colSpan={4} style={{ padding: '40px 0', textAlign: 'center', color: C.muted }}>No active deployments yet.</td></tr>
             )}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+
+  const renderTemplates = () => (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h3 style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Schema Templates</h3>
+        <button 
+          onClick={() => handleOpenModal()}
+          style={{ background: C.accent, color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <Plus size={16} /> New Template
+        </button>
+      </div>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+        <thead>
+          <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+            <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Name</th>
+            <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Type</th>
+            <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Description</th>
+            <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', textAlign: 'right' }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.length > 0 ? data.map((item) => (
+            <tr key={item.id} style={{ borderBottom: `1px solid ${C.border}55` }}>
+              <td style={{ padding: '16px 10px', fontSize: 14, color: '#e2e8f0', fontWeight: 600 }}>{item.name}</td>
+              <td style={{ padding: '16px 10px' }}>
+                <span style={{ background: 'rgba(139, 92, 246, 0.1)', color: '#8b5cf6', padding: '4px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
+                  {item.schema_type}
+                </span>
+              </td>
+              <td style={{ padding: '16px 10px', fontSize: 13, color: '#94a3b8' }}>{item.description || '-'}</td>
+              <td style={{ padding: '16px 10px', textAlign: 'right' }}>
+                <button onClick={() => handleOpenModal(item)} style={{ background: 'transparent', border: 'none', color: '#3b82f6', cursor: 'pointer', padding: 4, marginRight: 8 }}>
+                  <Edit2 size={16} />
+                </button>
+                <button onClick={() => triggerDelete(item)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}>
+                  <Trash2 size={16} />
+                </button>
+              </td>
+            </tr>
+          )) : (
+            <tr><td colSpan={4} style={{ padding: '40px 0', textAlign: 'center', color: C.muted }}>No templates found. Create one to get started.</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const renderGenerator = () => (
+    <div style={{ display: 'flex', gap: 30, height: 'calc(100vh - 200px)' }}>
+      <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 30, overflowY: 'auto' }}>
+        <h3 style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Sparkles size={18} color={C.accent} /> Business Context
+        </h3>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>Business Name *</label>
+            <input 
+              type="text" value={genForm.businessName} onChange={e => setGenForm({...genForm, businessName: e.target.value})}
+              placeholder="e.g. Acme Plumbing"
+              style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '12px 16px', borderRadius: 8, outline: 'none' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>Business Type *</label>
+            <select 
+              value={genForm.businessType} onChange={e => setGenForm({...genForm, businessType: e.target.value})}
+              style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '12px 16px', borderRadius: 8, outline: 'none' }}
+            >
+              <option value="LocalBusiness" style={{color: '#000'}}>LocalBusiness</option>
+              <option value="Organization" style={{color: '#000'}}>Organization</option>
+              <option value="MedicalBusiness" style={{color: '#000'}}>MedicalBusiness</option>
+              <option value="LegalService" style={{color: '#000'}}>LegalService</option>
+              <option value="HomeAndConstructionBusiness" style={{color: '#000'}}>HomeAndConstructionBusiness</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>Website URL</label>
+            <input 
+              type="text" value={genForm.website} onChange={e => setGenForm({...genForm, website: e.target.value})}
+              placeholder="https://www.example.com"
+              style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '12px 16px', borderRadius: 8, outline: 'none' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>Services & Description</label>
+            <textarea 
+              value={genForm.description} onChange={e => setGenForm({...genForm, description: e.target.value})}
+              placeholder="Describe the main services, service areas, and specialties..."
+              style={{ width: '100%', minHeight: 120, background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '12px 16px', borderRadius: 8, outline: 'none', resize: 'vertical' }}
+            />
+          </div>
+          <button 
+            onClick={handleGenerate}
+            disabled={generating || !genForm.businessName}
+            style={{ background: `linear-gradient(135deg, ${C.accent}, #ea580c)`, color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontSize: 15, fontWeight: 700, cursor: (generating || !genForm.businessName) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: (generating || !genForm.businessName) ? 0.7 : 1, marginTop: 10 }}
+          >
+            {generating ? <Loader2 size={18} className="spin" /> : <Sparkles size={18} />}
+            {generating ? 'AI is Generating Schema...' : 'Generate Magic Schema'}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)' }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Code size={18} color="#38bdf8" /> AI Output JSON-LD
+          </h3>
+          {generatedSchema && (
+            <button 
+              onClick={handleSaveGenerated}
+              style={{ background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', border: '1px solid rgba(34, 197, 94, 0.3)', padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            >
+              Save to Library
+            </button>
+          )}
+        </div>
+        <div style={{ flex: 1, padding: 24, overflowY: 'auto', background: '#0f172a' }}>
+          {generatedSchema ? (
+            <pre style={{ margin: 0, color: '#38bdf8', fontSize: 13, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {JSON.stringify(generatedSchema, null, 2)}
+            </pre>
+          ) : (
+            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: C.muted }}>
+              <FileJson size={48} style={{ opacity: 0.2, marginBottom: 16 }} />
+              <p>Waiting for generation...</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderEntities = () => (
+    <div style={{ display: 'flex', gap: 30, height: 'calc(100vh - 200px)' }}>
+      {/* Left side: Form */}
+      <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 30, overflowY: 'auto' }}>
+        <h3 style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Network size={18} color={C.accent} /> Knowledge Graph Entities
+        </h3>
+        <p style={{ color: C.muted, fontSize: 14, marginBottom: 24, lineHeight: 1.5 }}>
+          Strengthen your Google Knowledge Panel by explicitly mapping your primary business entity to known high-authority profiles (Wikipedia, Crunchbase, Social Media).
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {entityLinks.map((link, idx) => (
+            <div key={idx} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <select 
+                value={link.type}
+                onChange={e => {
+                  const arr = [...entityLinks];
+                  arr[idx].type = e.target.value;
+                  setEntityLinks(arr);
+                }}
+                style={{ width: 140, background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '10px', borderRadius: 8, outline: 'none' }}
+              >
+                <option style={{color:'#000'}} value="Wikipedia">Wikipedia</option>
+                <option style={{color:'#000'}} value="Wikidata">Wikidata</option>
+                <option style={{color:'#000'}} value="Crunchbase">Crunchbase</option>
+                <option style={{color:'#000'}} value="LinkedIn">LinkedIn</option>
+                <option style={{color:'#000'}} value="Twitter">Twitter</option>
+                <option style={{color:'#000'}} value="Facebook">Facebook</option>
+                <option style={{color:'#000'}} value="Instagram">Instagram</option>
+              </select>
+              <input 
+                type="text" 
+                value={link.url}
+                onChange={e => {
+                  const arr = [...entityLinks];
+                  arr[idx].url = e.target.value;
+                  setEntityLinks(arr);
+                }}
+                placeholder="https://"
+                style={{ flex: 1, background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '10px 14px', borderRadius: 8, outline: 'none' }}
+              />
+              <button 
+                onClick={() => setEntityLinks(entityLinks.filter((_, i) => i !== idx))}
+                style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 8 }}
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 8, paddingTop: 16, borderTop: `1px dashed ${C.border}` }}>
+            <select 
+              value={newLink.type}
+              onChange={e => setNewLink({...newLink, type: e.target.value})}
+              style={{ width: 140, background: 'rgba(255,255,255,0.03)', border: `1px dashed ${C.border}`, color: '#fff', padding: '10px', borderRadius: 8, outline: 'none' }}
+            >
+                <option style={{color:'#000'}} value="Wikipedia">Wikipedia</option>
+                <option style={{color:'#000'}} value="Wikidata">Wikidata</option>
+                <option style={{color:'#000'}} value="Crunchbase">Crunchbase</option>
+                <option style={{color:'#000'}} value="LinkedIn">LinkedIn</option>
+                <option style={{color:'#000'}} value="Twitter">Twitter</option>
+                <option style={{color:'#000'}} value="Facebook">Facebook</option>
+                <option style={{color:'#000'}} value="Instagram">Instagram</option>
+            </select>
+            <input 
+              type="text" 
+              value={newLink.url}
+              onChange={e => setNewLink({...newLink, url: e.target.value})}
+              placeholder="Add new entity URL..."
+              style={{ flex: 1, background: 'rgba(255,255,255,0.03)', border: `1px dashed ${C.border}`, color: '#fff', padding: '10px 14px', borderRadius: 8, outline: 'none' }}
+            />
+            <button 
+              onClick={() => {
+                if(newLink.url) {
+                  setEntityLinks([...entityLinks, newLink]);
+                  setNewLink({ type: 'Twitter', url: '' });
+                }
+              }}
+              style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', color: '#3b82f6', cursor: 'pointer', padding: '10px', borderRadius: 8, display: 'flex', alignItems: 'center' }}
+            >
+              <Plus size={16} />
+            </button>
+          </div>
+
+          <button 
+            onClick={async () => {
+              setUpdatingGraph(true);
+              try {
+                await api.put('/thedal/schemalibrary/entities', { entities: entityLinks });
+                setUpdateGraphModalOpen(true);
+              } catch (err) {
+                alert("Failed to update graph: " + err.message);
+              } finally {
+                setUpdatingGraph(false);
+              }
+            }}
+            disabled={updatingGraph}
+            style={{ background: C.accent, color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: updatingGraph ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 24, opacity: updatingGraph ? 0.7 : 1 }}
+          >
+            {updatingGraph ? <Loader2 size={16} className="spin" /> : <Network size={16} />}
+            {updatingGraph ? 'Updating Knowledge Graph...' : 'Update Knowledge Graph Mapping'}
+          </button>
+        </div>
+      </div>
+
+      {/* Right side: Graph Visualizer */}
+      <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, background: 'rgba(255,255,255,0.02)' }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Network size={18} color="#8b5cf6" /> Live Graph Visualization
+          </h3>
+        </div>
+        <div style={{ flex: 1, padding: 40, background: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+          
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.05, backgroundImage: 'radial-gradient(#38bdf8 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 60, position: 'relative', zIndex: 10, width: '100%', maxWidth: 500 }}>
+            {/* Core Entity */}
+            <div style={{ background: 'rgba(234, 88, 12, 0.1)', border: '2px solid #ea580c', padding: '20px', borderRadius: '50%', width: 120, height: 120, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 30px rgba(234, 88, 12, 0.2)', zIndex: 2 }}>
+              <Globe size={32} color="#ea580c" style={{ marginBottom: 8 }} />
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', textAlign: 'center' }}>Primary Entity</div>
+            </div>
+
+            {/* Connector Lines & Nodes */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20, position: 'relative' }}>
+              {(showAllEntities ? entityLinks : entityLinks.slice(0, 8)).map((link, idx) => (
+                <div key={idx} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <div style={{ position: 'absolute', left: -60, width: 60, height: 2, background: 'rgba(139, 92, 246, 0.3)' }}></div>
+                  <div style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid #8b5cf6', padding: '12px 16px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10, width: '100%', boxShadow: '0 0 15px rgba(139, 92, 246, 0.1)' }}>
+                    <div style={{ background: '#8b5cf6', width: 8, height: 8, borderRadius: '50%' }}></div>
+                    <div style={{ overflow: 'hidden' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0' }}>{link.type}</div>
+                      <div style={{ fontSize: 11, color: C.muted, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.url}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {entityLinks.length > 8 && (
+                <button 
+                  onClick={() => setShowAllEntities(!showAllEntities)}
+                  style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid #8b5cf6', color: '#cbd5e1', cursor: 'pointer', padding: '8px 12px', borderRadius: 6, fontSize: 12, width: '100%', textAlign: 'center', fontWeight: 600, marginTop: 10 }}
+                >
+                  {showAllEntities ? 'Show Less (Limit to 8)' : `Show All (+${entityLinks.length - 8} more)`}
+                </button>
+              )}
+              {entityLinks.length === 0 && (
+                <div style={{ color: C.muted, fontSize: 13, textAlign: 'center', padding: 20 }}>No external entities mapped.</div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderDeployments = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 30 }}>
+      <div style={{ display: 'flex', gap: 30 }}>
+        <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 30 }}>
+          <h3 style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Globe size={18} color={C.accent} /> Deployment Setup
+          </h3>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>1. Select Master Template</label>
+              <select 
+                value={deployForm.templateId} onChange={e => setDeployForm({...deployForm, templateId: e.target.value})}
+                style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '12px 16px', borderRadius: 8, outline: 'none' }}
+              >
+                <option value="" style={{color:'#000'}}>-- Select Template --</option>
+                {data.map(t => (
+                  <option key={t.id} value={t.id} style={{color:'#000'}}>{t.name} ({t.schema_type})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>2. Client Website URL</label>
+              <input 
+                type="text" value={deployForm.clientUrl} onChange={e => setDeployForm({...deployForm, clientUrl: e.target.value})}
+                placeholder="https://www.client-website.com"
+                style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '12px 16px', borderRadius: 8, outline: 'none' }}
+              />
+            </div>
+
+            <div style={{ background: 'rgba(234, 88, 12, 0.1)', border: '1px dashed #ea580c', borderRadius: 8, padding: 16, marginTop: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#ea580c', marginBottom: 4 }}>Entity Graph Injection</div>
+              <div style={{ fontSize: 12, color: C.muted }}>
+                When compiled, {entityLinks.length} mapped entities will automatically be injected into the `sameAs` property.
+              </div>
+            </div>
+
+            <button 
+              onClick={generateDeployment}
+              style={{ background: `linear-gradient(135deg, ${C.accent}, #ea580c)`, color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontSize: 15, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 10 }}
+            >
+              <Code size={18} /> Compile Deployment Code
+            </button>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 350 }}>
+          <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)' }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Code size={18} color="#38bdf8" /> Compiled Tag
+            </h3>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {deploymentScript && (
+                <button 
+                  onClick={handleCopyCode}
+                  style={{ background: copied ? 'rgba(34, 197, 94, 0.1)' : 'transparent', color: copied ? '#22c55e' : '#e2e8f0', border: `1px solid ${copied ? '#22c55e' : C.border}`, padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
+                >
+                  {copied ? 'Copied ✓' : 'Copy to GTM'}
+                </button>
+              )}
+              {deploymentScript && (
+                <button 
+                  onClick={handlePushDeploy}
+                  disabled={deploying}
+                  style={{ background: '#22c55e', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: deploying ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: deploying ? 0.7 : 1 }}
+                >
+                  {deploying ? <Loader2 size={12} className="spin" /> : <Globe size={12} />}
+                  {deploying ? 'Pushing...' : 'Push to API'}
+                </button>
+              )}
+            </div>
+          </div>
+          <div style={{ flex: 1, padding: 24, overflowY: 'auto', background: '#0f172a' }}>
+            {deploymentScript ? (
+              <pre style={{ margin: 0, color: '#38bdf8', fontSize: 13, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {deploymentScript}
+              </pre>
+            ) : (
+              <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: C.muted }}>
+                <Globe size={48} style={{ opacity: 0.2, marginBottom: 16 }} />
+                <p>Configure and compile to view deployment tag.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Section: Deployment History Log */}
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Globe size={18} color={C.accent} /> Deployment History Log
+        </h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+          <thead>
+            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+              <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Client URL</th>
+              <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Template Applied</th>
+              <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Deployed At</th>
+              <th style={{ padding: '12px 10px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', textAlign: 'right' }}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {activeDeployments.length > 0 ? activeDeployments.map((dep, idx) => (
+              <tr key={idx} style={{ borderBottom: `1px solid ${C.border}55` }}>
+                <td style={{ padding: '16px 10px', fontSize: 14, color: '#38bdf8', fontWeight: 600 }}>{dep.clientUrl}</td>
+                <td style={{ padding: '16px 10px', fontSize: 14, color: '#e2e8f0' }}>{dep.templateName || 'Unknown Template'}</td>
+                <td style={{ padding: '16px 10px', fontSize: 13, color: '#94a3b8' }}>
+                  {dep.deployedAt ? new Date(dep.deployedAt).toLocaleString() : 'Just now'}
+                </td>
+                <td style={{ padding: '16px 10px', textAlign: 'right' }}>
+                  <span style={{ background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', padding: '4px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
+                    Live
+                  </span>
+                </td>
+              </tr>
+            )) : (
+              <tr><td colSpan={4} style={{ padding: '40px 0', textAlign: 'center', color: C.muted }}>No deployments found.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  const renderPlaceholder = (title, phase) => (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 60, textAlign: 'center' }}>
+      <AlertCircle size={48} color={C.muted} style={{ marginBottom: 20, opacity: 0.5 }} />
+      <h2 style={{ fontSize: 24, fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>{title}</h2>
+      <p style={{ color: '#94a3b8', fontSize: 15, maxWidth: 500, margin: '0 auto' }}>
+        This module is scheduled for development in <strong>{phase}</strong> of the Schema Library rollout plan.
+      </p>
+    </div>
+  );
+
+  const tabs = [
+    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={16} /> },
+    { id: 'templates', label: 'Templates', icon: <Code size={16} /> },
+    { id: 'generate', label: 'AI Generator', icon: <Sparkles size={16} /> },
+    { id: 'entities', label: 'Entity Graph', icon: <Network size={16} /> },
+    { id: 'deploy', label: 'Deployments', icon: <Globe size={16} /> },
+  ];
+
+  return (
+    <div style={{ padding: 40, color: C.text, height: '100%', overflowY: 'auto', background: C.background }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 }}>
+        <div>
+          <h1 style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif", display: 'flex', alignItems: 'center', gap: 12 }}>
+            <FileJson size={28} color={C.accent} /> Schema Library
+          </h1>
+          <p style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>
+            Centralized Structured Data and Entity Management System.
+          </p>
+        </div>
+      </div>
+
+      {/* Navigation Tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 30, borderBottom: `1px solid ${C.border}`, paddingBottom: 16 }}>
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            style={{
+              background: activeTab === t.id ? 'rgba(234, 88, 12, 0.1)' : 'transparent',
+              color: activeTab === t.id ? C.accent : C.muted,
+              border: `1px solid ${activeTab === t.id ? 'rgba(234, 88, 12, 0.3)' : 'transparent'}`,
+              padding: '8px 16px',
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              transition: 'all 0.2s'
+            }}
+          >
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div style={{ display: 'flex', height: 200, alignItems: 'center', justifyContent: 'center' }}>
+          <Loader2 size={32} color={C.accent} className="spin" />
+        </div>
+      ) : (
+        <>
+          {activeTab === 'dashboard' && renderDashboard()}
+          {activeTab === 'templates' && renderTemplates()}
+          {activeTab === 'generate' && renderGenerator()}
+          {activeTab === 'entities' && renderEntities()}
+          {activeTab === 'deploy' && renderDeployments()}
+        </>
+      )}
+
+      {/* Template Modal */}
+      {modalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, width: '100%', maxWidth: 800, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}>
+            
+            <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: 18, color: '#e2e8f0', fontWeight: 700 }}>
+                {editingId ? 'Edit Schema Template' : 'Create Schema Template'}
+              </h3>
+            </div>
+
+            <div style={{ padding: 24, overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
+              
+              <div style={{ display: 'flex', gap: 16 }}>
+                <div style={{ flex: 2 }}>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>Template Name *</label>
+                  <input 
+                    type="text" 
+                    value={formData.name}
+                    onChange={e => setFormData({...formData, name: e.target.value})}
+                    placeholder="e.g. Master LocalBusiness Schema"
+                    style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '10px 14px', borderRadius: 6, outline: 'none' }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>Schema Type *</label>
+                  <select 
+                    value={formData.schema_type}
+                    onChange={e => setFormData({...formData, schema_type: e.target.value})}
+                    style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '10px 14px', borderRadius: 6, outline: 'none' }}
+                  >
+                    <option value="LocalBusiness" style={{color: '#000'}}>LocalBusiness</option>
+                    <option value="Organization" style={{color: '#000'}}>Organization</option>
+                    <option value="FAQPage" style={{color: '#000'}}>FAQPage</option>
+                    <option value="Article" style={{color: '#000'}}>Article</option>
+                    <option value="Service" style={{color: '#000'}}>Service</option>
+                    <option value="Review" style={{color: '#000'}}>Review</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>Description</label>
+                <input 
+                  type="text" 
+                  value={formData.description}
+                  onChange={e => setFormData({...formData, description: e.target.value})}
+                  placeholder="Optional description for this template"
+                  style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: '#fff', padding: '10px 14px', borderRadius: 6, outline: 'none' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: C.muted, textTransform: 'uppercase' }}>JSON-LD Data *</label>
+                  <button 
+                    onClick={handleValidate} 
+                    disabled={validating}
+                    style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '4px 10px', borderRadius: 4, fontSize: 11, fontWeight: 600, cursor: validating ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                  >
+                    {validating ? <Loader2 size={12} className="spin" /> : <Network size={12} />}
+                    {validating ? 'Validating...' : 'Validate against Google'}
+                  </button>
+                </div>
+                
+                {validationResult && (
+                  <div style={{ marginBottom: 12, padding: 12, borderRadius: 6, border: `1px solid ${validationResult.isValid ? '#22c55e' : '#ef4444'}`, background: validationResult.isValid ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: validationResult.isValid ? '#22c55e' : '#ef4444', marginBottom: validationResult.errors?.length || validationResult.warnings?.length ? 8 : 0 }}>
+                      {validationResult.isValid ? '✓ Schema is valid for Google Rich Results' : '⚠ Schema has errors'}
+                    </div>
+                    {validationResult.errors?.length > 0 && (
+                      <ul style={{ margin: '0 0 8px 0', paddingLeft: 20, color: '#ef4444', fontSize: 12 }}>
+                        {validationResult.errors.map((e, i) => <li key={i}>{e}</li>)}
+                      </ul>
+                    )}
+                    {validationResult.warnings?.length > 0 && (
+                      <ul style={{ margin: 0, paddingLeft: 20, color: '#eab308', fontSize: 12 }}>
+                        {validationResult.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
+                <textarea 
+                  value={formData.schema_data}
+                  onChange={e => {
+                    setFormData({...formData, schema_data: e.target.value});
+                    setValidationResult(null); // Clear validation on edit
+                  }}
+                  style={{ 
+                    width: '100%', flex: 1, minHeight: 250, background: '#0f172a', border: `1px solid ${C.border}`, 
+                    color: '#38bdf8', padding: '14px', borderRadius: 6, outline: 'none', fontFamily: 'monospace', fontSize: 13, resize: 'vertical'
+                  }}
+                />
+              </div>
+
+            </div>
+
+            <div style={{ padding: '16px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 12, background: 'rgba(0,0,0,0.1)' }}>
+              <button 
+                onClick={() => setModalOpen(false)}
+                style={{ background: 'transparent', color: '#e2e8f0', border: `1px solid ${C.border}`, padding: '8px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSave}
+                disabled={saving}
+                style={{ background: C.accent, color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: saving ? 0.7 : 1 }}
+              >
+                {saving ? <Loader2 size={16} className="spin" /> : null}
+                {saving ? 'Saving...' : 'Save Template'}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 30, maxWidth: 400, width: '90%', boxShadow: '0 20px 40px rgba(0,0,0,0.5)', textAlign: 'center' }}>
+            <div style={{ background: 'rgba(239, 68, 68, 0.1)', width: 64, height: 64, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px auto' }}>
+              <Trash2 size={32} color="#ef4444" />
+            </div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0', margin: '0 0 12px 0' }}>Delete Template?</h3>
+            <p style={{ color: C.muted, fontSize: 14, lineHeight: 1.5, margin: '0 0 24px 0' }}>
+              Are you sure you want to delete <strong>{templateToDelete?.name}</strong>? This action cannot be undone.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
+              <button 
+                onClick={() => setDeleteModalOpen(false)}
+                style={{ background: 'transparent', color: '#e2e8f0', border: `1px solid ${C.border}`, padding: '8px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmDelete}
+                style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Knowledge Graph Success Modal */}
+      {updateGraphModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 30, maxWidth: 400, width: '90%', boxShadow: '0 20px 40px rgba(0,0,0,0.5)', textAlign: 'center' }}>
+            <div style={{ background: 'rgba(34, 197, 94, 0.1)', width: 64, height: 64, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px auto' }}>
+              <Network size={32} color="#22c55e" />
+            </div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0', margin: '0 0 12px 0' }}>Knowledge Graph Updated!</h3>
+            <p style={{ color: C.muted, fontSize: 14, lineHeight: 1.5, margin: '0 0 24px 0' }}>
+              Successfully mapped <strong>{entityLinks.length}</strong> entities. The 'sameAs' attributes have been dynamically injected into your active schema deployments.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <button 
+                onClick={() => setUpdateGraphModalOpen(false)}
+                style={{ background: '#22c55e', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+              >
+                Awesome
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

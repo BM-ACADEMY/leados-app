@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { C } from '../../constants/theme.js';
 import { Loader2, Play, CheckCircle2, XCircle, AlertTriangle, Globe, ChevronDown, ChevronRight, Activity, BrainCircuit, Link, Type, Search, Download } from 'lucide-react';
 import { api } from '../../services/api.js';
@@ -14,6 +14,20 @@ export default function OnPageAudit() {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const reportRef = useRef();
 
+  // Restore last technical audit from Cache
+  useEffect(() => {
+    const cached = localStorage.getItem('lastOnPageAudit');
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (parsed.url) setUrl(parsed.url);
+        if (parsed.data) setAuditData(parsed.data);
+      } catch (e) {
+        console.error('Failed to parse cached audit results', e);
+      }
+    }
+  }, []);
+
   const handleRunCheck = async () => {
     if (!url) {
       setError('Please enter a valid URL');
@@ -27,6 +41,9 @@ export default function OnPageAudit() {
       const res = await api.post('/thedal/seo-audit', { url });
       setAuditData(res);
       setActiveTab('onPage');
+      
+      // Cache successful technical audit results in localStorage by URL
+      localStorage.setItem('lastOnPageAudit', JSON.stringify({ url, data: res }));
     } catch (err) {
       console.error('Audit failed', err);
       setError(err.message || 'Failed to analyze website. Ensure the URL is accessible.');
@@ -49,14 +66,17 @@ export default function OnPageAudit() {
 
     // Temporarily make the hidden element visible for capturing
     const element = reportRef.current;
-    element.style.display = 'block';
+    element.style.position = 'static';
+    element.style.visibility = 'visible';
 
     html2pdf().set(opt).from(element).save().then(() => {
-      element.style.display = 'none';
+      element.style.position = 'absolute';
+      element.style.visibility = 'hidden';
       setDownloadingPdf(false);
     }).catch(err => {
       console.error('PDF Generation Failed', err);
-      element.style.display = 'none';
+      element.style.position = 'absolute';
+      element.style.visibility = 'hidden';
       setDownloadingPdf(false);
       alert('Failed to generate PDF report.');
     });
@@ -87,13 +107,19 @@ export default function OnPageAudit() {
         {categoryData.failed.map((check, idx) => (
           <div key={`failed-${idx}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 16, background: 'rgba(239, 68, 68, 0.05)', borderRadius: 8, borderLeft: '3px solid #ef4444' }}>
             <XCircle size={18} color="#ef4444" style={{ marginTop: 2 }} />
-            <div style={{ fontSize: 14, color: '#e2e8f0', lineHeight: 1.5 }}>{check}</div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontSize: 14, color: '#e2e8f0', lineHeight: 1.5, fontWeight: 'bold' }}>{check.title || check}</div>
+              {check.description && <div style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.5, marginTop: 4 }}>{check.description}</div>}
+            </div>
           </div>
         ))}
         {categoryData.passed.map((check, idx) => (
           <div key={`passed-${idx}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 16, background: 'rgba(34, 197, 94, 0.05)', borderRadius: 8, borderLeft: '3px solid #22c55e' }}>
             <CheckCircle2 size={18} color="#22c55e" style={{ marginTop: 2 }} />
-            <div style={{ fontSize: 14, color: '#e2e8f0', lineHeight: 1.5 }}>{check}</div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ fontSize: 14, color: '#e2e8f0', lineHeight: 1.5, fontWeight: 'bold' }}>{check.title || check}</div>
+              {check.description && <div style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.5, marginTop: 4 }}>{check.description}</div>}
+            </div>
           </div>
         ))}
         {categoryData.failed.length === 0 && categoryData.passed.length === 0 && (
@@ -306,7 +332,7 @@ export default function OnPageAudit() {
           
           {/* Hidden PDF Template Container */}
           <div style={{ overflow: 'hidden', height: 0, width: 0, position: 'absolute', top: -9999, left: -9999 }}>
-            <div ref={reportRef} style={{ display: 'none', width: '800px', backgroundColor: '#fff' }}>
+            <div ref={reportRef} style={{ position: 'absolute', visibility: 'hidden', width: '800px', backgroundColor: '#fff' }}>
               <SeoReportTemplate data={auditData} />
             </div>
           </div>

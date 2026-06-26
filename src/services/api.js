@@ -40,7 +40,14 @@ class LeadOSAPI {
       window.location.href = '/login';
     }
 
-    const data = await response.json();
+    const text = await response.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (e) {
+      console.error('API Error: Non-JSON response:', text);
+      throw new Error('Received invalid data from server');
+    }
 
     if (!response.ok) {
       throw new Error(data.error || 'API Error');

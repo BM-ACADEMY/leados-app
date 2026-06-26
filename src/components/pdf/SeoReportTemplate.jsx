@@ -32,7 +32,7 @@ const SeoReportTemplate = forwardRef(({ data }, ref) => {
     },
     // --- New Cover Page Styles ---
     coverPage: {
-      height: '11in', // approximate standard letter height
+      height: '10.5in', // slightly less than 11in to prevent overflow blank pages
       position: 'relative',
       padding: '60px',
       boxSizing: 'border-box',
@@ -92,7 +92,7 @@ const SeoReportTemplate = forwardRef(({ data }, ref) => {
     // --- Table of Contents Styles ---
     tocPage: {
       padding: '60px',
-      height: '11in',
+      height: '10.5in',
       boxSizing: 'border-box'
     },
     tocTitle: {
@@ -170,14 +170,20 @@ const SeoReportTemplate = forwardRef(({ data }, ref) => {
         <ul style={styles.list}>
           {categoryData.failed.map((check, idx) => (
             <li key={`failed-${idx}`} style={{ ...styles.listItem, borderLeft: `4px solid ${dangerColor}`, backgroundColor: '#fef2f2' }}>
-              <span style={{ color: dangerColor, fontWeight: 'bold' }}>✕</span>
-              <span style={{ fontSize: '14px', lineHeight: '1.5' }}>{check}</span>
+              <span style={{ color: dangerColor, fontWeight: 'bold', fontSize: '18px' }}>✕</span>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '14px', lineHeight: '1.5', fontWeight: 'bold' }}>{check.title || check}</span>
+                {check.description && <span style={{ fontSize: '12px', lineHeight: '1.5', color: '#666', marginTop: '4px' }}>{check.description}</span>}
+              </div>
             </li>
           ))}
           {categoryData.passed.map((check, idx) => (
             <li key={`passed-${idx}`} style={{ ...styles.listItem, borderLeft: `4px solid ${successColor}`, backgroundColor: '#f0fdf4' }}>
-              <span style={{ color: successColor, fontWeight: 'bold' }}>✓</span>
-              <span style={{ fontSize: '14px', lineHeight: '1.5' }}>{check}</span>
+              <span style={{ color: successColor, fontWeight: 'bold', fontSize: '18px' }}>✓</span>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '14px', lineHeight: '1.5', fontWeight: 'bold' }}>{check.title || check}</span>
+                {check.description && <span style={{ fontSize: '12px', lineHeight: '1.5', color: '#666', marginTop: '4px' }}>{check.description}</span>}
+              </div>
             </li>
           ))}
         </ul>

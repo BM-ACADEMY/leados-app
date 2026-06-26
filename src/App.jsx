@@ -41,6 +41,7 @@ import BacklinkTracker from './views/thedal/BacklinkTracker.jsx';
 import LocalCitations from './views/thedal/LocalCitations.jsx';
 import LocalSeoBridge from './views/thedal/LocalSeoBridge.jsx';
 import PlanManagement from './views/thedal/PlanManagement.jsx';
+import PlanSubscription from './views/thedal/PlanSubscription.jsx';
 import { ClientProvider } from './contexts/ClientContext.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
@@ -143,6 +144,7 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
               <Route path="/admin/content-os/approval" element={<ApprovalDashboard />} />
 
               <Route path="/thedal/clients" element={<ClientOnboard />} />
+              <Route path="/thedal/plan-subscription" element={<PlanSubscription />} />
               <Route path="/thedal/plans" element={<PlanManagement />} />
               <Route path="/thedal" element={<ThedalHQ />} />
               <Route path="/thedal/keyword-tracking" element={<KeywordTracking />} />

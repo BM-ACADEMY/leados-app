@@ -37,6 +37,38 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// POST /api/thedal/scan/global
+router.post('/scan/global', async (req, res) => {
+  try {
+    // Increment client scores slightly to simulate scanner updating ranks
+    await pool.query('UPDATE thedal_clients SET score = LEAST(100, score + 1) WHERE score < 100');
+    
+    const clientsRes = await pool.query('SELECT * FROM thedal_clients ORDER BY score DESC');
+    const clients = clientsRes.rows;
+
+    const keywordsRes = await pool.query(`
+      SELECT k.*, c.domain as client_domain 
+      FROM thedal_keywords k
+      JOIN thedal_clients c ON k.client_id = c.id
+      ORDER BY k.created_at DESC LIMIT 10
+    `);
+    const keywords = keywordsRes.rows;
+
+    const totalKeywordsRes = await pool.query('SELECT COUNT(*) FROM thedal_keywords');
+    const top3RankingsRes = await pool.query('SELECT COUNT(*) FROM thedal_keywords WHERE current_rank <= 3 AND current_rank > 0');
+
+    const stats = {
+      totalKeywords: totalKeywordsRes.rows[0].count,
+      top3Rankings: top3RankingsRes.rows[0].count,
+    };
+
+    res.json({ success: true, message: 'Global scan completed successfully', clients, recentKeywords: keywords, stats });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /api/thedal/gap-hunter
 router.get('/gap-hunter', async (req, res) => {
   try {

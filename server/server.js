@@ -61,6 +61,18 @@ const thedalClientsRoutes = require('./routes/thedal-clients');
 const thedalPlansRoutes = require('./routes/thedal-plans');
 const thedalAuditRoutes = require('./routes/thedal-audit');
 const thedalSeoAuditRoutes = require('./routes/thedal-seo-audit');
+const thedalKeywordTrackingRoutes = require('./routes/thedal-keywordtracking');
+const thedalGscIntelRoutes = require('./routes/thedal-gsc-intel');
+const thedalSerpRadarRoutes = require('./routes/thedal-serp-radar');
+const thedalGapHunterRoutes = require('./routes/thedal-gap-hunter');
+const thedalSchemaLibraryRoutes = require('./routes/thedal-schema-library');
+const thedalCompetitorSpyRoutes = require('./routes/thedal-competitor-spy');
+const thedalBacklinksRoutes = require('./routes/thedal-backlinks');
+const thedalCitationsRoutes = require('./routes/thedal-citations');
+const thedalLocalSeoBridgeRoutes = require('./routes/thedal-localseobridge');
+const thedalRankDropAlertRoutes = require('./routes/thedal-rank-drop-alert');
+const thedalContentRoutes = require('./routes/thedal-content');
+
 
 app.use('/api/knowledge', knowledgeRoutes); // We should use auth but let's check auth middleware later
 app.use('/api/upload', uploadRoutes);
@@ -69,6 +81,11 @@ app.use('/api/analyze', analyzeRoutes);
 
 // ── AUTH MIDDLEWARE ───────────────────────────────────────
 const auth = (req, res, next) => {
+  // Bypass JWT auth for OAuth redirect routes where the browser doesn't send a token
+  if (req.path.includes('/auth/google') || req.path.includes('/auth/callback')) {
+    return next();
+  }
+  
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'No token' });
   try {
@@ -91,8 +108,20 @@ app.use('/api/content-os', auth, contentOsRoutes);
 app.use('/api/thedal/audit', auth, thedalAuditRoutes);
 app.use('/api/thedal/plans', auth, thedalPlansRoutes);
 app.use('/api/thedal/seo-audit', auth, thedalSeoAuditRoutes);
+app.use('/api/thedal/keywordtracking', auth, thedalKeywordTrackingRoutes);
+app.use('/api/thedal/gscintel', thedalGscIntelRoutes); // Removed auth so OAuth browser redirects work
+app.use('/api/thedal/serpradar', auth, thedalSerpRadarRoutes);
+app.use('/api/thedal/gaphunter', auth, thedalGapHunterRoutes);
+app.use('/api/thedal/schemalibrary', auth, thedalSchemaLibraryRoutes);
+app.use('/api/thedal/competitorspy', auth, thedalCompetitorSpyRoutes);
+app.use('/api/thedal/rankdropalert', auth, thedalRankDropAlertRoutes);
+app.use('/api/thedal/backlinks', auth, thedalBacklinksRoutes);
+app.use('/api/thedal/citations', auth, thedalCitationsRoutes);
+app.use('/api/thedal/localseobridge', auth, thedalLocalSeoBridgeRoutes);
 app.use('/api/thedal/clients', auth, thedalClientsRoutes);
+app.use('/api/thedal/content', auth, thedalContentRoutes);
 app.use('/api/thedal', auth, thedalRoutes);
+
 
 // ══════════════════════════════════════════════════════════
 // HEALTH

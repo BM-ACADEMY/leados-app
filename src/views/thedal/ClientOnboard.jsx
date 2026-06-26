@@ -14,11 +14,15 @@ export default function ClientOnboard() {
   const [clientToDelete, setClientToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [viewingPlanClient, setViewingPlanClient] = useState(null);
+  
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
   
   const { refreshGlobalData } = useClient();
   
   // Form State
-  const [step, setStep] = useState(1); // 1: Account, 2: Plan
   const [isCustomCategory, setIsCustomCategory] = useState(false);
   const [hasDraft, setHasDraft] = useState(false);
   const [errors, setErrors] = useState({});
@@ -53,13 +57,22 @@ export default function ClientOnboard() {
     fetchClientsAndPlans();
   }, []);
 
+  // Helper to normalize domain by stripping protocol, www, and path/slashes
+  const normalizeDomain = (url) => {
+    if (!url) return '';
+    let clean = url.trim().toLowerCase();
+    clean = clean.replace(/^(https?:\/\/)?(www\.)?/, '');
+    clean = clean.split('/')[0];
+    return clean;
+  };
+
   // Save Draft automatically when typing new client
   useEffect(() => {
     if (modalOpen && !editingClient) {
-      localStorage.setItem('clientOnboardDraft', JSON.stringify({ formData, step, isCustomCategory }));
+      localStorage.setItem('clientOnboardDraft', JSON.stringify({ formData, isCustomCategory, timestamp: Date.now() }));
       if (!hasDraft) setHasDraft(true);
     }
-  }, [formData, step, isCustomCategory, modalOpen, editingClient]);
+  }, [formData, isCustomCategory, modalOpen, editingClient]);
 
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -77,10 +90,9 @@ export default function ClientOnboard() {
         business_name: client.business_name || '',
         domain: client.domain || '',
         business_category: client.business_category || '',
-        plan: client.plan || 'Free',
+        plan: client.plan || '',
         subscription_duration: client.subscription_duration || ''
       });
-      setStep(1);
       setHasDraft(false);
     } else {
       setEditingClient(null);
@@ -88,20 +100,25 @@ export default function ClientOnboard() {
       if (draft) {
         try {
           const parsed = JSON.parse(draft);
-          setFormData(parsed.formData);
-          setStep(parsed.step || 1);
-          setIsCustomCategory(parsed.isCustomCategory || false);
-          setHasDraft(true);
+          const oneDay = 24 * 60 * 60 * 1000;
+          if (parsed.timestamp && Date.now() - parsed.timestamp > oneDay) {
+            localStorage.removeItem('clientOnboardDraft');
+            setIsCustomCategory(false);
+            setFormData({ client_name: '', phone: '', email: '', business_name: '', domain: '', business_category: '', plan: '', subscription_duration: '' });
+            setHasDraft(false);
+          } else {
+            setFormData(parsed.formData);
+            setIsCustomCategory(parsed.isCustomCategory || false);
+            setHasDraft(true);
+          }
         } catch (e) {
           setIsCustomCategory(false);
           setFormData({ client_name: '', phone: '', email: '', business_name: '', domain: '', business_category: '', plan: '', subscription_duration: '' });
-          setStep(1);
           setHasDraft(false);
         }
       } else {
         setIsCustomCategory(false);
         setFormData({ client_name: '', phone: '', email: '', business_name: '', domain: '', business_category: '', plan: '', subscription_duration: '' });
-        setStep(1);
         setHasDraft(false);
       }
     }
@@ -112,7 +129,6 @@ export default function ClientOnboard() {
     localStorage.removeItem('clientOnboardDraft');
     setFormData({ client_name: '', phone: '', email: '', business_name: '', domain: '', business_category: '', plan: '', subscription_duration: '' });
     setIsCustomCategory(false);
-    setStep(1);
     setErrors({});
     setHasDraft(false);
     toast('Draft discarded', { icon: '🗑️', style: { background: '#334155', color: '#fff' } });
@@ -122,35 +138,37 @@ export default function ClientOnboard() {
     setModalOpen(false);
   };
 
-  const handleContinueToPlan = () => {
+  const handleSave = async () => {
+    const normalizedDomain = normalizeDomain(formData.domain);
+    const finalFormData = { ...formData, domain: normalizedDomain };
     const newErrors = {};
 
     // Phone validation (10 digits only)
     const phoneRegex = /^\d{10}$/;
-    if (formData.phone && !phoneRegex.test(formData.phone)) {
+    if (finalFormData.phone && !phoneRegex.test(finalFormData.phone)) {
       newErrors.phone = 'Requires exactly a 10-digit number.';
     }
 
     // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (formData.email && !emailRegex.test(formData.email)) {
+    if (finalFormData.email && !emailRegex.test(finalFormData.email)) {
       newErrors.email = 'Requires a valid email address.';
     }
 
     // Domain validation
     const urlRegex = /^(https?:\/\/)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/;
-    if (formData.domain && !urlRegex.test(formData.domain)) {
+    if (finalFormData.domain && !urlRegex.test(finalFormData.domain)) {
       newErrors.domain = 'Requires a valid domain (e.g., google.com).';
     }
 
     // Required fields
-    if (!formData.business_category || formData.business_category.trim() === '') {
+    if (!finalFormData.business_category || finalFormData.business_category.trim() === '') {
       newErrors.business_category = 'Business category is required.';
     }
-    if (!formData.business_name) {
+    if (!finalFormData.business_name) {
       newErrors.business_name = 'Business name is required.';
     }
-    if (!formData.domain) {
+    if (!finalFormData.domain) {
       newErrors.domain = 'Website domain is required.';
     }
 
@@ -160,18 +178,15 @@ export default function ClientOnboard() {
     }
 
     setErrors({});
-    setStep(2);
-  };
-
-  const handleSave = async () => {
     setIsSaving(true);
     try {
       if (editingClient) {
-        await api.put(`/thedal/clients/${editingClient.id}`, formData);
+        await api.put(`/thedal/clients/${editingClient.id}`, finalFormData);
       } else {
-        await api.post('/thedal/clients', formData);
+        await api.post('/thedal/clients', finalFormData);
       }
       localStorage.removeItem('clientOnboardDraft');
+      setHasDraft(false);
       closeModal();
       fetchClientsAndPlans();
       refreshGlobalData();
@@ -183,6 +198,8 @@ export default function ClientOnboard() {
       setIsSaving(false);
     }
   };
+
+
 
   const handleDeleteClick = (client) => {
     setClientToDelete(client);
@@ -213,6 +230,9 @@ export default function ClientOnboard() {
     );
   }
 
+  const totalPages = Math.ceil(clients.length / itemsPerPage);
+  const paginatedClients = clients.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
   return (
     <div style={{ padding: 30, color: C.text, height: '100%', overflowY: 'auto', background: 'rgba(0,0,0,0.2)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
@@ -240,7 +260,7 @@ export default function ClientOnboard() {
             </tr>
           </thead>
           <tbody>
-            {clients.length > 0 ? clients.map((client) => (
+            {paginatedClients.length > 0 ? paginatedClients.map((client) => (
               <tr key={client.id} style={{ borderBottom: `1px solid ${C.border}55` }}>
                 <td style={{ padding: '16px 0' }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>{client.business_name || 'N/A'}</div>
@@ -263,7 +283,10 @@ export default function ClientOnboard() {
                 </td>
                 <td style={{ padding: '16px 0', textAlign: 'right' }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                    <button onClick={() => openModal(client)} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, padding: '6px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    <button onClick={() => setViewingPlanClient(client)} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.accent, padding: '6px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="View Plan Detail">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <button onClick={() => openModal(client)} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, padding: '6px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Edit Client">
                       <Edit2 size={14} />
                     </button>
                     <button onClick={() => handleDeleteClick(client)} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: '#ef4444', padding: '6px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
@@ -277,6 +300,28 @@ export default function ClientOnboard() {
             )}
           </tbody>
         </table>
+        
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, padding: '0 8px' }}>
+            <button 
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
+              disabled={currentPage === 1}
+              style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, padding: '8px 16px', borderRadius: 8, cursor: currentPage === 1 ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: currentPage === 1 ? 0.5 : 1 }}
+            >
+              Previous
+            </button>
+            <div style={{ fontSize: 13, color: C.muted, fontWeight: 500 }}>
+              Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, clients.length)} of {clients.length} clients
+            </div>
+            <button 
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} 
+              disabled={currentPage === totalPages}
+              style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, padding: '8px 16px', borderRadius: 8, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: currentPage === totalPages ? 0.5 : 1 }}
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Onboarding Modal */}
@@ -291,16 +336,8 @@ export default function ClientOnboard() {
               <button onClick={closeModal} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 24 }}>&times;</button>
             </div>
 
-            {/* Stepper Progress */}
-            <div style={{ display: 'flex', padding: '20px 24px', gap: 12 }}>
-              <div style={{ flex: 1, height: 4, background: step >= 1 ? C.accent : C.border, borderRadius: 2 }} />
-              <div style={{ flex: 1, height: 4, background: step >= 2 ? C.accent : C.border, borderRadius: 2 }} />
-            </div>
-
-            <div style={{ padding: '0 24px 24px', flex: 1, overflowY: 'auto' }}>
-              {step === 1 && (
+            <div style={{ padding: '24px', flex: 1, overflowY: 'auto' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 600, color: C.accent, marginBottom: 8 }}>Step 1: Account Details</h3>
                   
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                     <div>
@@ -398,59 +435,6 @@ export default function ClientOnboard() {
                     </div>
                   </div>
                 </div>
-              )}
-
-              {step === 2 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 600, color: C.accent, marginBottom: 8 }}>Step 2: Subscription Plan</h3>
-                  
-                  <div style={{ marginBottom: 20 }}>
-                    <label style={{ display: 'block', fontSize: 13, color: C.muted, marginBottom: 8, fontWeight: 600 }}>Select a Plan</label>
-                    <select 
-                      value={formData.plan || ''} 
-                      onChange={(e) => {
-                        const selectedPlan = plans.find(p => p.name === e.target.value);
-                        setFormData({ 
-                          ...formData, 
-                          plan: selectedPlan.name, 
-                          subscription_duration: String(selectedPlan.billing_cycle) === '-1' ? 'Lifetime' : `${selectedPlan.billing_cycle} Days` 
-                        });
-                      }}
-                      style={{ background: 'rgba(0,0,0,0.2)', border: `1px solid ${C.border}`, color: '#fff', padding: '12px 16px', borderRadius: 8, width: '100%', outline: 'none', fontSize: 15 }}
-                    >
-                      <option value="" disabled style={{ background: '#1e293b', color: '#fff' }}>Select a Subscription Plan...</option>
-                      {plans.map(p => (
-                        <option key={p.id} value={p.name} style={{ background: '#1e293b', color: '#fff' }}>{p.name} - {p.price > 0 ? `${p.currency} ${p.price}` : 'Free'}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {(() => {
-                    const selected = plans.find(p => p.name === formData.plan) || plans[0];
-                    if (!selected) return null;
-                    return (
-                      <div style={{ 
-                        background: `${C.accent}11`, 
-                        border: `1px solid ${C.accent}`, 
-                        borderRadius: 12, padding: 24,
-                        display: 'flex', flexDirection: 'column', gap: 12
-                      }}>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: '#fff' }}>{selected.name} Plan</div>
-                        <div style={{ fontSize: 24, fontWeight: 800, color: C.accent }}>
-                          {selected.price > 0 ? `${selected.currency} ${selected.price}` : 'Free'} <span style={{ fontSize: 13, color: C.muted, fontWeight: 500 }}>/ {String(selected.billing_cycle) === '-1' ? 'Lifetime' : `${selected.billing_cycle} Days`}</span>
-                        </div>
-                        <div style={{ fontSize: 13, color: '#e2e8f0', marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {selected.features?.map((f, i) => (
-                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <CheckCircle2 size={14} color={C.accent} /> {f.feature_name}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
             </div>
 
             <div style={{ padding: '16px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.2)' }}>
@@ -458,30 +442,90 @@ export default function ClientOnboard() {
                 {hasDraft && (
                   <button onClick={handleDiscardDraft} style={{ background: 'transparent', border: `1px solid ${C.red}`, padding: '10px 20px', borderRadius: 8, color: C.red, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Discard Draft</button>
                 )}
-                {step === 2 && (
-                  <button onClick={() => setStep(1)} style={{ background: 'transparent', border: `1px solid ${C.border}`, padding: '10px 20px', borderRadius: 8, color: C.text, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Back to Account</button>
-                )}
               </div>
               <div style={{ display: 'flex', gap: 12 }}>
                 <button onClick={closeModal} style={{ background: 'transparent', border: `1px solid ${C.border}`, padding: '10px 20px', borderRadius: 8, color: C.text, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-                {step === 1 ? (
-                  <button 
-                    onClick={handleContinueToPlan} 
-                    style={{ background: C.accent, border: 'none', padding: '10px 20px', borderRadius: 8, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                  >
-                    Continue to Plan
-                  </button>
-                ) : (
-                  <button 
-                    onClick={handleSave} 
-                    disabled={isSaving}
-                    style={{ background: C.accent, border: 'none', padding: '10px 20px', borderRadius: 8, color: '#fff', fontSize: 13, fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: isSaving ? 0.7 : 1 }}
-                  >
-                    {isSaving ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />} 
-                    {isSaving ? 'Processing...' : 'Purchase Plan & Complete'}
-                  </button>
-                )}
+                <button 
+                  onClick={handleSave} 
+                  disabled={isSaving}
+                  style={{ background: C.accent, border: 'none', padding: '10px 20px', borderRadius: 8, color: '#fff', fontSize: 13, fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: isSaving ? 0.7 : 1 }}
+                >
+                  {isSaving ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />} 
+                  {isSaving ? 'Saving...' : 'Save Client'}
+                </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Plan Modal */}
+      {viewingPlanClient && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: C.surface, width: 500, borderRadius: 16, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+            <div style={{ padding: 24, borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ fontSize: 18, fontWeight: 700, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg> 
+                  Active Plan Details
+                </h2>
+                <button onClick={() => setViewingPlanClient(null)} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: 0 }}><X size={20} /></button>
+              </div>
+            </div>
+            
+            <div style={{ padding: 24, overflowY: 'auto' }}>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 13, color: C.muted }}>CLIENT</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: '#fff' }}>{viewingPlanClient.business_name || viewingPlanClient.client_name}</div>
+              </div>
+
+              {viewingPlanClient.plan ? (() => {
+                const p = plans.find(plan => plan.name === viewingPlanClient.plan);
+                if (!p) return <div style={{ color: C.muted, fontStyle: 'italic' }}>Plan data not found.</div>;
+                
+                return (
+                  <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 20, border: `1px solid ${C.border}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: C.accent, textTransform: 'uppercase', letterSpacing: 1 }}>{p.name} Plan</div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: '#fff', marginTop: 4 }}>
+                          {p.price > 0 ? `${p.currency} ${p.price}` : 'Free'}
+                        </div>
+                        <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>
+                          Duration: <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{viewingPlanClient.subscription_duration}</span>
+                        </div>
+                      </div>
+                      <span style={{ background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
+                        Active
+                      </span>
+                    </div>
+
+                    <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 12 }}>Included Features:</div>
+                      <div style={{ display: 'grid', gap: 10 }}>
+                        {p.features && p.features.length > 0 ? (
+                          p.features.map((f, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#cbd5e1' }}>
+                              <CheckCircle2 size={14} color={C.accent} /> {f.feature_name}
+                            </div>
+                          ))
+                        ) : (
+                          <div style={{ color: C.muted, fontSize: 13, fontStyle: 'italic' }}>No specific features listed.</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })() : (
+                <div style={{ textAlign: 'center', padding: '30px 0', color: C.muted, background: 'rgba(0,0,0,0.2)', borderRadius: 12, border: `1px dashed ${C.border}` }}>
+                  <AlertTriangle size={32} style={{ margin: '0 auto 12px', opacity: 0.5 }} />
+                  <div>This client does not currently have an active subscription plan.</div>
+                </div>
+              )}
+            </div>
+            
+            <div style={{ padding: '16px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.2)' }}>
+              <button onClick={() => setViewingPlanClient(null)} style={{ background: C.surface, border: `1px solid ${C.border}`, padding: '8px 16px', borderRadius: 8, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Close</button>
             </div>
           </div>
         </div>

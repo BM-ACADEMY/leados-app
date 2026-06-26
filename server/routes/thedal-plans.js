@@ -134,7 +134,14 @@ router.get('/features/list', async (req, res) => {
 // POST new feature definition
 router.post('/features/list', async (req, res) => {
   const { key, name, type } = req.body;
+  if (!key || !name) return res.status(400).json({ error: 'Key and Name are required.' });
   try {
+    // Validate key uniqueness
+    const checkUnique = await pool.query('SELECT id FROM thedal_feature_definitions WHERE key = $1', [key]);
+    if (checkUnique.rows.length > 0) {
+      return res.status(400).json({ error: 'Feature key must be unique.' });
+    }
+
     const { rows } = await pool.query(
       'INSERT INTO thedal_feature_definitions (key, name, type) VALUES ($1, $2, $3) RETURNING *',
       [key, name, type || 'boolean']
@@ -161,6 +168,15 @@ router.put('/features/list/:id', async (req, res) => {
     }
     const oldKey = oldFeatureRes.rows[0].key;
 
+    // Check key uniqueness if it changed
+    if (key && key !== oldKey) {
+      const checkUnique = await pool.query('SELECT id FROM thedal_feature_definitions WHERE key = $1', [key]);
+      if (checkUnique.rows.length > 0) {
+        await pool.query('ROLLBACK');
+        return res.status(400).json({ error: 'Feature key must be unique.' });
+      }
+    }
+
     // Update the definition
     const { rows } = await pool.query(
       'UPDATE thedal_feature_definitions SET key = COALESCE($1, key), name = COALESCE($2, name), type = COALESCE($3, type) WHERE id = $4 RETURNING *',
@@ -180,7 +196,6 @@ router.put('/features/list/:id', async (req, res) => {
   } catch (err) {
     await pool.query('ROLLBACK');
     console.error(err);
-    // If there's a unique constraint violation, it will throw an error
     res.status(500).json({ error: 'Failed to update feature definition. Key must be unique.' });
   }
 });
@@ -202,12 +217,28 @@ router.delete('/features/list/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
+    // Get plan details first
+    const planRes = await pool.query('SELECT name FROM thedal_plans WHERE id = $1', [id]);
+    if (planRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Plan not found' });
+    }
+    const planName = planRes.rows[0].name;
+
+    // Check if any client is currently subscribed to this plan
+    const clientsRes = await pool.query('SELECT COUNT(*) FROM thedal_clients WHERE plan = $1', [planName]);
+    const activeSubscribers = parseInt(clientsRes.rows[0].count, 10);
+    if (activeSubscribers > 0) {
+      return res.status(400).json({ 
+        error: `Cannot delete plan. There are ${activeSubscribers} clients currently subscribed to this plan.` 
+      });
+    }
+
     const result = await pool.query('DELETE FROM thedal_plans WHERE id = $1 RETURNING *', [id]);
     if (result.rowCount === 0) return res.status(404).json({ error: 'Plan not found' });
     res.json({ message: 'Plan deleted' });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ error: 'Server error deleting plan' });
   }
 });
 

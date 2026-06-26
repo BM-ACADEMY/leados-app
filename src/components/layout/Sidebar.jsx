@@ -20,8 +20,29 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
   const [allianceOpen, setAllianceOpen] = useState(false);
   const [contentOsOpen, setContentOsOpen] = useState(false);
   const [thedalOsOpen, setThedalOsOpen] = useState(false);
+  const [rankDropCount, setRankDropCount] = useState(0);
   
   const { clients, plans, activeClient, setActiveClient } = useClient();
+
+  // Fetch unread rank drop alert count
+  useEffect(() => {
+    const fetchRankDropCount = async () => {
+      try {
+        const token = localStorage.getItem('leados_token');
+        const API_URL = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${API_URL}/api/thedal/rankdropalert/count`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setRankDropCount(data.count || 0);
+        }
+      } catch (e) { /* silent */ }
+    };
+    fetchRankDropCount();
+    const interval = setInterval(fetchRankDropCount, 5 * 60 * 1000); // every 5 mins
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const handleResize = () => {
@@ -334,16 +355,21 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
 
                 <NavLink to="/thedal/rank-drop-alert" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Rank Drop Alert')}>
                   <ShieldAlert size={14} style={{ marginRight: 8 }} /> Rank Drop Alert
-                </NavLink>
-
-                <NavLink to="/thedal/client-onboard" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Client Onboard Profile')}>
-                  <User size={14} style={{ marginRight: 8 }} /> Client Onboard
+                  {rankDropCount > 0 && (
+                    <span style={{ marginLeft: 'auto', background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 20, minWidth: 18, textAlign: 'center', lineHeight: '16px' }}>
+                      {rankDropCount}
+                    </span>
+                  )}
                 </NavLink>
 
                 <div style={{ margin: '16px 0 8px 10px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Manage</div>
                 
                 <NavLink to="/thedal/clients" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive)}>
                   <Target size={14} style={{ marginRight: 8 }} /> Clients
+                </NavLink>
+
+                <NavLink to="/thedal/plan-subscription" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive)}>
+                  <Activity size={14} style={{ marginRight: 8 }} /> Plan Subscription
                 </NavLink>
                 
                 <NavLink to="/thedal/plans" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive)}>

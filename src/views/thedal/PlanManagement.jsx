@@ -148,13 +148,25 @@ export default function PlanManagement() {
   };
 
   const handleDelete = (id) => {
+    const targetPlan = plans.find(p => p.id === id);
     setConfirmDialog({
       isOpen: true,
       isLoading: false,
-      message: 'Are you sure you want to delete this plan? This will NOT delete existing clients on this plan.',
+      message: `Are you sure you want to delete the plan "${targetPlan?.name || ''}"?`,
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isLoading: true }));
         try {
+          // Check active client subscription counts before allowing deletion
+          const clientsRes = await api.get('/thedal/clients');
+          const clientsList = Array.isArray(clientsRes) ? clientsRes : (clientsRes?.clients || []);
+          const activeCount = clientsList.filter(c => c.plan === targetPlan?.name).length;
+          
+          if (activeCount > 0) {
+            setConfirmDialog({ isOpen: false, message: '', isLoading: false, onConfirm: null });
+            toast.error(`Cannot delete plan: ${activeCount} active client(s) are currently subscribed to it.`);
+            return;
+          }
+
           await api.delete(`/thedal/plans/${id}`);
           await fetchData();
           toast.success('Plan deleted successfully');
@@ -169,6 +181,16 @@ export default function PlanManagement() {
 
   const handleAddMasterFeature = async () => {
     if (!newFeatureData.key || !newFeatureData.name) return toast.error('Key and Name are required');
+    
+    // Validate uniqueness constraints on newly defined feature keys
+    const keyExists = availableFeatures.some(f => 
+      f.key.toLowerCase().trim() === newFeatureData.key.toLowerCase().trim() && 
+      f.id !== newFeatureData.id
+    );
+    if (keyExists) {
+      return toast.error('Failed to save feature. Key must be unique.');
+    }
+
     setSavingFeature(true);
     try {
       if (newFeatureData.id) {

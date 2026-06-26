@@ -277,27 +277,34 @@ export default function ApprovalDashboard() {
   }
 
   function openItem(item) {
-    setSelected(item);
+    let initialSelectedAccounts = item.selected_accounts ? { ...item.selected_accounts } : {};
+
+    const resolvedItem = {
+      ...item,
+      selected_accounts: initialSelectedAccounts
+    };
+
+    setSelected(resolvedItem);
     setTab("description");
     setEditMode(false);
     setEditValues({
-      caption: item.caption,
-      x_caption: item.x_caption,
-      linkedin_caption: item.linkedin_caption,
-      thumbnail_title: item.thumbnail_title,
-      scheduled_at: item.scheduled_at,
-      platforms: [...(item.platforms || [])],
-      selected_accounts: item.selected_accounts ? { ...item.selected_accounts } : {},
-      video_url: item.video_url || "",
-      public_video_url: item.public_video_url || "",
-      description: item.description || "",
-      hashtags: item.hashtags || "",
-      thumbnail_options: item.thumbnail_options || [],
-      key_moments: item.key_moments || [],
-      thumbnail_url: item.thumbnail_url || "",
-      story_1: item.story_1 || "",
-      story_2: item.story_2 || "",
-      story_3: item.story_3 || "",
+      caption: resolvedItem.caption,
+      x_caption: resolvedItem.x_caption,
+      linkedin_caption: resolvedItem.linkedin_caption,
+      thumbnail_title: resolvedItem.thumbnail_title,
+      scheduled_at: resolvedItem.scheduled_at,
+      platforms: [...(resolvedItem.platforms || [])],
+      selected_accounts: initialSelectedAccounts,
+      video_url: resolvedItem.video_url || "",
+      public_video_url: resolvedItem.public_video_url || "",
+      description: resolvedItem.description || "",
+      hashtags: resolvedItem.hashtags || "",
+      thumbnail_options: resolvedItem.thumbnail_options || [],
+      key_moments: resolvedItem.key_moments || [],
+      thumbnail_url: resolvedItem.thumbnail_url || "",
+      story_1: resolvedItem.story_1 || "",
+      story_2: resolvedItem.story_2 || "",
+      story_3: resolvedItem.story_3 || "",
     });
   }
 
@@ -312,11 +319,18 @@ export default function ApprovalDashboard() {
     }
 
     // Check connected accounts for this brand
-    const connectedPlatforms = new Set(
-      (socialAccounts || [])
-        .filter(s => s.brand_name === selected.brand_name && s.is_active !== false)
-        .map(s => s.platform.toLowerCase())
+    const connectedAccounts = (socialAccounts || []).filter(
+      s => s.brand_name === selected.brand_name && s.is_active !== false
     );
+    const connectedPlatforms = new Set(connectedAccounts.map(s => s.platform.toLowerCase()));
+
+    const platformNames = {
+      instagram: 'Instagram',
+      facebook: 'Facebook',
+      youtube: 'YouTube',
+      linkedin: 'LinkedIn',
+      x_twitter: 'X/Twitter'
+    };
 
     for (const channel of channels) {
       let requiredPlatform = channel.toLowerCase();
@@ -324,9 +338,35 @@ export default function ApprovalDashboard() {
       if (requiredPlatform.includes('facebook')) requiredPlatform = 'facebook';
       if (requiredPlatform === 'x_twitter') requiredPlatform = 'x_twitter';
 
+      const displayPlat = platformNames[requiredPlatform] || (requiredPlatform.charAt(0).toUpperCase() + requiredPlatform.slice(1));
+
       if (!connectedPlatforms.has(requiredPlatform)) {
-        const displayPlat = requiredPlatform === 'instagram' ? 'Instagram' : 'Facebook';
         return `${displayPlat} account is not connected for this brand.`;
+      }
+
+      // Check if at least one account is selected for this platform
+      const brandPlatAccounts = connectedAccounts.filter(s => s.platform === requiredPlatform);
+      if (brandPlatAccounts.length > 0) {
+        const getSelectedAccs = (accsObj) => {
+          if (!accsObj) return [];
+          const direct = accsObj[channel] || accsObj[requiredPlatform] || [];
+          if (direct.length > 0) return direct;
+          
+          if (channel === 'instagram') return accsObj['instagram_post'] || [];
+          if (channel === 'facebook') return accsObj['facebook_post'] || [];
+          if (channel === 'instagram_post') return accsObj['instagram'] || [];
+          if (channel === 'facebook_post') return accsObj['facebook'] || [];
+          
+          return [];
+        };
+
+        const selectedAccs = editMode
+          ? getSelectedAccs(editValues.selected_accounts)
+          : getSelectedAccs(selected.selected_accounts);
+        
+        if (!selectedAccs || selectedAccs.length === 0) {
+          return `Please select at least one account for ${displayPlat}.`;
+        }
       }
     }
 
@@ -768,60 +808,67 @@ export default function ApprovalDashboard() {
                   {selected.file_name} · Uploaded {formatTime(selected.created_at)}
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {canApprove && ["PENDING", "pending_approval"].includes(selected.status) && (
-                  <>
-                    <button onClick={() => setConfirmAction({ type: "reject", id: selected.id })} style={{
-                      padding: "8px 16px", borderRadius: 8, border: "1px solid #EF444444",
-                      background: "#FEF2F2", color: "#EF4444", fontWeight: 600, fontSize: 13, cursor: "pointer"
-                    }}>✕ Reject</button>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: isMobile ? "stretch" : "flex-end", gap: 6 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: isMobile ? "stretch" : "flex-end" }}>
+                  {canApprove && ["PENDING", "pending_approval"].includes(selected.status) && (
+                    <>
+                      <button onClick={() => setConfirmAction({ type: "reject", id: selected.id })} style={{
+                        padding: "8px 16px", borderRadius: 8, border: "1px solid #EF444444",
+                        background: "#FEF2F2", color: "#EF4444", fontWeight: 600, fontSize: 13, cursor: "pointer"
+                      }}>✕ Reject</button>
+                      <button 
+                        disabled={!!validationError}
+                        onClick={() => handleApprove(selected.id)} 
+                        style={{
+                          padding: "8px 20px", borderRadius: 8, border: "none",
+                          background: validationError ? "#9CA3AF" : "#10B981", 
+                          color: "#fff", fontWeight: 700, fontSize: 13, 
+                          cursor: validationError ? "not-allowed" : "pointer",
+                          boxShadow: validationError ? "none" : "0 2px 8px #10B98133",
+                          opacity: validationError ? 0.7 : 1
+                        }}
+                      >
+                        ✓ Approve
+                      </button>
+                    </>
+                  )}
+                  {canApprove && ["approved", "APPROVED"].includes(selected.status) && (
                     <button 
-                      disabled={!!validationError}
-                      onClick={() => handleApprove(selected.id)} 
+                      disabled={isPublishing}
+                      onClick={() => handlePublishNow(selected.id)} 
                       style={{
                         padding: "8px 20px", borderRadius: 8, border: "none",
-                        background: validationError ? "#9CA3AF" : "#10B981", 
+                        background: isPublishing ? "#9CA3AF" : "#7C3AED", 
                         color: "#fff", fontWeight: 700, fontSize: 13, 
-                        cursor: validationError ? "not-allowed" : "pointer",
-                        boxShadow: validationError ? "none" : "0 2px 8px #10B98133",
-                        opacity: validationError ? 0.7 : 1
+                        cursor: isPublishing ? "not-allowed" : "pointer",
+                        boxShadow: isPublishing ? "none" : "0 2px 8px #7C3AED33",
+                        transition: "all 0.15s"
                       }}
                     >
-                      ✓ Approve
+                      {isPublishing ? "Publishing..." : "🚀 Publish Now"}
                     </button>
-                  </>
-                )}
-                {canApprove && ["approved", "APPROVED"].includes(selected.status) && (
-                  <button 
-                    disabled={isPublishing}
-                    onClick={() => handlePublishNow(selected.id)} 
-                    style={{
-                      padding: "8px 20px", borderRadius: 8, border: "none",
-                      background: isPublishing ? "#9CA3AF" : "#7C3AED", 
-                      color: "#fff", fontWeight: 700, fontSize: 13, 
-                      cursor: isPublishing ? "not-allowed" : "pointer",
-                      boxShadow: isPublishing ? "none" : "0 2px 8px #7C3AED33",
-                      transition: "all 0.15s"
-                    }}
-                  >
-                    {isPublishing ? "Publishing..." : "🚀 Publish Now"}
-                  </button>
-                )}
-                {/* Editing allowed for all if PENDING or REJECTED */}
-                {(["PENDING", "pending_approval", "REJECTED", "rejected"].includes(selected.status)) && (
-                  <button onClick={() => setEditMode(!editMode)} style={{
-                    padding: "8px 16px", borderRadius: 8, border: "1px solid #E5E4F0",
-                    background: editMode ? "#F5F3FF" : "#fff", color: editMode ? "#7C3AED" : "#1A1A2E",
-                    fontWeight: 600, fontSize: 13, cursor: "pointer"
-                  }}>
-                    {editMode ? "✏️ Editing" : "✏️ Edit"}
-                  </button>
-                )}
-                {editMode && (
-                  <button onClick={() => handleSaveEdit(selected.id)} style={{
-                    padding: "8px 16px", borderRadius: 8, border: "none",
-                    background: "#06B6D4", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer"
-                  }}>Save Changes</button>
+                  )}
+                  {/* Editing allowed for all if PENDING or REJECTED */}
+                  {(["PENDING", "pending_approval", "REJECTED", "rejected"].includes(selected.status)) && (
+                    <button onClick={() => setEditMode(!editMode)} style={{
+                      padding: "8px 16px", borderRadius: 8, border: "1px solid #E5E4F0",
+                      background: editMode ? "#F5F3FF" : "#fff", color: editMode ? "#7C3AED" : "#1A1A2E",
+                      fontWeight: 600, fontSize: 13, cursor: "pointer"
+                    }}>
+                      {editMode ? "✏️ Editing" : "✏️ Edit"}
+                    </button>
+                  )}
+                  {editMode && (
+                    <button onClick={() => handleSaveEdit(selected.id)} style={{
+                      padding: "8px 16px", borderRadius: 8, border: "none",
+                      background: "#06B6D4", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer"
+                    }}>Save Changes</button>
+                  )}
+                </div>
+                {validationError && (
+                  <div style={{ color: "#EF4444", fontSize: 11, fontWeight: 600, textAlign: isMobile ? "left" : "right", marginTop: 2 }}>
+                    ⚠️ {validationError}
+                  </div>
                 )}
               </div>
             </div>
@@ -1382,25 +1429,32 @@ export default function ApprovalDashboard() {
 
                 {/* Approve / Reject at bottom for mobile convenience */}
                 {canApprove && ["PENDING", "pending_approval"].includes(selected.status) && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <button onClick={() => setConfirmAction({ type: "reject", id: selected.id })} style={{
-                      padding: "12px", borderRadius: 10, border: "1px solid #EF444444",
-                      background: "#FEF2F2", color: "#EF4444", fontWeight: 700, fontSize: 13, cursor: "pointer"
-                    }}>✕ Reject</button>
-                    <button 
-                      disabled={!!validationError}
-                      onClick={() => handleApprove(selected.id)} 
-                      style={{
-                        padding: "12px", borderRadius: 10, border: "none",
-                        background: validationError ? "#9CA3AF" : "#10B981", 
-                        color: "#fff", fontWeight: 700, fontSize: 13, 
-                        cursor: validationError ? "not-allowed" : "pointer",
-                        boxShadow: validationError ? "none" : "0 2px 8px #10B98133",
-                        opacity: validationError ? 0.7 : 1
-                      }}
-                    >
-                      ✓ Approve
-                    </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <button onClick={() => setConfirmAction({ type: "reject", id: selected.id })} style={{
+                        padding: "12px", borderRadius: 10, border: "1px solid #EF444444",
+                        background: "#FEF2F2", color: "#EF4444", fontWeight: 700, fontSize: 13, cursor: "pointer"
+                      }}>✕ Reject</button>
+                      <button 
+                        disabled={!!validationError}
+                        onClick={() => handleApprove(selected.id)} 
+                        style={{
+                          padding: "12px", borderRadius: 10, border: "none",
+                          background: validationError ? "#9CA3AF" : "#10B981", 
+                          color: "#fff", fontWeight: 700, fontSize: 13, 
+                          cursor: validationError ? "not-allowed" : "pointer",
+                          boxShadow: validationError ? "none" : "0 2px 8px #10B98133",
+                          opacity: validationError ? 0.7 : 1
+                        }}
+                      >
+                        ✓ Approve
+                      </button>
+                    </div>
+                    {validationError && (
+                      <div style={{ color: "#EF4444", fontSize: 11, fontWeight: 600, textAlign: "center" }}>
+                        ⚠️ {validationError}
+                      </div>
+                    )}
                   </div>
                 )}
                 {canApprove && ["approved", "APPROVED"].includes(selected.status) && (

@@ -324,7 +324,7 @@ async function updateContent(req, res) {
   const { id } = req.params;
   const allowed = [
     "caption", "x_caption", "linkedin_caption", "thumbnail_title", "scheduled_at", 
-    "platforms", "selected_channels", "video_url", "public_video_url", "description", "hashtags", 
+    "platforms", "selected_channels", "selected_accounts", "video_url", "public_video_url", "description", "hashtags", 
     "thumbnail_options", "key_moments", "thumbnail_url", "brand_id", "video_name", "status",
     "story_1", "story_2", "story_3"
   ];
@@ -341,7 +341,7 @@ async function updateContent(req, res) {
 
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
-      const isJson = ["platforms", "selected_channels", "thumbnail_options", "key_moments"].includes(key);
+      const isJson = ["platforms", "selected_channels", "selected_accounts", "thumbnail_options", "key_moments"].includes(key);
       let val = isJson ? JSON.stringify(req.body[key]) : req.body[key];
       
       // Convert empty timestamp string to null
@@ -868,7 +868,7 @@ Respond ONLY with a valid JSON object matching this exact format:
           const meta = JSON.parse(content);
 
           const videoUrl = `https://drive.google.com/file/d/${file.id}/view`;
-          const defaultPlatforms = ['instagram', 'facebook', 'youtube'];
+          const defaultPlatforms = [];
 
           // Insert into database
           await pool.query(`
@@ -1019,7 +1019,7 @@ async function generateStoryCard(postId, slideNum, brandName, slideText, req = n
     const outputPath = path.join(uploadsDir, filename);
     await image.writeAsync(outputPath);
 
-    return resolvePublicUrl(`http://localhost:3500/uploads/${filename}`, req);
+    return resolvePublicUrl(`http://localhost:3500/uploads/${filename}`, req, true);
   } catch (err) {
     console.error('generateStoryCard error:', err);
     throw err;
@@ -1090,7 +1090,7 @@ async function healMissingMedia(driveFileId) {
   }
 }
 
-function resolvePublicUrl(url, req = null) {
+function resolvePublicUrl(url, req = null, forcePublic = false) {
   if (!url) return null;
 
   // 1. Google Drive direct link extraction
@@ -1118,6 +1118,11 @@ function resolvePublicUrl(url, req = null) {
       }
       baseUrl = `${protocol}://${host}`;
     }
+  }
+
+  // Fallback to production API URL if forcePublic is true and baseUrl resolved to localhost/127.0.0.1 (so Facebook/Instagram crawler can access it)
+  if (forcePublic && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
+    baseUrl = 'https://leados-api.abmgroups.org';
   }
 
   // 3. Rewrite any path containing '/uploads/' to use the determined baseUrl
@@ -1483,17 +1488,31 @@ async function publishPost(req, res) {
     if (jobs.length === 0) {
       console.log(`No jobs found in publish_queue for post ID ${post.id}. Initializing from platforms...`);
       let platforms = [];
-      if (Array.isArray(post.selected_channels)) {
+      
+      if (Array.isArray(post.selected_channels) && post.selected_channels.length > 0) {
         platforms = post.selected_channels;
-      } else if (Array.isArray(post.platforms)) {
-        platforms = post.platforms;
-      } else if (typeof post.platforms === 'string') {
+      } else if (typeof post.selected_channels === 'string' && post.selected_channels.trim()) {
         try {
-          platforms = JSON.parse(post.platforms);
-        } catch (e) {
-          platforms = [];
+          const parsed = JSON.parse(post.selected_channels);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            platforms = parsed;
+          }
+        } catch (e) {}
+      }
+
+      if (platforms.length === 0) {
+        if (Array.isArray(post.platforms) && post.platforms.length > 0) {
+          platforms = post.platforms;
+        } else if (typeof post.platforms === 'string' && post.platforms.trim()) {
+          try {
+            const parsed = JSON.parse(post.platforms);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              platforms = parsed;
+            }
+          } catch (e) {}
         }
       }
+
       for (const platform of platforms) {
         let normalizedChannel = platform.toLowerCase();
         if (normalizedChannel === 'instagram') normalizedChannel = 'instagram_post';
@@ -1516,7 +1535,7 @@ async function publishPost(req, res) {
       return res.status(400).json({ success: false, error: 'No platforms selected for this post' });
     }
 
-    const publicUrl = resolvePublicUrl(post.public_video_url || post.video_url, req);
+    const publicUrl = resolvePublicUrl(post.public_video_url || post.video_url, req, true);
     if (!publicUrl) {
       return res.status(400).json({ success: false, error: 'No video or media URL found for this post' });
     }

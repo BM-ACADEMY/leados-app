@@ -22,11 +22,15 @@ function getPlatformConfig(platform) {
   if (!platform) return { label: "Unknown", icon: "🌐", color: "#6B6B80" };
   const p = platform.toLowerCase();
   const known = {
-    instagram:  { label: "Instagram", icon: "📸", color: "#E1306C" },
-    youtube:    { label: "YouTube",   icon: "▶️", color: "#FF0000" },
-    facebook:   { label: "Facebook",  icon: "👍", color: "#1877F2" },
-    x_twitter:  { label: "X",         icon: "𝕏", color: "#000000" },
-    linkedin:   { label: "LinkedIn",  icon: "in", color: "#0A66C2" },
+    instagram:       { label: "Instagram Post",  icon: "📸", color: "#E1306C" },
+    instagram_post:  { label: "Instagram Post",  icon: "📸", color: "#E1306C" },
+    instagram_story: { label: "Instagram Story", icon: "📱", color: "#D3006A" },
+    youtube:         { label: "YouTube",         icon: "▶️", color: "#FF0000" },
+    facebook:        { label: "Facebook Post",   icon: "👍", color: "#1877F2" },
+    facebook_post:   { label: "Facebook Post",   icon: "👍", color: "#1877F2" },
+    facebook_story:  { label: "Facebook Story",  icon: "📱", color: "#1565C0" },
+    x_twitter:       { label: "X",               icon: "𝕏", color: "#000000" },
+    linkedin:        { label: "LinkedIn",        icon: "in", color: "#0A66C2" },
   };
   if (known[p]) return known[p];
   
@@ -35,9 +39,58 @@ function getPlatformConfig(platform) {
   return { label: platform, icon: "🌐", color: COLORS[Math.abs(hash) % COLORS.length].c };
 }
 
+function extractDriveFileId(url) {
+  if (!url) return null;
+  const patterns = [
+    /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /id=([a-zA-Z0-9_-]+)/,
+    /\/open\?id=([a-zA-Z0-9_-]+)/
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match && match[1]) return match[1];
+  }
+  return null;
+}
+
+function parseItemJsonFields(item) {
+  if (!item) return item;
+  const parsed = { ...item };
+  const jsonFields = ["platforms", "selected_accounts", "thumbnail_options", "key_moments"];
+  for (const field of jsonFields) {
+    if (parsed[field] !== undefined && parsed[field] !== null) {
+      if (typeof parsed[field] === 'string') {
+        try {
+          parsed[field] = JSON.parse(parsed[field]);
+        } catch (e) {
+          console.error(`Failed to parse field ${field} for item ${item.id}:`, e);
+        }
+      }
+    }
+  }
+  if (!parsed.selected_accounts || typeof parsed.selected_accounts !== 'object' || Array.isArray(parsed.selected_accounts)) {
+    parsed.selected_accounts = {};
+  }
+  if (!parsed.platforms || !Array.isArray(parsed.platforms)) {
+    parsed.platforms = [];
+  }
+  return parsed;
+}
+
 export default function ApprovalDashboard() {
   const { user } = useAuth();
-  const canApprove = !user || !user.role || ['Super Admin', 'Marketing Admin'].includes(user.role);
+  const canApprove = !user || !user.role || ['Super Admin', 'Marketing Admin', 'super_admin', 'admin', 'founder', 'Founder'].includes(user.role);
+
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  const isMobile = windowWidth < 768;
+  const isTablet = windowWidth < 1024;
 
   const [items, setItems] = useState([]);
   const [stats, setStats] = useState({ PENDING: 0, APPROVED: 0, REJECTED: 0, PUBLISHED: 0, FAILED: 0 });
@@ -56,6 +109,132 @@ export default function ApprovalDashboard() {
   const [toast, setToast] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [view, setView] = useState("queue"); // queue | generate | monitors
+  const [monitors, setMonitors] = useState([]);
+  const [loadingMonitors, setLoadingMonitors] = useState(false);
+  const [monitorInputs, setMonitorInputs] = useState({});
+  const [brands, setBrands] = useState([]);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isSuggestModalOpen, setIsSuggestModalOpen] = useState(false);
+  const [suggestCache, setSuggestCache] = useState({});
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [suggestionsError, setSuggestionsError] = useState(null);
+  const [selectedTone, setSelectedTone] = useState("engaging");
+  const [suggestionType, setSuggestionType] = useState("caption");
+
+  async function fetchMonitors() {
+    setLoadingMonitors(true);
+    try {
+      let activeBrands = brands;
+      if (activeBrands.length === 0) {
+        const res = await api.getClients();
+        const seenSlugs = new Set();
+        activeBrands = (res.clients || [])
+          .filter(c => c.status === "active" || c.status === "Live")
+          .map(c => {
+            const known = {
+              "BM Academy": "bm_academy",
+              "BM TechX": "bm_techx",
+              "Namma Pondy Properties": "namma_pondy_properties",
+              "Dada's Kitchen": "dadas_kitchen",
+              "ABM Groups": "abm_groups"
+            };
+            const slug = known[c.name] || c.name.toLowerCase()
+              .replace(/'/g, '')
+              .replace(/[^a-z0-9]+/g, '_')
+              .replace(/^_+|_+$/g, '');
+            return {
+              id: c.id,
+              name: c.name,
+              slug: slug
+            };
+          })
+          .filter(b => {
+            if (seenSlugs.has(b.slug)) return false;
+            seenSlugs.add(b.slug);
+            return true;
+          });
+        setBrands(activeBrands);
+      }
+
+      const data = await api.get("/api/content-os/folders");
+      setMonitors(data || []);
+      const inputs = {};
+      (data || []).forEach(m => {
+        inputs[m.brandSlug] = m.folderId;
+      });
+      activeBrands.forEach(b => {
+        if (!inputs[b.slug]) inputs[b.slug] = "";
+      });
+      setMonitorInputs(inputs);
+    } catch(e) {
+      console.error(e);
+      showToast("Failed to retrieve monitors", "error");
+    } finally {
+      setLoadingMonitors(false);
+    }
+  }
+
+  async function handleSaveMonitor(brandSlug) {
+    const rawVal = monitorInputs[brandSlug] || "";
+    const folderId = rawVal.includes("/folders/") ? (rawVal.match(/\/folders\/([a-zA-Z0-9_-]+)/)?.[1] || rawVal) : rawVal;
+    try {
+      const res = await api.post("/api/content-os/folders", {
+        brandSlug,
+        folderId
+      });
+      if (res.success) {
+        showToast(`Saved folder monitor!`);
+        fetchMonitors();
+      } else {
+        showToast("Failed to save monitor", "error");
+      }
+    } catch (e) {
+      showToast("Error saving monitor: " + e.message, "error");
+    }
+  }
+
+  async function handlePublishNow(id) {
+    setIsPublishing(true);
+    showToast("Publishing to Facebook & Instagram... 🚀");
+    try {
+      const res = await api.publishContent(id);
+      if (res.success) {
+        showToast("Successfully published! 🎉");
+        fetchData();
+        setSelected(null);
+      } else {
+        showToast(res.error || "Failed to publish", "error");
+        fetchData();
+        setSelected(null);
+      }
+    } catch(e) {
+      showToast("Error triggering publish: " + e.message, "error");
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
+  useEffect(() => {
+    if (view === "monitors") {
+      fetchMonitors();
+    }
+  }, [view]);
+
+  async function handleCreatePosts(newItems) {
+    try {
+      const res = await api.createBatchContent(newItems);
+      if (res.success) {
+        showToast(`Successfully added ${res.items.length} posts to staging queue!`);
+        setView("queue");
+        fetchData();
+      } else {
+        showToast(res.error || "Failed to create posts", "error");
+      }
+    } catch (e) {
+      showToast("Error creating posts: " + e.message, "error");
+    }
+  }
 
   useEffect(() => {
     const timer = setTimeout(() => fetchData(), 400);
@@ -66,20 +245,44 @@ export default function ApprovalDashboard() {
     fetchAccounts();
   }, []);
 
-  async function fetchData() {
-    setLoading(true);
+  async function fetchData(showLoading = true) {
+    if (showLoading) setLoading(true);
     try {
+      let apiStatus = filter;
+      if (filter === "PENDING") apiStatus = "pending_approval";
+      else if (filter === "APPROVED") apiStatus = "approved";
+      else if (filter === "REJECTED") apiStatus = "rejected";
+      else if (filter === "PUBLISHED") apiStatus = "published";
+      else if (filter === "FAILED") apiStatus = "failed";
+      else if (filter === "ALL") apiStatus = "all";
+
       const res = await api.getContentQueue({ 
-        status: filter === "ALL" ? "all" : filter,
+        status: apiStatus,
         search, startDate, endDate
       });
-      setItems(res.data);
-      setStats(res.stats);
-      if (res.analytics) setAnalytics(res.analytics);
+      setItems((res.items || []).map(parseItemJsonFields));
+
+      const statsRes = await api.getContentStats();
+      if (statsRes.success) {
+        const s = statsRes.stats;
+        setStats({
+          PENDING: s.pending || 0,
+          APPROVED: s.approved || 0,
+          REJECTED: s.rejected || 0,
+          PUBLISHED: s.published_today || 0,
+          FAILED: s.failed_today || 0
+        });
+        setAnalytics({
+          total: s.total || 0,
+          pending: s.pending || 0,
+          publishedToday: s.published_today || 0,
+          failedToday: s.failed_today || 0
+        });
+      }
     } catch(e) {
       showToast("Error loading data", "error");
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }
 
@@ -98,27 +301,120 @@ export default function ApprovalDashboard() {
   }
 
   function openItem(item) {
-    setSelected(item);
-    setTab("caption");
+    const parsedItem = parseItemJsonFields(item);
+    let initialSelectedAccounts = { ...parsedItem.selected_accounts };
+
+    const resolvedItem = {
+      ...parsedItem,
+      selected_accounts: initialSelectedAccounts
+    };
+
+    setSelected(resolvedItem);
+    setTab("description");
     setEditMode(false);
     setEditValues({
-      caption: item.caption,
-      x_caption: item.x_caption,
-      linkedin_caption: item.linkedin_caption,
-      thumbnail_title: item.thumbnail_title,
-      scheduled_at: item.scheduled_at,
-      platforms: [...(item.platforms || [])],
-      selected_accounts: item.selected_accounts ? { ...item.selected_accounts } : {},
+      caption: resolvedItem.caption,
+      x_caption: resolvedItem.x_caption,
+      linkedin_caption: resolvedItem.linkedin_caption,
+      thumbnail_title: resolvedItem.thumbnail_title,
+      scheduled_at: resolvedItem.scheduled_at,
+      platforms: [...(resolvedItem.platforms || [])],
+      selected_accounts: initialSelectedAccounts,
+      video_url: resolvedItem.video_url || "",
+      public_video_url: resolvedItem.public_video_url || "",
+      description: resolvedItem.description || "",
+      hashtags: resolvedItem.hashtags || "",
+      thumbnail_options: resolvedItem.thumbnail_options || [],
+      key_moments: resolvedItem.key_moments || [],
+      thumbnail_url: resolvedItem.thumbnail_url || "",
+      story_1: resolvedItem.story_1 || "",
+      story_2: resolvedItem.story_2 || "",
+      story_3: resolvedItem.story_3 || "",
     });
   }
 
+  function getApprovalValidationError() {
+    if (!selected) return null;
+    
+    // Determine active selected channels
+    const channels = editMode ? (editValues.platforms || []) : (selected.platforms || []);
+    
+    if (!channels || channels.length === 0) {
+      return "Please select at least one publishing channel.";
+    }
+
+    // Check connected accounts for this brand
+    const connectedAccounts = (socialAccounts || []).filter(
+      s => s.brand_name === selected.brand_name && s.is_active !== false
+    );
+    const connectedPlatforms = new Set(connectedAccounts.map(s => s.platform.toLowerCase()));
+
+    const platformNames = {
+      instagram: 'Instagram',
+      facebook: 'Facebook',
+      youtube: 'YouTube',
+      linkedin: 'LinkedIn',
+      x_twitter: 'X/Twitter'
+    };
+
+    for (const channel of channels) {
+      let requiredPlatform = channel.toLowerCase();
+      if (requiredPlatform.includes('instagram')) requiredPlatform = 'instagram';
+      if (requiredPlatform.includes('facebook')) requiredPlatform = 'facebook';
+      if (requiredPlatform === 'x_twitter') requiredPlatform = 'x_twitter';
+
+      const displayPlat = platformNames[requiredPlatform] || (requiredPlatform.charAt(0).toUpperCase() + requiredPlatform.slice(1));
+
+      if (!connectedPlatforms.has(requiredPlatform)) {
+        return `${displayPlat} account is not connected for this brand.`;
+      }
+
+      // Check if at least one account is selected for this platform
+      const brandPlatAccounts = connectedAccounts.filter(s => s.platform === requiredPlatform);
+      if (brandPlatAccounts.length > 0) {
+        const getSelectedAccs = (accsObj) => {
+          if (!accsObj) return [];
+          const direct = accsObj[channel] || accsObj[requiredPlatform] || [];
+          if (direct.length > 0) return direct;
+          
+          if (channel === 'instagram') return accsObj['instagram_post'] || [];
+          if (channel === 'facebook') return accsObj['facebook_post'] || [];
+          if (channel === 'instagram_post') return accsObj['instagram'] || [];
+          if (channel === 'facebook_post') return accsObj['facebook'] || [];
+          
+          return [];
+        };
+
+        const selectedAccs = editMode
+          ? getSelectedAccs(editValues.selected_accounts)
+          : getSelectedAccs(selected.selected_accounts);
+        
+        if (!selectedAccs || selectedAccs.length === 0) {
+          return `Please select at least one account for ${displayPlat}.`;
+        }
+      }
+    }
+
+    return null;
+  }
+
   async function handleApprove(id) {
+    const valError = getApprovalValidationError();
+    if (valError) {
+      showToast(valError, "error");
+      return;
+    }
     try {
       await api.approveContent(id);
-      setItems(prev => prev.map(i => i.id === id ? { ...i, status: "APPROVED" } : i));
-      setStats(prev => ({ ...prev, PENDING: prev.PENDING - 1, APPROVED: prev.APPROVED + 1 }));
+      if (filter !== "ALL" && filter !== "APPROVED") {
+        setItems(prev => prev.filter(i => i.id !== id));
+      } else {
+        setItems(prev => prev.map(i => i.id === id ? { ...i, status: "approved" } : i));
+      }
+      setStats(prev => ({ ...prev, PENDING: Math.max(0, prev.PENDING - 1), APPROVED: prev.APPROVED + 1 }));
       setSelected(null);
       showToast("Content approved — publishing queue updated ✅");
+      fetchData(false);
     } catch(e) {
       showToast("Approval failed", "error");
     }
@@ -127,12 +423,17 @@ export default function ApprovalDashboard() {
   async function handleReject(id, reason) {
     try {
       await api.rejectContent(id, reason);
-      setItems(prev => prev.map(i => i.id === id ? { ...i, status: "REJECTED" } : i));
-      setStats(prev => ({ ...prev, PENDING: prev.PENDING - 1, REJECTED: prev.REJECTED + 1 }));
+      if (filter !== "ALL" && filter !== "REJECTED") {
+        setItems(prev => prev.filter(i => i.id !== id));
+      } else {
+        setItems(prev => prev.map(i => i.id === id ? { ...i, status: "rejected" } : i));
+      }
+      setStats(prev => ({ ...prev, PENDING: Math.max(0, prev.PENDING - 1), REJECTED: prev.REJECTED + 1 }));
       setSelected(null);
       showToast("Content rejected", "error");
       setConfirmAction(null);
       setRejectionReason("");
+      fetchData(false);
     } catch(e) {
       showToast("Rejection failed", "error");
     }
@@ -141,8 +442,9 @@ export default function ApprovalDashboard() {
   async function handleSaveEdit(id) {
     try {
       const updated = await api.updateContent(id, editValues);
-      setItems(prev => prev.map(i => i.id === id ? { ...i, ...updated } : i));
-      if (selected?.id === id) setSelected(prev => ({ ...prev, ...updated }));
+      const parsedItem = parseItemJsonFields(updated.item);
+      setItems(prev => prev.map(i => i.id === id ? parsedItem : i));
+      if (selected?.id === id) setSelected(parsedItem);
       setEditMode(false);
       showToast("Changes saved");
     } catch(e) {
@@ -151,18 +453,41 @@ export default function ApprovalDashboard() {
   }
 
   function togglePlatform(p) {
-    setEditValues(prev => ({
-      ...prev,
-      platforms: prev.platforms.includes(p)
-        ? prev.platforms.filter(x => x !== p)
-        : [...prev.platforms, p]
-    }));
+    setEditValues(prev => {
+      const exists = prev.platforms.includes(p) || 
+        (p === 'instagram_post' && prev.platforms.includes('instagram')) ||
+        (p === 'facebook_post' && prev.platforms.includes('facebook'));
+
+      let nextPlatforms;
+      if (exists) {
+        nextPlatforms = prev.platforms.filter(x => {
+          if (p === 'instagram_post' && (x === 'instagram' || x === 'instagram_post')) return false;
+          if (p === 'facebook_post' && (x === 'facebook' || x === 'facebook_post')) return false;
+          return x !== p;
+        });
+      } else {
+        nextPlatforms = [...prev.platforms, p];
+      }
+
+      return {
+        ...prev,
+        platforms: nextPlatforms,
+        selected_channels: nextPlatforms
+      };
+    });
   }
 
   function toggleAccount(platform, accountId) {
     setEditValues(prev => {
+      let normalizedPlatform = platform;
+      if (platform.includes('instagram')) {
+        normalizedPlatform = 'instagram';
+      } else if (platform.includes('facebook')) {
+        normalizedPlatform = 'facebook';
+      }
+      
       const current = prev.selected_accounts || {};
-      const platAccounts = current[platform] || [];
+      const platAccounts = current[normalizedPlatform] || [];
       const isSelected = platAccounts.includes(accountId);
       
       const newPlatAccounts = isSelected 
@@ -173,7 +498,7 @@ export default function ApprovalDashboard() {
         ...prev,
         selected_accounts: {
           ...current,
-          [platform]: newPlatAccounts
+          [normalizedPlatform]: newPlatAccounts
         }
       };
     });
@@ -186,41 +511,183 @@ export default function ApprovalDashboard() {
     });
   }
 
+  function formatLocalDatetimeForInput(isoString) {
+    if (!isoString) return "";
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  const handleOpenAiSuggestions = (type = "caption", forceTone = null) => {
+    if (!selected) return;
+    const toneToUse = forceTone || selectedTone;
+    setSuggestionType(type);
+    setIsSuggestModalOpen(true);
+    
+    const cacheKey = `${selected.id}_${toneToUse}_${type}`;
+    if (suggestCache[cacheKey]) {
+      return;
+    }
+    
+    fetchAiSuggestions(selected.id, toneToUse, type);
+  };
+
+  const fetchAiSuggestions = async (itemId, tone, type = "caption") => {
+    setLoadingSuggestions(true);
+    setSuggestionsError(null);
+    try {
+      const res = type === "story"
+        ? await api.getAiStorySuggestions(itemId, tone)
+        : await api.getAiCaptionSuggestions(itemId, tone);
+      if (res.success && res.suggestions) {
+        const cacheKey = `${itemId}_${tone}_${type}`;
+        setSuggestCache(prev => ({
+          ...prev,
+          [cacheKey]: res.suggestions
+        }));
+      } else {
+        setSuggestionsError("Failed to fetch suggestions");
+      }
+    } catch (err) {
+      setSuggestionsError(err.message || "Failed to generate suggestions. Please try again.");
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
   const brandConf = selected ? getBrandConfig(selected.brand_name) : null;
+  const validationError = getApprovalValidationError();
 
   return (
     <div style={{ fontFamily: "'Inter', -apple-system, sans-serif", background: "#F8F7FF", height: "100%", color: "#1A1A2E", display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
       {/* ── TOPBAR ── */}
-      <div style={{ background: "#0A0A0F", padding: "0 24px", height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: "#E8E8F0", letterSpacing: "-0.3px" }}>
+      <div style={{ background: "#0A0A0F", padding: isMobile ? "0 12px" : "0 24px", height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12 }}>
+          <div style={{ fontWeight: 700, fontSize: isMobile ? 13 : 15, color: "#E8E8F0", letterSpacing: "-0.3px" }}>
             ABM Groups <span style={{ color: "#7C3AED" }}>· Content OS</span>
           </div>
-          <div style={{ background: "#7C3AED22", border: "1px solid #7C3AED44", borderRadius: 20, padding: "2px 10px", fontSize: 11, color: "#A78BFA", fontWeight: 600 }}>
+          <div style={{ background: "#7C3AED22", border: "1px solid #7C3AED44", borderRadius: 20, padding: "2px 8px", fontSize: 10, color: "#A78BFA", fontWeight: 600, whiteSpace: "nowrap" }}>
             Approval Dashboard
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 16 }}>
           {stats.PENDING > 0 && (
-            <div style={{ background: "#EF444420", border: "1px solid #EF444444", borderRadius: 20, padding: "3px 12px", fontSize: 12, color: "#EF4444", fontWeight: 700 }}>
+            <div style={{ background: "#EF444420", border: "1px solid #EF444444", borderRadius: 20, padding: "3px 10px", fontSize: 11, color: "#EF4444", fontWeight: 700, whiteSpace: "nowrap" }}>
               {stats.PENDING} pending
             </div>
           )}
-          <div style={{ fontSize: 12, color: "#6B6B80" }}>{user?.role || 'Admin'}</div>
+          {!isMobile && <div style={{ fontSize: 12, color: "#6B6B80" }}>{user?.role || 'Admin'}</div>}
         </div>
       </div>
 
-      {/* ── ANALYTICS BAR ── */}
-      <div style={{ padding: "16px 24px", display: "flex", gap: 16, borderBottom: "1px solid #E5E4F0", background: "#fff" }}>
+      {/* ── TABS NAVIGATION ── */}
+      <div style={{ display: "flex", borderBottom: "1px solid #E5E4F0", background: "#fff", padding: isMobile ? "0 12px" : "0 24px" }}>
+        <button 
+          onClick={() => setView("queue")} 
+          style={{
+            padding: "14px 16px",
+            fontSize: 13,
+            fontWeight: 700,
+            background: "transparent",
+            border: "none",
+            borderBottom: view === "queue" ? "3px solid #7C3AED" : "3px solid transparent",
+            color: view === "queue" ? "#7C3AED" : "#6B6B80",
+            cursor: "pointer",
+            transition: "all 0.15s"
+          }}
+        >
+          📥 Approval Queue
+        </button>
+        <button 
+          onClick={() => setView("monitors")} 
+          style={{
+            padding: "14px 16px",
+            fontSize: 13,
+            fontWeight: 700,
+            background: "transparent",
+            border: "none",
+            borderBottom: view === "monitors" ? "3px solid #7C3AED" : "3px solid transparent",
+            color: view === "monitors" ? "#7C3AED" : "#6B6B80",
+            cursor: "pointer",
+            transition: "all 0.15s"
+          }}
+        >
+          📁 Folder Monitors
+        </button>
+      </div>
+
+      {view === "monitors" ? (
+        <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? 16 : 24 }}>
+          <div style={{ maxWidth: 800, margin: "0 auto" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+              <span style={{ fontSize: 24 }}>📁</span>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#1A1A2E" }}>Google Drive Folder Monitors</h2>
+                <p style={{ margin: 0, fontSize: 13, color: "#6B6B80" }}>Configure Google Drive folder IDs for automated video ingestion.</p>
+              </div>
+            </div>
+
+            <div style={{ background: "#FFFBEB", border: "1px solid #F59E0B44", borderRadius: 12, padding: 16, marginBottom: 24 }}>
+              <div style={{ fontWeight: 700, color: "#B45309", fontSize: 13, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                ⚠️ Important Action Required
+              </div>
+              <div style={{ fontSize: 12, color: "#B45309", lineHeight: 1.5 }}>
+                You must share each Google Drive folder with the LeadOS service account email:
+                <code style={{ background: "#fff", padding: "2px 6px", borderRadius: 4, fontWeight: 700, marginLeft: 4, marginRight: 4, border: "1px solid #F59E0B66" }}>
+                  leados-drive-sync@jobportal-492311.iam.gserviceaccount.com
+                </code>
+                as a <strong>Viewer</strong> or <strong>Editor</strong>. Otherwise, LeadOS will not be able to auto-detect and analyze your videos.
+              </div>
+            </div>
+
+            {loadingMonitors ? (
+              <div style={{ padding: 40, textAlign: "center", color: "#6B6B80" }}>Loading folder settings...</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {brands.map(brand => {
+                  const folderId = monitorInputs[brand.slug] || "";
+                  return (
+                    <div key={brand.slug} style={{ background: "#fff", border: "1px solid #E5E4F0", borderRadius: 12, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontWeight: 700, fontSize: 14, color: "#1A1A2E" }}>{brand.name}</span>
+                        <span style={{ fontSize: 11, color: "#6B6B80" }}>{brand.slug}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 12 }}>
+                        <input 
+                          type="text"
+                          placeholder="Paste Google Drive Folder Link or Folder ID..."
+                          value={folderId}
+                          onChange={e => setMonitorInputs(prev => ({ ...prev, [brand.slug]: e.target.value }))}
+                          style={{ flex: 1, padding: "10px 14px", border: "1px solid #E5E4F0", borderRadius: 8, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                        />
+                        <button 
+                          onClick={() => handleSaveMonitor(brand.slug)}
+                          style={{ padding: "10px 20px", background: "#7C3AED", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all 0.15s" }}
+                        >
+                          Save Monitor
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* ── ANALYTICS BAR ── */}
+      <div style={{ padding: isMobile ? "12px" : "16px 24px", display: "flex", gap: isMobile ? 8 : 16, flexWrap: "wrap", borderBottom: "1px solid #E5E4F0", background: "#fff" }}>
         {[{ label: "Total Content", val: analytics.total }, 
           { label: "Pending", val: analytics.pending, color: "#F59E0B" }, 
           { label: "Published Today", val: analytics.publishedToday, color: "#10B981" }, 
           { label: "Failed Today", val: analytics.failedToday, color: "#EF4444" }
         ].map(a => (
-          <div key={a.label} style={{ flex: 1, padding: 16, borderRadius: 12, border: "1px solid #E5E4F0", background: "#FAFAFF" }}>
+          <div key={a.label} style={{ flex: isMobile ? "1 1 calc(50% - 8px)" : 1, minWidth: isMobile ? 120 : "auto", padding: isMobile ? 12 : 16, borderRadius: 12, border: "1px solid #E5E4F0", background: "#FAFAFF", boxSizing: "border-box" }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", marginBottom: 4 }}>{a.label}</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: a.color || "#1A1A2E", letterSpacing: "-0.5px" }}>{a.val}</div>
+            <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 800, color: a.color || "#1A1A2E", letterSpacing: "-0.5px" }}>{a.val}</div>
           </div>
         ))}
       </div>
@@ -229,7 +696,7 @@ export default function ApprovalDashboard() {
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
         {/* ── LEFT PANEL — CONTENT LIST ── */}
-        <div style={{ width: 340, flexShrink: 0, background: "#fff", borderRight: "1px solid #E5E4F0", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ width: isMobile ? "100%" : 340, flexShrink: 0, background: "#fff", borderRight: isMobile ? "none" : "1px solid #E5E4F0", overflowY: "auto", display: isMobile && selected ? "none" : "flex", flexDirection: "column" }}>
 
           {/* Filters & Search */}
           <div style={{ padding: 16, borderBottom: "1px solid #E5E4F0", background: "#FAFAFF" }}>
@@ -323,16 +790,43 @@ export default function ApprovalDashboard() {
 
         {/* ── MAIN PANEL — DETAIL VIEW ── */}
         {!selected ? (
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: "#6B6B80" }}>
+          <div style={{ flex: 1, display: isMobile ? "none" : "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: "#6B6B80" }}>
             <div style={{ fontSize: 40 }}>📋</div>
             <div style={{ fontSize: 16, fontWeight: 600, color: "#1A1A2E" }}>Select a content item to review</div>
             <div style={{ fontSize: 13 }}>{stats.PENDING} items waiting for approval</div>
           </div>
         ) : (
-          <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? 16 : 24, display: isMobile && !selected ? "none" : "block" }}>
+
+            {isMobile && (
+              <button 
+                onClick={() => setSelected(null)} 
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: "none",
+                  border: "none",
+                  color: "#7C3AED",
+                  fontWeight: 700,
+                  fontSize: 14,
+                  cursor: "pointer",
+                  padding: "0 0 16px 0"
+                }}
+              >
+                ← Back to List
+              </button>
+            )}
 
             {/* Item header */}
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+            <div style={{ 
+              display: "flex", 
+              flexDirection: isMobile ? "column" : "row", 
+              alignItems: isMobile ? "stretch" : "flex-start", 
+              justifyContent: "space-between", 
+              gap: 16,
+              marginBottom: 20 
+            }}>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
                   <div style={{ background: brandConf.bg, border: `1px solid ${brandConf.color}44`, borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 700, color: brandConf.color }}>
@@ -347,35 +841,67 @@ export default function ApprovalDashboard() {
                   {selected.file_name} · Uploaded {formatTime(selected.created_at)}
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {canApprove && selected.status === "PENDING" && (
-                  <>
-                    <button onClick={() => setConfirmAction({ type: "reject", id: selected.id })} style={{
-                      padding: "8px 16px", borderRadius: 8, border: "1px solid #EF444444",
-                      background: "#FEF2F2", color: "#EF4444", fontWeight: 600, fontSize: 13, cursor: "pointer"
-                    }}>✕ Reject</button>
-                    <button onClick={() => handleApprove(selected.id)} style={{
-                      padding: "8px 20px", borderRadius: 8, border: "none",
-                      background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer",
-                      boxShadow: "0 2px 8px #10B98133"
-                    }}>✓ Approve</button>
-                  </>
-                )}
-                {/* Editing allowed for all if PENDING or REJECTED */}
-                {(selected.status === "PENDING" || selected.status === "REJECTED") && (
-                  <button onClick={() => setEditMode(!editMode)} style={{
-                    padding: "8px 16px", borderRadius: 8, border: "1px solid #E5E4F0",
-                    background: editMode ? "#F5F3FF" : "#fff", color: editMode ? "#7C3AED" : "#1A1A2E",
-                    fontWeight: 600, fontSize: 13, cursor: "pointer"
-                  }}>
-                    {editMode ? "✏️ Editing" : "✏️ Edit"}
-                  </button>
-                )}
-                {editMode && (
-                  <button onClick={() => handleSaveEdit(selected.id)} style={{
-                    padding: "8px 16px", borderRadius: 8, border: "none",
-                    background: "#06B6D4", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer"
-                  }}>Save Changes</button>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: isMobile ? "stretch" : "flex-end", gap: 6 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: isMobile ? "stretch" : "flex-end" }}>
+                  {canApprove && ["PENDING", "pending_approval"].includes(selected.status) && (
+                    <>
+                      <button onClick={() => setConfirmAction({ type: "reject", id: selected.id })} style={{
+                        padding: "8px 16px", borderRadius: 8, border: "1px solid #EF444444",
+                        background: "#FEF2F2", color: "#EF4444", fontWeight: 600, fontSize: 13, cursor: "pointer"
+                      }}>✕ Reject</button>
+                      <button 
+                        disabled={!!validationError}
+                        onClick={() => handleApprove(selected.id)} 
+                        style={{
+                          padding: "8px 20px", borderRadius: 8, border: "none",
+                          background: validationError ? "#9CA3AF" : "#10B981", 
+                          color: "#fff", fontWeight: 700, fontSize: 13, 
+                          cursor: validationError ? "not-allowed" : "pointer",
+                          boxShadow: validationError ? "none" : "0 2px 8px #10B98133",
+                          opacity: validationError ? 0.7 : 1
+                        }}
+                      >
+                        ✓ Approve
+                      </button>
+                    </>
+                  )}
+                  {canApprove && ["approved", "APPROVED"].includes(selected.status) && (
+                    <button 
+                      disabled={isPublishing}
+                      onClick={() => handlePublishNow(selected.id)} 
+                      style={{
+                        padding: "8px 20px", borderRadius: 8, border: "none",
+                        background: isPublishing ? "#9CA3AF" : "#7C3AED", 
+                        color: "#fff", fontWeight: 700, fontSize: 13, 
+                        cursor: isPublishing ? "not-allowed" : "pointer",
+                        boxShadow: isPublishing ? "none" : "0 2px 8px #7C3AED33",
+                        transition: "all 0.15s"
+                      }}
+                    >
+                      {isPublishing ? "Publishing..." : "🚀 Publish Now"}
+                    </button>
+                  )}
+                  {/* Editing allowed for all if PENDING or REJECTED */}
+                  {(["PENDING", "pending_approval", "REJECTED", "rejected"].includes(selected.status)) && (
+                    <button onClick={() => setEditMode(!editMode)} style={{
+                      padding: "8px 16px", borderRadius: 8, border: "1px solid #E5E4F0",
+                      background: editMode ? "#F5F3FF" : "#fff", color: editMode ? "#7C3AED" : "#1A1A2E",
+                      fontWeight: 600, fontSize: 13, cursor: "pointer"
+                    }}>
+                      {editMode ? "✏️ Editing" : "✏️ Edit"}
+                    </button>
+                  )}
+                  {editMode && (
+                    <button onClick={() => handleSaveEdit(selected.id)} style={{
+                      padding: "8px 16px", borderRadius: 8, border: "none",
+                      background: "#06B6D4", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer"
+                    }}>Save Changes</button>
+                  )}
+                </div>
+                {validationError && (
+                  <div style={{ color: "#EF4444", fontSize: 11, fontWeight: 600, textAlign: isMobile ? "left" : "right", marginTop: 2 }}>
+                    ⚠️ {validationError}
+                  </div>
                 )}
               </div>
             </div>
@@ -395,21 +921,174 @@ export default function ApprovalDashboard() {
             )}
 
             {/* Two column layout */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isTablet ? "1fr" : "1fr 320px", gap: 20 }}>
 
-              {/* LEFT — Captions */}
+              {/* LEFT — Media and Main Captions */}
               <div>
-                {/* Caption tabs */}
+                {/* Video Player */}
+                <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden", marginBottom: 16 }}>
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    🎥 Video Preview
+                  </div>
+                  <div style={{ padding: 16, background: "#0A0A0F", display: "flex", justifyContent: "center", minHeight: 300, maxHeight: 400 }}>
+                    {selected.video_url || selected.public_video_url ? (
+                      (() => {
+                        const pubUrl = selected.public_video_url;
+                        const isTranscoded = pubUrl && !extractDriveFileId(pubUrl);
+                        if (isTranscoded) {
+                          return (
+                            <video 
+                              controls 
+                              preload="metadata"
+                              style={{ maxWidth: "100%", height: "auto", maxHeight: 360, borderRadius: 8 }}
+                              src={pubUrl}
+                            >
+                              Your browser does not support the video tag.
+                            </video>
+                          );
+                        }
+                        const driveId = extractDriveFileId(pubUrl || selected.video_url);
+                        if (driveId) {
+                          return (
+                            <iframe 
+                              src={`https://drive.google.com/file/d/${driveId}/preview`}
+                              style={{ width: "100%", height: 350, border: "none", borderRadius: 8 }}
+                              allow="autoplay"
+                            />
+                          );
+                        }
+                        return (
+                          <video 
+                            controls 
+                            preload="metadata"
+                            style={{ maxWidth: "100%", height: "auto", maxHeight: 360, borderRadius: 8 }}
+                            src={pubUrl || selected.video_url}
+                          >
+                            Your browser does not support the video tag.
+                          </video>
+                        );
+                      })()
+                    ) : (
+                      <div style={{ padding: "40px 20px", color: "#6B6B80", textAlign: "center" }}>
+                        <span>🎥 No preview stream available</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 1. Primary Caption & Hashtags Card */}
+                <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden", marginBottom: 16 }}>
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    📝 Generated Caption & Hashtags
+                  </div>
+                  <div style={{ padding: 16 }}>
+                    {editMode ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                        <div>
+                          <label style={{ fontSize: 11, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase" }}>Primary Caption</label>
+                          <textarea
+                            value={editValues.caption || ""}
+                            onChange={e => setEditValues(prev => ({ ...prev, caption: e.target.value }))}
+                            style={{
+                              width: "100%", minHeight: 120,
+                              border: "1px solid #7C3AED44", borderRadius: 8,
+                              padding: 12, fontSize: 13, lineHeight: 1.6,
+                              resize: "vertical", outline: "none", fontFamily: "inherit",
+                              background: "#FAFAFF", color: "#1A1A2E", boxSizing: "border-box", marginTop: 4
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAiSuggestions()}
+                            style={{
+                              marginTop: 8,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "6px 12px",
+                              borderRadius: 6,
+                              border: "1px solid #7C3AED",
+                              background: "#F5F3FF",
+                              color: "#7C3AED",
+                              fontSize: "11px",
+                              fontWeight: "700",
+                              cursor: "pointer",
+                              transition: "all 0.15s",
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = "#7C3AED"; e.currentTarget.style.color = "#fff"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; e.currentTarget.style.color = "#7C3AED"; }}
+                          >
+                            ✨ AI Suggestions
+                          </button>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 11, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase" }}>Hashtags</label>
+                          <textarea
+                            value={editValues.hashtags || ""}
+                            onChange={e => setEditValues(prev => ({ ...prev, hashtags: e.target.value }))}
+                            style={{
+                              width: "100%", minHeight: 80,
+                              border: "1px solid #7C3AED44", borderRadius: 8,
+                              padding: 12, fontSize: 13, lineHeight: 1.6,
+                              resize: "vertical", outline: "none", fontFamily: "inherit",
+                              background: "#FAFAFF", color: "#1A1A2E", boxSizing: "border-box", marginTop: 4
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", marginBottom: 6 }}>Caption</div>
+                          <div style={{ fontSize: 13, lineHeight: 1.7, color: "#1A1A2E", whiteSpace: "pre-wrap" }}>
+                            {selected.caption || <span style={{ color: "#9CA3AF" }}>No caption generated</span>}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAiSuggestions()}
+                            style={{
+                              marginTop: 8,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "6px 12px",
+                              borderRadius: 6,
+                              border: "1px solid #7C3AED",
+                              background: "#F5F3FF",
+                              color: "#7C3AED",
+                              fontSize: "11px",
+                              fontWeight: "700",
+                              cursor: "pointer",
+                              transition: "all 0.15s",
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = "#7C3AED"; e.currentTarget.style.color = "#fff"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; e.currentTarget.style.color = "#7C3AED"; }}
+                          >
+                            ✨ AI Suggestions
+                          </button>
+                        </div>
+                        <div style={{ borderTop: "1px solid #F0EFF8", paddingTop: 12 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", marginBottom: 6 }}>Hashtags</div>
+                          <div style={{ fontSize: 13, lineHeight: 1.7, color: "#7C3AED", fontWeight: 600, whiteSpace: "pre-wrap" }}>
+                            {selected.hashtags || <span style={{ color: "#9CA3AF" }}>No hashtags generated</span>}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. Platform Variations & Description Card */}
                 <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden", marginBottom: 16 }}>
                   <div style={{ display: "flex", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", overflowX: "auto" }}>
                     {[
-                      { key: "caption", label: "Primary Caption", icon: "📝" },
+                      { key: "description", label: "Description", icon: "📄" },
                       { key: "x_caption", label: "X (Twitter)", icon: "𝕏" },
                       { key: "linkedin_caption", label: "LinkedIn", icon: "in" },
                       { key: "thumbnail_title", label: "Title", icon: "▶️" }
-                    ].filter(t => selected[t.key] || editMode).map(t => (
+                    ].filter(t => selected[t.key] || editValues[t.key] !== undefined || editMode).map(t => (
                       <button key={t.key} onClick={() => setTab(t.key)} style={{
-                        flex: 1, padding: "10px 8px", border: "none", minWidth: 100,
+                        flex: 1, padding: "12px 8px", border: "none", minWidth: 110,
                         borderBottom: tab === t.key ? `2px solid #7C3AED` : "2px solid transparent",
                         background: "transparent", cursor: "pointer",
                         fontSize: 11, fontWeight: tab === t.key ? 700 : 500,
@@ -421,12 +1100,14 @@ export default function ApprovalDashboard() {
                     ))}
                   </div>
                   <div style={{ padding: 16 }}>
+                    {/* If selected tab is caption or hashtags (which are now rendered in Card 1), redirect tab view */}
+                    {["caption", "hashtags"].includes(tab) && setTab("description")}
                     {editMode ? (
                       <textarea
                         value={editValues[tab] || ""}
                         onChange={e => setEditValues(prev => ({ ...prev, [tab]: e.target.value }))}
                         style={{
-                          width: "100%", minHeight: tab === "caption" ? 240 : 120,
+                          width: "100%", minHeight: tab === "description" ? 200 : 100,
                           border: "1px solid #7C3AED44", borderRadius: 8,
                           padding: 12, fontSize: 13, lineHeight: 1.6,
                           resize: "vertical", outline: "none", fontFamily: "inherit",
@@ -446,26 +1127,122 @@ export default function ApprovalDashboard() {
                   </div>
                 </div>
 
+                {/* Key Highlights & Moments */}
+                {((editMode ? editValues.key_moments : selected.key_moments) && (editMode ? editValues.key_moments : selected.key_moments).length > 0) && (
+                  <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden", marginBottom: 16 }}>
+                    <div style={{ padding: "12px 16px", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      🔑 Key Highlights & Moments
+                    </div>
+                    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+                      {(editMode ? editValues.key_moments : selected.key_moments).map((m, idx) => (
+                        <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", background: "#F8F7FF", padding: 12, borderRadius: 8, border: "1px solid #E5E4F0" }}>
+                          <div style={{ background: "#7C3AED", color: "#fff", borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                            ⏱️ {m.time}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#1A1A2E", marginBottom: 2 }}>{m.title}</div>
+                            <div style={{ fontSize: 12, color: "#6B6B80", lineHeight: 1.4 }}>{m.desc}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Thumbnail Options */}
+                {((editMode ? editValues.thumbnail_options : selected.thumbnail_options) && (editMode ? editValues.thumbnail_options : selected.thumbnail_options).length > 0) && (
+                  <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden", marginBottom: 16 }}>
+                    <div style={{ padding: "12px 16px", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      🖼️ Generated Thumbnail Options
+                    </div>
+                    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+                      {(editMode ? editValues.thumbnail_options : selected.thumbnail_options).map((t, idx) => {
+                        const isChosen = editMode 
+                          ? editValues.thumbnail_title === t.title 
+                          : selected.thumbnail_title === t.title;
+                        return (
+                          <div key={idx} 
+                              onClick={async () => {
+                                if (editMode) {
+                                  setEditValues(prev => ({ ...prev, thumbnail_title: t.title }));
+                                } else {
+                                  try {
+                                    // Instantly update on DB
+                                    const updated = await api.updateContent(selected.id, { thumbnail_title: t.title });
+                                    // Update local items state
+                                    setItems(prev => prev.map(i => i.id === selected.id ? { ...i, thumbnail_title: t.title } : i));
+                                    // Update selected state
+                                    setSelected(prev => ({ ...prev, thumbnail_title: t.title }));
+                                    // Update editValues
+                                    setEditValues(prev => ({ ...prev, thumbnail_title: t.title }));
+                                    showToast(`Thumbnail changed to "${t.title}"`);
+                                  } catch (err) {
+                                    showToast("Failed to update thumbnail option", "error");
+                                  }
+                                }
+                              }}
+                              style={{
+                                background: isChosen ? "#F5F3FF" : "#fff",
+                                border: `1px solid ${isChosen ? "#7C3AED" : "#E5E4F0"}`,
+                                borderRadius: 8, padding: 12, cursor: "pointer",
+                                transition: "all 0.15s"
+                              }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: isChosen ? "#7C3AED" : "#1A1A2E" }}>Option {idx + 1}: "{t.title}"</span>
+                              {isChosen && <span style={{ color: "#7C3AED", fontSize: 12, fontWeight: 700 }}>✓ Selected</span>}
+                            </div>
+                            <p style={{ margin: 0, fontSize: 11, color: "#6B6B80", lineHeight: 1.4 }}>{t.layout}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* Stories */}
                 <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden" }}>
                   <div style={{ padding: "12px 16px", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", letterSpacing: 0.5 }}>
                     📱 Instagram Stories
                   </div>
-                  <div style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                    {["story_1","story_2","story_3"].map((s, i) => (
-                      <div key={s} style={{ background: "#F8F7FF", borderRadius: 8, padding: 12, border: "1px solid #E5E4F0" }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", marginBottom: 6, textTransform: "uppercase" }}>Slide {i+1}</div>
-                        {editMode ? (
-                          <textarea 
-                            value={editValues[s] || ""}
-                            onChange={e => setEditValues(prev => ({ ...prev, [s]: e.target.value }))}
-                            style={{ width: "100%", fontSize: 12, border: "1px solid #7C3AED44", borderRadius: 4, padding: 6, boxSizing: "border-box", minHeight: 80, outline: "none", resize: "vertical" }}
-                          />
-                        ) : (
-                          <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5 }}>{selected[s]}</div>
-                        )}
-                      </div>
-                    ))}
+                  <div style={{ padding: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+                      {["story_1","story_2","story_3"].map((s, i) => (
+                        <div key={s} style={{ background: "#F8F7FF", borderRadius: 8, padding: 12, border: "1px solid #E5E4F0" }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", marginBottom: 6, textTransform: "uppercase" }}>Slide {i+1}</div>
+                          {editMode ? (
+                            <textarea 
+                              value={editValues[s] || ""}
+                              onChange={e => setEditValues(prev => ({ ...prev, [s]: e.target.value }))}
+                              style={{ width: "100%", fontSize: 12, border: "1px solid #7C3AED44", borderRadius: 4, padding: 6, boxSizing: "border-box", minHeight: 80, outline: "none", resize: "vertical", background: "#FAFAFF", color: "#1A1A2E", fontFamily: "inherit" }}
+                            />
+                          ) : (
+                            <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5 }}>{selected[s]}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAiSuggestions("story")}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "6px 12px",
+                        borderRadius: 6,
+                        border: "1px solid #7C3AED",
+                        background: "#F5F3FF",
+                        color: "#7C3AED",
+                        fontSize: "11px",
+                        fontWeight: "700",
+                        cursor: "pointer",
+                        transition: "all 0.15s",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "#7C3AED"; e.currentTarget.style.color = "#fff"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; e.currentTarget.style.color = "#7C3AED"; }}
+                    >
+                      ✨ AI Suggestions
+                    </button>
                   </div>
                 </div>
               </div>
@@ -480,7 +1257,39 @@ export default function ApprovalDashboard() {
                   </div>
                   <div style={{ padding: 16 }}>
                     {selected.thumbnail_url ? (
-                      <img src={selected.thumbnail_url} alt="thumbnail" style={{ width: "100%", borderRadius: 8 }} />
+                      <div style={{ position: "relative", width: "100%", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
+                        <img src={selected.thumbnail_url} alt="thumbnail" style={{ width: "100%", display: "block" }} />
+                        {(editMode ? editValues.thumbnail_title : selected.thumbnail_title) && (
+                          <div style={{
+                            position: "absolute",
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            background: "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0) 100%)",
+                            padding: "24px 12px 16px 12px",
+                            display: "flex",
+                            justifyContent: "center",
+                            alignItems: "center"
+                          }}>
+                            <div style={{
+                              background: brandConf.color || "#7C3AED",
+                              color: "#fff",
+                              padding: "6px 12px",
+                              borderRadius: 6,
+                              fontSize: "12px",
+                              fontWeight: "800",
+                              textAlign: "center",
+                              boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+                              border: "1px solid rgba(255,255,255,0.2)",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.5px",
+                              wordBreak: "break-word"
+                            }}>
+                              {editMode ? editValues.thumbnail_title : selected.thumbnail_title}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <div style={{
                         background: `linear-gradient(135deg, ${brandConf.color}22, ${brandConf.color}44)`,
@@ -496,19 +1305,78 @@ export default function ApprovalDashboard() {
                   </div>
                 </div>
 
+                {/* Video Drive Link */}
+                <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden" }}>
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    🎥 Video Drive Link
+                  </div>
+                  <div style={{ padding: 16 }}>
+                    {editMode ? (
+                      <input
+                        type="text"
+                        placeholder="Paste Google Drive video link..."
+                        value={editValues.video_url || ""}
+                        onChange={e => setEditValues(prev => ({ ...prev, video_url: e.target.value, public_video_url: e.target.value }))}
+                        style={{ width: "100%", padding: "8px 10px", border: "1px solid #7C3AED44", borderRadius: 8, fontSize: 12, outline: "none", boxSizing: "border-box" }}
+                      />
+                    ) : (
+                      <div>
+                        {selected.video_url ? (
+                          <a href={selected.video_url} target="_blank" rel="noopener noreferrer" style={{
+                            display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 16px",
+                            background: "#7C3AED", color: "#fff", textDecoration: "none", borderRadius: 8,
+                            fontSize: 12, fontWeight: 700, boxShadow: "0 2px 8px rgba(124,90,237,0.2)"
+                          }}>
+                            🔗 Open Video Link
+                          </a>
+                        ) : (
+                          <span style={{ fontSize: 12, color: "#9CA3AF", fontStyle: "italic" }}>No video link added</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Platforms & Accounts */}
                 <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden" }}>
                   <div style={{ padding: "12px 16px", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", letterSpacing: 0.5 }}>
                     Platforms & Accounts
                   </div>
                   <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-                    {Array.from(new Set([...(socialAccounts.map(s => s.platform) || []), ...(selected.platforms || [])])).map(key => {
+                    {Array.from(new Set([
+                      ...((socialAccounts.filter(s => s.brand_name === selected.brand_name).map(s => s.platform) || []).map(plat => {
+                        if (plat === 'instagram') return 'instagram_post';
+                        if (plat === 'facebook') return 'facebook_post';
+                        return plat;
+                      })),
+                      ...((socialAccounts.filter(s => s.brand_name === selected.brand_name).map(s => s.platform) || []).map(plat => plat + '_story').filter(plat => ['instagram_story', 'facebook_story'].includes(plat))),
+                      ...((selected.platforms || []).map(plat => {
+                        if (plat === 'instagram') return 'instagram_post';
+                        if (plat === 'facebook') return 'facebook_post';
+                        return plat;
+                      })),
+                      ...((selected.selected_channels || []).map(plat => {
+                        if (plat === 'instagram') return 'instagram_post';
+                        if (plat === 'facebook') return 'facebook_post';
+                        return plat;
+                      }))
+                    ])).map(key => {
                       const p = getPlatformConfig(key);
+                      const checkActive = (arr) => {
+                        if (!arr) return false;
+                        if (arr.includes(key)) return true;
+                        if (key === 'instagram_post' && (arr.includes('instagram') || arr.includes('instagram_post'))) return true;
+                        if (key === 'facebook_post' && (arr.includes('facebook') || arr.includes('facebook_post'))) return true;
+                        return false;
+                      };
                       const active = editMode
-                        ? editValues.platforms?.includes(key)
-                        : selected.platforms?.includes(key);
+                        ? checkActive(editValues.platforms)
+                        : checkActive(selected.platforms);
                       
-                      const brandAccounts = socialAccounts.filter(s => s.brand_name === selected.brand_name && s.platform === key);
+                      let accountPlatform = key.endsWith('_story') ? key.replace('_story', '') : key;
+                      if (accountPlatform === 'instagram_post') accountPlatform = 'instagram';
+                      if (accountPlatform === 'facebook_post') accountPlatform = 'facebook';
+                      const brandAccounts = socialAccounts.filter(s => s.brand_name === selected.brand_name && s.platform === accountPlatform);
 
                       return (
                         <div key={key} style={{
@@ -538,9 +1406,16 @@ export default function ApprovalDashboard() {
                             <div style={{ padding: "8px 12px", background: "#fff", borderTop: "1px dashed #E5E4F0", display: "flex", flexDirection: "column", gap: 6 }}>
                               <div style={{ fontSize: 10, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase" }}>Select Accounts</div>
                               {brandAccounts.map(acc => {
+                                const checkIsAccSelected = (accs) => {
+                                  if (!accs) return false;
+                                  if ((accs[key] || []).includes(acc.account_id)) return true;
+                                  if (key.includes('instagram') && (accs['instagram'] || []).includes(acc.account_id)) return true;
+                                  if (key.includes('facebook') && (accs['facebook'] || []).includes(acc.account_id)) return true;
+                                  return false;
+                                };
                                 const isAccSelected = editMode 
-                                  ? (editValues.selected_accounts?.[key] || []).includes(acc.account_id)
-                                  : (selected.selected_accounts?.[key] || []).includes(acc.account_id);
+                                  ? checkIsAccSelected(editValues.selected_accounts)
+                                  : checkIsAccSelected(selected.selected_accounts);
                                 
                                 return (
                                   <div key={acc.account_id} 
@@ -568,8 +1443,20 @@ export default function ApprovalDashboard() {
                     {editMode ? (
                       <input
                         type="datetime-local"
-                        value={editValues.scheduled_at?.slice(0,16)}
-                        onChange={e => setEditValues(prev => ({ ...prev, scheduled_at: e.target.value + ":00+05:30" }))}
+                        value={formatLocalDatetimeForInput(editValues.scheduled_at)}
+                        onChange={e => {
+                          if (!e.target.value) {
+                            setEditValues(prev => ({ ...prev, scheduled_at: "" }));
+                            return;
+                          }
+                          const [datePart, timePart] = e.target.value.split('T');
+                          const [year, month, day] = datePart.split('-').map(Number);
+                          const [hours, minutes] = timePart.split(':').map(Number);
+                          const d = new Date(year, month - 1, day, hours, minutes);
+                          if (!isNaN(d.getTime())) {
+                            setEditValues(prev => ({ ...prev, scheduled_at: d.toISOString() }));
+                          }
+                        }}
                         style={{ width: "100%", padding: "8px 10px", border: "1px solid #7C3AED44", borderRadius: 8, fontSize: 12, outline: "none", boxSizing: "border-box" }}
                       />
                     ) : (
@@ -581,17 +1468,51 @@ export default function ApprovalDashboard() {
                 </div>
 
                 {/* Approve / Reject at bottom for mobile convenience */}
-                {canApprove && selected.status === "PENDING" && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <button onClick={() => setConfirmAction({ type: "reject", id: selected.id })} style={{
-                      padding: "12px", borderRadius: 10, border: "1px solid #EF444444",
-                      background: "#FEF2F2", color: "#EF4444", fontWeight: 700, fontSize: 13, cursor: "pointer"
-                    }}>✕ Reject</button>
-                    <button onClick={() => handleApprove(selected.id)} style={{
-                      padding: "12px", borderRadius: 10, border: "none",
-                      background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer",
-                      boxShadow: "0 2px 8px #10B98133"
-                    }}>✓ Approve</button>
+                {canApprove && ["PENDING", "pending_approval"].includes(selected.status) && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <button onClick={() => setConfirmAction({ type: "reject", id: selected.id })} style={{
+                        padding: "12px", borderRadius: 10, border: "1px solid #EF444444",
+                        background: "#FEF2F2", color: "#EF4444", fontWeight: 700, fontSize: 13, cursor: "pointer"
+                      }}>✕ Reject</button>
+                      <button 
+                        disabled={!!validationError}
+                        onClick={() => handleApprove(selected.id)} 
+                        style={{
+                          padding: "12px", borderRadius: 10, border: "none",
+                          background: validationError ? "#9CA3AF" : "#10B981", 
+                          color: "#fff", fontWeight: 700, fontSize: 13, 
+                          cursor: validationError ? "not-allowed" : "pointer",
+                          boxShadow: validationError ? "none" : "0 2px 8px #10B98133",
+                          opacity: validationError ? 0.7 : 1
+                        }}
+                      >
+                        ✓ Approve
+                      </button>
+                    </div>
+                    {validationError && (
+                      <div style={{ color: "#EF4444", fontSize: 11, fontWeight: 600, textAlign: "center" }}>
+                        ⚠️ {validationError}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {canApprove && ["approved", "APPROVED"].includes(selected.status) && (
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button 
+                      disabled={isPublishing}
+                      onClick={() => handlePublishNow(selected.id)} 
+                      style={{
+                        flex: 1, padding: "12px", borderRadius: 10, border: "none",
+                        background: isPublishing ? "#9CA3AF" : "#7C3AED", 
+                        color: "#fff", fontWeight: 700, fontSize: 13, 
+                        cursor: isPublishing ? "not-allowed" : "pointer",
+                        boxShadow: isPublishing ? "none" : "0 2px 8px #7C3AED33",
+                        transition: "all 0.15s"
+                      }}
+                    >
+                      {isPublishing ? "Publishing..." : "🚀 Publish Now"}
+                    </button>
                   </div>
                 )}
               </div>
@@ -599,6 +1520,8 @@ export default function ApprovalDashboard() {
           </div>
         )}
       </div>
+      </>
+      )}
 
       {/* ── TOAST ── */}
       {toast && (
@@ -643,21 +1566,272 @@ export default function ApprovalDashboard() {
           </div>
         </div>
       )}
+
+      {/* ── AI SUGGESTIONS MODAL ── */}
+      {isSuggestModalOpen && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 998,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16
+        }}>
+          <div style={{
+            background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 640,
+            maxHeight: "85vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,0.2)"
+          }}>
+            <style>{`
+              @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+            `}</style>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>
+                {suggestionType === "story" ? "✨ AI Story Suggestions" : "✨ AI Caption Suggestions"}
+              </div>
+              <button 
+                onClick={() => setIsSuggestModalOpen(false)}
+                style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#6B6B80" }}
+              >✕</button>
+            </div>
+
+            {/* Tone Selector */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase" }}>Select Tone:</span>
+              {[
+                { value: "engaging", label: "🎨 Diverse Mix" },
+                { value: "professional", label: "💼 Professional" },
+                { value: "educational", label: "📖 Educational" },
+                { value: "motivational", label: "🔥 Motivational" },
+                { value: "sales", label: "🎯 Sales" },
+                { value: "viral", label: "🚀 Viral" }
+              ].map(t => {
+                const isActive = selectedTone === t.value;
+                return (
+                  <button
+                    key={t.value}
+                    onClick={() => {
+                      setSelectedTone(t.value);
+                      handleOpenAiSuggestions(suggestionType, t.value);
+                    }}
+                    style={{
+                      padding: "5px 10px", borderRadius: 20, border: `1px solid ${isActive ? "#7C3AED" : "#E5E4F0"}`,
+                      background: isActive ? "#7C3AED" : "#fff", color: isActive ? "#fff" : "#1A1A2E",
+                      fontSize: 11, fontWeight: 600, cursor: "pointer", transition: "all 0.1s"
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Suggestions list container */}
+            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, marginBottom: 16, paddingRight: 4 }}>
+              {loadingSuggestions ? (
+                <div style={{ padding: "40px 0", textAlign: "center", color: "#6B6B80" }}>
+                  <div style={{ fontSize: 24, animation: "spin 1s linear infinite", display: "inline-block", marginBottom: 8 }}>🌀</div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {suggestionType === "story" ? "Analyzing brand & generating story slides..." : "Analyzing brand & generating creative copy..."}
+                  </div>
+                </div>
+              ) : suggestionsError ? (
+                <div style={{ padding: "30px 20px", textAlign: "center", background: "#FEF2F2", borderRadius: 8, border: "1px solid #EF444444" }}>
+                  <div style={{ fontSize: 13, color: "#EF4444", marginBottom: 12 }}>{suggestionsError}</div>
+                  <button 
+                    onClick={() => fetchAiSuggestions(selected.id, selectedTone, suggestionType)}
+                    style={{ padding: "6px 16px", background: "#EF4444", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >Retry</button>
+                </div>
+              ) : (
+                (suggestCache[`${selected.id}_${selectedTone}_${suggestionType}`] || []).map((s, idx) => {
+                  const toneLabel = s.tone ? s.tone.charAt(0).toUpperCase() + s.tone.slice(1) : "AI Suggestions";
+                  return (
+                    <div 
+                      key={s.id || idx}
+                      style={{
+                        background: "#FAFAFF", border: "1px solid #E5E4F0", borderRadius: 10,
+                        padding: 16, display: "flex", flexDirection: "column", gap: 10,
+                        transition: "all 0.15s",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.borderColor = "#7C3AED"}
+                      onMouseLeave={e => e.currentTarget.style.borderColor = "#E5E4F0"}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: "#7C3AED", textTransform: "uppercase", tracking: "0.5px" }}>
+                          ✨ Suggestion #{idx + 1} ({toneLabel} Style)
+                        </span>
+                      </div>
+                      
+                      {suggestionType === "story" ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "#fff", padding: 12, borderRadius: 8, border: "1px solid #E5E4F0" }}>
+                          <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", display: "block", marginBottom: 2 }}>SLIDE 1</span>
+                            {s.story_1}
+                          </div>
+                          <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5, borderTop: "1px solid #F0EFF8", paddingTop: 8 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", display: "block", marginBottom: 2 }}>SLIDE 2</span>
+                            {s.story_2}
+                          </div>
+                          <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5, borderTop: "1px solid #F0EFF8", paddingTop: 8 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", display: "block", marginBottom: 2 }}>SLIDE 3</span>
+                            {s.story_3}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, lineHeight: 1.6, color: "#1A1A2E", whiteSpace: "pre-wrap" }}>
+                          {s.caption}
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, borderTop: "1px dashed #E5E4F0", paddingTop: 10 }}>
+                        <button
+                          onClick={() => {
+                            if (suggestionType === "story") {
+                              navigator.clipboard.writeText(`Slide 1: ${s.story_1}\n\nSlide 2: ${s.story_2}\n\nSlide 3: ${s.story_3}`);
+                            } else {
+                              navigator.clipboard.writeText(s.caption);
+                            }
+                            showToast("Copied to clipboard!");
+                          }}
+                          style={{
+                            padding: "6px 12px", borderRadius: 6, border: "1px solid #E5E4F0",
+                            background: "#fff", color: "#1A1A2E", fontSize: 11, fontWeight: 600,
+                            cursor: "pointer"
+                          }}
+                        >
+                          📋 Copy
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (suggestionType === "story") {
+                              if (!editMode) {
+                                setEditMode(true);
+                                setEditValues({
+                                  caption: selected.caption,
+                                  x_caption: selected.x_caption,
+                                  linkedin_caption: selected.linkedin_caption,
+                                  thumbnail_title: selected.thumbnail_title,
+                                  scheduled_at: selected.scheduled_at,
+                                  platforms: [...(selected.platforms || [])],
+                                  selected_accounts: selected.selected_accounts ? { ...selected.selected_accounts } : {},
+                                  video_url: selected.video_url || "",
+                                  public_video_url: selected.public_video_url || "",
+                                  description: selected.description || "",
+                                  hashtags: selected.hashtags || "",
+                                  thumbnail_options: selected.thumbnail_options || [],
+                                  key_moments: selected.key_moments || [],
+                                  thumbnail_url: selected.thumbnail_url || "",
+                                  story_1: s.story_1,
+                                  story_2: s.story_2,
+                                  story_3: s.story_3,
+                                });
+                              } else {
+                                setEditValues(prev => ({ 
+                                  ...prev, 
+                                  story_1: s.story_1,
+                                  story_2: s.story_2,
+                                  story_3: s.story_3,
+                                }));
+                              }
+                              showToast("Applied stories!");
+                            } else {
+                              if (!editMode) {
+                                setEditMode(true);
+                                setEditValues({
+                                  caption: s.caption,
+                                  x_caption: selected.x_caption,
+                                  linkedin_caption: selected.linkedin_caption,
+                                  thumbnail_title: selected.thumbnail_title,
+                                  scheduled_at: selected.scheduled_at,
+                                  platforms: [...(selected.platforms || [])],
+                                  selected_accounts: selected.selected_accounts ? { ...selected.selected_accounts } : {},
+                                  video_url: selected.video_url || "",
+                                  public_video_url: selected.public_video_url || "",
+                                  description: selected.description || "",
+                                  hashtags: selected.hashtags || "",
+                                  thumbnail_options: selected.thumbnail_options || [],
+                                  key_moments: selected.key_moments || [],
+                                  thumbnail_url: selected.thumbnail_url || "",
+                                  story_1: selected.story_1 || "",
+                                  story_2: selected.story_2 || "",
+                                  story_3: selected.story_3 || "",
+                                });
+                              } else {
+                                setEditValues(prev => ({ ...prev, caption: s.caption }));
+                              }
+                              showToast("Applied caption!");
+                            }
+                            setIsSuggestModalOpen(false);
+                          }}
+                          style={{
+                            padding: "6px 14px", borderRadius: 6, border: "none",
+                            background: "#7C3AED", color: "#fff", fontSize: 11, fontWeight: 700,
+                            cursor: "pointer", boxShadow: "0 2px 6px rgba(124,90,237,0.2)"
+                          }}
+                        >
+                          {suggestionType === "story" ? "✓ Use Stories" : "✓ Use Caption"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #E5E4F0", paddingTop: 16 }}>
+              <button
+                disabled={loadingSuggestions}
+                onClick={() => {
+                  const cacheKey = `${selected.id}_${selectedTone}_${suggestionType}`;
+                  setSuggestCache(prev => {
+                    const newCache = { ...prev };
+                    delete newCache[cacheKey];
+                    return newCache;
+                  });
+                  fetchAiSuggestions(selected.id, selectedTone, suggestionType);
+                }}
+                style={{
+                  padding: "8px 16px", borderRadius: 8, border: "1px solid #7C3AED",
+                  background: "#fff", color: "#7C3AED", fontSize: 12, fontWeight: 700,
+                  cursor: loadingSuggestions ? "not-allowed" : "pointer"
+                }}
+              >
+                🔄 Regenerate
+              </button>
+              <button
+                onClick={() => setIsSuggestModalOpen(false)}
+                style={{
+                  padding: "8px 20px", borderRadius: 8, border: "1px solid #E5E4F0",
+                  background: "#fff", color: "#1A1A2E", fontSize: 12, fontWeight: 600,
+                  cursor: "pointer"
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function StatusBadge({ status }) {
+  const s = (status || "").toUpperCase();
   const cfg = {
-    PENDING:  { bg: "#FEF3C7", color: "#92400E", text: "Pending" },
-    APPROVED: { bg: "#D1FAE5", color: "#065F46", text: "Approved" },
-    REJECTED: { bg: "#FEE2E2", color: "#991B1B", text: "Rejected" },
-    PUBLISHED:{ bg: "#DBEAFE", color: "#1E40AF", text: "Published" },
-    FAILED:   { bg: "#FEE2E2", color: "#B91C1C", text: "Failed" },
-  }[status] || { bg: "#F3F4F6", color: "#374151", text: status };
+    PENDING:          { bg: "#FEF3C7", color: "#92400E", text: "Pending" },
+    PENDING_APPROVAL: { bg: "#FEF3C7", color: "#92400E", text: "Pending Approval" },
+    PROCESSING:       { bg: "#EFF6FF", color: "#1E40AF", text: "Processing" },
+    APPROVED:         { bg: "#D1FAE5", color: "#065F46", text: "Approved" },
+    REJECTED:         { bg: "#FEE2E2", color: "#991B1B", text: "Rejected" },
+    PUBLISHING:       { bg: "#ECFDF5", color: "#047857", text: "Publishing" },
+    PUBLISHED:        { bg: "#DBEAFE", color: "#1E40AF", text: "Published" },
+    PARTIAL:          { bg: "#FFEDD5", color: "#C2410C", text: "Partially Published" },
+    FAILED:           { bg: "#FEE2E2", color: "#B91C1C", text: "Failed" },
+  }[s] || { bg: "#F3F4F6", color: "#374151", text: status };
   return (
     <div style={{ background: cfg.bg, color: cfg.color, borderRadius: 5, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>
       {cfg.text}
     </div>
   );
 }
+

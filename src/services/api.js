@@ -59,35 +59,35 @@ class LeadOSAPI {
   }
 
   async get(endpoint, options = {}) {
-    return this.request(`/api${endpoint}`, {
-      method: 'GET',
-      ...options,
-    });
+    const path = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
+    return this.request(path, { ...options, method: 'GET' });
   }
 
   async post(endpoint, body, options = {}) {
-    return this.request(`/api${endpoint}`, {
-      method: 'POST',
-      body: JSON.stringify(body),
+    const path = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
+    return this.request(path, {
       ...options,
+      method: 'POST',
+      body: JSON.stringify(body)
     });
   }
 
   async put(endpoint, body, options = {}) {
-    return this.request(`/api${endpoint}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
+    const path = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
+    return this.request(path, {
       ...options,
+      method: 'PUT',
+      body: JSON.stringify(body)
     });
   }
 
   async delete(endpoint, options = {}) {
-    return this.request(`/api${endpoint}`, {
-      method: 'DELETE',
+    const path = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
+    return this.request(path, {
       ...options,
+      method: 'DELETE'
     });
   }
-
   // ─── AUTH ───────────────────────────────
   async login(email, password) {
     const data = await this.request('/api/auth/login', {
@@ -392,7 +392,7 @@ class LeadOSAPI {
 
   // ─── CONTENT OS ─────────────────────────
   async getSocialAccounts() {
-    return this.request('/api/content-os/social-accounts');
+    return this.request('/api/content/social-accounts');
   }
 
   async getContentQueue(filters = {}) {
@@ -402,26 +402,77 @@ class LeadOSAPI {
     if (filters.startDate) query.append('startDate', filters.startDate);
     if (filters.endDate) query.append('endDate', filters.endDate);
     
-    return this.request(`/api/content-os/content-queue?${query.toString()}`);
+    return this.request(`/api/content?${query.toString()}`);
+  }
+
+  async getContentStats() {
+    return this.request('/api/content/stats');
   }
 
   async updateContent(id, updates) {
-    return this.request(`/api/content-os/content/${id}`, {
+    return this.request(`/api/content/${id}/edit`, {
       method: 'PUT',
       body: JSON.stringify(updates),
     });
   }
 
   async approveContent(id) {
-    return this.request(`/api/content-os/content/${id}/approve`, {
+    return this.request(`/api/content/${id}/approve`, {
+      method: 'POST',
+    });
+  }
+
+  async publishContent(id) {
+    return this.request(`/api/content/${id}/publish`, {
       method: 'POST',
     });
   }
 
   async rejectContent(id, reason) {
-    return this.request(`/api/content-os/content/${id}/reject`, {
+    return this.request(`/api/content/${id}/reject`, {
       method: 'POST',
-      body: JSON.stringify({ reason })
+      body: JSON.stringify({ rejection_reason: reason })
+    });
+  }
+
+  async generateCaptions(brandName, videoUrl, platforms) {
+    return this.request('/api/content/generate-captions', {
+      method: 'POST',
+      body: JSON.stringify({ brand_name: brandName, video_url: videoUrl, platforms }),
+    });
+  }
+
+  async createBatchContent(items) {
+    return this.request('/api/content/batch', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+  }
+
+  async getFolderMonitors() {
+    return this.request('/api/content/monitors', {
+      method: 'GET',
+    });
+  }
+
+  async upsertFolderMonitor(brandName, folderId) {
+    return this.request('/api/content/monitors', {
+      method: 'POST',
+      body: JSON.stringify({ brand_name: brandName, folder_id: folderId }),
+    });
+  }
+
+  async getAiCaptionSuggestions(id, tone = 'engaging') {
+    return this.request(`/api/content/${id}/suggest-captions`, {
+      method: 'POST',
+      body: JSON.stringify({ tone })
+    });
+  }
+
+  async getAiStorySuggestions(id, tone = 'engaging') {
+    return this.request(`/api/content/${id}/suggest-stories`, {
+      method: 'POST',
+      body: JSON.stringify({ tone })
     });
   }
 }

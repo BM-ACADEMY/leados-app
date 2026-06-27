@@ -4,17 +4,8 @@
  * Creates 9 tables + seeds 7 ABM brands + 1 admin user
  */
 
-const { Pool } = require('pg');
+const pool = require('./db/connection');
 const bcrypt = require('bcryptjs');
-require('dotenv').config();
-
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'leados_db',
-  user: process.env.DB_USER || 'leados_user',
-  password: process.env.DB_PASS || 'LeadOS_DB@2026',
-});
 
 async function setup() {
   console.log('🔧 LeadOS Database Setup Starting...\n');
@@ -39,7 +30,7 @@ async function setup() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS clients (
       id SERIAL PRIMARY KEY,
-      name VARCHAR(150) NOT NULL,
+      name VARCHAR(150) NOT NULL UNIQUE,
       type VARCHAR(50),
       plan VARCHAR(20) DEFAULT 'Starter' CHECK (plan IN ('Starter', 'Pro', 'Enterprise')),
       status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
@@ -215,7 +206,7 @@ async function setup() {
     await pool.query(`
       INSERT INTO clients (name, type, plan, status)
       VALUES ($1, $2, $3, 'active')
-      ON CONFLICT DO NOTHING
+      ON CONFLICT (name) DO NOTHING
     `, [b.name, b.type, b.plan]);
     console.log(`  ✓ ${b.name}`);
   }

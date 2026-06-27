@@ -1,0 +1,9 @@
+{
+  "verbose": true,
+  "ignore": [
+    "uploads/*",
+    "*.log",
+    "*.sql",
+    "node_modules/*"
+  ]
+}

@@ -23,23 +23,15 @@ const app = express();
 const PORT = process.env.PORT || 3500;
 
 // ── DB CONNECTION ─────────────────────────────────────────
-console.log('--- DB CONNECTION DEBUG ---');
-console.log('DB_HOST from env:', process.env.DB_HOST);
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'leados_db',
-  user: process.env.DB_USER || 'leados_user',
-  password: process.env.DB_PASS || 'LeadOS_DB@2026',
-});
-console.log('Pool config host:', pool.options.host);
-console.log('---------------------------');
-
-pool.on('error', (err) => console.error('DB error:', err));
+const pool = require('./db/connection');
+const { checkNewDriveVideos, publishPost } = require("./controllers/contentController");
 
 // ── MIDDLEWARE ────────────────────────────────────────────
 app.use(morgan('dev')); // ← must be first so every request is logged
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: false
+}));
 app.use(cors({
   origin: function(origin, callback) {
     callback(null, origin || true);
@@ -49,6 +41,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'x-internal-key']
 }));
 app.use(express.json({ limit: '10mb' }));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── ALLIANCE OS ROUTES ────────────────────────────────────
 const knowledgeRoutes = require('./routes/knowledge');
@@ -56,6 +49,7 @@ const uploadRoutes = require('./routes/upload');
 const pipelineRoutes = require('./routes/pipeline');
 const analyzeRoutes = require('./routes/analyze');
 const contentOsRoutes = require('./routes/contentos');
+<<<<<<< HEAD
 const thedalRoutes = require('./routes/thedal');
 const thedalClientsRoutes = require('./routes/thedal-clients');
 const thedalPlansRoutes = require('./routes/thedal-plans');
@@ -73,6 +67,9 @@ const thedalLocalSeoBridgeRoutes = require('./routes/thedal-localseobridge');
 const thedalRankDropAlertRoutes = require('./routes/thedal-rank-drop-alert');
 const thedalContentRoutes = require('./routes/thedal-content');
 
+=======
+const contentRoutes = require('./routes/contentRoutes');
+>>>>>>> bf28ad9412816b27bdcf8c46823d0c7cb64cea9d
 
 app.use('/api/knowledge', knowledgeRoutes); // We should use auth but let's check auth middleware later
 app.use('/api/upload', uploadRoutes);
@@ -102,7 +99,8 @@ const internalAuth = (req, res, next) => {
 };
 
 // ── CONTENT OS ROUTES ─────────────────────────────────────
-app.use('/api/content-os', auth, contentOsRoutes);
+app.use('/api/content', internalAuth, contentRoutes);
+app.use('/api/content-os', internalAuth, contentOsRoutes);
 
 // Thedal OS Routes
 app.use('/api/thedal/audit', auth, thedalAuditRoutes);
@@ -1660,6 +1658,57 @@ cron.schedule('* * * * *', async () => {
     }
   } catch (err) {
     console.error('Cron check error:', err);
+  }
+});
+
+// Run every 1 minute to poll Google Drive folders for new videos
+if (process.env.DISABLE_DRIVE_POLLER !== 'true') {
+  cron.schedule('* * * * *', async () => {
+    try {
+      await checkNewDriveVideos();
+    } catch (err) {
+      console.error('Cron checkNewDriveVideos error:', err);
+    }
+  });
+} else {
+  console.log('DrivePoller: Polling disabled via DISABLE_DRIVE_POLLER=true environment variable.');
+}
+
+// Run every 5 minutes to auto-publish scheduled approved posts (acting as a fallback for n8n)
+cron.schedule('*/5 * * * *', async () => {
+  console.log('Cron: Checking for scheduled approved content due for publishing...');
+  try {
+    const { rows: duePosts } = await pool.query(`
+      SELECT id FROM content_queue 
+      WHERE status IN ('APPROVED', 'approved') 
+        AND scheduled_at <= NOW() 
+        AND scheduled_at > NOW() - INTERVAL '2 hours'
+      ORDER BY scheduled_at ASC
+    `);
+
+    if (duePosts.length > 0) {
+      console.log(`Cron: Found ${duePosts.length} posts due for publishing.`);
+      for (const post of duePosts) {
+        console.log(`Cron: Fallback publishing post ${post.id}...`);
+        const dummyReq = { params: { id: post.id } };
+        const dummyRes = {
+          status: function(code) {
+            this.statusCode = code;
+            return this;
+          },
+          json: function(data) {
+            console.log(`Cron: Publish result for post ${post.id}:`, JSON.stringify(data));
+          }
+        };
+        try {
+          await publishPost(dummyReq, dummyRes);
+        } catch (pubErr) {
+          console.error(`Cron: Failed to publish post ${post.id}:`, pubErr.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Cron scheduled fallback publisher check error:', err);
   }
 });
 

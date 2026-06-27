@@ -25,3 +25,13 @@ dist-ssr
 server/env.example
 server/data/gsc_tokens.json
 server/data/
+
+
+
+# Google credentials
+server/credentials/*.json
+
+# Environment files and uploads
+server/.env
+# Generated uploads
+server/uploads/

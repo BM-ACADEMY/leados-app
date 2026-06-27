@@ -7,14 +7,27 @@ const pool = new Pool({
   port: 5432
 });
 
+const axios = require('axios');
 async function run() {
+  const url = 'https://leados-api.abmgroups.org/uploads/transcoded_1LPxfMUbe_spaztPt3_YazpaW_VwUCYgG.mp4';
   try {
-    const res = await pool.query("SELECT id, brand_name, thumbnail_title, status, scheduled_at, platforms, file_name, video_url, public_video_url, thumbnail_url FROM content_queue ORDER BY id DESC LIMIT 5");
-    console.log(JSON.stringify(res.rows, null, 2));
+    const res = await axios.get(url, {
+      headers: {
+        'User-Agent': 'facebookexternalhit/1.1'
+      },
+      responseType: 'stream'
+    });
+    console.log('FB Crawler GET status:', res.status, res.headers['content-type']);
   } catch (e) {
-    console.error('Error:', e.message);
-  } finally {
-    await pool.end();
+    if (e.response) {
+      console.log('FB Crawler GET failed with status:', e.response.status, e.response.headers['content-type']);
+      // Read a bit of the error response if it is HTML
+      let body = '';
+      e.response.data.on('data', chunk => { body += chunk; });
+      e.response.data.on('end', () => { console.log('Error Body Snippet:', body.substring(0, 500)); });
+    } else {
+      console.log('FB Crawler GET failed:', e.message);
+    }
   }
 }
 run();

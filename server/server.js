@@ -33,7 +33,7 @@ app.use(helmet({
   crossOriginResourcePolicy: false
 }));
 app.use(cors({
-  origin: function(origin, callback) {
+  origin: function (origin, callback) {
     callback(null, origin || true);
   },
   credentials: true,
@@ -49,7 +49,7 @@ const uploadRoutes = require('./routes/upload');
 const pipelineRoutes = require('./routes/pipeline');
 const analyzeRoutes = require('./routes/analyze');
 const contentOsRoutes = require('./routes/contentos');
-<<<<<<< HEAD
+
 const thedalRoutes = require('./routes/thedal');
 const thedalClientsRoutes = require('./routes/thedal-clients');
 const thedalPlansRoutes = require('./routes/thedal-plans');
@@ -66,10 +66,8 @@ const thedalCitationsRoutes = require('./routes/thedal-citations');
 const thedalLocalSeoBridgeRoutes = require('./routes/thedal-localseobridge');
 const thedalRankDropAlertRoutes = require('./routes/thedal-rank-drop-alert');
 const thedalContentRoutes = require('./routes/thedal-content');
-
-=======
 const contentRoutes = require('./routes/contentRoutes');
->>>>>>> bf28ad9412816b27bdcf8c46823d0c7cb64cea9d
+
 
 app.use('/api/knowledge', knowledgeRoutes); // We should use auth but let's check auth middleware later
 app.use('/api/upload', uploadRoutes);
@@ -82,7 +80,7 @@ const auth = (req, res, next) => {
   if (req.path.includes('/auth/google') || req.path.includes('/auth/callback')) {
     return next();
   }
-  
+
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'No token' });
   try {
@@ -1692,11 +1690,11 @@ cron.schedule('*/5 * * * *', async () => {
         console.log(`Cron: Fallback publishing post ${post.id}...`);
         const dummyReq = { params: { id: post.id } };
         const dummyRes = {
-          status: function(code) {
+          status: function (code) {
             this.statusCode = code;
             return this;
           },
-          json: function(data) {
+          json: function (data) {
             console.log(`Cron: Publish result for post ${post.id}:`, JSON.stringify(data));
           }
         };

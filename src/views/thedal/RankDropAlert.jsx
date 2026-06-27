@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { ShieldAlert, Loader2, AlertTriangle, TrendingDown, ArrowDownRight, Activity, Clock, CheckCircle, History, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { api } from '../../services/api.js';
@@ -118,7 +119,7 @@ export default function RankDropAlert() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 30 }}>
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Rank Drop Alert</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Rank Drop Alert</h1><SopModal /></div>
           <p style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>
             Monitoring search ranking fluctuations for <strong style={{ color: '#fff' }}>{activeClient.business_name || activeClient.client_name}</strong>.
           </p>

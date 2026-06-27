@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { Sparkles, Copy, Check, FileText, Wand2, Lightbulb, Code2, Loader2, Building, Calendar, Globe, Eye } from 'lucide-react';
 import { api } from '../../services/api.js';
@@ -175,7 +176,7 @@ export default function ContentFactory() {
       <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', background: C.bg, color: C.text, padding: 30 }}>
         <div style={{ textAlign: 'center', maxWidth: 450, background: C.surface, border: `1px solid ${C.border}`, padding: 40, borderRadius: 16, boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}>
           <Building size={48} color={C.accent} style={{ marginBottom: 20 }} />
-          <h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12, fontFamily: "'Syne', sans-serif" }}>No Active Client Selected</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12, fontFamily: "'Syne', sans-serif" }}>No Active Client Selected</h2><SopModal /></div>
           <p style={{ color: C.muted, fontSize: 14, lineHeight: 1.6 }}>
             Please select an active client from the client selector in the sidebar or onboard a new client to access the Content Factory.
           </p>

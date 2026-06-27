@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { C } from '../../constants/theme.js';
@@ -787,7 +788,7 @@ export default function GapHunter() {
       
       {/* Exact Semrush layout mapping */}
       <div style={{ textAlign: 'center', marginBottom: 40, marginTop: 20 }}>
-        <h1 style={{ fontSize: 36, fontWeight: 700, color: '#f8fafc', margin: '0 0 8px 0', fontFamily: "'Inter', sans-serif" }}>Keyword Gap</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: 36, fontWeight: 700, color: '#f8fafc', margin: '0 0 8px 0', fontFamily: "'Inter', sans-serif" }}>Keyword Gap</h1><SopModal /></div>
         <p style={{ fontSize: 16, color: '#94a3b8', margin: 0 }}>A tool that helps you compare your keyword profile with your competitors.</p>
       </div>
 

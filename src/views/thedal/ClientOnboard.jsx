@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { User, Loader2, Plus, Edit2, Trash2, CheckCircle2, Building, Phone, Mail, Globe, MapPin, Tag, AlertTriangle, X } from 'lucide-react';
 import { api } from '../../services/api.js';
@@ -237,7 +238,7 @@ export default function ClientOnboard() {
     <div style={{ padding: 30, color: C.text, height: '100%', overflowY: 'auto', background: 'rgba(0,0,0,0.2)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Client Onboarding</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Client Onboarding</h1><SopModal /></div>
           <p style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>Manage Thedal OS clients and subscription plans.</p>
         </div>
         <button 

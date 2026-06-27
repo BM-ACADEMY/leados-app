@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { api } from '../../services/api.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
@@ -318,7 +319,7 @@ export default function LocalSeoBridge() {
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
             <MessageCircle size={20} color={C.accent} />
-            <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#fff' }}>Recent Reviews</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#fff' }}>Recent Reviews</h2><SopModal /></div>
             <span style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 600 }}>
               {data?.business.rating} ★ ({data?.business.totalReviews})
             </span>

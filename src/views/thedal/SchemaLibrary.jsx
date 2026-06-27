@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { Loader2, Plus, Edit2, Trash2, Code, LayoutDashboard, Sparkles, Network, Globe, AlertCircle, FileJson } from 'lucide-react';
 import { api } from '../../services/api.js';
@@ -2872,7 +2873,7 @@ export default function SchemaLibrary() {
   const renderPlaceholder = (title, phase) => (
     <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 60, textAlign: 'center' }}>
       <AlertCircle size={48} color={C.muted} style={{ marginBottom: 20, opacity: 0.5 }} />
-      <h2 style={{ fontSize: 24, fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>{title}</h2>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 style={{ fontSize: 24, fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>{title}</h2><SopModal /></div>
       <p style={{ color: '#94a3b8', fontSize: 15, maxWidth: 500, margin: '0 auto' }}>
         This module is scheduled for development in <strong>{phase}</strong> of the Schema Library rollout plan.
       </p>

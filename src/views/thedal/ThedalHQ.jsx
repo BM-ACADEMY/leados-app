@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { TrendingUp, TrendingDown, Minus, Search, Activity, Target, Loader2 } from 'lucide-react';
 import { api } from '../../services/api.js';
@@ -102,7 +103,7 @@ export default function ThedalHQ() {
     <div style={{ padding: 30, color: C.text, height: '100%', overflowY: 'auto', background: C.bg }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Thedal HQ</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Thedal HQ</h1><SopModal /></div>
           <p style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>Organic Search Domination Overview</p>
         </div>
         <div style={{ display: 'flex', gap: 12 }}>

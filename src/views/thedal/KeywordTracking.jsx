@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { Loader2, TrendingUp, TrendingDown, Minus, RefreshCw, Trash2, Plus, Globe, Type } from 'lucide-react';
 import { api } from '../../services/api.js';
@@ -139,7 +140,7 @@ export default function KeywordTracking() {
     <div style={{ padding: 40, color: C.text, height: '100%', overflowY: 'auto', background: C.background }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 40 }}>
         <div>
-          <h1 style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Keyword Map</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Keyword Map</h1><SopModal /></div>
           <p style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>Track your SERP rankings and map keywords to target URLs.</p>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import {
   Search, Loader2, Star, MessageSquare, Globe, Phone,

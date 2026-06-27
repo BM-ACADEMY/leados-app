@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { 
   Loader2, Search, Activity, ArrowUpRight, ArrowDownRight, AlertTriangle, 
@@ -174,7 +175,7 @@ export default function SerpRadar() {
       {/* HEADER */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 }} className="flex-col-mobile gap-mobile">
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>SERP Radar</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>SERP Radar</h1><SopModal /></div>
           <p style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>Google search competitor evaluation and keyword intelligence.</p>
         </div>
 

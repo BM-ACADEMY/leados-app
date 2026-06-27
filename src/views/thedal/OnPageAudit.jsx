@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { api } from '../../services/api.js';
 import html2pdf from 'html2pdf.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
@@ -348,7 +349,7 @@ Target Keyword: "${keyword}"
             <Activity size={28} color={C.blue} />
           </div>
           <div>
-            <h1 style={{ fontSize: '28px', fontWeight: 800, margin: 0, color: '#ffffff' }}>All-in-One SEO Audit Tool</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: '28px', fontWeight: 800, margin: 0, color: '#ffffff' }}>All-in-One SEO Audit Tool</h1><SopModal /></div>
             <p style={{ color: C.muted, fontSize: '14px', marginTop: 4 }}>Deep browser analysis of On-Page, Off-Page, Technical & Local SEO signals</p>
           </div>
         </div>

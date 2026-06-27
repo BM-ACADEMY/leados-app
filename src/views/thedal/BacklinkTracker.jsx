@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { api } from '../../services/api.js';
 import {
@@ -458,7 +459,7 @@ export default function BacklinkTracker() {
           {/* Links Table */}
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
             <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#f8fafc' }}>Discovered Backlinks</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#f8fafc' }}>Discovered Backlinks</h2><SopModal /></div>
               <span style={{ fontSize: 13, color: C.muted, background: `${C.border}`, padding: '4px 10px', borderRadius: 20 }}>
                 Showing {activeLinks.length} sample results
               </span>

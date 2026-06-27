@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import html2pdf from 'html2pdf.js';
 import { C } from '../../constants/theme.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
@@ -158,7 +159,7 @@ export default function MonthlyReport() {
           <div style={{ background: 'rgba(59, 130, 246, 0.1)', width: 80, height: 80, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
             <FileOutput size={40} color="#3b82f6" />
           </div>
-          <h1 style={{ fontSize: 32, fontWeight: 800, color: '#fff', marginBottom: 16, fontFamily: "'Syne', sans-serif" }}>Select a Client</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: 32, fontWeight: 800, color: '#fff', marginBottom: 16, fontFamily: "'Syne', sans-serif" }}>Select a Client</h1><SopModal /></div>
           <p style={{ color: C.muted, fontSize: 16, lineHeight: 1.6, marginBottom: 0 }}>You need to select an Active Client from the sidebar before you can generate their Monthly SEO & Performance Report.</p>
         </div>
       </div>

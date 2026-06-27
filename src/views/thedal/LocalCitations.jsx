@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SopModal from '../../components/common/SopModal.jsx';
 import { C } from '../../constants/theme.js';
 import { api } from '../../services/api.js';
 import {
@@ -252,7 +253,7 @@ export default function LocalCitations() {
           {/* Action Bar */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 20 }}>
             <div>
-              <h2 style={{ margin: 0, fontSize: 24, color: '#f8fafc', fontWeight: 800 }}>{data.businessName}</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 style={{ margin: 0, fontSize: 24, color: '#f8fafc', fontWeight: 800 }}>{data.businessName}</h2><SopModal /></div>
               <div style={{ display: 'flex', gap: 16, color: C.muted, fontSize: 14, marginTop: 6 }}>
                 {data.phone && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Phone size={14}/> {data.phone}</span>}
                 {data.address && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><MapPin size={14}/> {data.address}</span>}

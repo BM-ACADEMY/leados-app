@@ -9,25 +9,16 @@ const pool = new Pool({
 
 const axios = require('axios');
 async function run() {
-  const url = 'https://leados-api.abmgroups.org/uploads/transcoded_1LPxfMUbe_spaztPt3_YazpaW_VwUCYgG.mp4';
   try {
-    const res = await axios.get(url, {
-      headers: {
-        'User-Agent': 'facebookexternalhit/1.1'
-      },
-      responseType: 'stream'
-    });
-    console.log('FB Crawler GET status:', res.status, res.headers['content-type']);
+    const res = await pool.query(
+      "SELECT id, brand_name, status, platforms FROM content_queue ORDER BY id DESC LIMIT 10"
+    );
+    console.log("AVAILABLE CONTENT QUEUE ITEMS:");
+    console.log(JSON.stringify(res.rows, null, 2));
   } catch (e) {
-    if (e.response) {
-      console.log('FB Crawler GET failed with status:', e.response.status, e.response.headers['content-type']);
-      // Read a bit of the error response if it is HTML
-      let body = '';
-      e.response.data.on('data', chunk => { body += chunk; });
-      e.response.data.on('end', () => { console.log('Error Body Snippet:', body.substring(0, 500)); });
-    } else {
-      console.log('FB Crawler GET failed:', e.message);
-    }
+    console.error('Error:', e.message);
+  } finally {
+    await pool.end();
   }
 }
 run();

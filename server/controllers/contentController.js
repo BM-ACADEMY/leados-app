@@ -1279,6 +1279,7 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
         video_id: video_id,
         video_state: 'PUBLISHED',
         description: caption,
+        share_to_feed: true,
         access_token: pageAccessToken
       }
     });
@@ -1846,10 +1847,11 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
       const finalCaption = `${post.caption || post.description || ''}${hashtags}`.trim();
 
       if (channel === 'facebook' || channel === 'facebook_post') {
-        if (!account.facebook_page_id) {
+        const pageId = account.facebook_page_id || account.account_id;
+        if (!pageId) {
           throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
         }
-        publishRes = await publishReelToFacebook(account.facebook_page_id, decryptedToken, {
+        publishRes = await publishReelToFacebook(pageId, decryptedToken, {
           caption: finalCaption,
           videoUrl: publicUrl
         });
@@ -1866,104 +1868,21 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         if (!account.instagram_business_id) {
           throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
         }
-        const slides = [];
-        if (post.story_1 && post.story_1.trim()) slides.push({ num: 1, text: post.story_1.trim() });
-        if (post.story_2 && post.story_2.trim()) slides.push({ num: 2, text: post.story_2.trim() });
-        if (post.story_3 && post.story_3.trim()) slides.push({ num: 3, text: post.story_3.trim() });
-
-        if (slides.length > 0) {
-          const slidePostIds = [];
-          const slideErrors = [];
-          
-          for (const slide of slides) {
-            try {
-              console.log(`[BackgroundPublish] Generating card for story slide ${slide.num}: "${slide.text}"`);
-              const cardUrl = await generateStoryCard(post.id, slide.num, post.brand_name, slide.text, reqInfo);
-              console.log(`[BackgroundPublish] Story slide ${slide.num} card URL: ${cardUrl}`);
-              
-              console.log(`[BackgroundPublish] Publishing slide ${slide.num} to Instagram Story...`);
-              const slideRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
-                caption: '',
-                videoUrl: cardUrl,
-                isStory: true
-              });
-              
-              if (slideRes && slideRes.success) {
-                slidePostIds.push(slideRes.post_id);
-              }
-            } catch (slideErr) {
-              console.error(`[BackgroundPublish] Failed to publish story slide ${slide.num}:`, slideErr.message);
-              slideErrors.push(`Slide ${slide.num}: ${slideErr.message}`);
-            }
-          }
-          
-          if (slidePostIds.length > 0) {
-            publishRes = {
-              success: true,
-              post_id: slidePostIds.join(',')
-            };
-            if (slideErrors.length > 0) {
-              publishRes.warning = `Partial success. Failed slides: ${slideErrors.join('; ')}`;
-            }
-          } else {
-            throw new Error(`All story slides failed to publish: ${slideErrors.join('; ')}`);
-          }
-        } else {
-          console.log(`[BackgroundPublish] No story text slides found. Falling back to video story for post ID ${post.id}`);
-          publishRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
-            caption: '',
-            videoUrl: publicUrl,
-            isStory: true
-          });
-        }
+        console.log(`[BackgroundPublish] Publishing video story to Instagram Business for post ID ${post.id}`);
+        publishRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
+          caption: '',
+          videoUrl: publicUrl,
+          isStory: true
+        });
       } else if (channel === 'facebook_story') {
-        if (!account.facebook_page_id) {
+        const pageId = account.facebook_page_id || account.account_id;
+        if (!pageId) {
           throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
         }
-        const slides = [];
-        if (post.story_1 && post.story_1.trim()) slides.push({ num: 1, text: post.story_1.trim() });
-        if (post.story_2 && post.story_2.trim()) slides.push({ num: 2, text: post.story_2.trim() });
-        if (post.story_3 && post.story_3.trim()) slides.push({ num: 3, text: post.story_3.trim() });
-
-        if (slides.length > 0) {
-          const slidePostIds = [];
-          const slideErrors = [];
-          
-          for (const slide of slides) {
-            try {
-              console.log(`[BackgroundPublish] Generating card for Facebook story slide ${slide.num}: "${slide.text}"`);
-              const cardUrl = await generateStoryCard(post.id, slide.num, post.brand_name, slide.text, reqInfo);
-              console.log(`[BackgroundPublish] Facebook Story slide ${slide.num} card URL: ${cardUrl}`);
-              
-              console.log(`[BackgroundPublish] Publishing slide ${slide.num} to Facebook Page Story...`);
-              const slideRes = await publishPhotoStoryToFacebook(account.facebook_page_id, decryptedToken, { imageUrl: cardUrl });
-              
-              if (slideRes && slideRes.success) {
-                slidePostIds.push(slideRes.post_id);
-              }
-            } catch (slideErr) {
-              console.error(`[BackgroundPublish] Failed to publish Facebook story slide ${slide.num}:`, slideErr.message);
-              slideErrors.push(`Slide ${slide.num}: ${slideErr.message}`);
-            }
-          }
-          
-          if (slidePostIds.length > 0) {
-            publishRes = {
-              success: true,
-              post_id: slidePostIds.join(',')
-            };
-            if (slideErrors.length > 0) {
-              publishRes.warning = `Partial success. Failed slides: ${slideErrors.join('; ')}`;
-            }
-          } else {
-            throw new Error(`All Facebook story slides failed to publish: ${slideErrors.join('; ')}`);
-          }
-        } else {
-          console.log(`[BackgroundPublish] No story text slides found. Falling back to video story for Facebook Page post ID ${post.id}`);
-          publishRes = await publishVideoStoryToFacebook(account.facebook_page_id, decryptedToken, {
-            videoUrl: publicUrl
-          });
-        }
+        console.log(`[BackgroundPublish] Publishing video story to Facebook Page for post ID ${post.id}`);
+        publishRes = await publishVideoStoryToFacebook(pageId, decryptedToken, {
+          videoUrl: publicUrl
+        });
       }
 
       if (publishRes && publishRes.success) {

@@ -967,6 +967,9 @@ function getBrandGradient(brandName) {
 }
 
 async function generateStoryCard(postId, slideNum, brandName, slideText, req = null) {
+  if (process.env.TEST_PUBLIC_STORY_IMAGE === 'true') {
+    return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1080&q=80';
+  }
   try {
     const image = new Jimp(1080, 1920, 0x000000FF);
     const colors = getBrandGradient(brandName);
@@ -1163,7 +1166,7 @@ function resolvePublicUrl(url, req = null, forcePublic = false) {
         }
 
         // Fallbacks to prevent broken links on the frontend
-        if (transcodedMatch && !transcodedExists) {
+        if (!forcePublic && transcodedMatch && !transcodedExists) {
           // Return the Google Drive link so the dashboard can render it in the iframe preview
           return `https://drive.google.com/file/d/${healFileId}/view`;
         }
@@ -1245,6 +1248,44 @@ async function publishVideoStoryToFacebook(pageId, pageAccessToken, { videoUrl }
     return { success: true, post_id: finishRes.data.id || video_id };
   } catch (err) {
     console.error('Facebook video story publishing failed:', err.response?.data || err.message);
+    throw new Error(err.response?.data?.error?.message || err.message);
+  }
+}
+
+// Facebook Reel Publishing
+async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl }) {
+  try {
+    const initRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, {
+      upload_phase: 'start',
+      access_token: pageAccessToken
+    });
+    const { video_id, upload_url } = initRes.data;
+    if (!video_id || !upload_url) {
+      throw new Error("Failed to initialize Facebook Reels session.");
+    }
+    console.log(`Facebook Reel session initialized: video_id = ${video_id}`);
+
+    await axios.post(upload_url, null, {
+      headers: {
+        'file_url': videoUrl,
+        'Authorization': `OAuth ${pageAccessToken}`
+      }
+    });
+    console.log(`Facebook Reel upload completed for video_id = ${video_id}`);
+
+    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, null, {
+      params: {
+        upload_phase: 'finish',
+        video_id: video_id,
+        video_state: 'PUBLISHED',
+        description: caption,
+        access_token: pageAccessToken
+      }
+    });
+
+    return { success: true, post_id: finishRes.data.id || video_id };
+  } catch (err) {
+    console.error('Facebook Reels publishing failed:', err.response?.data || err.message);
     throw new Error(err.response?.data?.error?.message || err.message);
   }
 }
@@ -1492,57 +1533,80 @@ async function publishPost(req, res) {
     }
     const post = postRes.rows[0];
 
-    // Fetch or seed publish_queue jobs
-    let { rows: jobs } = await pool.query(
-      "SELECT * FROM publish_queue WHERE content_id = $1 AND status IN ('pending', 'failed')",
-      [post.id]
-    );
+    // 1. Resolve currently selected platforms/channels
+    let platforms = [];
+    
+    if (Array.isArray(post.selected_channels) && post.selected_channels.length > 0) {
+      platforms = post.selected_channels;
+    } else if (typeof post.selected_channels === 'string' && post.selected_channels.trim()) {
+      try {
+        const parsed = JSON.parse(post.selected_channels);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          platforms = parsed;
+        }
+      } catch (e) {}
+    }
 
-    if (jobs.length === 0) {
-      console.log(`No jobs found in publish_queue for post ID ${post.id}. Initializing from platforms...`);
-      let platforms = [];
-      
-      if (Array.isArray(post.selected_channels) && post.selected_channels.length > 0) {
-        platforms = post.selected_channels;
-      } else if (typeof post.selected_channels === 'string' && post.selected_channels.trim()) {
+    if (platforms.length === 0) {
+      if (Array.isArray(post.platforms) && post.platforms.length > 0) {
+        platforms = post.platforms;
+      } else if (typeof post.platforms === 'string' && post.platforms.trim()) {
         try {
-          const parsed = JSON.parse(post.selected_channels);
+          const parsed = JSON.parse(post.platforms);
           if (Array.isArray(parsed) && parsed.length > 0) {
             platforms = parsed;
           }
         } catch (e) {}
       }
+    }
 
-      if (platforms.length === 0) {
-        if (Array.isArray(post.platforms) && post.platforms.length > 0) {
-          platforms = post.platforms;
-        } else if (typeof post.platforms === 'string' && post.platforms.trim()) {
-          try {
-            const parsed = JSON.parse(post.platforms);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              platforms = parsed;
-            }
-          } catch (e) {}
-        }
-      }
+    // Normalize platforms (e.g. 'instagram' -> 'instagram_post', 'facebook' -> 'facebook_post')
+    const activeChannels = platforms.map(platform => {
+      let normalizedChannel = platform.toLowerCase();
+      if (normalizedChannel === 'instagram') normalizedChannel = 'instagram_post';
+      if (normalizedChannel === 'facebook') normalizedChannel = 'facebook_post';
+      return normalizedChannel;
+    });
 
-      for (const platform of platforms) {
-        let normalizedChannel = platform.toLowerCase();
-        if (normalizedChannel === 'instagram') normalizedChannel = 'instagram_post';
-        if (normalizedChannel === 'facebook') normalizedChannel = 'facebook_post';
+    // 2. Fetch all existing jobs for this post
+    const existingJobsRes = await pool.query(
+      "SELECT * FROM publish_queue WHERE content_id = $1",
+      [post.id]
+    );
+    const existingJobs = existingJobsRes.rows;
 
+    // 3. Delete non-success jobs that are NOT in activeChannels (clean up deselected channels)
+    const jobsToDelete = existingJobs.filter(job => {
+      return job.status !== 'success' && !activeChannels.includes(job.channel);
+    });
+
+    if (jobsToDelete.length > 0) {
+      const deleteIds = jobsToDelete.map(j => j.id);
+      await pool.query(
+        "DELETE FROM publish_queue WHERE id = ANY($1)",
+        [deleteIds]
+      );
+    }
+
+    // 4. Ensure a pending job exists for all activeChannels that do NOT already have a 'success' job
+    for (const channel of activeChannels) {
+      const hasSuccessJob = existingJobs.some(job => job.channel === channel && job.status === 'success');
+      if (!hasSuccessJob) {
+        // Upsert to ensure it exists with status 'pending' (failed ones are reset to pending to allow retry)
         await pool.query(`
           INSERT INTO publish_queue (content_id, brand_name, channel, status)
           VALUES ($1, $2, $3, 'pending')
-          ON CONFLICT (content_id, channel) DO NOTHING
-        `, [post.id, post.brand_name, normalizedChannel]);
+          ON CONFLICT (content_id, channel) 
+          DO UPDATE SET status = 'pending', updated_at = NOW(), error_message = NULL
+        `, [post.id, post.brand_name, channel]);
       }
-      const refetch = await pool.query(
-        "SELECT * FROM publish_queue WHERE content_id = $1 AND status IN ('pending', 'failed')",
-        [post.id]
-      );
-      jobs = refetch.rows;
     }
+
+    // 5. Fetch all pending or failed jobs to process
+    let { rows: jobs } = await pool.query(
+      "SELECT * FROM publish_queue WHERE content_id = $1 AND status IN ('pending', 'failed')",
+      [post.id]
+    );
 
     if (!jobs || jobs.length === 0) {
       return res.status(400).json({ success: false, error: 'No platforms selected for this post' });
@@ -1676,7 +1740,7 @@ async function publishPost(req, res) {
           if (!account.facebook_page_id) {
             throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
           }
-          publishRes = await publishToFacebookPage(account.facebook_page_id, decryptedToken, {
+          publishRes = await publishReelToFacebook(account.facebook_page_id, decryptedToken, {
             caption: finalCaption,
             videoUrl: publicUrl
           });

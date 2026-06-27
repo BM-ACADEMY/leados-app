@@ -21,8 +21,10 @@ class LeadOSAPI {
   }
 
   async request(endpoint, options = {}) {
+    const dataMode = localStorage.getItem('leados_data_mode') || 'live';
     const headers = {
       'Content-Type': 'application/json',
+      'x-data-mode': dataMode,
       ...options.headers,
     };
 
@@ -40,7 +42,14 @@ class LeadOSAPI {
       window.location.href = '/login';
     }
 
-    const data = await response.json();
+    const text = await response.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (e) {
+      console.error('API Error: Non-JSON response:', text);
+      throw new Error('Received invalid data from server');
+    }
 
     if (!response.ok) {
       throw new Error(data.error || 'API Error');
@@ -50,17 +59,35 @@ class LeadOSAPI {
   }
 
   async get(endpoint, options = {}) {
-    return this.request(endpoint, { ...options, method: 'GET' });
+    const path = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
+    return this.request(path, { ...options, method: 'GET' });
   }
 
   async post(endpoint, body, options = {}) {
-    return this.request(endpoint, {
+    const path = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
+    return this.request(path, {
       ...options,
       method: 'POST',
       body: JSON.stringify(body)
     });
   }
 
+  async put(endpoint, body, options = {}) {
+    const path = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
+    return this.request(path, {
+      ...options,
+      method: 'PUT',
+      body: JSON.stringify(body)
+    });
+  }
+
+  async delete(endpoint, options = {}) {
+    const path = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
+    return this.request(path, {
+      ...options,
+      method: 'DELETE'
+    });
+  }
   // ─── AUTH ───────────────────────────────
   async login(email, password) {
     const data = await this.request('/api/auth/login', {

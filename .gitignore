@@ -23,6 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 server/env.example
+server/data/gsc_tokens.json
+server/data/
 
 
 

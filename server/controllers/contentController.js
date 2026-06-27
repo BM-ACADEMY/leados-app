@@ -333,6 +333,7 @@ function safeJsonValue(val) {
 // ---------------------------------------------------------------
 async function updateContent(req, res) {
   const { id } = req.params;
+  console.log(`[updateContent] Received update request for ID ${id}. Body:`, JSON.stringify(req.body));
   const allowed = [
     "caption", "x_caption", "linkedin_caption", "thumbnail_title", "scheduled_at", 
     "platforms", "selected_channels", "selected_accounts", "video_url", "public_video_url", "description", "hashtags", 
@@ -371,6 +372,7 @@ async function updateContent(req, res) {
   }
 
   try {
+    console.log(`[updateContent] Running query: UPDATE content_queue SET ${sets.join(", ")} WHERE id = ${id}. Params:`, JSON.stringify(params));
     const { rows } = await pool.query(
       `UPDATE content_queue SET ${sets.join(", ")} WHERE id = $1 RETURNING ${CONTENT_COLUMNS}`,
       params
@@ -1584,19 +1586,21 @@ async function publishPost(req, res) {
             ? JSON.parse(post.selected_accounts)
             : post.selected_accounts;
           
-          if (sel[channel] !== undefined) {
-            selectedAccIds = sel[channel];
-          } else if (sel[accountPlatform] !== undefined) {
-            selectedAccIds = sel[accountPlatform];
+          if (sel && typeof sel === 'object' && !Array.isArray(sel)) {
+            if (sel[channel] !== undefined) {
+              selectedAccIds = sel[channel];
+            } else if (sel[accountPlatform] !== undefined) {
+              selectedAccIds = sel[accountPlatform];
+            }
           }
         } catch (e) {
           console.warn("Failed to parse selected_accounts JSON:", e.message);
         }
       }
 
-      // If explicitly unchecked (empty array), skip and fail publishing for this channel
-      if (selectedAccIds !== null && Array.isArray(selectedAccIds) && selectedAccIds.length === 0) {
-        const errMsg = `No accounts were selected for publishing on channel ${channel}`;
+      // If no accounts selected (null, undefined, or empty array), fail publishing for this channel
+      if (!selectedAccIds || !Array.isArray(selectedAccIds) || selectedAccIds.length === 0) {
+        const errMsg = `No accounts selected for ${accountPlatform || channel}`;
         errors.push(errMsg);
         results.push({ platform: channel, status: 'failed', error: errMsg });
 
@@ -1617,16 +1621,11 @@ async function publishPost(req, res) {
         const isPlatMatch = acc.platform.toLowerCase() === accountPlatform;
         if (!isPlatMatch || !acc.access_token) return false;
         
-        if (selectedAccIds && Array.isArray(selectedAccIds) && selectedAccIds.length > 0) {
-          return selectedAccIds.includes(acc.account_id) || selectedAccIds.includes(String(acc.account_id));
-        }
-        return true;
+        return selectedAccIds.includes(acc.account_id) || selectedAccIds.includes(String(acc.account_id));
       });
 
       if (!account) {
-        const errMsg = selectedAccIds && Array.isArray(selectedAccIds) && selectedAccIds.length > 0
-          ? `Selected social account(s) not found or inactive for brand ${post.brand_name} on platform ${channel}`
-          : `No active account or access token found for brand ${post.brand_name} on platform ${channel}`;
+        const errMsg = `Selected social account(s) not found or inactive for brand ${post.brand_name} on platform ${channel}`;
         errors.push(errMsg);
         results.push({ platform: channel, status: 'failed', error: errMsg });
 

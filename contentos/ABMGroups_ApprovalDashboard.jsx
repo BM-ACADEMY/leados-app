@@ -124,7 +124,7 @@ export default function ApprovalDashboard() {
       thumbnail_title: item.thumbnail_title,
       scheduled_at: item.scheduled_at,
       platforms: [...(item.platforms || [])],
-      selected_accounts: item.selected_accounts ? { ...item.selected_accounts } : {},
+      selected_accounts: item.selected_accounts && !Array.isArray(item.selected_accounts) ? { ...item.selected_accounts } : {},
       story_1: item.story_1 || "",
       story_2: item.story_2 || "",
       story_3: item.story_3 || "",
@@ -190,8 +190,15 @@ export default function ApprovalDashboard() {
 
   function toggleAccount(platform, accountId) {
     setEditValues(prev => {
+      let normalizedPlatform = platform;
+      if (platform.includes('instagram')) {
+        normalizedPlatform = 'instagram';
+      } else if (platform.includes('facebook')) {
+        normalizedPlatform = 'facebook';
+      }
+      
       const current = prev.selected_accounts || {};
-      const platAccounts = current[platform] || [];
+      const platAccounts = current[normalizedPlatform] || [];
       const isSelected = platAccounts.includes(accountId);
       
       const newPlatAccounts = isSelected 
@@ -202,7 +209,7 @@ export default function ApprovalDashboard() {
         ...prev,
         selected_accounts: {
           ...current,
-          [platform]: newPlatAccounts
+          [normalizedPlatform]: newPlatAccounts
         }
       };
     });
@@ -567,9 +574,16 @@ export default function ApprovalDashboard() {
                             <div style={{ padding: "8px 12px", background: "#fff", borderTop: "1px dashed #E5E4F0", display: "flex", flexDirection: "column", gap: 6 }}>
                               <div style={{ fontSize: 10, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase" }}>Select Accounts</div>
                               {brandAccounts.map(acc => {
+                                const checkIsAccSelected = (accs) => {
+                                  if (!accs) return false;
+                                  if ((accs[key] || []).includes(acc.account_id)) return true;
+                                  if (key.includes('instagram') && (accs['instagram'] || []).includes(acc.account_id)) return true;
+                                  if (key.includes('facebook') && (accs['facebook'] || []).includes(acc.account_id)) return true;
+                                  return false;
+                                };
                                 const isAccSelected = editMode 
-                                  ? (editValues.selected_accounts?.[key] || []).includes(acc.account_id)
-                                  : (selected.selected_accounts?.[key] || []).includes(acc.account_id);
+                                  ? checkIsAccSelected(editValues.selected_accounts)
+                                  : checkIsAccSelected(selected.selected_accounts);
                                 
                                 return (
                                   <div key={acc.account_id} 

@@ -68,7 +68,7 @@ function parseItemJsonFields(item) {
       }
     }
   }
-  if (!parsed.selected_accounts || typeof parsed.selected_accounts !== 'object') {
+  if (!parsed.selected_accounts || typeof parsed.selected_accounts !== 'object' || Array.isArray(parsed.selected_accounts)) {
     parsed.selected_accounts = {};
   }
   if (!parsed.platforms || !Array.isArray(parsed.platforms)) {
@@ -479,8 +479,15 @@ export default function ApprovalDashboard() {
 
   function toggleAccount(platform, accountId) {
     setEditValues(prev => {
+      let normalizedPlatform = platform;
+      if (platform.includes('instagram')) {
+        normalizedPlatform = 'instagram';
+      } else if (platform.includes('facebook')) {
+        normalizedPlatform = 'facebook';
+      }
+      
       const current = prev.selected_accounts || {};
-      const platAccounts = current[platform] || [];
+      const platAccounts = current[normalizedPlatform] || [];
       const isSelected = platAccounts.includes(accountId);
       
       const newPlatAccounts = isSelected 
@@ -491,7 +498,7 @@ export default function ApprovalDashboard() {
         ...prev,
         selected_accounts: {
           ...current,
-          [platform]: newPlatAccounts
+          [normalizedPlatform]: newPlatAccounts
         }
       };
     });
@@ -1399,9 +1406,16 @@ export default function ApprovalDashboard() {
                             <div style={{ padding: "8px 12px", background: "#fff", borderTop: "1px dashed #E5E4F0", display: "flex", flexDirection: "column", gap: 6 }}>
                               <div style={{ fontSize: 10, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase" }}>Select Accounts</div>
                               {brandAccounts.map(acc => {
+                                const checkIsAccSelected = (accs) => {
+                                  if (!accs) return false;
+                                  if ((accs[key] || []).includes(acc.account_id)) return true;
+                                  if (key.includes('instagram') && (accs['instagram'] || []).includes(acc.account_id)) return true;
+                                  if (key.includes('facebook') && (accs['facebook'] || []).includes(acc.account_id)) return true;
+                                  return false;
+                                };
                                 const isAccSelected = editMode 
-                                  ? ((editValues.selected_accounts?.[key] || []).includes(acc.account_id) || (key === 'instagram_post' && (editValues.selected_accounts?.['instagram'] || []).includes(acc.account_id)) || (key === 'facebook_post' && (editValues.selected_accounts?.['facebook'] || []).includes(acc.account_id)))
-                                  : ((selected.selected_accounts?.[key] || []).includes(acc.account_id) || (key === 'instagram_post' && (selected.selected_accounts?.['instagram'] || []).includes(acc.account_id)) || (key === 'facebook_post' && (selected.selected_accounts?.['facebook'] || []).includes(acc.account_id)));
+                                  ? checkIsAccSelected(editValues.selected_accounts)
+                                  : checkIsAccSelected(selected.selected_accounts);
                                 
                                 return (
                                   <div key={acc.account_id} 

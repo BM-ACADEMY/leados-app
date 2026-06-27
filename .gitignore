@@ -31,3 +31,5 @@ server/credentials/*.json
 
 # Environment files and uploads
 server/.env
+# Generated uploads
+server/uploads/

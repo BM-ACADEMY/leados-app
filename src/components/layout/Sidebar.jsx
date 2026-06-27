@@ -30,7 +30,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
       try {
         const token = localStorage.getItem('leados_token');
         const API_URL = import.meta.env.VITE_API_URL || '';
-        const res = await fetch(`${API_URL}/api/thedal/rankdropalert/count`, {
+        const url = activeClient 
+          ? `${API_URL}/api/thedal/rankdropalert/count?client=${encodeURIComponent(activeClient.business_name || activeClient.client_name)}`
+          : `${API_URL}/api/thedal/rankdropalert/count`;
+        const res = await fetch(url, {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (res.ok) {
@@ -42,7 +45,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
     fetchRankDropCount();
     const interval = setInterval(fetchRankDropCount, 5 * 60 * 1000); // every 5 mins
     return () => clearInterval(interval);
-  }, []);
+  }, [activeClient]);
 
   useEffect(() => {
     const handleResize = () => {

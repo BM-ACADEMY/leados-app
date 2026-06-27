@@ -74,8 +74,17 @@ router.post('/refresh/:id', async (req, res) => {
   
   try {
     const apiKey = process.env.SERPER_API_KEY || process.env.SERP_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: 'SERPER_API_KEY is missing in environment variables.' });
+    const isDemo = req.headers['x-data-mode'] === 'demo' || !apiKey;
+
+    if (isDemo) {
+      // Simulate rank search
+      const rank = Math.random() > 0.15 ? Math.floor(Math.random() * 20) + 1 : null;
+      item.previousRank = item.currentRank;
+      item.currentRank = rank;
+      item.lastChecked = new Date().toISOString();
+      keywords[itemIndex] = item;
+      saveKeywords(keywords);
+      return res.json(item);
     }
 
     const response = await axios.post('https://google.serper.dev/search', {

@@ -21,8 +21,10 @@ class LeadOSAPI {
   }
 
   async request(endpoint, options = {}) {
+    const dataMode = localStorage.getItem('leados_data_mode') || 'live';
     const headers = {
       'Content-Type': 'application/json',
+      'x-data-mode': dataMode,
       ...options.headers,
     };
 

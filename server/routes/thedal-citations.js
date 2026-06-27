@@ -51,28 +51,39 @@ router.post('/scan', async (req, res) => {
 
   const dfsLogin = process.env.DATAFORSEO_LOGIN;
   const dfsPass = process.env.DATAFORSEO_PASSWORD;
-  const auth = Buffer.from(`${dfsLogin}:${dfsPass}`).toString('base64');
+  const useDemoMode = req.headers['x-data-mode'] === 'demo' || !dfsLogin || !dfsPass;
 
   try {
-    const q = address ? `${businessName} ${address}` : businessName;
-    const postData = [{
-      keyword: q,
-      language_code: "en",
-      location_name: "United States" // Required by DataForSEO, can be broad
-    }];
-    
-    const response = await axios({
-      method: 'post',
-      url: 'https://api.dataforseo.com/v3/serp/google/maps/live/advanced',
-      data: postData,
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    const items = response.data.tasks[0]?.result[0]?.items;
-    const place = items && items.length > 0 ? items[0] : null;
+    let place = null;
+    if (useDemoMode) {
+      place = {
+        title: businessName,
+        phone: phone || '+91 98765 43210',
+        address: address || '123 Business Lane, Pondicherry'
+      };
+      console.log(`Demo Mode active: Generated GBP details for local citations: ${businessName}`);
+    } else {
+      const auth = Buffer.from(`${dfsLogin}:${dfsPass}`).toString('base64');
+      const q = address ? `${businessName} ${address}` : businessName;
+      const postData = [{
+        keyword: q,
+        language_code: "en",
+        location_name: "United States" // Required by DataForSEO, can be broad
+      }];
+      
+      const response = await axios({
+        method: 'post',
+        url: 'https://api.dataforseo.com/v3/serp/google/maps/live/advanced',
+        data: postData,
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      const items = response.data.tasks[0]?.result[0]?.items;
+      place = items && items.length > 0 ? items[0] : null;
+    }
     
     const citations = [];
     let accurateCount = 0;

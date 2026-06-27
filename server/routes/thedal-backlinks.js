@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const { Pool } = require('pg');
+const axios = require('axios');
 
 const pool = new Pool({
   host:     process.env.DB_HOST || 'localhost',
@@ -42,44 +43,232 @@ ensureTable();
 
 // Helper to generate mock backlink data for a domain
 function generateMockBacklinks(domain) {
+  const cleanDomain = domain.toLowerCase().replace(/^(?:https?:\/\/)?(?:www\.)?/i, "").split('/')[0];
+  
   const sources = [
-    { name: 'Wikipedia', root: 'wikipedia.org', maxDr: 98, minDr: 95 },
-    { name: 'Medium', root: 'medium.com', maxDr: 95, minDr: 85 },
-    { name: 'TechCrunch', root: 'techcrunch.com', maxDr: 92, minDr: 80 },
-    { name: 'GitHub', root: 'github.com', maxDr: 96, minDr: 90 },
-    { name: 'Forbes', root: 'forbes.com', maxDr: 94, minDr: 85 },
-    { name: 'Reddit', root: 'reddit.com', maxDr: 93, minDr: 75 },
-    { name: 'Local Directory', root: 'localdirectory.org', maxDr: 50, minDr: 30 },
-    { name: 'Industry Blog', root: 'industry-blog.net', maxDr: 60, minDr: 40 },
-    { name: 'News Outlet', root: 'daily-news.com', maxDr: 75, minDr: 60 },
-    { name: 'Partner Site', root: 'partner-agency.io', maxDr: 65, minDr: 45 },
+    { 
+      name: 'Wikipedia', 
+      root: 'en.wikipedia.org', 
+      maxDr: 98, 
+      minDr: 95,
+      urls: [
+        'https://en.wikipedia.org/wiki/B2B_e-commerce',
+        'https://en.wikipedia.org/wiki/Export',
+        'https://en.wikipedia.org/wiki/Trade',
+        'https://en.wikipedia.org/wiki/Wholesaling',
+        'https://en.wikipedia.org/wiki/International_trade',
+        'https://en.wikipedia.org/wiki/Global_marketing',
+        'https://en.wikipedia.org/wiki/Supply_chain_management',
+        'https://en.wikipedia.org/wiki/E-commerce'
+      ]
+    },
+    { 
+      name: 'Medium', 
+      root: 'medium.com', 
+      maxDr: 95, 
+      minDr: 85,
+      urls: [
+        'https://medium.com/topic/business',
+        'https://medium.com/topic/marketing',
+        'https://medium.com/topic/technology',
+        'https://medium.com/tag/b2b-marketing',
+        'https://medium.com/tag/seo',
+        'https://medium.com/tag/business-strategy',
+        'https://medium.com/tag/entrepreneurship'
+      ]
+    },
+    { 
+      name: 'TechCrunch', 
+      root: 'techcrunch.com', 
+      maxDr: 92, 
+      minDr: 80,
+      urls: [
+        'https://techcrunch.com/category/startups/',
+        'https://techcrunch.com/category/enterprise/',
+        'https://techcrunch.com/category/marketing/',
+        'https://techcrunch.com/category/funding/',
+        'https://techcrunch.com/category/artificial-intelligence/'
+      ]
+    },
+    { 
+      name: 'GitHub', 
+      root: 'github.com', 
+      maxDr: 96, 
+      minDr: 90,
+      urls: [
+        'https://github.com/trending',
+        'https://github.com/topics/seo',
+        'https://github.com/topics/b2b',
+        'https://github.com/topics/marketing',
+        'https://github.com/collections/clean-code'
+      ]
+    },
+    { 
+      name: 'Forbes', 
+      root: 'forbes.com', 
+      maxDr: 94, 
+      minDr: 85,
+      urls: [
+        'https://www.forbes.com/business/',
+        'https://www.forbes.com/leadership/',
+        'https://www.forbes.com/innovation/',
+        'https://www.forbes.com/lists/',
+        'https://www.forbes.com/money/',
+        'https://www.forbes.com/small-business/'
+      ]
+    },
+    { 
+      name: 'Reddit', 
+      root: 'reddit.com', 
+      maxDr: 93, 
+      minDr: 75,
+      urls: [
+        'https://www.reddit.com/r/SEO/',
+        'https://www.reddit.com/r/marketing/',
+        'https://www.reddit.com/r/business/',
+        'https://www.reddit.com/r/startups/',
+        'https://www.reddit.com/r/ecommerce/'
+      ]
+    },
+    { 
+      name: 'Yellow Pages', 
+      root: 'yellowpages.com', 
+      maxDr: 88, 
+      minDr: 70,
+      urls: [
+        'https://www.yellowpages.com/',
+        'https://www.yellowpages.com/about',
+        'https://www.yellowpages.com/contact'
+      ]
+    },
+    { 
+      name: 'HubSpot', 
+      root: 'hubspot.com', 
+      maxDr: 92, 
+      minDr: 80,
+      urls: [
+        'https://www.hubspot.com/resources',
+        'https://blog.hubspot.com/',
+        'https://blog.hubspot.com/marketing',
+        'https://blog.hubspot.com/sales'
+      ]
+    },
+    { 
+      name: 'Shopify Blog', 
+      root: 'shopify.com', 
+      maxDr: 94, 
+      minDr: 80,
+      urls: [
+        'https://www.shopify.com/blog',
+        'https://www.shopify.com/blog/topics/marketing',
+        'https://www.shopify.com/blog/topics/seo'
+      ]
+    },
+    { 
+      name: 'New York Times', 
+      root: 'nytimes.com', 
+      maxDr: 95, 
+      minDr: 85,
+      urls: [
+        'https://www.nytimes.com/section/business',
+        'https://www.nytimes.com/section/technology',
+        'https://www.nytimes.com/section/world'
+      ]
+    },
   ];
 
-  const totalLinks = Math.floor(Math.random() * 40) + 15; // 15 to 55 links
+  let totalLinks, referringDomains, dofollowRatio, domainAuthority;
+  const isExportersIndia = cleanDomain === 'exportersindia.com';
+
+  if (isExportersIndia) {
+    totalLinks = 1724530;
+    referringDomains = 40230;
+    dofollowRatio = 76;
+    domainAuthority = 81;
+  } else {
+    // Generate randomized metrics for other domains
+    const baseLinks = Math.floor(Math.random() * 40) + 15;
+    totalLinks = baseLinks + Math.floor(Math.random() * 1000);
+    referringDomains = Math.floor(baseLinks * 0.7) + Math.floor(Math.random() * 200);
+    dofollowRatio = Math.floor(Math.random() * 30) + 50;
+    domainAuthority = Math.floor(Math.random() * 40) + 20;
+  }
+
+  // Generate sample links for the table (e.g., 50 for exportersindia or 20-30 for others)
+  const linksCount = isExportersIndia ? 80 : (Math.floor(Math.random() * 30) + 20);
   const links = [];
-  let dofollowCount = 0;
 
-  for (let i = 0; i < totalLinks; i++) {
+  // Custom targets for exportersindia
+  const exportersIndiaTargets = [
+    `https://www.exportersindia.com/`,
+    `https://www.exportersindia.com/indian-manufacturers.html`,
+    `https://www.exportersindia.com/suppliers/`,
+    `https://www.exportersindia.com/apparel-fashion.htm`,
+    `https://www.exportersindia.com/machinery-equipment.htm`
+  ];
+
+  // Custom anchors for exportersindia
+  const exportersIndiaAnchors = [
+    'Exporters India',
+    'Indian Exporters B2B Marketplace',
+    'exportersindia.com',
+    'B2B Directory',
+    'Indian exporters list',
+    'Indian Manufacturers & Suppliers',
+    'B2B Portal',
+    'Indian Trade Directory'
+  ];
+
+  for (let i = 0; i < linksCount; i++) {
     const source = sources[Math.floor(Math.random() * sources.length)];
-    const isDofollow = Math.random() > 0.35; // 65% chance of dofollow
-    if (isDofollow) dofollowCount++;
+    const isDofollow = Math.random() < (dofollowRatio / 100);
 
-    const dr = Math.floor(Math.random() * (source.maxDr - source.minDr + 1)) + source.minDr;
+    const dr = isExportersIndia && source.maxDr > 80
+      ? Math.floor(Math.random() * (source.maxDr - 82 + 1)) + 82
+      : Math.floor(Math.random() * (source.maxDr - source.minDr + 1)) + source.minDr;
     
-    // Randomise anchor text
-    const anchors = [domain, `Visit ${domain}`, 'Click here', 'Website', 'Source', 'Read more', 'Official Site'];
-    const anchor = anchors[Math.floor(Math.random() * anchors.length)];
+    // URL Rating (UR) is generally lower than DR
+    const ur = Math.max(5, Math.min(100, Math.floor(dr * 0.65) + Math.floor(Math.random() * 12)));
 
-    // Randomise status
-    const status = Math.random() > 0.1 ? 'Active' : 'Lost';
+    // Referring domains of the referring page
+    const refDomainsCount = Math.floor(Math.random() * 18) + 1;
+
+    // Linked external domains from the referring page
+    const linkedDomainsCount = Math.floor(Math.random() * 80) + 10;
+
+    // Target URL
+    let targetUrl = `https://www.${cleanDomain}/`;
+    if (isExportersIndia) {
+      targetUrl = exportersIndiaTargets[Math.floor(Math.random() * exportersIndiaTargets.length)];
+    } else if (Math.random() > 0.5) {
+      targetUrl = `https://www.${cleanDomain}/product-item-${Math.floor(Math.random() * 100)}.html`;
+    }
+
+    // Anchor text
+    let anchor = '';
+    if (isExportersIndia) {
+      anchor = exportersIndiaAnchors[Math.floor(Math.random() * exportersIndiaAnchors.length)];
+    } else {
+      const anchors = [cleanDomain, `Visit ${cleanDomain}`, 'Click here', 'Website', 'Source', 'Read more', 'Official Site'];
+      anchor = anchors[Math.floor(Math.random() * anchors.length)];
+    }
+
+    const status = Math.random() > 0.08 ? 'Active' : 'Lost';
+    const sourceUrl = source.urls[Math.floor(Math.random() * source.urls.length)];
 
     links.push({
       id: i + 1,
-      sourceUrl: `https://${source.root}/article-${Math.floor(Math.random() * 10000)}`,
-      sourceTitle: `${source.name} - Mention of ${domain}`,
+      sourceUrl: sourceUrl,
+      sourceTitle: isExportersIndia 
+        ? `${source.name} - Directory profile of ExportersIndia` 
+        : `${source.name} - Mention of ${cleanDomain}`,
       anchorText: anchor,
+      targetUrl: targetUrl,
       type: isDofollow ? 'Dofollow' : 'Nofollow',
       dr: dr,
+      ur: ur,
+      refDomains: refDomainsCount,
+      linkedDomains: linkedDomainsCount,
       status: status,
       firstSeen: new Date(Date.now() - Math.floor(Math.random() * 10000000000)).toISOString().split('T')[0],
     });
@@ -89,28 +278,150 @@ function generateMockBacklinks(domain) {
   links.sort((a, b) => b.dr - a.dr);
 
   const metrics = {
-    totalBacklinks: totalLinks + Math.floor(Math.random() * 1000), // inflate total for realism
-    referringDomains: Math.floor(totalLinks * 0.7) + Math.floor(Math.random() * 200),
-    dofollowRatio: Math.round((dofollowCount / totalLinks) * 100),
-    domainAuthority: Math.floor(Math.random() * 40) + 20, // 20 to 60
+    totalBacklinks: totalLinks,
+    referringDomains: referringDomains,
+    dofollowRatio: dofollowRatio,
+    domainAuthority: domainAuthority,
   };
+
+  return { metrics, links };
+}
+
+// Helper to fetch live backlinks from DataForSEO
+async function fetchLiveBacklinks(domain, mode = 'subdomains') {
+  const dfsLogin = process.env.DATAFORSEO_LOGIN;
+  const dfsPass = process.env.DATAFORSEO_PASSWORD;
+  
+  if (!dfsLogin || !dfsPass) {
+    throw new Error('DataForSEO credentials not configured in environment');
+  }
+
+  const auth = Buffer.from(`${dfsLogin}:${dfsPass}`).toString('base64');
+  const cleanDomain = domain.toLowerCase().replace(/^(?:https?:\/\/)?(?:www\.)?/i, "").split('/')[0];
+
+  // 1. Call summary API
+  const summaryRes = await axios({
+    method: 'post',
+    url: 'https://api.dataforseo.com/v3/backlinks/summary/live',
+    data: [{
+      target: cleanDomain,
+      include_subdomains: mode !== 'exact'
+    }],
+    headers: {
+      'Authorization': `Basic ${auth}`,
+      'Content-Type': 'application/json'
+    },
+    timeout: 8000
+  });
+
+  // 2. Call backlinks list API
+  const listRes = await axios({
+    method: 'post',
+    url: 'https://api.dataforseo.com/v3/backlinks/backlinks/live',
+    data: [{
+      target: cleanDomain,
+      mode: 'as_is',
+      limit: 50,
+      include_subdomains: mode !== 'exact'
+    }],
+    headers: {
+      'Authorization': `Basic ${auth}`,
+      'Content-Type': 'application/json'
+    },
+    timeout: 8000
+  });
+
+  // Parse Summary
+  const summaryTask = summaryRes.data?.tasks?.[0];
+  if (!summaryTask || summaryTask.status_code !== 20000) {
+    throw new Error(`Summary API error: ${summaryTask?.status_message || 'Unknown error'}`);
+  }
+  const summaryResult = summaryTask.result?.[0];
+  if (!summaryResult) {
+    throw new Error('Summary API returned empty results');
+  }
+
+  // Parse List
+  const listTask = listRes.data?.tasks?.[0];
+  if (!listTask || listTask.status_code !== 20000) {
+    throw new Error(`List API error: ${listTask?.status_message || 'Unknown error'}`);
+  }
+  const listItems = listTask.result?.[0]?.items || [];
+
+  // Map to our expected metrics
+  const totalBacklinks = summaryResult.backlinks || 0;
+  const referringDomains = summaryResult.referring_domains || 0;
+  
+  // Calculate dofollow ratio
+  const dofollowCount = summaryResult.referring_links_attributes?.dofollow || 0;
+  const nofollowCount = summaryResult.referring_links_attributes?.nofollow || 0;
+  const totalLinksCount = dofollowCount + nofollowCount;
+  const dofollowRatio = totalLinksCount > 0 ? Math.round((dofollowCount / totalLinksCount) * 100) : 0;
+  
+  const rankVal = summaryResult.rank || 0;
+  const capRank = rankVal > 100 ? Math.round(Math.min(100, rankVal / 10)) : rankVal;
+
+  const metrics = {
+    totalBacklinks,
+    referringDomains,
+    dofollowRatio: dofollowRatio || 50,
+    domainAuthority: capRank || 1,
+  };
+
+  // Map items to our link format
+  const links = listItems.map((item, idx) => {
+    const targetUrl = item.url_to || `https://www.${cleanDomain}/`;
+    const dr = item.domain_from_rank 
+      ? (item.domain_from_rank > 100 ? Math.round(Math.min(100, item.domain_from_rank / 10)) : item.domain_from_rank)
+      : 1;
+    const ur = item.page_from_rank
+      ? (item.page_from_rank > 100 ? Math.round(Math.min(100, item.page_from_rank / 10)) : item.page_from_rank)
+      : 1;
+
+    const status = item.is_broken ? 'Lost' : 'Active';
+
+    return {
+      id: idx + 1,
+      sourceUrl: item.url_from,
+      sourceTitle: item.page_from_title || 'Untitled Referring Page',
+      anchorText: item.anchor || 'No anchor text',
+      targetUrl: targetUrl,
+      type: item.dofollow ? 'Dofollow' : 'Nofollow',
+      dr: dr || 1,
+      ur: ur || 1,
+      refDomains: item.referring_links_count || 1,
+      linkedDomains: item.external_links_count || 10,
+      status: status,
+      firstSeen: item.first_seen ? item.first_seen.split(' ')[0] : new Date().toISOString().split('T')[0],
+    };
+  });
 
   return { metrics, links };
 }
 
 // ── POST /scan ─────────────────────────────────────────────────────────────
 router.post('/scan', async (req, res) => {
-  const { domain } = req.body;
+  const { domain, mode } = req.body;
   if (!domain) {
     return res.status(400).json({ error: 'Domain is required' });
   }
 
-  try {
-    // Artificial delay to simulate API fetching
-    await new Promise(resolve => setTimeout(resolve, 1500));
+  const useDemoMode = req.headers['x-data-mode'] === 'demo';
 
-    // Generate mock data (until a real API like DataForSEO is hooked up)
-    const { metrics, links } = generateMockBacklinks(domain);
+  try {
+    let metrics, links;
+    if (useDemoMode) {
+      const mock = generateMockBacklinks(domain);
+      metrics = mock.metrics;
+      links = mock.links;
+      console.log(`Demo Mode active: Generated mock backlinks for: ${domain}`);
+    } else {
+      // Fetch live data directly from DataForSEO API
+      const liveData = await fetchLiveBacklinks(domain, mode);
+      metrics = liveData.metrics;
+      links = liveData.links;
+      console.log(`Successfully fetched live backlinks for: ${domain}`);
+    }
 
     // Save to DB
     await pool.query(
@@ -127,7 +438,7 @@ router.post('/scan', async (req, res) => {
 
   } catch (err) {
     console.error('Backlink scan error:', err);
-    return res.status(500).json({ error: 'Failed to scan backlinks.' });
+    return res.status(500).json({ error: err.message || 'Failed to scan backlinks.' });
   }
 });
 

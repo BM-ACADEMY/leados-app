@@ -18,6 +18,45 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 
+const getFriendlyGoogleError = (err) => {
+  if (!err) return { title: 'Google API Connection Error', desc: 'An unknown connection error occurred.' };
+  try {
+    const parsed = typeof err === 'string' ? JSON.parse(err) : err;
+    const errorObj = parsed?.error || parsed;
+    const code = errorObj?.code;
+    const message = errorObj?.message || '';
+
+    if (code === 429 || message.toLowerCase().includes('quota') || message.toLowerCase().includes('rate limit')) {
+      return {
+        title: 'Google API Rate Limit Exceeded',
+        desc: 'Google APIs have temporarily rate-limited requests for this account. Please wait a few minutes before trying again, or request a higher quota limit.'
+      };
+    }
+    if (code === 403 || message.toLowerCase().includes('permission') || message.toLowerCase().includes('access denied') || message.toLowerCase().includes('forbidden')) {
+      return {
+        title: 'Google Profile Access Forbidden',
+        desc: 'The authenticated Google account does not have the required Owner or Manager permissions to access the business reviews and insights. Please make sure the account is authorized.'
+      };
+    }
+    if (code === 401 || message.toLowerCase().includes('unauthorized') || message.toLowerCase().includes('token expired')) {
+      return {
+        title: 'Google Session Expired',
+        desc: 'Your Google Business Profile connection has expired. Please disconnect and re-authenticate your Google account.'
+      };
+    }
+
+    return {
+      title: `Google API Error (Status ${code || 'Unknown'})`,
+      desc: message || 'An unexpected issue occurred while communicating with Google Business Profile. Please try again later.'
+    };
+  } catch (e) {
+    return {
+      title: 'Google API Connection Error',
+      desc: typeof err === 'string' ? err : 'A connection error occurred.'
+    };
+  }
+};
+
 export default function LocalSeoBridge() {
   const { activeClient, clients } = useClient();
   const [loading, setLoading] = useState(true);
@@ -286,14 +325,22 @@ export default function LocalSeoBridge() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {data?._debug_google_error && (
-              <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', padding: 16, borderRadius: 8, color: '#fca5a5', fontSize: 14 }}>
-                <strong>Google API Connection Error:</strong> {JSON.stringify(data._debug_google_error)}
-                <div style={{ marginTop: 8, fontSize: 13, color: '#f87171' }}>
-                  We successfully authenticated your Google account, but Google's server blocked us from fetching the raw reviews. Please make sure the Google account you connected has Admin/Owner permissions to this Business Profile.
+            {data?._debug_google_error && (() => {
+              const friendly = getFriendlyGoogleError(data._debug_google_error);
+              return (
+                <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', padding: 18, borderRadius: 12, color: '#fca5a5', fontSize: 14, marginBottom: 20 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8, color: '#f87171', display: 'flex', alignItems: 'center', gap: 8, fontSize: 16 }}>
+                    ⚠️ {friendly.title}
+                  </div>
+                  <div style={{ marginBottom: 12, lineHeight: 1.5 }}>
+                    {friendly.desc}
+                  </div>
+                  <div style={{ fontSize: 13, color: '#f87171', borderTop: '1px dashed rgba(239, 68, 68, 0.2)', paddingTop: 10 }}>
+                    We successfully authenticated your Google account, but Google's server blocked us from fetching the raw reviews. Please make sure the Google account you connected has Admin/Owner permissions to this Business Profile.
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
             
             {data?.recentReviews.map(review => (
               <div key={review.id} style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 20 }}>

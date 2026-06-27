@@ -85,10 +85,37 @@ router.get('/auth/callback', async (req, res) => {
 
 // 4. Fetch Live Data from GSC
 router.get('/', async (req, res) => {
-  const { clientId = 'default', days = '28Days', device = 'All', country = 'All', siteUrl } = req.query;
+  const isDemo = req.headers['x-data-mode'] === 'demo';
+  const { clientId = 'default', days = '28Days', device = 'All', country = 'All', siteUrl, startDate: customStart, endDate: customEnd } = req.query;
 
   if (!siteUrl) {
     return res.status(400).json({ error: 'siteUrl is required (e.g., https://bmtechx.in/)' });
+  }
+
+  if (isDemo) {
+    return res.json({
+      metrics: {
+        clicks: 12450,
+        impressions: 145000,
+        ctr: 8.5,
+        position: 14.2
+      },
+      topQueries: [
+        { query: 'digital marketing agency', clicks: 1200, impressions: 15000, ctr: 8.0, position: 5.1 },
+        { query: 'seo services', clicks: 950, impressions: 12000, ctr: 7.9, position: 4.8 },
+        { query: 'web development company', clicks: 800, impressions: 10000, ctr: 8.0, position: 6.2 },
+        { query: 'local seo expert', clicks: 500, impressions: 5000, ctr: 10.0, position: 3.5 },
+        { query: 'social media management', clicks: 450, impressions: 8000, ctr: 5.6, position: 7.1 }
+      ],
+      topPages: [
+        { page: 'https://' + siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') + '/', clicks: 5000, impressions: 50000, ctr: 10.0, position: 5.5 },
+        { page: 'https://' + siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') + '/services/seo', clicks: 2500, impressions: 20000, ctr: 12.5, position: 3.2 },
+        { page: 'https://' + siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') + '/about-us', clicks: 1000, impressions: 15000, ctr: 6.6, position: 8.4 },
+        { page: 'https://' + siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') + '/blog/seo-tips', clicks: 800, impressions: 10000, ctr: 8.0, position: 4.5 },
+        { page: 'https://' + siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') + '/contact', clicks: 500, impressions: 5000, ctr: 10.0, position: 2.1 }
+      ],
+      isVerified: true
+    });
   }
 
   const allTokens = getTokens();
@@ -102,16 +129,31 @@ router.get('/', async (req, res) => {
     oauth2Client.setCredentials(clientTokens);
     const searchconsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
 
-    // Calculate dates based on data freshness (GSC is delayed by ~3 days)
-    const today = new Date();
-    today.setDate(today.getDate() - 3); 
-    const endDate = today.toISOString().split('T')[0];
-    
-    const startDateObj = new Date(today);
-    if (days === '7Days') startDateObj.setDate(startDateObj.getDate() - 7);
-    else if (days === '3Months') startDateObj.setDate(startDateObj.getDate() - 90);
-    else startDateObj.setDate(startDateObj.getDate() - 28); // Default 28 days
-    const startDate = startDateObj.toISOString().split('T')[0];
+    // Calculate dates based on data freshness (GSC is delayed by ~3 days, except for 24Hours/fresh data)
+    let startDate, endDate;
+    if (customStart && customEnd) {
+      startDate = customStart;
+      endDate = customEnd;
+    } else if (days === '24Hours') {
+      const todayObj = new Date();
+      endDate = todayObj.toISOString().split('T')[0];
+      const yesterdayObj = new Date();
+      yesterdayObj.setDate(yesterdayObj.getDate() - 1);
+      startDate = yesterdayObj.toISOString().split('T')[0];
+    } else {
+      const today = new Date();
+      today.setDate(today.getDate() - 3); 
+      endDate = today.toISOString().split('T')[0];
+      
+      const startDateObj = new Date(today);
+      if (days === '7Days') startDateObj.setDate(startDateObj.getDate() - 7);
+      else if (days === '3Months') startDateObj.setDate(startDateObj.getDate() - 90);
+      else if (days === '6Months') startDateObj.setDate(startDateObj.getDate() - 180);
+      else if (days === '12Months') startDateObj.setDate(startDateObj.getDate() - 365);
+      else if (days === '16Months') startDateObj.setDate(startDateObj.getDate() - 480);
+      else startDateObj.setDate(startDateObj.getDate() - 28); // Default 28 days
+      startDate = startDateObj.toISOString().split('T')[0];
+    }
 
     // Build dimensions and filters
     const dimensions = ['query'];
@@ -139,7 +181,7 @@ router.get('/', async (req, res) => {
       // 1. Try to Fetch Aggregated Metrics with primary URL
       metricsReq = await searchconsole.searchanalytics.query({
         siteUrl: activeSiteUrl,
-        requestBody: { startDate, endDate, dimensions: [], dimensionFilterGroups }
+        requestBody: { startDate, endDate, dimensions: [], dimensionFilterGroups, dataState: 'all' }
       });
     } catch (err) {
       if (err.code === 403 && fallbackSiteUrl) {
@@ -147,7 +189,7 @@ router.get('/', async (req, res) => {
         try {
           metricsReq = await searchconsole.searchanalytics.query({
             siteUrl: fallbackSiteUrl,
-            requestBody: { startDate, endDate, dimensions: [], dimensionFilterGroups }
+            requestBody: { startDate, endDate, dimensions: [], dimensionFilterGroups, dataState: 'all' }
           });
           activeSiteUrl = fallbackSiteUrl; // Keep this for the queries fetch below
         } catch (fallbackErr) {
@@ -170,13 +212,14 @@ router.get('/', async (req, res) => {
         endDate,
         dimensions: ['query'],
         dimensionFilterGroups,
+        dataState: 'all',
         rowLimit: 100
       }
     });
 
     const queries = (queriesReq.data.rows || []).map((row, index) => ({
       id: index + 1,
-      query: row.keys[0],
+      query: row.keys?.[0] || '',
       clicks: row.clicks,
       impressions: row.impressions,
       ctr: (row.ctr * 100).toFixed(2), // Convert to percentage
@@ -191,13 +234,14 @@ router.get('/', async (req, res) => {
         endDate,
         dimensions: ['page'],
         dimensionFilterGroups,
+        dataState: 'all',
         rowLimit: 100
       }
     });
 
     const pages = (pagesReq.data.rows || []).map((row, index) => ({
       id: index + 1,
-      page: row.keys[0],
+      page: row.keys?.[0] || '',
       clicks: row.clicks,
       impressions: row.impressions,
       ctr: (row.ctr * 100).toFixed(2), // Convert to percentage
@@ -213,16 +257,64 @@ router.get('/', async (req, res) => {
           startDate,
           endDate,
           dimensions: ['country'],
+          dataState: 'all',
           rowLimit: 50
         }
       });
       countries = (countriesReq.data.rows || []).map(row => ({
-        countryCode: row.keys[0].toUpperCase(),
+        countryCode: (row.keys?.[0] || 'unknown').toUpperCase(),
         clicks: row.clicks,
         impressions: row.impressions
       }));
     } catch (cErr) {
       console.error('Failed to fetch GSC countries list', cErr);
+    }
+
+    // 5. Fetch Timeseries/Date level metrics (daily trend)
+    let timeseries = [];
+    try {
+      const timeseriesReq = await searchconsole.searchanalytics.query({
+        siteUrl: activeSiteUrl,
+        requestBody: {
+          startDate,
+          endDate,
+          dimensions: ['date'],
+          dimensionFilterGroups,
+          dataState: 'all',
+          rowLimit: 90
+        }
+      });
+      timeseries = (timeseriesReq.data.rows || []).map(row => ({
+        date: row.keys?.[0] || '',
+        clicks: row.clicks,
+        impressions: row.impressions,
+        ctr: parseFloat((row.ctr * 100).toFixed(2)),
+        position: parseFloat(row.position.toFixed(1))
+      })).sort((a, b) => new Date(a.date) - new Date(b.date));
+    } catch (tErr) {
+      console.error('Failed to fetch GSC timeseries daily data', tErr);
+    }
+
+    // 6. Fetch Device level metrics
+    let devices = [];
+    try {
+      const devicesReq = await searchconsole.searchanalytics.query({
+        siteUrl: activeSiteUrl,
+        requestBody: {
+          startDate,
+          endDate,
+          dimensions: ['device'],
+          dataState: 'all',
+          rowLimit: 5
+        }
+      });
+      devices = (devicesReq.data.rows || []).map(row => ({
+        device: (row.keys?.[0] || 'unknown').toLowerCase(),
+        clicks: row.clicks,
+        impressions: row.impressions
+      }));
+    } catch (dErr) {
+      console.error('Failed to fetch GSC devices list', dErr);
     }
 
     // Send payload matching the exact UI structure we built
@@ -242,7 +334,9 @@ router.get('/', async (req, res) => {
       topQueries: queries,
       topPages: pages,
       pages,
-      countries
+      countries,
+      timeseries,
+      devices
     });
 
   } catch (error) {

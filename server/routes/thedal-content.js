@@ -85,6 +85,40 @@ router.post('/:clientId/generate-blog', async (req, res) => {
     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
     const client = clientRes.rows[0];
 
+    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !process.env.GEMINI_API_KEY;
+    if (useDemoMode) {
+      const aiRes = {
+        title: `${keyword.toUpperCase()} - The Definitive Guide`,
+        metaDescription: `Read our comprehensive guide about ${keyword}. Find everything you need to know, tips, and step-by-step instructions.`,
+        slug: keyword.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+        content: `
+          <h2>Introduction to ${keyword}</h2>
+          <p>This is a simulated blog post for the keyword "${keyword}". In a live setup, Gemini generates an SEO-optimized blog copy targeting this keyword directly.</p>
+          <h2>Key Benefits of ${keyword}</h2>
+          <ul>
+            <li>Higher ranking and visibility</li>
+            <li>Increased traffic from organic search</li>
+            <li>Better user engagement</li>
+          </ul>
+          <h2>Conclusion</h2>
+          <p>Start optimizing your content now to reap the benefits of good SEO.</p>
+        `,
+        wordCount: parseInt(wordCount) || 800,
+        readingTime: `${Math.round((parseInt(wordCount) || 800) / 200)} min read`,
+        focusKeyword: keyword,
+        secondaryKeywords: [`${keyword} tips`, `${keyword} guide`]
+      };
+
+      // Save to Postgres
+      const insertRes = await pool.query(
+        `INSERT INTO thedal_content (client_id, content_type, title, body, target_keyword, status, language, word_count, meta_description, slug)
+         VALUES ($1, 'blog_post', $2, $3, $4, 'draft', $5, $6, $7, $8) RETURNING id`,
+        [clientId, aiRes.title, aiRes.content, keyword, language, aiRes.wordCount, aiRes.metaDescription, aiRes.slug]
+      );
+
+      return res.json({ post: { ...aiRes, id: insertRes.rows[0].id } });
+    }
+
     const langInstruction = language === 'tamil'
       ? 'Write entirely in Tamil script.'
       : language === 'tanglish'
@@ -151,6 +185,19 @@ router.post('/:clientId/rewrite-meta', async (req, res) => {
     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
     const client = clientRes.rows[0];
 
+    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !process.env.GEMINI_API_KEY;
+    if (useDemoMode) {
+      return res.json({
+        result: {
+          newTitle: `${targetKeyword} | Optimized Title for SEO`,
+          newMetaDescription: `Looking for ${targetKeyword}? Discover premium services and solutions. Clear CTAs and local benefits inside!`,
+          titleLength: 55,
+          metaLength: 155,
+          improvement: 'Injected high-priority target keyword first, optimized lengths to avoid truncation in Google Search SERPs.'
+        }
+      });
+    }
+
     const prompt = `You are an SEO specialist. Rewrite these meta tags for better rankings.
 
     Business: ${client.business_name || client.domain}
@@ -197,6 +244,22 @@ router.post('/:clientId/topic-ideas', async (req, res) => {
     const clientRes = await pool.query('SELECT * FROM thedal_clients WHERE id = $1', [clientId]);
     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
     const client = clientRes.rows[0];
+
+    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !process.env.GEMINI_API_KEY;
+    if (useDemoMode) {
+      const topics = [];
+      for (let i = 1; i <= count; i++) {
+        topics.push({
+          title: `How to Maximize Your Business Success in Pondicherry (Topic #${i})`,
+          targetKeyword: `pondicherry business success`,
+          intent: i % 2 === 0 ? 'informational' : 'transactional',
+          estimatedTraffic: i % 3 === 0 ? 'high' : 'medium',
+          contentType: i % 4 === 0 ? 'listicle' : 'guide',
+          priority: i
+        });
+      }
+      return res.json({ ideas: { topics } });
+    }
 
     // Grab some tracked keywords to feed the prompt
     const kwRes = await pool.query('SELECT keyword FROM thedal_keywords WHERE client_id = $1 LIMIT 10', [clientId]);

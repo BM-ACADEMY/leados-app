@@ -25,6 +25,67 @@ const ensureTable = async () => {
 };
 ensureTable().catch(console.error);
 
+/// Helper to generate mock local search competitors for testing/sandbox
+function generateMockCompetitors(keyword, location, clientGmbName, safeCount, t) {
+  const categories = ['Dental Clinic', 'Dentist', 'Cosmetic Dentist', 'Orthodontist', 'Dental Office'];
+  const baseNames = ['Apex', 'Smile Care', 'Family Dental', 'Bright Smile', 'Elite Dentistry', 'Metro Dental', 'Modern Dental', 'Pearl Dental', 'Gentle Dental', 'Valley Dentistry'];
+  
+  const competitors = [];
+  for (let idx = 0; idx < safeCount; idx++) {
+    const isClient = clientGmbName && idx === 3; // Put GMB client at index 3
+    const name = isClient ? clientGmbName : `${baseNames[idx % baseNames.length]} - ${location}`;
+    const rating = parseFloat((4.0 + Math.random() * 1.0).toFixed(1));
+    const reviews = Math.floor(Math.random() * 450) + 12;
+    const category = categories[idx % categories.length];
+    const phone = `+91 98765 ${Math.floor(10000 + Math.random() * 90000)}`;
+    const address = `${Math.floor(idx * 15 + 12)} Tech Plaza, Sector ${Math.floor(idx * 2 + 1)}, ${location}`;
+    const website = isClient ? null : `https://www.${name.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`;
+    const thumbnail = `https://images.unsplash.com/photo-1598256989800-fe5f95da9787?w=120&h=120&fit=crop`;
+    const placeId = `place-mock-${idx}`;
+    const hours = 'Open 24 hours';
+
+    let score = 0;
+    if (rating >= t.ratingExcellent) score += 30;
+    else if (rating >= t.ratingGood) score += 20;
+    else if (rating >= t.ratingFair) score += 10;
+    if (reviews >= t.reviewsMassive) score += 30;
+    else if (reviews >= t.reviewsHigh) score += 25;
+    else if (reviews >= t.reviewsGood) score += 20;
+    else if (reviews >= t.reviewsFair) score += 15;
+    else if (reviews >= t.reviewsLow) score += 8;
+    else score += 3;
+    score += 10; // Hours
+    if (website) score += 10;
+    if (phone) score += 10;
+    score += 5; // Thumbnail
+    score += 5; // Type
+
+    const resolved = { title: name, rating, reviews, website, phone, thumbnail, hours, address, place_id: placeId, type: category };
+
+    competitors.push({
+      rank: idx + 1,
+      name,
+      placeId,
+      rating,
+      reviews,
+      category,
+      address,
+      phone,
+      website,
+      thumbnail,
+      hours,
+      isOpen: true,
+      gmbScore: Math.min(100, score),
+      mapsUrl: `https://www.google.com/maps/place/?q=place_id:${placeId}`,
+      isClient,
+      strengths: buildStrengths(rating, reviews, resolved, t),
+      weaknesses: buildWeaknesses(rating, reviews, resolved, t),
+    });
+  }
+
+  return competitors;
+}
+
 // ── POST /scan ─────────────────────────────────────────────────────────────
 
 router.post('/scan', async (req, res) => {
@@ -56,8 +117,27 @@ router.post('/scan', async (req, res) => {
 
   const safeCount = Math.min(Math.max(parseInt(resultCount) || 20, 5), 40);
   const SERP_API_KEY = process.env.SERP_RADAR_API_KEY || process.env.SERP_API_KEY || process.env.SERPKEY;
-  if (!SERP_API_KEY) {
-    return res.status(500).json({ error: 'SERP API key not configured in environment.' });
+  const isDemoMode = req.headers['x-data-mode'] === 'demo' || !SERP_API_KEY;
+
+  if (isDemoMode) {
+    const competitors = generateMockCompetitors(keyword, location, clientGmbName, safeCount, t);
+    const clientEntry = competitors.find(c => c.isClient);
+    const clientPosition = clientEntry ? clientEntry.rank : null;
+
+    pool.query(
+      `INSERT INTO competitor_spy_history (query, location, results_json, scanned_at) VALUES ($1, $2, $3, NOW())`,
+      [keyword, location, JSON.stringify(competitors)]
+    ).catch(e => console.error('History save error:', e.message));
+
+    return res.json({
+      keyword, location, language,
+      resultCount: safeCount,
+      thresholds: t,
+      competitors,
+      clientPosition,
+      scanned_at: new Date().toISOString(),
+      total: competitors.length,
+    });
   }
 
   try {
@@ -223,8 +303,31 @@ router.get('/place-details', async (req, res) => {
   }
 
   const SERP_API_KEY = process.env.SERP_RADAR_API_KEY || process.env.SERP_API_KEY || process.env.SERPKEY;
-  if (!SERP_API_KEY) {
-    return res.status(500).json({ error: 'SERP API key not configured.' });
+  const isDemoMode = req.headers['x-data-mode'] === 'demo' || !SERP_API_KEY;
+
+  if (isDemoMode) {
+    return res.json({
+      placeId,
+      name: name || 'Mock Business',
+      rating: 4.6,
+      reviews_count: 142,
+      address: '102 Tech Plaza, Sector 4, Pondicherry',
+      phone: '+91 98765 12345',
+      website: 'https://example.com',
+      category: 'Dentist',
+      photos: [
+        { url: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=800', thumbnail: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=200', title: 'Clinic Front', source: 'Google Maps' },
+        { url: 'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=800', thumbnail: 'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=200', title: 'Treatment Room', source: 'Google Maps' },
+        { url: 'https://images.unsplash.com/photo-1598256989800-fe5f95da9787?w=800', thumbnail: 'https://images.unsplash.com/photo-1598256989800-fe5f95da9787?w=200', title: 'Lobby', source: 'Google Maps' }
+      ],
+      reviews: [
+        { author: 'Jane Smith', rating: 5, text: 'Clean and professional environment. High GMB standards!', date: 'Just now', avatar: null },
+        { author: 'Vikram Singh', rating: 4, text: 'Friendly staff and quick appointment scheduling.', date: 'Yesterday', avatar: null },
+        { author: 'Sarah Connor', rating: 5, text: 'Best local service in Pondicherry. Will visit again.', date: '3 days ago', avatar: null }
+      ],
+      hoursTable: null,
+      services: ['Dentist', 'Orthodontist', 'Implants']
+    });
   }
 
   try {

@@ -34,6 +34,50 @@ initDB();
 
 // GET all schemas
 router.get('/', async (req, res) => {
+  const isDemoMode = req.headers['x-data-mode'] === 'demo';
+  if (isDemoMode) {
+    return res.json({
+      items: [
+        {
+          id: 901,
+          name: 'Demo Local Business Schema',
+          schema_type: 'LocalBusiness',
+          description: 'Demo schema for local business location',
+          created_at: new Date().toISOString(),
+          schema_data: {
+            "@context": "https://schema.org",
+            "@type": "LocalBusiness",
+            "name": "Demo Digital Agency",
+            "image": "https://example.com/logo.png",
+            "url": "https://example.com",
+            "telephone": "+1-555-123-4567",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "123 Demo Street",
+              "addressLocality": "Demo City",
+              "postalCode": "12345",
+              "addressCountry": "US"
+            }
+          }
+        },
+        {
+          id: 902,
+          name: 'Demo Organization Schema',
+          schema_type: 'Organization',
+          description: 'Corporate organization markup for demo',
+          created_at: new Date().toISOString(),
+          schema_data: {
+            "@context": "https://schema.org",
+            "@type": "Organization",
+            "name": "Demo Inc.",
+            "url": "https://example.com",
+            "logo": "https://example.com/logo.png"
+          }
+        }
+      ]
+    });
+  }
+
   try {
     const { rows } = await pool.query('SELECT * FROM schema_templates ORDER BY created_at DESC');
     res.json({ items: rows });

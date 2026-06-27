@@ -48,6 +48,7 @@ const MetricCard = ({ title, value, compValue, icon: Icon, color }) => (
 export default function BacklinkTracker() {
   const [domain, setDomain] = useState('');
   const [competitor, setCompetitor] = useState('');
+  const [searchMode, setSearchMode] = useState('subdomains'); // 'subdomains', 'domain', 'exact'
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const [compData, setCompData] = useState(null);
@@ -81,6 +82,28 @@ export default function BacklinkTracker() {
     }
   }, [data, tracked]);
 
+  const handleDomainChange = (val) => {
+    let inputVal = val;
+    // Check if it's an Ahrefs backlink checker URL
+    if (inputVal.includes('ahrefs.com/backlink-checker')) {
+      try {
+        const urlObj = new URL(inputVal.startsWith('http') ? inputVal : 'https://' + inputVal);
+        const inputUrl = urlObj.searchParams.get('input');
+        const mode = urlObj.searchParams.get('mode');
+        
+        if (inputUrl) {
+          inputVal = decodeURIComponent(inputUrl);
+        }
+        if (mode === 'subdomains' || mode === 'domain' || mode === 'exact') {
+          setSearchMode(mode);
+        }
+      } catch (e) {
+        console.error("Failed to parse Ahrefs URL parameters", e);
+      }
+    }
+    setDomain(inputVal);
+  };
+
   const fetchHistory = async () => {
     try {
       const res = await api.get('/thedal/backlinks/history');
@@ -99,7 +122,23 @@ export default function BacklinkTracker() {
     if (e) e.preventDefault();
     if (!domain) return;
 
-    const clean = (url) => url.replace(/^(?:https?:\/\/)?(?:www\.)?/i, "").split('/')[0];
+    const clean = (url) => {
+      if (!url) return '';
+      let target = url.trim();
+      
+      // Extract from Ahrefs URL if submitted directly
+      if (target.includes('ahrefs.com/backlink-checker')) {
+        try {
+          const urlObj = new URL(target.startsWith('http') ? target : 'https://' + target);
+          const inputUrl = urlObj.searchParams.get('input');
+          if (inputUrl) {
+            target = decodeURIComponent(inputUrl);
+          }
+        } catch (err) {}
+      }
+      return target.replace(/^(?:https?:\/\/)?(?:www\.)?/i, "").split('/')[0];
+    };
+
     const cleanedDomain = clean(domain);
     const cleanedComp = competitor ? clean(competitor) : null;
     
@@ -116,8 +155,8 @@ export default function BacklinkTracker() {
     setActiveTab('primary');
 
     try {
-      const p1 = api.post('/thedal/backlinks/scan', { domain: cleanedDomain }, { signal });
-      const p2 = cleanedComp ? api.post('/thedal/backlinks/scan', { domain: cleanedComp }, { signal }) : Promise.resolve(null);
+      const p1 = api.post('/thedal/backlinks/scan', { domain: cleanedDomain, mode: searchMode }, { signal });
+      const p2 = cleanedComp ? api.post('/thedal/backlinks/scan', { domain: cleanedComp, mode: searchMode }, { signal }) : Promise.resolve(null);
       
       const [res1, res2] = await Promise.all([p1, p2]);
       
@@ -212,14 +251,14 @@ export default function BacklinkTracker() {
 
       {/* ── Search Bar ──────────────────────────────────────────────────── */}
       <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: '24px 30px', marginBottom: 30, boxShadow: '0 10px 30px rgba(0,0,0,0.1)' }}>
-        <form onSubmit={handleScan} style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, position: 'relative', minWidth: 250 }}>
+        <form onSubmit={handleScan} style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ flex: 1.5, position: 'relative', minWidth: 250 }}>
             <Globe size={20} color={C.muted} style={{ position: 'absolute', left: 16, top: 18 }} />
             <input
               type="text"
-              placeholder="Your Domain (e.g. apple.com)"
+              placeholder="Your Domain (e.g. exportersindia.com) or Ahrefs URL"
               value={domain}
-              onChange={e => setDomain(e.target.value)}
+              onChange={e => handleDomainChange(e.target.value)}
               disabled={loading}
               style={{
                 width: '100%', padding: '16px 20px 16px 48px',
@@ -229,9 +268,28 @@ export default function BacklinkTracker() {
             />
           </div>
           
+          <div style={{ position: 'relative', minWidth: 160 }}>
+            <select
+              value={searchMode}
+              onChange={e => setSearchMode(e.target.value)}
+              disabled={loading}
+              style={{
+                width: '100%', padding: '16px 36px 16px 16px',
+                background: 'rgba(15, 23, 42, 0.4)', border: `1px solid ${C.border}`,
+                borderRadius: 12, color: '#f8fafc', fontSize: 16, outline: 'none',
+                cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none',
+              }}
+            >
+              <option value="subdomains" style={{ background: C.surface, color: '#fff' }}>Subdomains (*.domain/*)</option>
+              <option value="domain" style={{ background: C.surface, color: '#fff' }}>Domain (domain/*)</option>
+              <option value="exact" style={{ background: C.surface, color: '#fff' }}>Exact URL</option>
+            </select>
+            <div style={{ position: 'absolute', right: 16, top: 22, pointerEvents: 'none', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: `5px solid ${C.muted}` }} />
+          </div>
+          
           <div style={{ display: 'flex', alignItems: 'center', color: C.muted, fontWeight: 600 }}>VS</div>
 
-          <div style={{ flex: 1, position: 'relative', minWidth: 250 }}>
+          <div style={{ flex: 1, position: 'relative', minWidth: 200 }}>
             <Globe size={20} color={C.muted} style={{ position: 'absolute', left: 16, top: 18 }} />
             <input
               type="text"
@@ -251,6 +309,7 @@ export default function BacklinkTracker() {
             type="submit"
             disabled={loading || !domain}
             style={{
+              height: 52,
               padding: '0 32px', background: loading ? 'rgba(249, 115, 22, 0.5)' : C.accent,
               color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 16,
               cursor: loading || !domain ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 10
@@ -261,8 +320,44 @@ export default function BacklinkTracker() {
           </button>
         </form>
         {error && (
-          <div style={{ marginTop: 16, padding: '12px 16px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 8, color: '#fca5a5', fontSize: 14 }}>
-            {error}
+          <div style={{ 
+            marginTop: 16, 
+            padding: '20px 24px', 
+            background: 'rgba(239, 68, 68, 0.06)', 
+            border: '1px solid rgba(239, 68, 68, 0.2)', 
+            borderRadius: 12, 
+            color: '#fecaca', 
+            fontSize: 15,
+            lineHeight: 1.6
+          }}>
+            <div style={{ fontWeight: 700, marginBottom: 8, color: '#f87171', display: 'flex', alignItems: 'center', gap: 8, fontSize: 16 }}>
+              <Shield size={18} /> API Subscription Plan Required
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              Your DataForSEO free trial limits have been reached, or the <strong>Backlinks API subscription</strong> is inactive on your account. 
+              To analyze websites and retrieve live backlink profiles, you need to purchase a plan or upgrade your subscription.
+            </div>
+            <a 
+              href="https://app.dataforseo.com/backlinks-subscription" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              style={{ 
+                padding: '10px 20px', 
+                background: '#ef4444', 
+                color: '#fff', 
+                fontWeight: 700, 
+                borderRadius: 8, 
+                textDecoration: 'none', 
+                display: 'inline-flex', 
+                alignItems: 'center', 
+                gap: 8,
+                transition: 'background 0.2s'
+              }}
+              onMouseOver={e => e.currentTarget.style.background = '#dc2626'}
+              onMouseOut={e => e.currentTarget.style.background = '#ef4444'}
+            >
+              Upgrade / Purchase Plan <ExternalLink size={16} />
+            </a>
           </div>
         )}
       </div>
@@ -319,9 +414,46 @@ export default function BacklinkTracker() {
               <MetricCard title="Total Backlinks" value={activeMetrics.totalBacklinks?.toLocaleString()} compValue={compMetrics?.totalBacklinks?.toLocaleString()} icon={LinkIcon} color="#3b82f6" />
               <MetricCard title="Referring Domains" value={activeMetrics.referringDomains?.toLocaleString()} compValue={compMetrics?.referringDomains?.toLocaleString()} icon={Globe} color="#8b5cf6" />
               <MetricCard title="Dofollow Ratio" value={`${activeMetrics.dofollowRatio}%`} compValue={compMetrics ? `${compMetrics.dofollowRatio}%` : undefined} icon={PieChart} color="#10b981" />
-              <MetricCard title="Domain Authority" value={activeMetrics.domainAuthority} compValue={compMetrics?.domainAuthority} icon={Shield} color="#f59e0b" />
+              <MetricCard title="Domain Rating (DR)" value={activeMetrics.domainAuthority} compValue={compMetrics?.domainAuthority} icon={Shield} color="#f59e0b" />
             </div>
           )}
+
+          {/* SEO Guidance Panel */}
+          <div style={{ 
+            background: 'rgba(59, 130, 246, 0.05)', 
+            border: '1px solid rgba(59, 130, 246, 0.15)', 
+            borderRadius: 16, 
+            padding: '20px 24px', 
+            marginBottom: 30, 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: 12 
+          }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Shield size={18} color="#3b82f6" /> SOP: How to Interpret Backlink Metrics
+            </h3>
+            <p style={{ margin: 0, fontSize: 14, color: '#cbd5e1', lineHeight: 1.5 }}>
+              Analyze these standard metrics to measure link profile strength and find optimization gaps:
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 8 }}>
+              <div style={{ background: 'rgba(15, 23, 42, 0.3)', padding: 12, borderRadius: 8, border: `1px solid ${C.border}` }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc', display: 'block', marginBottom: 4 }}>Domain Rating (DR)</span>
+                <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.4 }}>Represents the overall backlink strength of the domain on a scale of 0-100. Higher DR sites pass more link value.</span>
+              </div>
+              <div style={{ background: 'rgba(15, 23, 42, 0.3)', padding: 12, borderRadius: 8, border: `1px solid ${C.border}` }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc', display: 'block', marginBottom: 4 }}>URL Rating (UR)</span>
+                <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.4 }}>Indicates the strength of the specific referring page's backlink profile, providing granular page-level insights.</span>
+              </div>
+              <div style={{ background: 'rgba(15, 23, 42, 0.3)', padding: 12, borderRadius: 8, border: `1px solid ${C.border}` }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc', display: 'block', marginBottom: 4 }}>Referring Domains</span>
+                <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.4 }}>The count of unique domains linking to the site. Diverse referring domains are critical for high rankings.</span>
+              </div>
+              <div style={{ background: 'rgba(15, 23, 42, 0.3)', padding: 12, borderRadius: 8, border: `1px solid ${C.border}` }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc', display: 'block', marginBottom: 4 }}>Dofollow Ratio</span>
+                <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.4 }}>The proportion of links that pass search authority. Higher ratio is better, but a natural profile includes both dofollow and nofollow.</span>
+              </div>
+            </div>
+          </div>
 
           {/* Links Table */}
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
@@ -336,31 +468,35 @@ export default function BacklinkTracker() {
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ background: 'rgba(15, 23, 42, 0.4)' }}>
-                    <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Source Page</th>
-                    <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Anchor Text</th>
-                    <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Type</th>
+                    <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Referring Page</th>
                     <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>DR</th>
+                    <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>UR</th>
+                    <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', textAlign: 'center' }}>Ref. Domains</th>
+                    <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', textAlign: 'center' }}>Linked Domains</th>
+                    <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Anchor & Target Link</th>
                     <th style={{ padding: '16px 24px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {activeLinks.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((link, idx) => {
                     const clampedDr = Math.max(0, Math.min(100, Number(link.dr) || 0));
+                    const clampedUr = Math.max(0, Math.min(100, Number(link.ur) || 0));
                     return (
                       <tr key={link.id || idx} style={{ borderTop: `1px solid ${C.border}`, background: idx % 2 === 0 ? 'transparent' : 'rgba(15,23,42,0.2)' }}>
-                        <td style={{ padding: '16px 24px' }}>
+                        <td style={{ padding: '16px 24px', maxWidth: 300 }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span style={{ color: '#f8fafc', fontWeight: 600, fontSize: 14 }}>{link.sourceTitle}</span>
-                            <a href={link.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
-                              {link.sourceUrl} <ExternalLink size={12} />
+                            <span style={{ color: '#f8fafc', fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={link.sourceTitle}>
+                              {link.sourceTitle}
+                            </span>
+                            <a href={link.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {link.sourceUrl} <ExternalLink size={12} style={{ flexShrink: 0 }} />
                             </a>
+                            {link.firstSeen && (
+                              <span style={{ fontSize: 11, color: C.muted, display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                                <Clock size={10} /> First seen: {link.firstSeen}
+                              </span>
+                            )}
                           </div>
-                        </td>
-                        <td style={{ padding: '16px 24px', color: '#cbd5e1', fontSize: 14, fontWeight: 500 }}>{link.anchorText}</td>
-                        <td style={{ padding: '16px 24px' }}>
-                          <span style={{ padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, background: link.type === 'Dofollow' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(148, 163, 184, 0.1)', color: link.type === 'Dofollow' ? '#34d399' : '#94a3b8' }}>
-                            {link.type}
-                          </span>
                         </td>
                         <td style={{ padding: '16px 24px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -368,6 +504,35 @@ export default function BacklinkTracker() {
                             <div style={{ width: 40, height: 4, background: C.border, borderRadius: 2, overflow: 'hidden' }}>
                               <div style={{ width: `${clampedDr}%`, height: '100%', background: clampedDr > 80 ? '#10b981' : clampedDr > 50 ? '#f59e0b' : '#ef4444' }} />
                             </div>
+                          </div>
+                        </td>
+                        <td style={{ padding: '16px 24px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{clampedUr}</span>
+                            <div style={{ width: 40, height: 4, background: C.border, borderRadius: 2, overflow: 'hidden' }}>
+                              <div style={{ width: `${clampedUr}%`, height: '100%', background: clampedUr > 70 ? '#10b981' : clampedUr > 40 ? '#3b82f6' : '#94a3b8' }} />
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{ padding: '16px 24px', textAlign: 'center', color: '#e2e8f0', fontWeight: 600 }}>
+                          {link.refDomains || 1}
+                        </td>
+                        <td style={{ padding: '16px 24px', textAlign: 'center', color: '#cbd5e1' }}>
+                          {link.linkedDomains || 15}
+                        </td>
+                        <td style={{ padding: '16px 24px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 250 }}>
+                            <span style={{ color: '#34d399', fontWeight: 600, fontSize: 13, background: 'rgba(52, 211, 153, 0.08)', padding: '2px 8px', borderRadius: 4, width: 'fit-content' }}>
+                              {link.anchorText || 'No anchor text'}
+                            </span>
+                            {link.targetUrl && (
+                              <a href={link.targetUrl} target="_blank" rel="noopener noreferrer" style={{ color: C.muted, fontSize: 12, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={link.targetUrl}>
+                                {link.targetUrl} <ExternalLink size={10} style={{ flexShrink: 0 }} />
+                              </a>
+                            )}
+                            <span style={{ fontSize: 11, color: link.type === 'Dofollow' ? '#34d399' : '#94a3b8', fontWeight: 600 }}>
+                              {link.type}
+                            </span>
                           </div>
                         </td>
                         <td style={{ padding: '16px 24px' }}>
@@ -380,7 +545,7 @@ export default function BacklinkTracker() {
                     );
                   })}
                   {activeLinks.length === 0 && (
-                    <tr><td colSpan={5} style={{ padding: '40px 0', textAlign: 'center', color: C.muted }}>No backlinks found.</td></tr>
+                    <tr><td colSpan={7} style={{ padding: '40px 0', textAlign: 'center', color: C.muted }}>No backlinks found.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -443,7 +608,7 @@ export default function BacklinkTracker() {
                     <span style={{ fontSize: 12, background: 'rgba(16, 185, 129, 0.1)', color: '#34d399', padding: '2px 6px', borderRadius: 10 }}>{t.status}</span>
                   </div>
                   <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>
-                    DA: {t.metrics?.domainAuthority} • Links: {t.metrics?.totalBacklinks?.toLocaleString()}
+                    DR: {t.metrics?.domainAuthority} • Links: {t.metrics?.totalBacklinks?.toLocaleString()}
                   </div>
                 </div>
               ))}

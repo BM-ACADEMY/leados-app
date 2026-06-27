@@ -26,7 +26,8 @@ let globalGoogleTokens = null;
 
 router.get('/status', async (req, res) => {
   try {
-    res.json({ connected: isConnected });
+    const isDemo = req.headers['x-data-mode'] === 'demo';
+    res.json({ connected: isConnected || isDemo });
   } catch (error) {
     console.error('Error checking GBP status:', error);
     res.status(500).json({ error: 'Server error' });
@@ -75,11 +76,59 @@ router.post('/disconnect', async (req, res) => {
 });
 
 router.get('/data', async (req, res) => {
-  if (!isConnected) {
+  const isDemo = req.headers['x-data-mode'] === 'demo';
+  if (!isConnected && !isDemo) {
     return res.status(403).json({ error: 'Not connected to Google Business Profile' });
   }
 
   const businessName = req.query.name || 'Your Business';
+  
+  if (isDemo) {
+    return res.json({
+      business: {
+        name: businessName,
+        address: '123 Tech Park, Pondicherry, India',
+        phone: '+91 98765 43210',
+        rating: 4.8,
+        totalReviews: 24,
+        profileUrl: 'https://maps.google.com'
+      },
+      insights: {
+        views: 1250, viewsTrend: '+12%',
+        searches: 840, searchesTrend: '+8%',
+        actions: 310, actionsTrend: '+15%'
+      },
+      recentReviews: [
+        {
+          id: 'rev-1',
+          author: 'John Doe',
+          rating: 5,
+          text: 'Excellent service and great selection of products. ExportersIndia has been key to our business success.',
+          date: 'Yesterday',
+          replied: true,
+          replyText: 'Thank you for the review, John!'
+        },
+        {
+          id: 'rev-2',
+          author: 'Priya Sharma',
+          rating: 4,
+          text: 'Very easy onboarding process and very professional team. Highly recommended.',
+          date: '3 days ago',
+          replied: false,
+          replyText: ''
+        },
+        {
+          id: 'rev-3',
+          author: 'Robert Lee',
+          rating: 5,
+          text: 'Outstanding support! They helped us configure our profile and we got organic leads within the first week.',
+          date: '1 week ago',
+          replied: true,
+          replyText: 'Thank you Robert! We are happy to help.'
+        }
+      ]
+    });
+  }
   
   let googleApiError = null;
 

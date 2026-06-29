@@ -2,7 +2,7 @@ const pool = require('../db/connection');
 
 async function createTestPost() {
   console.log('Inserting test post for BM TechX...');
-  
+
   const query = `
     INSERT INTO content_queue (
       brand_name, file_name, video_url, caption, platforms, status, created_at, updated_at
@@ -26,7 +26,7 @@ async function createTestPost() {
     console.log(`Platforms: Facebook & Instagram`);
     console.log(`Status: APPROVED`);
     console.log(`\nTo publish this post immediately, you can trigger it via API:`);
-    console.log(`POST http://localhost:3500/api/content/${rows[0].id}/publish`);
+    console.log(`POST http://localhost:5000/api/content/${rows[0].id}/publish`);
   } catch (err) {
     console.error('Failed to create test post:', err);
   } finally {

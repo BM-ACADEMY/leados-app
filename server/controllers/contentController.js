@@ -33,14 +33,14 @@ function extractDriveFileId(url) {
 
 function getGoogleAuth(scopes = ['https://www.googleapis.com/auth/drive.readonly']) {
   const credPath = path.join(__dirname, '../credentials/jobportal-492311-465d0e8c2633.json');
-  
+
   if (fs.existsSync(credPath)) {
     return new google.auth.GoogleAuth({
       keyFile: credPath,
       scopes
     });
   }
-  
+
   const envCreds = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_CREDS_JSON;
   if (envCreds) {
     try {
@@ -53,7 +53,7 @@ function getGoogleAuth(scopes = ['https://www.googleapis.com/auth/drive.readonly
       console.error("Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON from environment:", e.message);
     }
   }
-  
+
   return null;
 }
 
@@ -63,7 +63,7 @@ async function downloadDriveFileServiceAccount(fileId, destPath) {
     throw new Error('Google Drive credentials are not available (neither credentials file nor environment variable is set).');
   }
   const drive = google.drive({ version: 'v3', auth });
-  
+
   const response = await drive.files.get(
     { fileId, alt: 'media' },
     { responseType: 'stream' }
@@ -220,7 +220,7 @@ async function getContent(req, res) {
     params.push(parseInt(limit), parseInt(offset));
 
     const { rows } = await pool.query(query, params);
-    
+
     // Dynamically resolve localhost/relative paths to the current public base URL of the incoming request
     const resolvedItems = rows.map(item => ({
       ...item,
@@ -335,8 +335,8 @@ async function updateContent(req, res) {
   const { id } = req.params;
   console.log(`[updateContent] Received update request for ID ${id}. Body:`, JSON.stringify(req.body));
   const allowed = [
-    "caption", "x_caption", "linkedin_caption", "thumbnail_title", "scheduled_at", 
-    "platforms", "selected_channels", "selected_accounts", "video_url", "public_video_url", "description", "hashtags", 
+    "caption", "x_caption", "linkedin_caption", "thumbnail_title", "scheduled_at",
+    "platforms", "selected_channels", "selected_accounts", "video_url", "public_video_url", "description", "hashtags",
     "thumbnail_options", "key_moments", "thumbnail_url", "brand_id", "video_name", "status",
     "story_1", "story_2", "story_3"
   ];
@@ -355,12 +355,12 @@ async function updateContent(req, res) {
     if (req.body[key] !== undefined) {
       const isJson = ["platforms", "selected_channels", "selected_accounts", "thumbnail_options", "key_moments"].includes(key);
       let val = isJson ? JSON.stringify(safeJsonValue(req.body[key])) : req.body[key];
-      
+
       // Convert empty timestamp string to null
       if (key === "scheduled_at" && val === "") {
         val = null;
       }
-      
+
       sets.push(`${key} = $${i}${isJson ? "::jsonb" : ""}`);
       params.push(val);
       i++;
@@ -378,7 +378,7 @@ async function updateContent(req, res) {
       params
     );
     if (rows.length === 0) return res.status(404).json({ success: false, error: "Item not found" });
-    
+
     // Dynamically resolve localhost/relative paths to the current public base URL of the incoming request
     const item = rows[0];
     const resolvedItem = {
@@ -439,7 +439,7 @@ const BRAND_VOICES = {
 // ---------------------------------------------------------------
 async function generateCaptions(req, res) {
   const { brand_name, topic, video_url, platforms } = req.body;
-  
+
   if (!brand_name || (!topic && !video_url) || !platforms || !Array.isArray(platforms) || platforms.length === 0) {
     return res.status(400).json({ success: false, error: "Missing required fields: brand_name, platforms, and either topic or video_url" });
   }
@@ -457,16 +457,16 @@ async function generateCaptions(req, res) {
       try {
         console.log(`Downloading Google Drive video ${fileId}...`);
         await downloadDriveFileServiceAccount(fileId, tempFilePath);
-        
+
         console.log("Extracting audio from video for Whisper...");
         await extractAudio(tempFilePath, tempAudioPath);
-        
+
         console.log("Transcribing video audio via Groq Whisper...");
         const transcriptionResult = await groq.audio.transcriptions.create({
           file: fs.createReadStream(tempAudioPath),
           model: "whisper-large-v3"
         });
-        
+
         transcript = transcriptionResult.text || "";
         console.log("Transcription successful:", transcript);
       } catch (transcribeErr) {
@@ -491,7 +491,7 @@ async function generateCaptions(req, res) {
   }
 
   if (transcript) {
-    inferredTopic = inferredTopic 
+    inferredTopic = inferredTopic
       ? `${inferredTopic} (Video Transcript: "${transcript}")`
       : `Video Transcript: "${transcript}"`;
   } else {
@@ -501,7 +501,7 @@ async function generateCaptions(req, res) {
   }
 
   const brandInfo = BRAND_VOICES[brand_name] || { tag: brand_name, voice: `Professional voice for ${brand_name}` };
-  
+
   const platformList = platforms.map(p => {
     const mapping = {
       instagram: "Instagram",
@@ -547,15 +547,15 @@ Rules:
 
     const content = response.choices[0].message.content.trim();
     const result = JSON.parse(content);
-    
+
     const arrayResult = Array.isArray(result) ? result : (result.results || result.captions || Object.values(result)[0]);
     if (!Array.isArray(arrayResult)) {
       throw new Error("Response is not an array");
     }
 
-    res.json({ 
-      success: true, 
-      results: arrayResult, 
+    res.json({
+      success: true,
+      results: arrayResult,
       video_title: extractedTitle,
       transcript: transcript || null
     });
@@ -574,7 +574,7 @@ async function createBatchContent(req, res) {
   if (!items || !Array.isArray(items)) {
     return res.status(400).json({ success: false, error: "Invalid items format" });
   }
-  
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -677,7 +677,7 @@ async function checkNewDriveVideos() {
     const drive = google.drive({ version: 'v3', auth });
 
     const { rows: monitors } = await pool.query("SELECT brand_slug, folder_id FROM drive_folder_monitors WHERE is_active = true");
-    
+
     const { rows: allClients } = await pool.query("SELECT name FROM clients");
     const SLUG_TO_BRAND = {};
     for (const c of allClients) {
@@ -699,7 +699,7 @@ async function checkNewDriveVideos() {
       const { brand_slug, folder_id } = monitor;
       const brand_name = SLUG_TO_BRAND[brand_slug] || brand_slug;
       console.log(`DrivePoller: Querying folder ${folder_id} for ${brand_name} (${brand_slug})...`);
-      
+
       let files = [];
       try {
         const res = await drive.files.list({
@@ -749,7 +749,7 @@ async function checkNewDriveVideos() {
         }
 
         console.log(`DrivePoller: New video detected: ${file.name} (ID: ${file.id})`);
-        
+
         // 1. Download video
         const tempFilePath = path.join(os.tmpdir(), `drive_video_${file.id}.mp4`);
         const tempAudioPath = path.join(os.tmpdir(), `drive_audio_${file.id}.mp3`);
@@ -757,10 +757,10 @@ async function checkNewDriveVideos() {
         const videoUrl = `https://drive.google.com/file/d/${file.id}/view`;
         let publicVideoUrl = videoUrl; // Default fallback to Drive link
         let publicThumbnailUrl = null;
- 
+
         try {
           await downloadDriveFileServiceAccount(file.id, tempFilePath);
-          
+
           // 2. Transcribe video audio
           console.log("DrivePoller: Transcribing video audio via Groq Whisper...");
           try {
@@ -798,7 +798,7 @@ async function checkNewDriveVideos() {
             }
           } catch (transcodeErr) {
             console.warn(`DrivePoller: Transcoding failed (falling back to Drive download URL):`, transcodeErr.message);
-            
+
             // Attempt to generate thumbnail from downloaded temp file
             console.log("DrivePoller: Generating video thumbnail from temp file...");
             try {
@@ -835,7 +835,7 @@ async function checkNewDriveVideos() {
         // 3. Generate content via Groq Llama model
         console.log("DrivePoller: Generating brand-voice metadata via LLM...");
         const brandInfo = BRAND_VOICES[brand_name] || { tag: brand_name, voice: `Professional voice for ${brand_name}` };
-        
+
         const prompt = `You are the expert social media content writer for "${brand_name}" (${brandInfo.tag}).
 BRAND VOICE GUIDE:
 ${brandInfo.voice}
@@ -919,7 +919,7 @@ Respond ONLY with a valid JSON object matching this exact format:
           console.error("DrivePoller: Failed to parse LLM response or save to DB:", llmErr.message);
         }
       }
-      
+
       // Update last checked time
       await pool.query("UPDATE drive_folder_monitors SET last_checked_at = NOW() WHERE brand_slug = $1", [brand_slug]);
     }
@@ -1035,7 +1035,8 @@ async function generateStoryCard(postId, slideNum, brandName, slideText, req = n
     const outputPath = path.join(uploadsDir, filename);
     await image.writeAsync(outputPath);
 
-    return resolvePublicUrl(`http://localhost:3500/uploads/${filename}`, req, true);
+    const baseUrl = (process.env.API_BASE_URL || 'https://leados-api.abmgroups.org').replace(/\/+$/, '');
+    return resolvePublicUrl(`${baseUrl}/uploads/${filename}`, req, true);
   } catch (err) {
     console.error('generateStoryCard error:', err);
     throw err;
@@ -1046,46 +1047,46 @@ const healingJobs = new Set();
 
 async function healMissingMedia(driveFileId) {
   if (!driveFileId || healingJobs.has(driveFileId)) return;
-  
+
   healingJobs.add(driveFileId);
   console.log(`[SelfHealing] Initiating media recovery for Drive File ID: ${driveFileId}`);
-  
+
   const tempFilePath = path.join(os.tmpdir(), `heal_video_${driveFileId}.mp4`);
-  
+
   try {
     const uploadsDir = path.join(__dirname, '../uploads');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
-    
+
     const transcodedPath = path.join(uploadsDir, `transcoded_${driveFileId}.mp4`);
     const thumbnailPath = path.join(uploadsDir, `thumbnail_${driveFileId}.jpg`);
-    
+
     const transcodeExists = fs.existsSync(transcodedPath);
     const thumbnailExists = fs.existsSync(thumbnailPath);
-    
+
     if (transcodeExists && thumbnailExists) {
       console.log(`[SelfHealing] Both transcoded video and thumbnail already exist on disk for ${driveFileId}.`);
       healingJobs.delete(driveFileId);
       return;
     }
-    
+
     const auth = getGoogleAuth();
     if (!auth) {
       console.warn(`[SelfHealing] Service account credentials not found. Recovery skipped.`);
       healingJobs.delete(driveFileId);
       return;
     }
-    
+
     console.log(`[SelfHealing] Downloading video from Drive: ${driveFileId}...`);
     await downloadDriveFileServiceAccount(driveFileId, tempFilePath);
-    
+
     if (!transcodeExists) {
       console.log(`[SelfHealing] Transcoding video to ${transcodedPath}...`);
       await transcodeVideo(tempFilePath, transcodedPath);
       console.log(`[SelfHealing] Transcoding completed for ${driveFileId}`);
     }
-    
+
     if (!thumbnailExists) {
       console.log(`[SelfHealing] Generating thumbnail to ${thumbnailPath}...`);
       const sourceVideo = fs.existsSync(transcodedPath) ? transcodedPath : tempFilePath;
@@ -1117,7 +1118,7 @@ function resolvePublicUrl(url, req = null, forcePublic = false) {
 
   // 2. Determine base URL
   let baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
-  
+
   // Self-healing: if baseUrl is localhost, but portal is live (only when no request context exists)
   if (!req && baseUrl.includes('localhost') && process.env.PORTAL_URL && process.env.PORTAL_URL.includes('abmgroups.org')) {
     baseUrl = 'https://leados-api.abmgroups.org';
@@ -1146,7 +1147,7 @@ function resolvePublicUrl(url, req = null, forcePublic = false) {
     const parts = url.split('/uploads/');
     if (parts.length > 1) {
       const filename = parts[1];
-      
+
       // Auto-heal missing media if transcoded or thumbnail is requested but not on disk
       const transcodedMatch = filename.match(/^transcoded_([a-zA-Z0-9_-]+)\.mp4$/);
       const thumbnailMatch = filename.match(/^thumbnail_([a-zA-Z0-9_-]+)\.jpg$/);
@@ -1155,7 +1156,7 @@ function resolvePublicUrl(url, req = null, forcePublic = false) {
         const uploadsDir = path.join(__dirname, '../uploads');
         const transcodedPath = path.join(uploadsDir, `transcoded_${healFileId}.mp4`);
         const thumbnailPath = path.join(uploadsDir, `thumbnail_${healFileId}.jpg`);
-        
+
         const transcodedExists = fs.existsSync(transcodedPath);
         const thumbnailExists = fs.existsSync(thumbnailPath);
 
@@ -1321,7 +1322,7 @@ async function publishToFacebookPage(pageId, pageAccessToken, { caption, videoUr
 // Instagram Business Container Creation
 async function createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false }) {
   const containerUrl = `https://graph.facebook.com/v19.0/${instagramBusinessId}/media`;
-  
+
   // Check if media is video or image
   const isVideo = videoUrl && (videoUrl.toLowerCase().match(/\.(mp4|mov|avi|mkv|wmv|flv|webm)/) || videoUrl.includes('drive.google.com'));
   const params = {
@@ -1478,9 +1479,9 @@ async function handleMetaCallback(req, res) {
     res.json({ success: true, accounts: discoveredAccounts });
   } catch (err) {
     console.error('Meta OAuth Callback error:', err.response?.data || err.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed Meta authentication: ' + (err.response?.data?.error?.message || err.message) 
+    res.status(500).json({
+      success: false,
+      error: 'Failed Meta authentication: ' + (err.response?.data?.error?.message || err.message)
     });
   }
 }
@@ -1536,7 +1537,7 @@ async function publishPost(req, res) {
 
     // 1. Resolve currently selected platforms/channels
     let platforms = [];
-    
+
     if (Array.isArray(post.selected_channels) && post.selected_channels.length > 0) {
       platforms = post.selected_channels;
     } else if (typeof post.selected_channels === 'string' && post.selected_channels.trim()) {
@@ -1545,7 +1546,7 @@ async function publishPost(req, res) {
         if (Array.isArray(parsed) && parsed.length > 0) {
           platforms = parsed;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (platforms.length === 0) {
@@ -1557,7 +1558,7 @@ async function publishPost(req, res) {
           if (Array.isArray(parsed) && parsed.length > 0) {
             platforms = parsed;
           }
-        } catch (e) {}
+        } catch (e) { }
       }
     }
 
@@ -1889,7 +1890,7 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         const isWarning = !!publishRes.warning;
         const statusVal = isWarning ? 'partial' : 'success';
         console.log(`[BackgroundPublish] Successfully published to ${channel} (${statusVal})! Post ID: ${publishRes.post_id}`);
-        
+
         await pool.query(
           "UPDATE publish_queue SET status = 'success', post_id = $1, published_at = NOW(), error_message = NULL, updated_at = NOW() WHERE id = $2",
           [publishRes.post_id, job.id]
@@ -1899,18 +1900,18 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
           `INSERT INTO publishing_logs (content_id, brand_name, platform, post_id, status, published_at, metadata)
            VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
           [
-            post.id, 
-            post.brand_name, 
-            channel, 
-            publishRes.post_id, 
-            statusVal, 
+            post.id,
+            post.brand_name,
+            channel,
+            publishRes.post_id,
+            statusVal,
             JSON.stringify({ account_id: account.account_id, response: publishRes })
           ]
         );
       }
     } catch (pubErr) {
       console.error(`[BackgroundPublish] Publishing to ${channel} failed:`, pubErr.message);
-      
+
       await pool.query(
         "UPDATE publish_queue SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2",
         [pubErr.message, job.id]
@@ -2155,12 +2156,12 @@ Do not write any introductory or explanatory text. Return ONLY the valid JSON ob
   }
 }
 
-module.exports = { 
-  getContent, 
-  getStats, 
-  approveContent, 
-  rejectContent, 
-  updateContent, 
+module.exports = {
+  getContent,
+  getStats,
+  approveContent,
+  rejectContent,
+  updateContent,
   getSocialAccounts,
   generateCaptions,
   createBatchContent,

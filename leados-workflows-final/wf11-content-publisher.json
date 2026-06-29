@@ -116,7 +116,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=http://localhost:3500/api/content/{{ $json.id }}/publish",
+        "url": "=http://localhost:5000/api/content/{{ $json.id }}/publish",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

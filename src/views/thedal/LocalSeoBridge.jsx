@@ -107,7 +107,7 @@ export default function LocalSeoBridge() {
   const handleConnect = () => {
     setLoading(true);
     // Redirect directly to the official Google OAuth URL on our backend
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3600';
     window.location.href = `${apiUrl}/api/thedal/localseobridge/auth/google`;
   };
 

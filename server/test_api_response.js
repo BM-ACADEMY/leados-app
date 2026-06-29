@@ -1,6 +1,6 @@
 const http = require('http');
 
-http.get('http://localhost:3500/api/content?status=pending_approval', {
+http.get('http://localhost:5000/api/content?status=pending_approval', {
   headers: {
     'Authorization': 'Bearer dummy_token_or_none', // wait, does it require authentication?
     'x-internal-key': 'leados_internal_2026' // Bypass auth via internal key!

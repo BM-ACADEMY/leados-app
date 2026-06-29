@@ -15,7 +15,7 @@ const getTokens = () => JSON.parse(fs.readFileSync(tokensFile, 'utf8'));
 const saveTokens = (data) => fs.writeFileSync(tokensFile, JSON.stringify(data, null, 2), 'utf8');
 
 // Initialize OAuth2 client
-const port = process.env.PORT || 3500;
+const port = process.env.PORT || 3600;
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID_GSC_I,
   process.env.GOOGLE_CLIENT_SECRET_GSC_I,
@@ -26,7 +26,7 @@ const oauth2Client = new google.auth.OAuth2(
 router.get('/status', (req, res) => {
   const { clientId = 'default' } = req.query; // Support multi-client
   const tokens = getTokens();
-  
+
   if (!process.env.GOOGLE_CLIENT_ID_GSC_I || !process.env.GOOGLE_CLIENT_SECRET_GSC_I) {
     return res.json({ isVerified: false, error: 'MISSING_ENV_KEYS' });
   }
@@ -59,10 +59,10 @@ router.get('/auth/google', (req, res) => {
 // 3. OAuth Callback
 router.get('/auth/callback', async (req, res) => {
   const { code, state: clientId } = req.query;
-  
+
   try {
     const { tokens } = await oauth2Client.getToken(code);
-    
+
     // We strictly need the refresh_token for background/future requests
     const allTokens = getTokens();
     if (tokens.refresh_token) {
@@ -142,9 +142,9 @@ router.get('/', async (req, res) => {
       startDate = yesterdayObj.toISOString().split('T')[0];
     } else {
       const today = new Date();
-      today.setDate(today.getDate() - 3); 
+      today.setDate(today.getDate() - 3);
       endDate = today.toISOString().split('T')[0];
-      
+
       const startDateObj = new Date(today);
       if (days === '7Days') startDateObj.setDate(startDateObj.getDate() - 7);
       else if (days === '3Months') startDateObj.setDate(startDateObj.getDate() - 90);
@@ -158,7 +158,7 @@ router.get('/', async (req, res) => {
     // Build dimensions and filters
     const dimensions = ['query'];
     const dimensionFilterGroups = [];
-    
+
     const filters = [];
     if (device !== 'All') {
       filters.push({ dimension: 'device', operator: 'equals', expression: device.toUpperCase() });
@@ -172,7 +172,7 @@ router.get('/', async (req, res) => {
     }
 
     let activeSiteUrl = siteUrl;
-    let fallbackSiteUrl = siteUrl.startsWith('sc-domain:') 
+    let fallbackSiteUrl = siteUrl.startsWith('sc-domain:')
       ? 'https://' + siteUrl.replace('sc-domain:', '') + '/'
       : 'sc-domain:' + siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
@@ -200,8 +200,8 @@ router.get('/', async (req, res) => {
       }
     }
 
-    const totals = metricsReq.data.rows && metricsReq.data.rows.length > 0 
-      ? metricsReq.data.rows[0] 
+    const totals = metricsReq.data.rows && metricsReq.data.rows.length > 0
+      ? metricsReq.data.rows[0]
       : { clicks: 0, impressions: 0, ctr: 0, position: 0 };
 
     // 2. Fetch Query Level Data (Top 100 queries)

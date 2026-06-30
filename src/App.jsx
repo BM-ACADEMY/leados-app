@@ -22,9 +22,6 @@ import { Pipeline } from './views/Pipeline.jsx';
 import { LeadProfile } from './views/LeadProfile.jsx';
 import { KnowledgeBase } from './views/KnowledgeBase.jsx';
 import { PromptManager } from './views/PromptManager.jsx';
-import { GmbAddClient } from './views/GmbAddClient.jsx';
-import { GmbLoyalty } from './views/GmbLoyalty.jsx';
-import { GmbRankings } from './views/GmbRankings.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -122,9 +119,6 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
               <Route path="/lead-profile" element={<LeadProfile />} />
               <Route path="/knowledge-base" element={<KnowledgeBase />} />
               <Route path="/prompt-manager" element={<PromptManager />} />
-              <Route path="/gmb/add-client" element={<GmbAddClient />} />
-              <Route path="/gmb/loyalty" element={<GmbLoyalty />} />
-              <Route path="/gmb/rankings" element={<GmbRankings />} />
 
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
@@ -165,14 +159,16 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <AppLayout
-        user={user}
-        logout={logout}
-        selectedLead={selectedLead}
-        setSelectedLead={setSelectedLead}
-        leadRefresh={leadRefresh}
-        setLeadRefresh={setLeadRefresh}
-      />
+      <ClientProvider>
+        <AppLayout
+          user={user}
+          logout={logout}
+          selectedLead={selectedLead}
+          setSelectedLead={setSelectedLead}
+          leadRefresh={leadRefresh}
+          setLeadRefresh={setLeadRefresh}
+        />
+      </ClientProvider>
     </BrowserRouter>
   );
 }

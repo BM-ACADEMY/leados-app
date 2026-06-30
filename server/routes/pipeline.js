@@ -5,14 +5,15 @@ const router = express.Router();
 // GET /api/pipeline?type=college
 router.get('/', async (req, res) => {
   const { type } = req.query;
+  const orgType = type || 'college';
   try {
     const { rows } = await db.query(`
-      SELECT l.id, l.name, c.name as brand_name, l.status,
-             l.score, l.source as district
-      FROM leads l
-      LEFT JOIN clients c ON l.client_id = c.id
-      ORDER BY COALESCE(l.score, 0) DESC, l.created_at DESC
-    `);
+      SELECT o.id, o.name, o.district, o.status, a.score
+      FROM organisations o
+      LEFT JOIN ai_analysis a ON a.org_id = o.id
+      WHERE o.type = $1
+      ORDER BY COALESCE(a.score, 0) DESC, o.created_at DESC
+    `, [orgType]);
     
     // Group by status (new, analysed, contacted, meeting, negotiation, closed)
     const pipeline = {

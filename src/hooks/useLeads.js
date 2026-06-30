@@ -55,3 +55,55 @@ export const useLead = (id) => {
 
   return { lead, conversations, loading, error, refetch: fetchLead };
 };
+
+export const useAllianceInbox = () => {
+  const [inbox, setInbox] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const fetchInbox = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getAllianceInbox();
+      setInbox(data || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchInbox();
+  }, []);
+
+  return { inbox, loading, error, refetch: fetchInbox };
+};
+
+export const useAllianceLead = (id) => {
+  const [lead, setLead] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const fetchLead = async () => {
+    if (!id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.getAllianceLead(id);
+      setLead(data.lead);
+      setConversations(data.conversations || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLead();
+  }, [id]);
+
+  return { lead, conversations, loading, error, refetch: fetchLead };
+};

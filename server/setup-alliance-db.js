@@ -1,13 +1,4 @@
-const { Pool } = require('pg');
-require('dotenv').config();
-
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'leados_db',
-  user: process.env.DB_USER || 'leados_user',
-  password: process.env.DB_PASS || 'LeadOS_DB@2026',
-});
+const pool = require('./db/connection');
 
 async function setupAllianceDb() {
   console.log('🔧 LeadOS — AllianceOS Database Extension Setup Starting...\n');

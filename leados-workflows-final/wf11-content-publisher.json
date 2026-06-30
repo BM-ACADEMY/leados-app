@@ -17,14 +17,14 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
       "position": [
-        200,
+        100,
         300
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT cp.*, c.phone_number_id, c.wa_access_token, c.name as client_name FROM content_posts cp JOIN clients c ON cp.client_id = c.id WHERE cp.status = 'scheduled' AND cp.scheduled_at <= NOW() AND cp.scheduled_at > NOW() - INTERVAL '2 hours' ORDER BY cp.scheduled_at ASC LIMIT 10",
+        "query": "SELECT cq.*, bsa.instagram_business_id, bsa.facebook_page_id, bsa.account_id FROM content_queue cq LEFT JOIN brand_social_accounts bsa ON bsa.brand_name = cq.brand_name AND bsa.platform = 'instagram' AND bsa.is_active = true WHERE cq.status IN ('APPROVED', 'approved') AND cq.scheduled_at <= NOW() AND cq.scheduled_at > NOW() - INTERVAL '2 hours' ORDER BY cq.scheduled_at ASC LIMIT 10",
         "additionalFields": {}
       },
       "id": "node-get-due-posts",
@@ -32,7 +32,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        400,
+        250,
         300
       ],
       "credentials": {
@@ -58,7 +58,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        600,
+        450,
         300
       ]
     },
@@ -72,27 +72,95 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        800,
+        650,
         400
       ]
     },
     {
       "parameters": {
-        "jsCode": "const post = $input.first().json;\n\n// Determine publish method based on platform\nconst canAutoPublish = ['GMB', 'WhatsApp Status'].includes(post.platform);\n\nreturn [{ json: {\n  ...post,\n  can_auto_publish: canAutoPublish,\n  note: canAutoPublish\n    ? 'Will attempt auto-publish'\n    : `Manual action needed: Log in to ${post.platform} and publish post ID ${post.id}`\n}}];"
+        "jsCode": "const post = $input.first().json;\n\n// Check if credentials are present (fields from SQL join)\nconst hasInstagramCreds = post.platform === 'instagram' && post.instagram_business_id;\nconst hasFacebookCreds = post.platform === 'facebook' && post.facebook_page_id;\nconst isGeneralAutoPublish = ['GMB', 'WhatsApp Status'].includes(post.platform);\n\nconst canAutoPublish = isGeneralAutoPublish || hasInstagramCreds || hasFacebookCreds;\nconst isMetaPlatform = ['instagram', 'facebook'].includes(post.platform);\n\nreturn [{ json: {\n  ...post,\n  can_auto_publish: canAutoPublish,\n  is_meta_platform: isMetaPlatform,\n  note: canAutoPublish\n    ? (isMetaPlatform ? 'Triggering backend Meta auto-publisher...' : 'Will attempt auto-publish')\n    : `Manual action needed: Log in to ${post.platform} and publish post ID ${post.id}`\n}}];"
       },
       "id": "node-decide-publish",
       "name": "Decide Publish Method",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1000,
+        850,
         400
       ]
     },
     {
       "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.can_auto_publish }}",
+              "value2": true
+            },
+            {
+              "value1": "={{ $json.is_meta_platform }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-check-meta-platform",
+      "name": "Is Meta Auto Publish?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5000/api/content/{{ $json.id }}/publish",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-key",
+              "value": "leados_internal_2026"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-publish-meta-backend",
+      "name": "Publish via Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.can_auto_publish }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-check-other-auto",
+      "name": "Is Other Auto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        500
+      ]
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE content_posts SET status = 'published', published_at = NOW() WHERE id = $1",
+        "query": "UPDATE content_queue SET status = 'published' WHERE id = $1",
         "additionalFields": {
           "queryParams": "={{ $json.id }}"
         }
@@ -102,8 +170,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        1200,
-        400
+        1450,
+        450
       ],
       "credentials": {
         "postgres": {
@@ -124,7 +192,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        1400,
+        1650,
         400
       ],
       "credentials": {
@@ -184,7 +252,54 @@
       "main": [
         [
           {
+            "node": "Is Meta Auto Publish?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Meta Auto Publish?": {
+      "main": [
+        [
+          {
+            "node": "Publish via Backend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Other Auto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish via Backend": {
+      "main": [
+        [
+          {
+            "node": "Notify Team of Published Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Other Auto?": {
+      "main": [
+        [
+          {
             "node": "Mark as Published",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Each Post",
             "type": "main",
             "index": 0
           }

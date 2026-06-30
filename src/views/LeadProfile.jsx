@@ -14,7 +14,13 @@ export const LeadProfile = () => {
 
       {/* PROFILE HEADER */}
       <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 24, marginBottom: 24 }}>
-        <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'rgba(228,165,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 700, color: 'var(--gold)', flexShrink: 0 }}>S</div>
+        <div className="score-ring">
+          <svg viewBox="0 0 36 36">
+            <path className="bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+            <path className="fill" strokeDasharray="92, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+          </svg>
+          <div className="text">92<br/><span>Score</span></div>
+        </div>
         <div style={{ flex: 1 }}>
           <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, marginBottom: 6, color: 'white' }}>Sri Venkateswara Engineering College</h2>
           <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 12 }}>Engineering College · Villupuram District, Tamil Nadu · Contact: Mr. Rajan (PO) · 94XXXXXXXX</div>
@@ -103,7 +109,7 @@ export const LeadProfile = () => {
               <div className="timeline-dot"></div>
               <div className="timeline-content">
                 <div className="timeline-label">AI Analysis Completed</div>
-                <div className="timeline-text">Offer: Training + Employability MoU</div>
+                <div className="timeline-text">Score: 92 · Offer: Training + Employability MoU</div>
                 <div className="timeline-time">2 days ago · OpenAI GPT-4o</div>
               </div>
             </div>

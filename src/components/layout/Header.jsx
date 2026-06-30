@@ -36,6 +36,13 @@ export const Header = ({user, onMenuClick}) => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef(null);
+  const [dataMode, setDataMode] = useState(localStorage.getItem('leados_data_mode') || 'live');
+
+  const handleDataModeChange = (mode) => {
+    setDataMode(mode);
+    localStorage.setItem('leados_data_mode', mode);
+    window.location.reload();
+  };
 
   const initial = user?.name ? user.name[0].toUpperCase() : 'K';
   const roleLabel = user?.role ? (user.role.charAt(0).toUpperCase() + user.role.slice(1)) : 'Super Admin';
@@ -80,6 +87,28 @@ export const Header = ({user, onMenuClick}) => {
           </div>
         </div>
         <div style={{display:'flex',alignItems:'center',gap:10}}>
+          {/* Data Mode Select */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.card, border: '1px solid ' + C.border, borderRadius: 7, padding: '4px 8px' }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Mode:</span>
+            <select
+              value={dataMode}
+              onChange={(e) => handleDataModeChange(e.target.value)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: dataMode === 'live' ? '#10b981' : '#f59e0b',
+                fontSize: 11,
+                fontWeight: 800,
+                outline: 'none',
+                cursor: 'pointer',
+                padding: '2px 4px'
+              }}
+            >
+              <option value="live" style={{ background: C.surface, color: '#10b981' }}>🟢 Live API</option>
+              <option value="demo" style={{ background: C.surface, color: '#f59e0b' }}>🧪 Demo Sandbox</option>
+            </select>
+          </div>
+
           <div 
             onClick={() => setSearchOpen(true)} 
             style={{display:'flex',alignItems:'center',gap:7,background:C.card,border:'1px solid '+C.border,borderRadius:7,padding:'6px 11px', cursor:'pointer', transition: 'border-color 0.2s'}}

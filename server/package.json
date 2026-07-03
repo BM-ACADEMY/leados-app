@@ -12,9 +12,9 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/genai": "^2.8.0",
     "axios": "^1.18.0",
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "bcryptjs": "^3.0.3",
     "cheerio": "^1.2.0",
     "cors": "^2.8.6",
@@ -34,6 +34,7 @@
     "pdf-parse": "^2.4.5",
     "pg": "^8.21.0",
     "razorpay": "^2.9.6",
+    "socket.io": "^4.8.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

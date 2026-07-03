@@ -16,6 +16,13 @@ export default defineConfig({
         target: 'http://localhost:3600',
         changeOrigin: true,
       },
+      // Socket.io — must proxy both HTTP polling and WebSocket upgrade
+      '/socket.io': {
+        target: 'http://localhost:3600',
+        changeOrigin: true,
+        ws: true,  // enable WebSocket proxying
+      },
     },
   },
 })
+

@@ -572,10 +572,6 @@ app.post('/webhook/whatsapp', async (req, res) => {
             RETURNING id, direction, content, msg_type as type, wa_msg_id, status, sent_at as timestamp
           `, [conversationId, text, msg.id]);
 
-          await pool.query(
-            'UPDATE leads SET last_contact = NOW(), updated_at = NOW() WHERE id = $1',
-            [lead.id]
-          );
 
           // ── REAL-TIME: push to CRM Inbox immediately ─────────
           io.emit('incoming_message', { lead_id: lead.id, message: savedRows[0] });
@@ -1245,16 +1241,15 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         }
 
         await pool.query(`
-          INSERT INTO leads (client_id, name, phone, status, source, score, interest, assigned_to, last_contact, created_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+          INSERT INTO leads (client_id, name, phone, status, source, score, interest, assigned_to, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
           ON CONFLICT (phone) DO UPDATE 
           SET name = EXCLUDED.name, status = EXCLUDED.status, 
               client_id = COALESCE(EXCLUDED.client_id, leads.client_id),
               source = EXCLUDED.source, score = EXCLUDED.score,
               interest = EXCLUDED.interest, assigned_to = COALESCE(EXCLUDED.assigned_to, leads.assigned_to),
-              last_contact = COALESCE(EXCLUDED.last_contact, leads.last_contact),
               updated_at = NOW()
-        `, [rowClientId, name, phone, status, source, score, interest, assignedTo, lastContact]);
+        `, [rowClientId, name, phone, status, source, score, interest, assignedTo]);
 
         imported++;
       } catch (e) {

@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { C } from '../../constants/theme.js';
 import { Target, Search, Plus, Loader2, Sparkles, Zap, Crosshair, ArrowRight, Download, CheckSquare, Clock, Info, ShieldAlert, ChevronLeft, ChevronRight, Filter, ArrowUpDown, Circle, LayoutDashboard, X } from 'lucide-react';
 import { api } from '../../services/api.js';
-import html2pdf from 'html2pdf.js';
+import html2pdf from 'html2pdf.js/dist/html2pdf.bundle.min.js';
 const getDomainTotal = (domain) => {
   let hash = 0;
   for (let i = 0; i < domain.length; i++) {

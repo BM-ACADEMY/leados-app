@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, Send, ChevronLeft, Wifi, WifiOff } from 'lucide-react';
+import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut } from 'lucide-react';
+import EmojiPicker from 'emoji-picker-react';
 import { io as socketIO } from 'socket.io-client';
 import { C } from '../constants/theme.js';
 import { useLeads, useLead } from '../hooks/useLeads.js';
@@ -9,6 +10,27 @@ import { api } from '../services/api.js';
 // In production, connect directly to the API server.
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const SOCKET_URL = isLocalDev ? window.location.origin : (import.meta.env.VITE_API_URL || 'https://leados-api.abmgroups.org');
+
+const CircularProgress = ({ progress, size = 30, strokeWidth = 3 }) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const offset = circumference - (progress / 100) * circumference;
+  return (
+    <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+      <circle cx={size / 2} cy={size / 2} r={radius} stroke={C.border} strokeWidth={strokeWidth} fill="none" />
+      <circle cx={size / 2} cy={size / 2} r={radius} stroke={C.accent} strokeWidth={strokeWidth} fill="none" strokeDasharray={circumference} strokeDashoffset={offset} style={{ transition: 'stroke-dashoffset 0.2s ease-out' }} />
+      <text x="50%" y="50%" fill={C.text} fontSize="9" fontWeight="600" textAnchor="middle" dy=".3em" transform={`rotate(90 ${size / 2} ${size / 2})`}>{Math.round(progress)}</text>
+    </svg>
+  );
+};
+
+const formatBytes = (bytes) => {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
 
 export const InboxView = () => {
   const [search, setSearch] = useState('');
@@ -20,8 +42,126 @@ export const InboxView = () => {
   const [showChatOnMobile, setShowChatOnMobile] = useState(false);
   const [localMessages, setLocalMessages] = useState([]);
   const [connected, setConnected] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editContent, setEditContent] = useState('');
+  const [attachedFile, setAttachedFile] = useState(null);
+  const [hoveredMessage, setHoveredMessage] = useState(null);
+  const [activeDropdownId, setActiveDropdownId] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [deleteModalMsg, setDeleteModalMsg] = useState(null);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+  const [uploadProgress, setUploadProgress] = useState(null);
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const timerRef = useRef(null);
+
+  const [forwardMessage, setForwardMessage] = useState(null);
+  const [forwardSearch, setForwardSearch] = useState('');
+  const [selectedForwardLeads, setSelectedForwardLeads] = useState([]);
+  const [forwarding, setForwarding] = useState(false);
+  const recordingTimerRef = useRef(null);
+
+  const [pinMessageModal, setPinMessageModal] = useState(null);
+  const [pinDuration, setPinDuration] = useState(168); // Default 7 days (168 hours)
+  const [pinning, setPinning] = useState(false);
+  const [currentPinIndex, setCurrentPinIndex] = useState(0);
+
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState([]);
+
+  // Lightbox state
+  const [zoomedImageIndex, setZoomedImageIndex] = useState(null);
+  const [lightboxZoomLevel, setLightboxZoomLevel] = useState(1);
+
+  // Reaction state
+  const [activeReactBarMsgId, setActiveReactBarMsgId] = useState(null);
+  const [showFullReactionPicker, setShowFullReactionPicker] = useState(null);
+  // userReactions: { [msgId]: emoji } — tracks the current user's own reaction per message
+  const [userReactions, setUserReactions] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('leados_user_reactions') || '{}'); } catch { return {}; }
+  });
+  const saveUserReactions = (updated) => {
+    setUserReactions(updated);
+    localStorage.setItem('leados_user_reactions', JSON.stringify(updated));
+  };
+
+  // Deleted for me state
+  const [deletedForMeIds, setDeletedForMeIds] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('leados_deleted_for_me') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const hideMessageForMe = (msgId) => {
+    const updated = [...deletedForMeIds, msgId];
+    setDeletedForMeIds(updated);
+    localStorage.setItem('leados_deleted_for_me', JSON.stringify(updated));
+  };
+
+  // cleanup recording on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, []);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const file = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
+        setAttachedFile(file);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      alert("Microphone access denied or not available.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      clearInterval(recordingTimerRef.current);
+    }
+  };
+
+  const formatDuration = (seconds) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+  const [attachAccept, setAttachAccept] = useState('*/*');
+
   const socketRef = useRef(null);
   const bottomRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Auto-select first lead
   useEffect(() => {
@@ -44,10 +184,15 @@ export const InboxView = () => {
   const activeLeadIdRef = useRef(activeLeadId);
   const refetchLeadsListRef = useRef(refetchLeadsList);
 
+  // Separate effect for reading the conversation to prevent infinite loop
   useEffect(() => {
-    activeLeadIdRef.current = activeLeadId;
-    refetchLeadsListRef.current = refetchLeadsList;
-  }, [activeLeadId, refetchLeadsList]);
+    if (activeLeadId) {
+      api.readConversation(activeLeadId).then(() => {
+        // Refetch leads without adding the function to the dependency array
+        refetchLeadsListRef.current();
+      }).catch(e => console.error(e));
+    }
+  }, [activeLeadId]);
 
   // ── SOCKET.IO CONNECTION ────────────────────────────────────
   useEffect(() => {
@@ -100,41 +245,307 @@ export const InboxView = () => {
       );
     });
 
+    socket.on('message_edited', (message) => {
+      setLocalMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, ...message } : m)));
+    });
+
+    socket.on('message_deleted', (message) => {
+      setLocalMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, is_deleted: true } : m)));
+    });
+
     return () => {
       socket.disconnect();
     };
   }, []); // Empty dependency array ensures it connects only once!
 
+  const handleFileChange = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setAttachedFile(e.target.files[0]);
+    }
+  };
+
+  const handleAttachOptionClick = (acceptString) => {
+    setShowAttachMenu(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.accept = acceptString;
+      fileInputRef.current.click();
+    }
+  };
+
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!msg.trim() || !activeLeadId || sending) return;
+    if ((!msg.trim() && !attachedFile) || !activeLeadId || sending) return;
     setSending(true);
-    const optimisticMsg = {
-      id: `optimistic-${Date.now()}`,
-      direction: 'outbound',
-      content: msg,
-      status: 'sending',
-      timestamp: new Date().toISOString(),
-    };
-    setLocalMessages((prev) => [...prev, optimisticMsg]);
-    setMsg('');
+
+    let mediaUrl = null;
+    let msgType = 'text';
+
     try {
-      await api.sendWhatsAppMessage(activeLeadId, optimisticMsg.content);
-      // The socket event will replace this once the server confirms
+      if (attachedFile) {
+        setUploadProgress(0);
+        const formData = new FormData();
+        formData.append('file', attachedFile);
+        const uploadRes = await api.uploadMedia(formData, (progress) => {
+          setUploadProgress(progress);
+        });
+        mediaUrl = uploadRes.fileUrl;
+        setUploadProgress(null);
+
+        if (attachedFile.type.startsWith('image/')) msgType = 'image';
+        else if (attachedFile.type.startsWith('video/')) msgType = 'video';
+        else if (attachedFile.type.startsWith('audio/')) msgType = 'audio';
+        else msgType = 'document';
+      }
+
+      const optimisticId = `optimistic-${Date.now()}`;
+      const optimisticMsg = {
+        id: optimisticId,
+        direction: 'outbound',
+        content: msg,
+        status: 'sending',
+        type: msgType,
+        media_url: mediaUrl,
+        reply_to: replyingTo,
+        timestamp: new Date().toISOString(),
+      };
+      setLocalMessages((prev) => [...prev, optimisticMsg]);
+      setReplyingTo(null);
+      setMsg('');
+      setAttachedFile(null);
+
+      const sentMsg = await api.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
+
+      // Replace optimistic message directly with the confirmed database message
+      setLocalMessages((prev) => prev.map(m => m.id === optimisticId ? { ...sentMsg.message, reply_to: replyingTo } : m));
     } catch (err) {
-      // Remove optimistic message and show error
-      setLocalMessages((prev) => prev.filter((m) => m.id !== optimisticMsg.id));
-      setMsg(optimisticMsg.content);
+      // On error, remove the optimistic message
+      setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
       alert('Failed to send message: ' + (err.response?.data?.error || err.message));
     } finally {
       setSending(false);
     }
   };
 
+  const handleCopy = (text) => navigator.clipboard.writeText(text);
+  const handleDownloadMedia = (mediaUrl) => {
+    if (!mediaUrl) return;
+    const fullMediaUrl = mediaUrl.startsWith('http') ? mediaUrl : `${SOCKET_URL}${mediaUrl}`;
+    const link = document.createElement('a');
+    link.href = fullMediaUrl;
+    link.target = '_blank';
+    const filename = mediaUrl.split('/').pop() || 'download';
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  const startEdit = (m) => {
+    setEditingMessageId(m.id);
+    setEditContent(getMessageText(m));
+  };
+  const saveEdit = async () => {
+    setEditSaving(true);
+    try {
+      await api.editMessage(editingMessageId, editContent);
+      setEditingMessageId(null);
+      setEditContent('');
+    } catch (e) {
+      alert("Failed to edit");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleForward = async () => {
+    if (!forwardMessage || selectedForwardLeads.length === 0) return;
+    setForwarding(true);
+    try {
+      if (forwardMessage.isBulk) {
+        // Bulk forwarding: send multiple messages to all selected leads
+        for (const leadId of selectedForwardLeads) {
+          for (const msgId of forwardMessage.messages) {
+            const m = localMessages.find(x => x.id === msgId);
+            if (m) {
+              await api.sendWhatsAppMessage(leadId, m.content, m.media_url, m.msg_type || m.type || 'text', null, true);
+            }
+          }
+        }
+        setIsSelectMode(false);
+        setSelectedMessageIds([]);
+      } else {
+        // Single forward
+        await Promise.all(selectedForwardLeads.map(leadId =>
+          api.sendWhatsAppMessage(leadId, forwardMessage.content, forwardMessage.media_url, forwardMessage.type || 'text', null, true)
+        ));
+      }
+
+      const firstLeadId = selectedForwardLeads[0];
+      setForwardMessage(null);
+      setSelectedForwardLeads([]);
+      setForwardSearch('');
+      if (firstLeadId) setActiveLeadId(firstLeadId);
+    } catch (err) {
+      console.error('Failed to forward message:', err);
+      alert('Failed to forward message to some contacts.');
+    } finally {
+      setForwarding(false);
+    }
+  };
+
+  const handlePin = async () => {
+    if (!pinMessageModal) return;
+    setPinning(true);
+    try {
+      let updatedMessage;
+      if (pinMessageModal.pinned_until && new Date(pinMessageModal.pinned_until) > new Date()) {
+        const res = await api.unpinMessage(pinMessageModal.id);
+        updatedMessage = res.message;
+      } else {
+        const res = await api.pinMessage(pinMessageModal.id, pinDuration);
+        updatedMessage = res.message;
+      }
+
+      // Instantly update the local state so the top bar and icon appear immediately
+      setLocalMessages((prev) => prev.map((m) => (m.id === updatedMessage.id ? { ...m, ...updatedMessage } : m)));
+
+      setPinMessageModal(null);
+    } catch (err) {
+      console.error('Failed to pin/unpin:', err);
+      alert('Failed to update pin status.');
+    } finally {
+      setPinning(false);
+    }
+  };
+
+  const handleStar = async (msgId, isStarred) => {
+    try {
+      // Optimistically update the UI instantly
+      setLocalMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, is_starred: isStarred } : m)));
+
+      const res = await api.toggleStarMessage(msgId, isStarred);
+      // Backend confirmation
+      setLocalMessages((prev) => prev.map((m) => (m.id === res.message.id ? { ...m, ...res.message } : m)));
+    } catch (err) {
+      console.error('Failed to star/unstar:', err);
+      alert('Failed to update star status.');
+      // Revert on error
+      setLocalMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, is_starred: !isStarred } : m)));
+    }
+  };
+
+  const handleReact = async (msgId, emoji) => {
+    setActiveReactBarMsgId(null);
+    setShowFullReactionPicker(null);
+
+    const prevEmoji = userReactions[msgId]; // emoji the user already reacted with
+    const isSameEmoji = prevEmoji === emoji;
+
+    // Build updated userReactions map
+    const updatedUserReactions = { ...userReactions };
+    if (isSameEmoji) {
+      delete updatedUserReactions[msgId]; // toggle off
+    } else {
+      updatedUserReactions[msgId] = emoji; // switch to new emoji
+    }
+    saveUserReactions(updatedUserReactions);
+
+    // Optimistic UI update
+    setLocalMessages((prev) => prev.map((m) => {
+      if (m.id !== msgId) return m;
+      const reactions = { ...(m.reactions || {}) };
+      // Remove old reaction if switching
+      if (prevEmoji && !isSameEmoji) {
+        if (reactions[prevEmoji] > 1) reactions[prevEmoji] -= 1;
+        else delete reactions[prevEmoji];
+      }
+      // Toggle off or add new
+      if (isSameEmoji) {
+        if (reactions[emoji] > 1) reactions[emoji] -= 1;
+        else delete reactions[emoji];
+      } else {
+        reactions[emoji] = (reactions[emoji] || 0) + 1;
+      }
+      return { ...m, reactions };
+    }));
+
+    try {
+      // Remove old reaction first if switching emoji
+      if (prevEmoji && !isSameEmoji) {
+        await api.reactToMessage(msgId, prevEmoji, 'remove');
+      }
+      // Add new or remove toggled
+      const action = isSameEmoji ? 'remove' : 'add';
+      const res = await api.reactToMessage(msgId, emoji, action);
+      setLocalMessages((prev) => prev.map((m) => m.id === res.message.id ? { ...m, reactions: res.message.reactions } : m));
+    } catch (err) {
+      console.error('React failed:', err);
+    }
+  };
+
   const displayLeads = leads || [];
   const activeObj = displayLeads.find((l) => l.id === activeLeadId) || displayLeads[0];
 
+  const chatImages = localMessages.filter(m => m.type === 'image' && m.media_url && !deletedForMeIds.includes(m.id));
+
   const getMessageText = (m) => m.content || m.message || m.text || '';
+  const renderLastMessage = (lead) => {
+    const lastMsg = lead.last_msg;
+    if (!lastMsg || Object.keys(lastMsg).every(k => lastMsg[k] === null)) {
+      return <span>{lead.interest || 'No custom details'}</span>;
+    }
+
+    if (lastMsg.is_deleted) {
+      return (
+        <span style={{ fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          This message was deleted
+        </span>
+      );
+    }
+
+    const type = lastMsg.msg_type;
+    const content = lastMsg.content || '';
+
+    // Truncate helper to max 15 characters
+    const truncate = (str, len = 15) => {
+      if (!str) return '';
+      return str.length > len ? str.substring(0, len) + '...' : str;
+    };
+
+    if (type === 'image') {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <Image size={12} style={{ flexShrink: 0 }} />
+          <span>{content ? truncate(content) : 'Photo'}</span>
+        </span>
+      );
+    }
+    if (type === 'video') {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <Film size={12} style={{ flexShrink: 0 }} />
+          <span>{content ? truncate(content) : 'Video'}</span>
+        </span>
+      );
+    }
+    if (type === 'audio') {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <Music size={12} style={{ flexShrink: 0 }} />
+          <span>Audio</span>
+        </span>
+      );
+    }
+    if (type && type !== 'text') {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <FileText size={12} style={{ flexShrink: 0 }} />
+          <span>{content ? truncate(content) : 'Document'}</span>
+        </span>
+      );
+    }
+
+    return <span>{truncate(content)}</span>;
+  };
   const getMessageTime = (m) => {
     const raw = m.timestamp || m.sent_at || m.time;
     if (!raw) return '';
@@ -180,10 +591,15 @@ export const InboxView = () => {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <p style={{ fontSize: 9, color: C.dim }}>{l.last_contact ? new Date(l.last_contact).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}</p>
+                  {Number(l.unread || 0) > 0 && (
+                    <div style={{ marginTop: 4, background: C.accent, color: '#fff', fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 10, display: 'inline-block' }}>
+                      {Number(l.unread)}
+                    </div>
+                  )}
                 </div>
               </div>
-              <p style={{ fontSize: 10, color: C.muted, paddingLeft: 40, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {l.interest || 'No custom details'}
+              <p style={{ fontSize: 10, color: C.muted, paddingLeft: 40, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 4 }}>
+                {renderLastMessage(l)}
               </p>
             </div>
           ))}
@@ -211,25 +627,244 @@ export const InboxView = () => {
           </div>
         </div>
 
+        {/* Pinned Messages Bar */}
+        {(() => {
+          const pinnedMessages = localMessages.filter(m => m.pinned_until && new Date(m.pinned_until) > new Date() && !deletedForMeIds.includes(m.id));
+          if (pinnedMessages.length === 0) return null;
+
+          const currentPin = pinnedMessages[currentPinIndex % pinnedMessages.length];
+          if (!currentPin) return null;
+
+          return (
+            <div
+              style={{ background: C.card, borderBottom: '1px solid ' + C.border, padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', position: 'relative' }}
+              onClick={() => {
+                const el = document.getElementById(`msg-${currentPin.id}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                setCurrentPinIndex((prev) => (prev + 1) % pinnedMessages.length);
+              }}
+            >
+              <Pin size={16} color={C.accent} style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: C.accent }}>Pinned Message {pinnedMessages.length > 1 ? `(${currentPinIndex + 1}/${pinnedMessages.length})` : ''}</p>
+                <p style={{ margin: 0, fontSize: 12, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {currentPin.content || (currentPin.media_url ? 'Attachment' : '')}
+                </p>
+              </div>
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    await api.unpinMessage(currentPin.id);
+                    // Instantly update the local state so the top bar updates immediately
+                    setLocalMessages((prev) => prev.map((m) => (m.id === currentPin.id ? { ...m, pinned_until: null } : m)));
+                  } catch (err) {
+                    console.error('Failed to unpin:', err);
+                    alert('Failed to unpin message');
+                  }
+                }}
+                style={{
+                  background: C.bg,
+                  border: '1px solid ' + C.border,
+                  borderRadius: 6,
+                  padding: '4px 10px',
+                  fontSize: 11,
+                  color: C.muted,
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  flexShrink: 0
+                }}
+                onMouseOver={e => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.borderColor = '#ef4444'; }}
+                onMouseOut={e => { e.currentTarget.style.color = C.muted; e.currentTarget.style.borderColor = C.border; }}
+              >
+                <X size={12} />
+                Unpin
+              </button>
+            </div>
+          );
+        })()}
+
         {/* Messages area */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: 18, display: 'flex', flexDirection: 'column', gap: 11, background: C.bg + '88' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '60px 18px 18px 18px', display: 'flex', flexDirection: 'column', gap: 11, background: C.bg + '88' }}>
           {loadingLead && localMessages.length === 0 && (
             <p style={{ textAlign: 'center', color: C.muted, fontSize: 11 }}>Loading conversation…</p>
           )}
           {!loadingLead && localMessages.length === 0 && (
             <p style={{ textAlign: 'center', color: C.muted, fontSize: 11 }}>No messages yet. Start the conversation!</p>
           )}
-          {localMessages.map((m, i) => {
+          {localMessages.filter(m => !deletedForMeIds.includes(m.id)).map((m, i) => {
             const isLead = m.direction === 'inbound' || m.from === 'lead';
             const isAI = m.sender === 'ai' || m.from === 'ai';
             const isSending = m.id?.toString().startsWith('optimistic-');
             return (
-              <div key={m.id || i} style={{ display: 'flex', justifyContent: isLead ? 'flex-start' : 'flex-end', opacity: isSending ? 0.6 : 1, transition: 'opacity 0.3s' }}>
-                <div style={{ maxWidth: '60%', background: isLead ? C.card : C.accent + '20', border: '1px solid ' + (isLead ? C.border : C.accentDim), borderRadius: isLead ? '4px 13px 13px 13px' : '13px 4px 13px 13px', padding: '9px 13px' }}>
-                  {isAI && <p style={{ fontSize: 8, color: C.accent, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>AI AGENT</p>}
-                  {!isLead && !isAI && <p style={{ fontSize: 8, color: C.blue, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>HUMAN AGENT</p>}
-                  <p style={{ fontSize: 12, color: C.text, whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{getMessageText(m)}</p>
+              <div
+                id={`msg-${m.id}`}
+                key={m.id || i}
+                style={{ display: 'flex', justifyContent: isLead ? 'flex-start' : 'flex-end', opacity: isSending ? 0.6 : 1, transition: 'opacity 0.3s' }}
+                onMouseEnter={() => setHoveredMessage(m.id)}
+                onMouseLeave={() => setHoveredMessage(null)}
+              >
+                {isSelectMode && (
+                  <div style={{ display: 'flex', alignItems: 'center', marginRight: isLead ? 10 : 10, marginLeft: isLead ? 0 : 10, order: isLead ? -1 : 1 }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedMessageIds.includes(m.id)}
+                      onChange={() => {
+                        setSelectedMessageIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id]);
+                      }}
+                      style={{ width: 18, height: 18, accentColor: C.accent, cursor: 'pointer' }}
+                    />
+                  </div>
+                )}
+                <div style={{ position: 'relative', maxWidth: '60%' }}>
+                  <div
+                    style={{ position: 'relative', background: isLead ? (selectedMessageIds.includes(m.id) ? C.accent + '30' : C.card) : (selectedMessageIds.includes(m.id) ? C.accent + '40' : C.accent + '20'), border: '1px solid ' + (isLead ? C.border : C.accentDim), borderRadius: isLead ? '4px 13px 13px 13px' : '13px 4px 13px 13px', padding: '9px 13px' }}
+                  onMouseLeave={() => { if (activeDropdownId === m.id) setActiveDropdownId(null); }}
+                  onClick={() => {
+                    if (isSelectMode) {
+                      setSelectedMessageIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id]);
+                    }
+                  }}
+                >
+                  {(hoveredMessage === m.id || activeDropdownId === m.id) && !m.is_deleted && !isSelectMode && (
+                    <div style={{ position: 'absolute', top: 5, right: 5, zIndex: 10 }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setActiveDropdownId(activeDropdownId === m.id ? null : m.id); }}
+                        style={{ background: isLead ? C.card : C.accent + '20', border: 'none', cursor: 'pointer', padding: 2, borderRadius: 4, display: 'flex' }}
+                      >
+                        <ChevronDown size={14} color={C.muted} />
+                      </button>
+
+                      {activeDropdownId === m.id && (
+                        <div style={{ position: 'absolute', top: '100%', left: isLead ? 0 : 'auto', right: isLead ? 'auto' : 0, background: C.card, border: '1px solid ' + C.border, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 100, minWidth: 160, padding: '5px 0', display: 'flex', flexDirection: 'column' }}>
+                          <button onClick={() => { setReplyingTo(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <CornerUpLeft size={16} color={C.muted} /> Reply
+                          </button>
+
+                          {(!m.type || m.type === 'text') && (
+                            <button onClick={() => { handleCopy(getMessageText(m)); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                              <Copy size={16} color={C.muted} /> Copy
+                            </button>
+                          )}
+
+                          <button onClick={() => { setForwardMessage(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <CornerUpRight size={16} color={C.muted} /> Forward
+                          </button>
+
+                          {m.media_url && (
+                            <button
+                              onClick={() => {
+                                handleDownloadMedia(m.media_url);
+                                setActiveDropdownId(null);
+                              }}
+                              style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}
+                            >
+                              <Download size={16} color={C.muted} /> Download
+                            </button>
+                          )}
+
+                          <button onClick={() => { setPinMessageModal(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <Pin size={16} color={C.muted} /> {m.pinned_until && new Date(m.pinned_until) > new Date() ? 'Unpin' : 'Pin'}
+                          </button>
+
+                          <button onClick={() => { handleStar(m.id, !m.is_starred); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <Star size={16} color={C.muted} /> {m.is_starred ? 'Unstar' : 'Star'}
+                          </button>
+
+                          <div style={{ height: 1, background: C.border, margin: '4px 0' }} />
+
+                          <button onClick={() => { setIsSelectMode(true); setSelectedMessageIds([m.id]); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <CheckSquare size={16} color={C.muted} /> Select
+                          </button>
+
+                          {!isLead && (!m.type || m.type === 'text') && (
+                            <button onClick={() => { startEdit(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                              <Edit2 size={16} color={C.muted} /> Edit
+                            </button>
+                          )}
+
+                          <button onClick={() => { setDeleteModalMsg(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: '#ef4444', padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <Trash2 size={16} color="#ef4444" /> Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {m.is_deleted ? (
+                    <p style={{ fontSize: 12, color: C.muted, fontStyle: 'italic' }}>🚫 This message was deleted</p>
+                  ) : editingMessageId === m.id ? (
+                    <div style={{ display: 'flex', gap: 5, flexDirection: 'column' }}>
+                      <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} style={{ width: '100%', background: C.bg, color: C.text, border: '1px solid ' + C.border, borderRadius: 5, padding: 5, fontSize: 12, minHeight: 40 }} />
+                      <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end' }}>
+                        <button onClick={() => setEditingMessageId(null)} style={{ background: 'transparent', border: 'none', color: C.muted, fontSize: 11, cursor: 'pointer' }}>Cancel</button>
+                        <button onClick={saveEdit} disabled={editSaving} style={{ background: C.accent, border: 'none', color: '#fff', fontSize: 11, padding: '3px 8px', borderRadius: 4, cursor: 'pointer', opacity: editSaving ? 0.6 : 1 }}>
+                          {editSaving ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {isAI && <p style={{ fontSize: 8, color: C.accent, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>AI AGENT</p>}
+                      {!isLead && !isAI && <p style={{ fontSize: 8, color: C.blue, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>HUMAN AGENT</p>}
+
+                      {m.reply_to && (
+                        <div style={{ padding: '6px 10px', background: C.bg + '50', borderLeft: `4px solid ${C.accent}`, borderRadius: 4, marginBottom: 6, opacity: 0.8 }}>
+                          <span style={{ fontSize: 11, color: C.accent, fontWeight: 600, display: 'block', marginBottom: 2 }}>
+                            {m.reply_to.direction === 'inbound' || m.reply_to.from === 'lead' ? 'Contact' : 'You'}
+                          </span>
+                          <span style={{ fontSize: 11, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>
+                            {m.reply_to.media_url ? '📷 Media message' : getMessageText(m.reply_to)}
+                          </span>
+                        </div>
+                      )}
+
+                      {m.is_forwarded && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: C.muted, fontSize: 11, fontStyle: 'italic', marginBottom: 4 }}>
+                          <CornerUpRight size={12} /> Forwarded
+                        </div>
+                      )}
+
+                      {m.pinned_until && new Date(m.pinned_until) > new Date() && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: C.muted, fontSize: 11, fontWeight: 500, marginBottom: 4 }}>
+                          <Pin size={12} /> Pinned
+                        </div>
+                      )}
+
+                      {m.media_url && (() => {
+                        const fullMediaUrl = m.media_url.startsWith('http') ? m.media_url : `${SOCKET_URL}${m.media_url}`;
+                        return (
+                          <div style={{ marginBottom: 6 }}>
+                            {m.type === 'image' ? (
+                              <img 
+                                src={fullMediaUrl} 
+                                style={{ maxWidth: '100%', borderRadius: 6, minHeight: 100, backgroundColor: C.bg, cursor: 'pointer' }} 
+                                alt="attachment" 
+                                onClick={() => {
+                                  const idx = chatImages.findIndex(img => img.id === m.id);
+                                  if (idx !== -1) {
+                                    setZoomedImageIndex(idx);
+                                    setLightboxZoomLevel(1);
+                                  }
+                                }}
+                              />
+                            ) : m.type === 'video' ? <video src={fullMediaUrl} controls style={{ maxWidth: '100%', borderRadius: 6, backgroundColor: C.bg }} />
+                                : m.type === 'audio' ? <audio src={fullMediaUrl} controls style={{ maxWidth: '100%' }} />
+                                  : <a href={fullMediaUrl} target="_blank" rel="noreferrer" style={{ color: C.accent, fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }}><Paperclip size={12} /> Document</a>}
+                          </div>
+                        );
+                      })()}
+
+                      <p style={{ fontSize: 12, color: C.text, whiteSpace: 'pre-wrap', lineHeight: 1.7, paddingRight: 10 }}>{getMessageText(m)}</p>
+                    </>
+                  )}
+
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, marginTop: 4 }}>
+                    {m.is_starred && <Star size={11} fill={C.muted} color={C.muted} style={{ opacity: 0.8 }} />}
                     <p style={{ fontSize: 9, color: C.muted }}>{isSending ? 'Sending…' : getMessageTime(m)}</p>
                     {!isLead && m.status && !isSending && (
                       <span style={{ fontSize: 8, color: m.status === 'read' ? C.blue : m.status === 'delivered' ? C.green : C.muted }}>
@@ -237,26 +872,557 @@ export const InboxView = () => {
                       </span>
                     )}
                   </div>
+
+                  {/* Reaction Bubbles */}
+                  {m.reactions && Object.keys(m.reactions).length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+                      {Object.entries(m.reactions).map(([emoji, count]) => {
+                        const isMyReaction = userReactions[m.id] === emoji;
+                        return (
+                          <button
+                            key={emoji}
+                            onClick={() => handleReact(m.id, emoji)}
+                            title={isMyReaction ? 'Remove your reaction' : 'React with ' + emoji}
+                            style={{
+                              background: isMyReaction ? C.accent + '22' : C.bg,
+                              border: `1.5px solid ${isMyReaction ? C.accent : C.border}`,
+                              borderRadius: 12,
+                              padding: '2px 7px',
+                              fontSize: 13,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              color: C.text,
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            {emoji} <span style={{ fontSize: 10, color: isMyReaction ? C.accent : C.muted, fontWeight: isMyReaction ? 600 : 400 }}>{count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
+
+                {/* Single Emoji Trigger Button (shows on hover) */}
+                {(hoveredMessage === m.id || activeReactBarMsgId === m.id) && activeDropdownId !== m.id && !isSelectMode && !m.is_deleted && !isSending && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveReactBarMsgId(activeReactBarMsgId === m.id ? null : m.id);
+                    }}
+                    style={{
+                      position: 'absolute',
+                      [isLead ? 'left' : 'right']: '100%',
+                      [isLead ? 'marginLeft' : 'marginRight']: 8,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: C.card,
+                      border: '1.5px solid ' + C.border,
+                      borderRadius: '50%',
+                      width: 32,
+                      height: 32,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                      zIndex: 15,
+                      color: C.muted,
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseOver={e => e.currentTarget.style.color = C.text}
+                    onMouseOut={e => e.currentTarget.style.color = C.muted}
+                    title="React to message"
+                  >
+                    <Smile size={16} />
+                  </button>
+                )}
+
+                {/* Emoji Quick-Reaction Bar (shows on trigger click) */}
+                {activeReactBarMsgId === m.id && !isSelectMode && !m.is_deleted && !isSending && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      [isLead ? 'left' : 'right']: 0,
+                      bottom: 'calc(100% - 8px)',
+                      paddingBottom: 10,
+                      background: 'transparent',
+                      zIndex: 30,
+                      whiteSpace: 'nowrap'
+                    }}
+                    onMouseLeave={() => { setActiveReactBarMsgId(null); setShowFullReactionPicker(null); }}
+                  >
+                    <div style={{
+                      background: C.card,
+                      border: '1px solid ' + C.border,
+                      borderRadius: 24,
+                      padding: '5px 10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+                    }}>
+                      {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
+                        <button
+                          key={emoji}
+                          onClick={() => handleReact(m.id, emoji)}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            fontSize: 20,
+                            cursor: 'pointer',
+                            padding: '2px 3px',
+                            borderRadius: 6,
+                            transition: 'transform 0.15s',
+                            lineHeight: 1
+                          }}
+                          onMouseOver={e => e.currentTarget.style.transform = 'scale(1.4)'}
+                          onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}
+                          title={emoji}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                      {/* Full Picker Button */}
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          onClick={() => setShowFullReactionPicker(showFullReactionPicker === m.id ? null : m.id)}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: C.muted, padding: '2px 4px', fontSize: 18, display: 'flex', alignItems: 'center' }}
+                          title="More emojis"
+                        >
+                          ＋
+                        </button>
+                        {showFullReactionPicker === m.id && (
+                          <div style={{ position: 'absolute', bottom: '100%', [isLead ? 'left' : 'right']: 0, zIndex: 100, marginBottom: 8 }}>
+                            <EmojiPicker
+                              onEmojiClick={(emojiObj) => handleReact(m.id, emojiObj.emoji)}
+                              theme="dark"
+                              searchDisabled={false}
+                              height={350}
+                              width={300}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
+            </div>
             );
           })}
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
-        <form onSubmit={handleSend} style={{ padding: 14, borderTop: '1px solid ' + C.border, display: 'flex', gap: 9 }}>
-          <input
-            value={msg}
-            onChange={(e) => setMsg(e.target.value)}
-            placeholder="Type manual message (overrides AI for this reply)..."
-            style={{ flex: 1, background: C.card, border: '1px solid ' + C.border, borderRadius: 11, padding: '10px 13px', color: C.text, fontSize: 12, outline: 'none' }}
-          />
-          <button type="submit" disabled={sending} style={{ background: C.accent, border: 'none', width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', opacity: sending ? 0.6 : 1 }}>
-            <Send size={15} color='#fff' />
-          </button>
-        </form>
+        {/* Action Bar (Select Mode) or Input */}
+        {isSelectMode ? (
+          <div style={{ padding: '16px 20px', background: C.card, borderTop: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+              <button onClick={() => { setIsSelectMode(false); setSelectedMessageIds([]); }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: C.text, display: 'flex' }}>
+                <X size={24} />
+              </button>
+              <span style={{ fontSize: 16, color: C.text, fontWeight: 500 }}>
+                {selectedMessageIds.length} selected
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+              <button style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: C.muted, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <Star size={20} />
+              </button>
+              <button style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: C.muted, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <Trash2 size={20} />
+              </button>
+              <button
+                onClick={() => {
+                  if (selectedMessageIds.length > 0) {
+                    setForwardMessage({ isBulk: true, messages: selectedMessageIds });
+                  }
+                }}
+                style={{ background: 'transparent', border: 'none', cursor: selectedMessageIds.length > 0 ? 'pointer' : 'not-allowed', color: selectedMessageIds.length > 0 ? C.text : C.muted, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
+              >
+                <CornerUpRight size={20} />
+              </button>
+              <button style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: C.muted, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <Download size={20} />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {replyingTo && (
+              <div style={{ padding: '8px 14px', background: C.card, borderTop: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderLeft: `5px solid ${C.accent}`, margin: '0 10px', borderRadius: '4px 4px 0 0', position: 'relative', top: 5, zIndex: 1 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  <span style={{ fontSize: 13, color: C.accent, fontWeight: 600 }}>
+                    {replyingTo.direction === 'inbound' || replyingTo.from === 'lead' ? 'Contact' : 'You'}
+                  </span>
+                  <span style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '300px' }}>
+                    {replyingTo.media_url ? '📷 Media message' : getMessageText(replyingTo)}
+                  </span>
+                </div>
+                <button onClick={() => setReplyingTo(null)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: C.text, padding: 5 }}><X size={16} /></button>
+              </div>
+            )}
+
+            {attachedFile && (
+              <div style={{ padding: '8px 14px', background: C.card, borderTop: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {attachedFile.type.startsWith('image/') ? (
+                    <img src={URL.createObjectURL(attachedFile)} style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6, border: '1px solid ' + C.border }} alt="preview" />
+                  ) : attachedFile.type.startsWith('video/') ? (
+                    <div style={{ width: 40, height: 40, borderRadius: 6, background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Film size={18} color={C.muted} /></div>
+                  ) : attachedFile.type.startsWith('audio/') ? (
+                    <audio src={URL.createObjectURL(attachedFile)} controls style={{ height: 40, outline: 'none', maxWidth: 250 }} />
+                  ) : (
+                    <div style={{ width: 40, height: 40, borderRadius: 6, background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileText size={18} color={C.muted} /></div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: 13, color: C.text, fontWeight: 500, wordBreak: 'break-all' }}>{attachedFile.name}</span>
+                    <span style={{ fontSize: 10, color: C.muted }}>{formatBytes(attachedFile.size)}</span>
+                  </div>
+                </div>
+                {uploadProgress !== null ? (
+                  <div style={{ padding: '0 5px', display: 'flex', alignItems: 'center' }}>
+                    <CircularProgress progress={uploadProgress} />
+                  </div>
+                ) : (
+                  <button onClick={() => setAttachedFile(null)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: C.muted, padding: 5 }}><X size={16} /></button>
+                )}
+              </div>
+            )}
+            <form onSubmit={handleSend} style={{ padding: 14, borderTop: '1px solid ' + C.border, display: 'flex', gap: 9, position: 'relative' }}>
+              <input type="file" ref={fileInputRef} accept={attachAccept} style={{ display: 'none' }} onChange={handleFileChange} />
+
+              <div style={{ position: 'relative' }}>
+                {showAttachMenu && (
+                  <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 10, background: C.card, border: '1px solid ' + C.border, borderRadius: 8, padding: 5, display: 'flex', flexDirection: 'column', gap: 2, zIndex: 10, minWidth: 120, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+                    {[
+                      { label: 'Image', accept: 'image/*', icon: <Image size={14} color={C.muted} /> },
+                      { label: 'Video', accept: 'video/*', icon: <Film size={14} color={C.muted} /> },
+                      { label: 'Audio', accept: 'audio/*', icon: <Music size={14} color={C.muted} /> },
+                      { label: 'Document', accept: '.pdf,.doc,.docx,.xls,.xlsx,.txt', icon: <FileText size={14} color={C.muted} /> },
+                    ].map((opt) => (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        onClick={() => handleAttachOptionClick(opt.accept)}
+                        style={{ background: 'transparent', border: 'none', color: C.text, padding: '8px 12px', textAlign: 'left', borderRadius: 5, cursor: 'pointer', fontSize: 12, display: 'flex', gap: 10, alignItems: 'center' }}
+                        onMouseOver={(e) => e.currentTarget.style.background = C.bg}
+                        onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                      >
+                        {opt.icon} {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button type="button" onClick={() => setShowAttachMenu(!showAttachMenu)} style={{ background: C.card, border: '1px solid ' + C.border, width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} title="Attach File">
+                  <Paperclip size={15} color={C.muted} />
+                </button>
+              </div>
+
+              <div style={{ position: 'relative' }}>
+                {showEmojiPicker && (
+                  <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 10, zIndex: 100 }}>
+                    <EmojiPicker
+                      onEmojiClick={(emojiObject) => {
+                        setMsg(prev => prev + emojiObject.emoji);
+                      }}
+                      theme="dark"
+                      searchDisabled
+                    />
+                  </div>
+                )}
+                <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} style={{ background: C.card, border: '1px solid ' + C.border, width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} title="Add Emoji">
+                  <Smile size={15} color={C.muted} />
+                </button>
+              </div>
+
+              {isRecording ? (
+                <div style={{ flex: 1, background: C.card, border: '1px solid ' + C.border, borderRadius: 11, padding: '10px 13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'red', animation: 'pulse 1s infinite' }} />
+                    <span style={{ color: C.text, fontSize: 13 }}>Recording... {formatDuration(recordingDuration)}</span>
+                  </div>
+                  <button type="button" onClick={stopRecording} style={{ background: 'transparent', border: 'none', color: 'red', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>STOP</button>
+                </div>
+              ) : (
+                <input
+                  value={msg}
+                  onChange={(e) => setMsg(e.target.value)}
+                  placeholder="Type manual message (overrides AI for this reply)..."
+                  style={{ flex: 1, background: C.card, border: '1px solid ' + C.border, borderRadius: 11, padding: '10px 13px', color: C.text, fontSize: 12, outline: 'none' }}
+                />
+              )}
+
+              {!msg.trim() && !attachedFile && !isRecording ? (
+                <button type="button" onClick={startRecording} style={{ background: C.card, border: '1px solid ' + C.border, width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                  <Mic size={15} color={C.muted} />
+                </button>
+              ) : (
+                <button type="submit" disabled={sending || isRecording} style={{ background: C.accent, border: 'none', width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', opacity: (sending || isRecording) ? 0.6 : 1 }}>
+                  <Send size={15} color='#fff' />
+                </button>
+              )}
+            </form>
+          </>
+        )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteModalMsg && (() => {
+        const isMsgLead = deleteModalMsg.direction === 'inbound' || deleteModalMsg.from === 'lead';
+        return (
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ background: C.card, padding: 24, borderRadius: 12, width: 340, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', border: '1px solid ' + C.border }}>
+              <h3 style={{ margin: '0 0 10px 0', color: C.text, fontSize: 18, fontWeight: 600 }}>Delete Message?</h3>
+              <p style={{ margin: '0 0 20px 0', color: C.muted, fontSize: 14, lineHeight: 1.5 }}>
+                {isMsgLead 
+                  ? 'This message will be hidden from your chat view. The contact will still be able to see it.'
+                  : 'Choose whether you want to delete this message only for yourself or for everyone.'}
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {!isMsgLead && (
+                  <button 
+                    onClick={async () => {
+                      try {
+                        await api.deleteMessage(deleteModalMsg.id);
+                        setDeleteModalMsg(null);
+                      } catch (e) {
+                        alert("Failed to delete for everyone");
+                      }
+                    }} 
+                    style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: C.red || '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 14 }}
+                  >
+                    Delete for everyone
+                  </button>
+                )}
+                <button 
+                  onClick={() => {
+                    hideMessageForMe(deleteModalMsg.id);
+                    setDeleteModalMsg(null);
+                  }} 
+                  style={{ padding: '10px 16px', borderRadius: 8, border: '1px solid ' + C.border, background: isMsgLead ? (C.red || '#ef4444') : 'transparent', color: isMsgLead ? '#fff' : C.text, cursor: 'pointer', fontWeight: 500, fontSize: 14 }}
+                >
+                  Delete for me
+                </button>
+                <button 
+                  onClick={() => setDeleteModalMsg(null)} 
+                  style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer', fontWeight: 500, fontSize: 14 }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Pin Duration Modal */}
+      {pinMessageModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: C.card, borderRadius: 12, width: '100%', maxWidth: 400, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '24px 24px 12px 24px' }}>
+              <h3 style={{ margin: '0 0 8px 0', color: C.text, fontSize: 18, fontWeight: 600 }}>
+                {pinMessageModal.pinned_until && new Date(pinMessageModal.pinned_until) > new Date() ? 'Unpin message' : 'Choose how long your pin lasts'}
+              </h3>
+              <p style={{ margin: 0, color: C.muted, fontSize: 14 }}>
+                {pinMessageModal.pinned_until && new Date(pinMessageModal.pinned_until) > new Date() ? 'This message will no longer be pinned for anyone in the chat.' : 'You can unpin at any time.'}
+              </p>
+            </div>
+
+            {!(pinMessageModal.pinned_until && new Date(pinMessageModal.pinned_until) > new Date()) && (
+              <div style={{ padding: '12px 24px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', margin: '10px 0' }}>
+                  <input type="radio" name="pin_duration" value="24" checked={pinDuration === 24} onChange={() => setPinDuration(24)} style={{ accentColor: C.accent, width: 18, height: 18 }} />
+                  <span style={{ color: C.text, fontSize: 15 }}>24 hours</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', margin: '10px 0' }}>
+                  <input type="radio" name="pin_duration" value="168" checked={pinDuration === 168} onChange={() => setPinDuration(168)} style={{ accentColor: C.accent, width: 18, height: 18 }} />
+                  <span style={{ color: C.text, fontSize: 15 }}>7 days</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', margin: '10px 0' }}>
+                  <input type="radio" name="pin_duration" value="720" checked={pinDuration === 720} onChange={() => setPinDuration(720)} style={{ accentColor: C.accent, width: 18, height: 18 }} />
+                  <span style={{ color: C.text, fontSize: 15 }}>30 days</span>
+                </label>
+              </div>
+            )}
+
+            <div style={{ padding: 24, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button
+                onClick={() => setPinMessageModal(null)}
+                style={{ background: 'transparent', border: 'none', color: C.accent, fontSize: 15, fontWeight: 500, cursor: 'pointer', padding: '8px 16px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePin}
+                disabled={pinning}
+                style={{ background: C.accent, color: '#fff', border: 'none', borderRadius: 24, fontSize: 15, fontWeight: 500, cursor: pinning ? 'not-allowed' : 'pointer', padding: '8px 24px', opacity: pinning ? 0.7 : 1 }}
+              >
+                {pinMessageModal.pinned_until && new Date(pinMessageModal.pinned_until) > new Date() ? 'Unpin' : 'Pin'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Forward Modal */}
+      {forwardMessage && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: C.card, borderRadius: 12, width: '100%', maxWidth: 400, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
+            <div style={{ padding: 16, borderBottom: '1px solid ' + C.border, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <button onClick={() => { setForwardMessage(null); setSelectedForwardLeads([]); setForwardSearch(''); }} style={{ background: 'transparent', border: 'none', color: C.text, cursor: 'pointer', padding: 4, display: 'flex' }}><X size={20} /></button>
+              <h3 style={{ margin: 0, color: C.text, fontSize: 16, fontWeight: 600 }}>Forward message to</h3>
+            </div>
+            <div style={{ padding: 12, borderBottom: '1px solid ' + C.border }}>
+              <div style={{ background: C.bg, borderRadius: 20, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10, border: '1px solid ' + C.border }}>
+                <Search size={16} color={C.muted} />
+                <input
+                  type="text"
+                  placeholder="Search name or number"
+                  value={forwardSearch}
+                  onChange={(e) => setForwardSearch(e.target.value)}
+                  style={{ background: 'transparent', border: 'none', color: C.text, outline: 'none', width: '100%', fontSize: 14 }}
+                />
+              </div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '10px 0' }}>
+              <p style={{ padding: '0 16px 10px', margin: 0, color: C.muted, fontSize: 13, fontWeight: 500 }}>Recent chats</p>
+              {leads?.filter(l => l.name.toLowerCase().includes(forwardSearch.toLowerCase()) || l.phone.includes(forwardSearch)).map(lead => {
+                const isSelected = selectedForwardLeads.includes(lead.id);
+                return (
+                  <div
+                    key={lead.id}
+                    onClick={() => setSelectedForwardLeads(prev => isSelected ? prev.filter(id => id !== lead.id) : [...prev, lead.id])}
+                    style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', background: isSelected ? C.bg : 'transparent' }}
+                    onMouseOver={(e) => e.currentTarget.style.background = isSelected ? C.bg : C.bg + '55'}
+                    onMouseOut={(e) => e.currentTarget.style.background = isSelected ? C.bg : 'transparent'}
+                  >
+                    <div style={{ width: 40, height: 40, borderRadius: '50%', background: C.accent + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.accent, fontWeight: 600, flexShrink: 0 }}>
+                      {lead.name?.[0]}
+                    </div>
+                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                      <div style={{ color: C.text, fontSize: 15, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{lead.name}</div>
+                      <div style={{ color: C.muted, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{lead.phone}</div>
+                    </div>
+                    <div style={{ width: 22, height: 22, borderRadius: 4, border: `2px solid ${isSelected ? C.accent : C.muted}`, background: isSelected ? C.accent : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {isSelected && <Check size={16} color="#fff" strokeWidth={3} />}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {selectedForwardLeads.length > 0 && (
+              <div style={{ padding: 16, borderTop: '1px solid ' + C.border, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.bg }}>
+                <span style={{ color: C.text, fontSize: 14 }}>{selectedForwardLeads.length} selected</span>
+                <button
+                  onClick={handleForward}
+                  disabled={forwarding}
+                  style={{ background: C.accent, color: '#fff', border: 'none', borderRadius: 50, width: 46, height: 46, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: forwarding ? 'not-allowed' : 'pointer', opacity: forwarding ? 0.7 : 1, boxShadow: '0 4px 10px rgba(0,0,0,0.2)' }}
+                >
+                  <Send size={20} style={{ marginLeft: 3 }} />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Modal */}
+      {zoomedImageIndex !== null && chatImages[zoomedImageIndex] && (() => {
+        const currentImgUrl = chatImages[zoomedImageIndex].media_url.startsWith('http') ? chatImages[zoomedImageIndex].media_url : `${SOCKET_URL}${chatImages[zoomedImageIndex].media_url}`;
+        
+        return (
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.95)', zIndex: 9999, display: 'flex', flexDirection: 'column', userSelect: 'none' }}>
+            {/* Top Toolbar */}
+            <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                <button onClick={() => setZoomedImageIndex(null)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex' }} title="Close (Esc)">
+                  <X size={28} />
+                </button>
+                <div style={{ color: '#fff', fontSize: 16, fontWeight: 500 }}>
+                  Image {zoomedImageIndex + 1} of {chatImages.length}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                <button onClick={() => setLightboxZoomLevel(Math.max(0.5, lightboxZoomLevel - 0.25))} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex' }} title="Zoom Out">
+                  <ZoomOut size={24} />
+                </button>
+                <span style={{ color: '#fff', fontSize: 14, minWidth: 40, textAlign: 'center' }}>{Math.round(lightboxZoomLevel * 100)}%</span>
+                <button onClick={() => setLightboxZoomLevel(Math.min(3, lightboxZoomLevel + 0.25))} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex' }} title="Zoom In">
+                  <ZoomIn size={24} />
+                </button>
+                <a href={currentImgUrl} download target="_blank" rel="noreferrer" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', textDecoration: 'none' }} title="Download">
+                  <Download size={24} />
+                </a>
+              </div>
+            </div>
+
+            {/* Main View Area */}
+            <div style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              {/* Prev Button */}
+              {zoomedImageIndex > 0 && (
+                <button onClick={() => { setZoomedImageIndex(zoomedImageIndex - 1); setLightboxZoomLevel(1); }} style={{ position: 'absolute', left: 24, zIndex: 10, background: 'rgba(255,255,255,0.1)', border: 'none', width: 56, height: 56, borderRadius: '50%', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
+                  <ChevronLeft size={36} />
+                </button>
+              )}
+
+              {/* Image */}
+              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: lightboxZoomLevel > 1 ? 'auto' : 'hidden' }}>
+                <img 
+                  src={currentImgUrl}
+                  style={{ 
+                    maxHeight: lightboxZoomLevel > 1 ? 'none' : '90%', 
+                    maxWidth: lightboxZoomLevel > 1 ? 'none' : '90%', 
+                    transform: `scale(${lightboxZoomLevel})`,
+                    transformOrigin: 'center center',
+                    transition: lightboxZoomLevel === 1 ? 'transform 0.2s ease-out' : 'none',
+                    objectFit: 'contain'
+                  }}
+                  alt="Zoomed"
+                />
+              </div>
+
+              {/* Next Button */}
+              {zoomedImageIndex < chatImages.length - 1 && (
+                <button onClick={() => { setZoomedImageIndex(zoomedImageIndex + 1); setLightboxZoomLevel(1); }} style={{ position: 'absolute', right: 24, zIndex: 10, background: 'rgba(255,255,255,0.1)', border: 'none', width: 56, height: 56, borderRadius: '50%', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
+                  <ChevronRight size={36} />
+                </button>
+              )}
+            </div>
+
+            {/* Thumbnails Gallery (Bottom) */}
+            <div style={{ height: 100, background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '0 24px', overflowX: 'auto' }}>
+              {chatImages.map((img, idx) => (
+                <div 
+                  key={img.id}
+                  onClick={() => { setZoomedImageIndex(idx); setLightboxZoomLevel(1); }}
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: 8,
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    border: zoomedImageIndex === idx ? `2px solid ${C.accent}` : '2px solid transparent',
+                    opacity: zoomedImageIndex === idx ? 1 : 0.5,
+                    transition: 'all 0.2s',
+                    flexShrink: 0
+                  }}
+                >
+                  <img 
+                    src={img.media_url.startsWith('http') ? img.media_url : `${SOCKET_URL}${img.media_url}`} 
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                    alt="Thumbnail" 
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
     </div>
-  );
+  )
 };

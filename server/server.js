@@ -5,6 +5,8 @@
  */
 
 const express = require('express');
+const http = require('http');
+const { Server: SocketIOServer } = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -20,7 +22,24 @@ const path = require('path');
 require('dotenv').config();
 
 const app = express();
+const httpServer = http.createServer(app);
 const PORT = process.env.PORT || 3600;
+
+// ── SOCKET.IO ─────────────────────────────────────────────
+const io = new SocketIOServer(httpServer, {
+  cors: {
+    origin: function (origin, callback) { callback(null, origin || true); },
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log(`[Socket.io] Client connected: ${socket.id}`);
+  socket.on('disconnect', () => {
+    console.log(`[Socket.io] Client disconnected: ${socket.id}`);
+  });
+});
 
 // ── DB CONNECTION ─────────────────────────────────────────
 const pool = require('./db/connection');
@@ -275,10 +294,15 @@ app.get('/api/leads/:id', auth, async (req, res) => {
 
     if (!rows.length) return res.status(404).json({ error: 'Lead not found' });
 
-    const conversations = await pool.query(
-      'SELECT * FROM messages WHERE lead_id = $1 ORDER BY timestamp ASC',
-      [req.params.id]
-    );
+    // Join conversations (thread) → messages (individual) for this lead
+    const conversations = await pool.query(`
+      SELECT m.id, m.direction, m.content, m.msg_type as type, m.wa_msg_id,
+             m.status, m.is_ai, m.sent_at as timestamp, m.read_at
+      FROM messages m
+      JOIN conversations cv ON m.conversation_id = cv.id
+      WHERE cv.lead_id = $1
+      ORDER BY m.sent_at ASC
+    `, [req.params.id]);
 
     res.json({ lead: rows[0], conversations: conversations.rows });
   } catch (err) {
@@ -353,7 +377,7 @@ app.delete('/api/leads/:id', auth, async (req, res) => {
 // WHATSAPP ROUTES
 // ══════════════════════════════════════════════════════════
 
-// POST /api/whatsapp/send — manual send from portal
+// POST /api/whatsapp/send — manual send from CRM portal
 app.post('/api/whatsapp/send', auth, async (req, res) => {
   try {
     const { lead_id, message } = req.body;
@@ -365,31 +389,62 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
       WHERE l.id = $1
     `, [lead_id]);
 
-    if (!leadRes.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    if (!leadRes.rows.length) return res.status(404).json({ error: 'Lead not found or client not linked to lead.' });
     const lead = leadRes.rows[0];
 
+    const phoneNumberId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+    const waAccessToken = lead.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+
+    if (!phoneNumberId || !waAccessToken) {
+      return res.status(400).json({ error: 'WhatsApp not configured for this brand. Please add phone_number_id and wa_access_token in Clients settings or server .env file.' });
+    }
+
     const waRes = await axios.post(
-      `https://graph.facebook.com/v18.0/${lead.phone_number_id}/messages`,
+      `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
       {
         messaging_product: 'whatsapp',
         to: lead.phone.replace(/\D/g, ''),
         type: 'text',
         text: { body: message }
       },
-      { headers: { Authorization: `Bearer ${lead.wa_access_token}`, 'Content-Type': 'application/json' } }
+      { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
     );
 
-    await pool.query(`
-      INSERT INTO conversations (lead_id, direction, message, message_type, sent_at, wa_message_id, sender)
-      VALUES ($1, 'outbound', $2, 'text', NOW(), $3, 'human')
-    `, [lead_id, message, waRes.data.messages?.[0]?.id]);
+    const waMessageId = waRes.data.messages?.[0]?.id;
+    const phone = lead.phone?.replace(/\D/g, '');
 
-    await pool.query('UPDATE leads SET last_contact = NOW() WHERE id = $1', [lead_id]);
+    // Upsert the conversation thread (unique per phone+tenant)
+    const convRes = await pool.query(`
+      INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+      VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
+      ON CONFLICT (phone, tenant_id) DO UPDATE
+        SET lead_id = EXCLUDED.lead_id,
+            last_message = EXCLUDED.last_message,
+            last_message_at = NOW()
+      RETURNING id
+    `, [lead_id, lead.tenant_id, phone, message]);
+    const conversationId = convRes.rows[0].id;
 
-    res.json({ success: true });
+    // Insert message into messages table
+    const { rows: savedRows } = await pool.query(`
+      INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, sent_at)
+      VALUES ($1, 'outbound', $2, 'text', $3, 'sent', NOW())
+      RETURNING id, direction, content, msg_type as type, wa_msg_id, status, sent_at as timestamp
+    `, [conversationId, message, waMessageId]);
+
+    // Emit real-time event to all CRM clients
+    io.emit('outgoing_message', { lead_id: Number(lead_id), message: savedRows[0] });
+
+    res.json({ success: true, message: savedRows[0] });
   } catch (err) {
-    console.error('WA send error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to send message' });
+    console.error('WA send error:', err.response?.data || err.message, err.stack);
+    
+    res.status(500).json({
+      error: 'Failed to send message',
+      detail: err.message,
+      meta_response: err.response?.data || null,
+      stack: err.stack
+    });
   }
 });
 
@@ -407,7 +462,7 @@ app.get('/webhook/whatsapp', (req, res) => {
 
 // POST — incoming WhatsApp messages + template status updates
 app.post('/webhook/whatsapp', async (req, res) => {
-  res.sendStatus(200); // Always respond 200 immediately
+  res.sendStatus(200); // Always respond 200 immediately to Meta
 
   try {
     const body = req.body;
@@ -418,16 +473,15 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
         // ── TEMPLATE STATUS UPDATES ──────────────────────────
         if (change.field === 'message_template_status_update') {
-          const { event, message_template_id, message_template_name, reason } = change.value;
+          const { event, message_template_id, message_template_name } = change.value;
           console.log(`📋 Template status update: ${message_template_name} → ${event}`);
 
           let newStatus = null;
           if (event === 'APPROVED') newStatus = 'approved';
-          else if (event === 'REJECTED' || event === 'PAUSED' || event === 'DISABLED') newStatus = 'rejected';
+          else if (['REJECTED', 'PAUSED', 'DISABLED'].includes(event)) newStatus = 'rejected';
           else if (event === 'PENDING_DELETION') newStatus = 'draft';
 
           if (newStatus) {
-            // Try to match by meta_template_id first, then by name
             const updateResult = await pool.query(`
               UPDATE templates
               SET status = $1,
@@ -445,65 +499,92 @@ app.post('/webhook/whatsapp', async (req, res) => {
           continue;
         }
 
-        // ── INCOMING MESSAGES & STATUSES ─────────────────────
+        // ── INCOMING MESSAGES & DELIVERY STATUSES ────────────
         if (change.field !== 'messages') continue;
         const value = change.value;
 
+        // Handle delivery/read status receipts
         if (value.statuses) {
           for (const s of value.statuses) {
             const wamid = s.id;
-            const newStatus = s.status;
-            const error = s.errors ? s.errors[0].title : null;
+            const newStatus = s.status; // 'sent', 'delivered', 'read', 'failed'
+            const errorMsg = s.errors ? s.errors[0].title : null;
             if (!wamid) continue;
 
-            await pool.query(`UPDATE campaign_logs SET status = $1, error_message = $2 WHERE wa_message_id = $3`, [newStatus, error, wamid]);
-            await pool.query(`UPDATE conversations SET status = $1 WHERE wa_message_id = $2`, [newStatus, wamid]);
-            console.log(`[Status Webhook] ${wamid} -> ${newStatus}`);
+                      // Update status in messages table (using wa_msg_id)
+            await pool.query(`UPDATE messages SET status = $1 WHERE wa_msg_id = $2`, [newStatus, wamid]);
+            // Also update campaign_logs for campaign tracking
+            await pool.query(`UPDATE campaign_logs SET status = $1 WHERE wa_message_id = $2`, [newStatus, wamid]);
+
+            // Emit real-time status update to CRM
+            io.emit('message_status', { wa_message_id: wamid, status: newStatus });
+            console.log(`[Webhook Status] ${wamid} → ${newStatus}`);
           }
         }
 
+        // Handle incoming text messages from customers
         for (const msg of value.messages || []) {
-          if (msg.type !== 'text') continue;
+          if (msg.type !== 'text') {
+            console.log(`[Webhook] Unsupported message type: ${msg.type} from ${msg.from}`);
+            continue;
+          }
 
-          const phone = msg.from;
+          const phone = msg.from;       // e.g. '919876543210'
           const text = msg.text.body;
           const phoneNumberId = value.metadata.phone_number_id;
 
-          // Find or create lead
+          // Find matching client by phone_number_id
+          const client = (await pool.query(
+            'SELECT * FROM clients WHERE phone_number_id = $1', [phoneNumberId]
+          )).rows[0];
+
+          // Find or auto-create lead by phone number
           let lead = (await pool.query('SELECT * FROM leads WHERE phone = $1', [phone])).rows[0];
 
           if (!lead) {
-            const client = (await pool.query(
-              'SELECT * FROM clients WHERE phone_number_id = $1', [phoneNumberId]
-            )).rows[0];
-
             const newLead = await pool.query(`
               INSERT INTO leads (name, phone, source, client_id, status, score, created_at)
               VALUES ($1, $2, 'WhatsApp', $3, 'new', 10, NOW())
               RETURNING *
             `, [phone, phone, client?.id || null]);
             lead = newLead.rows[0];
+            console.log(`[Webhook] Auto-created lead for phone: ${phone}`);
           }
 
-          // Save incoming message
-          await pool.query(`
-            INSERT INTO conversations (lead_id, direction, message, message_type, sent_at, wa_message_id, sender)
-            VALUES ($1, 'inbound', $2, 'text', NOW(), $3, 'lead')
-          `, [lead.id, text, msg.id]);
+                    // Upsert conversation thread (unique per phone+tenant)
+          const tenantId = lead.tenant_id || 1;
+          const convRes = await pool.query(`
+            INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+            VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
+            ON CONFLICT (phone, tenant_id) DO UPDATE
+              SET lead_id = EXCLUDED.lead_id,
+                  last_message = EXCLUDED.last_message,
+                  last_message_at = NOW(),
+                  unread_count = COALESCE(conversations.unread_count, 0) + 1
+            RETURNING id
+          `, [lead.id, tenantId, phone, text]);
+          const conversationId = convRes.rows[0].id;
 
-          await pool.query(
-            'UPDATE leads SET last_contact = NOW(), updated_at = NOW() WHERE id = $1',
-            [lead.id]
-          );
+          // Save incoming message to messages table
+          const { rows: savedRows } = await pool.query(`
+            INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
+            VALUES ($1, 'inbound', $2, 'text', $3, 'delivered', false, NOW())
+            RETURNING id, direction, content, msg_type as type, wa_msg_id, status, sent_at as timestamp
+          `, [conversationId, text, msg.id]);
 
-          // Forward to n8n for AI processing
+
+          // ── REAL-TIME: push to CRM Inbox immediately ─────────
+          io.emit('incoming_message', { lead_id: lead.id, message: savedRows[0] });
+          console.log(`[Webhook] Inbound message from ${phone} saved & emitted via Socket.io`);
+
+          // ── Forward to n8n for AI auto-reply processing ──────
           if (process.env.N8N_WEBHOOK_URL) {
             axios.post(process.env.N8N_WEBHOOK_URL, {
               lead_id: lead.id,
               phone,
               message: text,
               phone_number_id: phoneNumberId
-            }).catch(e => console.error('n8n forward error:', e.message));
+            }).catch(e => console.error('[n8n forward error]', e.message));
           }
         }
       }
@@ -1160,16 +1241,15 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         }
 
         await pool.query(`
-          INSERT INTO leads (client_id, name, phone, status, source, score, interest, assigned_to, last_contact, created_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+          INSERT INTO leads (client_id, name, phone, status, source, score, interest, assigned_to, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
           ON CONFLICT (phone) DO UPDATE 
           SET name = EXCLUDED.name, status = EXCLUDED.status, 
               client_id = COALESCE(EXCLUDED.client_id, leads.client_id),
               source = EXCLUDED.source, score = EXCLUDED.score,
               interest = EXCLUDED.interest, assigned_to = COALESCE(EXCLUDED.assigned_to, leads.assigned_to),
-              last_contact = COALESCE(EXCLUDED.last_contact, leads.last_contact),
               updated_at = NOW()
-        `, [rowClientId, name, phone, status, source, score, interest, assignedTo, lastContact]);
+        `, [rowClientId, name, phone, status, source, score, interest, assignedTo]);
 
         imported++;
       } catch (e) {
@@ -1711,8 +1791,9 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 // ── START ─────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`LeadOS API running on port ${PORT}`);
+httpServer.listen(PORT, () => {
+  console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);
 });
 
-module.exports = app;
+module.exports = { app, httpServer, io };
+  

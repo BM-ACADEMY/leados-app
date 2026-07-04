@@ -35,6 +35,7 @@
     "pdf-parse": "^2.4.5",
     "pg": "^8.21.0",
     "razorpay": "^2.9.6",
+    "socket.io": "^4.8.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

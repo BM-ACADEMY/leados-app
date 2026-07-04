@@ -492,10 +492,20 @@ app.get('/api/leads', auth, async (req, res) => {
     }
     if (search) {
       params.push(`%${search}%`);
-      q += ` AND (l.name ILIKE $${params.length} OR l.phone ILIKE $${params.length})`;
+      const likeParam = `$${params.length}`;
+      
+      params.push(search);
+      const searchParam = `$${params.length}`;
+      
+      q += ` AND (l.name ILIKE ${likeParam} OR l.phone ILIKE ${likeParam} OR l.name % ${searchParam} OR l.phone % ${searchParam})`;
     }
 
-    q += ` ORDER BY COALESCE((SELECT MAX(last_message_at) FROM conversations WHERE lead_id = l.id), l.created_at) DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    if (search) {
+      const searchParamIndex = params.length; // points to the exact search term param
+      q += ` ORDER BY similarity(l.name, $${searchParamIndex}) DESC, similarity(l.phone, $${searchParamIndex}) DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    } else {
+      q += ` ORDER BY COALESCE((SELECT MAX(last_message_at) FROM conversations WHERE lead_id = l.id), l.created_at) DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    }
     params.push(limit, offset);
 
     const { rows } = await pool.query(q, params);

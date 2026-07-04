@@ -75,6 +75,11 @@ export const InboxView = () => {
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState([]);
 
+  // Message Search states
+  const [showMessageSearchPanel, setShowMessageSearchPanel] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+  const [highlightedMessageId, setHighlightedMessageId] = useState(null);
+
   // Lightbox state
   const [zoomedImageIndex, setZoomedImageIndex] = useState(null);
   const [lightboxZoomLevel, setLightboxZoomLevel] = useState(1);
@@ -621,13 +626,41 @@ export const InboxView = () => {
               <p style={{ fontSize: 9, color: C.green }}>AI Agent Active - {activeObj?.brand_name || activeObj?.brand || 'Manual'}</p>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 7 }}>
+          <div style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
             <button style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 7, padding: '5px 11px', color: C.muted, fontSize: 11 }}>Take Over</button>
             <button style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 7, padding: '5px 11px', color: C.muted, fontSize: 11 }}>View Lead</button>
+            <div style={{ width: 1, height: 16, background: C.border, margin: '0 4px' }} />
+            <button
+              onClick={() => {
+                setShowMessageSearchPanel(!showMessageSearchPanel);
+                setMessageSearchQuery('');
+              }}
+              style={{
+                background: showMessageSearchPanel ? C.accent + '22' : 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '6px',
+                borderRadius: 6,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: showMessageSearchPanel ? C.accent : C.muted,
+                transition: 'all 0.2s'
+              }}
+              onMouseOver={e => { if (!showMessageSearchPanel) e.currentTarget.style.color = C.text; }}
+              onMouseOut={e => { if (!showMessageSearchPanel) e.currentTarget.style.color = C.muted; }}
+              title="Search messages"
+            >
+              <Search size={16} />
+            </button>
           </div>
         </div>
 
-        {/* Pinned Messages Bar */}
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+          {/* Main Chat Flow */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+            {/* Pinned Messages Bar */}
         {(() => {
           const pinnedMessages = localMessages.filter(m => m.pinned_until && new Date(m.pinned_until) > new Date() && !deletedForMeIds.includes(m.id));
           if (pinnedMessages.length === 0) return null;
@@ -722,7 +755,18 @@ export const InboxView = () => {
                 )}
                 <div style={{ position: 'relative', maxWidth: '60%' }}>
                   <div
-                    style={{ position: 'relative', background: isLead ? (selectedMessageIds.includes(m.id) ? C.accent + '30' : C.card) : (selectedMessageIds.includes(m.id) ? C.accent + '40' : C.accent + '20'), border: '1px solid ' + (isLead ? C.border : C.accentDim), borderRadius: isLead ? '4px 13px 13px 13px' : '13px 4px 13px 13px', padding: '9px 13px' }}
+                    style={{
+                      position: 'relative',
+                      background: highlightedMessageId === m.id
+                        ? C.accent + '55'
+                        : isLead 
+                          ? (selectedMessageIds.includes(m.id) ? C.accent + '30' : C.card) 
+                          : (selectedMessageIds.includes(m.id) ? C.accent + '40' : C.accent + '20'),
+                      border: '1px solid ' + (highlightedMessageId === m.id ? C.accent : isLead ? C.border : C.accentDim),
+                      borderRadius: isLead ? '4px 13px 13px 13px' : '13px 4px 13px 13px',
+                      padding: '9px 13px',
+                      transition: 'all 0.3s ease'
+                    }}
                   onMouseLeave={() => { if (activeDropdownId === m.id) setActiveDropdownId(null); }}
                   onClick={() => {
                     if (isSelectMode) {
@@ -1168,6 +1212,125 @@ export const InboxView = () => {
             </form>
           </>
         )}
+          </div>
+
+          {/* Message Search Side Panel */}
+          {showMessageSearchPanel && (
+            <div style={{ width: 340, borderLeft: '1px solid ' + C.border, background: C.card, display: 'flex', flexDirection: 'column', zIndex: 10, flexShrink: 0 }}>
+              {/* Panel Header */}
+              <div style={{ padding: '16px 18px', borderBottom: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text }}>
+                  <Search size={16} />
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>Search messages</span>
+                </div>
+                <button
+                  onClick={() => { setShowMessageSearchPanel(false); setMessageSearchQuery(''); }}
+                  style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: 4, display: 'flex' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Panel Search Input */}
+              <div style={{ padding: '14px 18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: C.bg, border: '1px solid ' + C.border, borderRadius: 8, padding: '8px 12px' }}>
+                  <Search size={14} color={C.muted} />
+                  <input
+                    value={messageSearchQuery}
+                    onChange={(e) => setMessageSearchQuery(e.target.value)}
+                    placeholder="Search..."
+                    style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 13, outline: 'none', width: '100%' }}
+                  />
+                  {messageSearchQuery && (
+                    <button
+                      onClick={() => setMessageSearchQuery('')}
+                      style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: 2, display: 'flex' }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Panel Results List */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '0 18px 18px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {messageSearchQuery.trim() === '' ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: C.muted, textAlign: 'center', padding: '0 20px', gap: 10 }}>
+                    <Search size={24} style={{ opacity: 0.5 }} />
+                    <p style={{ fontSize: 13, margin: 0 }}>Search for messages within this chat.</p>
+                  </div>
+                ) : (() => {
+                  const query = messageSearchQuery.trim().toLowerCase();
+                  const results = localMessages.filter(m => 
+                    !m.is_deleted && 
+                    !m.id?.toString().startsWith('optimistic-') &&
+                    (m.content || '').toLowerCase().includes(query)
+                  );
+
+                  if (results.length === 0) {
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: C.muted, textAlign: 'center', padding: '0 20px' }}>
+                        <p style={{ fontSize: 13 }}>No messages found matching "{messageSearchQuery}"</p>
+                      </div>
+                    );
+                  }
+
+                  const highlightText = (text, q) => {
+                    if (!q) return text;
+                    const parts = text.split(new RegExp(`(${q})`, 'gi'));
+                    return parts.map((part, idx) => 
+                      part.toLowerCase() === q.toLowerCase()
+                        ? <span key={idx} style={{ background: '#eab308', color: '#000', padding: '0 2px', borderRadius: 2, fontWeight: 600 }}>{part}</span>
+                        : part
+                    );
+                  };
+
+                  return results.map((m) => {
+                    const isLeadMsg = m.direction === 'inbound' || m.from === 'lead';
+                    const timeStr = m.timestamp || m.sent_at || m.time;
+                    const dateFormatted = timeStr ? new Date(timeStr).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
+                    return (
+                      <div
+                        key={m.id}
+                        onClick={() => {
+                          const el = document.getElementById(`msg-${m.id}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          setHighlightedMessageId(m.id);
+                          setTimeout(() => {
+                            setHighlightedMessageId(null);
+                          }, 2000);
+                        }}
+                        style={{
+                          background: C.card,
+                          border: '1px solid ' + C.border,
+                          borderRadius: 8,
+                          padding: '12px 14px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 4
+                        }}
+                        onMouseOver={e => e.currentTarget.style.borderColor = C.accent}
+                        onMouseOut={e => e.currentTarget.style.borderColor = C.border}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: isLeadMsg ? C.accent : C.text }}>
+                            {isLeadMsg ? (activeObj?.name || 'Contact') : 'You'}
+                          </span>
+                          <span style={{ fontSize: 10, color: C.muted }}>{dateFormatted}</span>
+                        </div>
+                        <p style={{ margin: 0, fontSize: 12, color: C.text, wordBreak: 'break-word', lineHeight: 1.4 }}>
+                          {highlightText(m.content || '', query)}
+                        </p>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Delete Confirmation Modal */}

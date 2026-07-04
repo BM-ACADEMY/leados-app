@@ -150,10 +150,10 @@ class LeadOSAPI {
   }
 
   // ─── WHATSAPP ───────────────────────────
-  async sendWhatsAppMessage(leadId, message) {
+  async sendWhatsAppMessage(leadId, message, mediaUrl = null, msgType = 'text', replyToWaId = null, isForwarded = false) {
     return this.request('/api/whatsapp/send', {
       method: 'POST',
-      body: JSON.stringify({ lead_id: leadId, message }),
+      body: JSON.stringify({ lead_id: leadId, message, media_url: mediaUrl, msg_type: msgType, reply_to_wa_id: replyToWaId, is_forwarded: isForwarded }),
     });
   }
 
@@ -194,9 +194,96 @@ class LeadOSAPI {
     });
   }
 
-  // ─── INBOX ──────────────────────────────
+  // ─── INBOX & MESSAGES ───────────────────
   async getInbox() {
     return this.request('/api/inbox');
+  }
+
+  async readConversation(leadId) {
+    return this.request(`/api/conversations/${leadId}/read`, {
+      method: 'PUT'
+    });
+  }
+
+  async editMessage(id, content) {
+    return this.request(`/api/messages/${id}/edit`, {
+      method: 'PUT',
+      body: JSON.stringify({ content })
+    });
+  }
+
+  async deleteMessage(id) {
+    return this.request(`/api/messages/${id}/delete`, {
+      method: 'PUT'
+    });
+  }
+
+  async pinMessage(id, durationHours) {
+    return this.request(`/api/messages/${id}/pin`, {
+      method: 'PUT',
+      body: JSON.stringify({ duration: durationHours })
+    });
+  }
+
+  async unpinMessage(id) {
+    return this.request(`/api/messages/${id}/pin`, {
+      method: 'PUT',
+      body: JSON.stringify({ unpin: true })
+    });
+  }
+
+  async toggleStarMessage(id, isStarred) {
+    return this.request(`/api/messages/${id}/star`, {
+      method: 'PUT',
+      body: JSON.stringify({ is_starred: isStarred })
+    });
+  }
+
+  async reactToMessage(id, emoji, action = 'add') {
+    return this.request(`/api/messages/${id}/react`, {
+      method: 'PUT',
+      body: JSON.stringify({ emoji, action })
+    });
+  }
+
+  async uploadMedia(formData, onProgress) {
+    const token = localStorage.getItem('leados_token');
+    if (!token) throw new Error('No authentication token found');
+    
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_URL}/api/messages/upload`);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+      if (onProgress && xhr.upload) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            onProgress(percentComplete);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch (e) {
+            resolve(xhr.responseText);
+          }
+        } else {
+          try {
+            const errorData = JSON.parse(xhr.responseText);
+            reject(new Error(errorData.error || `HTTP error! status: ${xhr.status}`));
+          } catch (e) {
+            reject(new Error(`HTTP error! status: ${xhr.status}`));
+          }
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      xhr.send(formData);
+    });
   }
 
   // ─── CAMPAIGNS ──────────────────────────

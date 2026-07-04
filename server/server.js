@@ -211,7 +211,7 @@ app.get('/api/inbox', auth, async (req, res) => {
         l.status,
         (SELECT message FROM conversations WHERE lead_id = l.id ORDER BY sent_at DESC LIMIT 1) as last,
         (SELECT sent_at FROM conversations WHERE lead_id = l.id ORDER BY sent_at DESC LIMIT 1) as time,
-        0 as unread
+        COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id), 0) as unread
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
       WHERE EXISTS (SELECT 1 FROM conversations WHERE lead_id = l.id)
@@ -223,6 +223,218 @@ app.get('/api/inbox', auth, async (req, res) => {
     console.error('Inbox fetch error:', err);
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+// PUT /api/conversations/:lead_id/read
+app.put('/api/conversations/:lead_id/read', auth, async (req, res) => {
+  try {
+    await pool.query('UPDATE conversations SET unread_count = 0 WHERE lead_id = $1', [req.params.lead_id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Mark read error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════
+// MESSAGES ROUTES (CRM-SIDE)
+// ══════════════════════════════════════════════════════════
+
+// PUT /api/messages/:id/edit
+app.put('/api/messages/:id/edit', auth, async (req, res) => {
+  try {
+    const { content } = req.body;
+    const msgId = req.params.id;
+    // Do not attempt to update optimistic UI messages on the backend
+    if (String(msgId).startsWith('optimistic-')) {
+      return res.status(400).json({ error: 'Cannot edit an unsaved message' });
+    }
+    const { rows } = await pool.query('UPDATE messages SET content = $1 WHERE id = $2 RETURNING *', [content, msgId]);
+    if (rows.length) {
+      io.emit('message_edited', rows[0]);
+    }
+    res.json({ success: true, message: rows[0] });
+  } catch (err) {
+    console.error('Edit message error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PUT /api/messages/:id/delete
+app.put('/api/messages/:id/delete', auth, async (req, res) => {
+  try {
+    const msgId = req.params.id;
+    if (String(msgId).startsWith('optimistic-')) {
+      return res.status(400).json({ error: 'Cannot delete an unsaved message' });
+    }
+    const { rows } = await pool.query('UPDATE messages SET is_deleted = true WHERE id = $1 RETURNING *', [msgId]);
+    if (rows.length) {
+      io.emit('message_deleted', rows[0]);
+    }
+    res.json({ success: true, message: rows[0] });
+  } catch (err) {
+    console.error('Delete message error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PUT /api/messages/:id/pin
+app.put('/api/messages/:id/pin', auth, async (req, res) => {
+  try {
+    const msgId = req.params.id;
+    const { duration, unpin } = req.body; // duration in hours: 24, 168 (7 days), 720 (30 days)
+
+    if (String(msgId).startsWith('optimistic-')) {
+      return res.status(400).json({ error: 'Cannot pin an unsaved message' });
+    }
+
+    let query;
+    let params;
+
+    if (unpin) {
+      query = 'UPDATE messages SET pinned_until = NULL WHERE id = $1 RETURNING *';
+      params = [msgId];
+    } else {
+      query = `UPDATE messages SET pinned_until = NOW() + interval '1 hour' * $1 WHERE id = $2 RETURNING *`;
+      params = [duration || 24, msgId];
+    }
+
+    const { rows } = await pool.query(query, params);
+    if (rows.length) {
+      io.emit('message_edited', rows[0]); // reuse message_edited or create message_pinned event
+    }
+    res.json({ success: true, message: rows[0] });
+  } catch (err) {
+    console.error('Pin message error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PUT /api/messages/:id/star
+app.put('/api/messages/:id/star', auth, async (req, res) => {
+  try {
+    const msgId = req.params.id;
+    const { is_starred } = req.body;
+
+    if (String(msgId).startsWith('optimistic-')) {
+      return res.status(400).json({ error: 'Cannot star an unsaved message' });
+    }
+
+    const { rows } = await pool.query(
+      'UPDATE messages SET is_starred = $1 WHERE id = $2 RETURNING *',
+      [is_starred, msgId]
+    );
+
+    if (rows.length) {
+      io.emit('message_edited', rows[0]);
+    }
+    res.json({ success: true, message: rows[0] });
+  } catch (err) {
+    console.error('Star message error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PUT /api/messages/:id/react
+// Body: { emoji: "👍", action: "add" | "remove" }
+app.put('/api/messages/:id/react', auth, async (req, res) => {
+  try {
+    const msgId = req.params.id;
+    const { emoji, action } = req.body;
+
+    if (!emoji) return res.status(400).json({ error: 'emoji is required' });
+    if (String(msgId).startsWith('optimistic-')) {
+      return res.status(400).json({ error: 'Cannot react to an unsaved message' });
+    }
+
+    // Get current message details, lead, and client credentials
+    const msgQuery = await pool.query(`
+      SELECT m.reactions, m.wa_msg_id, l.phone, c.phone_number_id, c.wa_access_token
+      FROM messages m
+      JOIN conversations cv ON m.conversation_id = cv.id
+      JOIN leads l ON cv.lead_id = l.id
+      LEFT JOIN clients c ON l.client_id = c.id
+      WHERE m.id = $1
+    `, [msgId]);
+
+    if (!msgQuery.rows.length) return res.status(404).json({ error: 'Message not found' });
+    const msgData = msgQuery.rows[0];
+
+    const reactions = msgData.reactions || {};
+    if (action === 'remove') {
+      if (reactions[emoji] && reactions[emoji] > 1) {
+        reactions[emoji] = reactions[emoji] - 1;
+      } else {
+        delete reactions[emoji];
+      }
+    } else {
+      reactions[emoji] = (reactions[emoji] || 0) + 1;
+    }
+
+    const { rows } = await pool.query(
+      'UPDATE messages SET reactions = $1::jsonb WHERE id = $2 RETURNING *',
+      [JSON.stringify(reactions), msgId]
+    );
+
+    // Send the reaction to Meta API if we have a WhatsApp message ID (wa_msg_id)
+    if (msgData.wa_msg_id) {
+      const phoneNumberId = msgData.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+      const waAccessToken = msgData.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+
+      if (phoneNumberId && waAccessToken) {
+        try {
+          const payload = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: (msgData.phone || '').replace(/\D/g, ''),
+            type: 'reaction',
+            reaction: {
+              message_id: msgData.wa_msg_id,
+              emoji: action === 'remove' ? '' : emoji
+            }
+          };
+
+          await axios.post(
+            `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+            payload,
+            { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+          );
+          console.log(`✅ Reaction sent to WhatsApp for message ID: ${msgData.wa_msg_id}`);
+        } catch (waErr) {
+          console.error('❌ Meta Reaction Send Error:', waErr.response?.data || waErr.message);
+        }
+      }
+    }
+
+    if (rows.length) {
+      io.emit('message_edited', rows[0]);
+    }
+    res.json({ success: true, message: rows[0] });
+  } catch (err) {
+    console.error('React message error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/messages/upload
+const mediaStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = path.join(__dirname, 'uploads', 'media');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname) || '';
+    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+  }
+});
+const mediaUpload = multer({ storage: mediaStorage });
+
+app.post('/api/messages/upload', auth, mediaUpload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const fileUrl = `/uploads/media/${req.file.filename}`;
+  res.json({ success: true, fileUrl });
 });
 
 // ══════════════════════════════════════════════════════════
@@ -247,7 +459,22 @@ app.get('/api/leads', auth, async (req, res) => {
   try {
     const { status, brand, search, limit = 100, offset = 0 } = req.query;
     let q = `
-      SELECT l.*, c.name as brand_name, u.name as assigned_name
+      SELECT l.*, c.name as brand_name, u.name as assigned_name,
+        COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id), 0) as unread,
+        (SELECT MAX(last_message_at) FROM conversations WHERE lead_id = l.id) as last_contact,
+        (
+          SELECT json_build_object(
+            'content', m.content,
+            'msg_type', m.msg_type,
+            'media_url', m.media_url,
+            'is_deleted', m.is_deleted
+          )
+          FROM messages m
+          JOIN conversations cv ON m.conversation_id = cv.id
+          WHERE cv.lead_id = l.id
+          ORDER BY m.sent_at DESC, m.id DESC
+          LIMIT 1
+        ) as last_msg
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
       LEFT JOIN users u ON l.assigned_to = u.id
@@ -268,7 +495,7 @@ app.get('/api/leads', auth, async (req, res) => {
       q += ` AND (l.name ILIKE $${params.length} OR l.phone ILIKE $${params.length})`;
     }
 
-    q += ` ORDER BY l.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    q += ` ORDER BY COALESCE((SELECT MAX(last_message_at) FROM conversations WHERE lead_id = l.id), l.created_at) DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
     const { rows } = await pool.query(q, params);
@@ -296,8 +523,12 @@ app.get('/api/leads/:id', auth, async (req, res) => {
 
     // Join conversations (thread) → messages (individual) for this lead
     const conversations = await pool.query(`
-      SELECT m.id, m.direction, m.content, m.msg_type as type, m.wa_msg_id,
-             m.status, m.is_ai, m.sent_at as timestamp, m.read_at
+      SELECT m.id, m.direction, m.content, m.msg_type as type, m.media_url, m.wa_msg_id,
+             m.status, m.is_ai, m.sent_at as timestamp, m.read_at, m.is_deleted, m.is_forwarded, m.pinned_until, m.is_starred, m.reactions,
+             CASE WHEN m.reply_to_wa_id IS NOT NULL THEN (
+               SELECT json_build_object('direction', r.direction, 'media_url', r.media_url, 'content', r.content, 'msg_type', r.msg_type)
+               FROM messages r WHERE r.wa_msg_id = m.reply_to_wa_id LIMIT 1
+             ) ELSE NULL END as reply_to
       FROM messages m
       JOIN conversations cv ON m.conversation_id = cv.id
       WHERE cv.lead_id = $1
@@ -321,6 +552,18 @@ app.post('/api/leads', auth, async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, 'new', 0, NOW())
       RETURNING *
     `, [name, phone, source || 'Manual', client_id || null, interest || '', assigned_to || null]);
+
+    // Trigger n8n webhook for new leads to send welcome template
+    if (process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
+      axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
+        lead_id: rows[0].id,
+        name: rows[0].name,
+        phone: rows[0].phone,
+        client_id: rows[0].client_id,
+        phone_number_id: process.env.WA_PHONE_NUMBER_ID,
+        wa_access_token: process.env.META_PAGE_ACCESS_TOKEN
+      }).catch(e => console.error('[n8n Webhook Error]', e.message));
+    }
 
     res.status(201).json({ lead: rows[0] });
   } catch (err) {
@@ -359,8 +602,8 @@ app.patch('/api/leads/:id', auth, async (req, res) => {
 app.delete('/api/leads/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
+    await pool.query('DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE lead_id = $1)', [id]);
     await pool.query('DELETE FROM conversations WHERE lead_id = $1', [id]);
-    await pool.query('DELETE FROM messages WHERE lead_id = $1', [id]);
     await pool.query('DELETE FROM payments WHERE lead_id = $1', [id]);
 
     const { rowCount } = await pool.query('DELETE FROM leads WHERE id = $1', [id]);
@@ -380,16 +623,16 @@ app.delete('/api/leads/:id', auth, async (req, res) => {
 // POST /api/whatsapp/send — manual send from CRM portal
 app.post('/api/whatsapp/send', auth, async (req, res) => {
   try {
-    const { lead_id, message } = req.body;
+    const { lead_id, message, media_url, msg_type, reply_to_wa_id, is_forwarded } = req.body;
 
     const leadRes = await pool.query(`
       SELECT l.*, c.phone_number_id, c.wa_access_token
       FROM leads l
-      JOIN clients c ON l.client_id = c.id
+      LEFT JOIN clients c ON l.client_id = c.id
       WHERE l.id = $1
     `, [lead_id]);
 
-    if (!leadRes.rows.length) return res.status(404).json({ error: 'Lead not found or client not linked to lead.' });
+    if (!leadRes.rows.length) return res.status(404).json({ error: 'Lead not found.' });
     const lead = leadRes.rows[0];
 
     const phoneNumberId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
@@ -399,14 +642,28 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
       return res.status(400).json({ error: 'WhatsApp not configured for this brand. Please add phone_number_id and wa_access_token in Clients settings or server .env file.' });
     }
 
+    const type = msg_type && msg_type !== 'text' ? msg_type : 'text';
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: (lead.phone || '').replace(/\D/g, ''),
+      type: type,
+    };
+
+    if (reply_to_wa_id) {
+      payload.context = { message_id: reply_to_wa_id };
+    }
+
+    if (type === 'text') {
+      payload.text = { body: message };
+    } else {
+      const fullMediaUrl = media_url && media_url.startsWith('http') ? media_url : `${process.env.API_URL || 'https://leados-api.abmgroups.org'}${media_url}`;
+      payload[type] = { link: fullMediaUrl };
+      if (message) payload[type].caption = message; // Optional caption for media
+    }
+
     const waRes = await axios.post(
       `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
-      {
-        messaging_product: 'whatsapp',
-        to: lead.phone.replace(/\D/g, ''),
-        type: 'text',
-        text: { body: message }
-      },
+      payload,
       { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
     );
 
@@ -427,10 +684,10 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
 
     // Insert message into messages table
     const { rows: savedRows } = await pool.query(`
-      INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, sent_at)
-      VALUES ($1, 'outbound', $2, 'text', $3, 'sent', NOW())
-      RETURNING id, direction, content, msg_type as type, wa_msg_id, status, sent_at as timestamp
-    `, [conversationId, message, waMessageId]);
+      INSERT INTO messages (conversation_id, direction, content, msg_type, media_url, wa_msg_id, status, sent_at, reply_to_wa_id, is_forwarded)
+      VALUES ($1, 'outbound', $2, $3, $4, $5, 'sent', NOW(), $6, $7)
+      RETURNING id, direction, content, msg_type as type, media_url, wa_msg_id, status, sent_at as timestamp, is_deleted, reply_to_wa_id, is_forwarded
+    `, [conversationId, message, type, media_url || null, waMessageId, reply_to_wa_id || null, is_forwarded || false]);
 
     // Emit real-time event to all CRM clients
     io.emit('outgoing_message', { lead_id: Number(lead_id), message: savedRows[0] });
@@ -532,6 +789,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
           const phone = msg.from;       // e.g. '919876543210'
           const text = msg.text.body;
           const phoneNumberId = value.metadata.phone_number_id;
+          const isForwarded = msg.context?.forwarded || msg.context?.frequently_forwarded || false;
 
           // Find matching client by phone_number_id
           const client = (await pool.query(
@@ -567,10 +825,10 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
           // Save incoming message to messages table
           const { rows: savedRows } = await pool.query(`
-            INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
-            VALUES ($1, 'inbound', $2, 'text', $3, 'delivered', false, NOW())
-            RETURNING id, direction, content, msg_type as type, wa_msg_id, status, sent_at as timestamp
-          `, [conversationId, text, msg.id]);
+            INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at, is_forwarded)
+            VALUES ($1, 'inbound', $2, 'text', $3, 'delivered', false, NOW(), $4)
+            RETURNING id, direction, content, msg_type as type, wa_msg_id, status, sent_at as timestamp, is_forwarded
+          `, [conversationId, text, msg.id, isForwarded]);
 
 
           // ── REAL-TIME: push to CRM Inbox immediately ─────────

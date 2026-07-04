@@ -22,6 +22,11 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,  // enable WebSocket proxying
       },
+      // Forward local static file uploads
+      '/uploads': {
+        target: 'http://localhost:3600',
+        changeOrigin: true,
+      },
     },
   },
 })

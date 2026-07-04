@@ -15,6 +15,8 @@ const cryptoHelper = require("../utils/crypto");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
 ffmpeg.setFfmpegPath(ffmpegPath);
+const ffprobePath = require("@ffprobe-installer/ffprobe").path;
+ffmpeg.setFfprobePath(ffprobePath);
 
 
 function extractDriveFileId(url) {
@@ -139,6 +141,117 @@ function extractAudio(videoPath, audioPath) {
         reject(err);
       })
       .run();
+  });
+}
+
+function getBrandSlug(brandName) {
+  if (!brandName) return 'default';
+  const known = {
+    "BM Academy": "bm_academy",
+    "BM TechX": "bm_techx",
+    "Namma Pondy Properties": "namma_pondy_properties",
+    "Dada's Kitchen": "dadas_kitchen",
+    "ABM Groups": "abm_groups"
+  };
+  return known[brandName] || brandName.toLowerCase()
+    .replace(/'/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function findBrandVoice(brandName) {
+  const slug = getBrandSlug(brandName);
+  for (const key of Object.keys(BRAND_VOICES)) {
+    if (getBrandSlug(key) === slug) {
+      return BRAND_VOICES[key];
+    }
+  }
+  return null;
+}
+
+function findBrandDetails(brandName) {
+  const slug = getBrandSlug(brandName);
+  for (const key of Object.keys(BRAND_DETAILS)) {
+    if (getBrandSlug(key) === slug) {
+      return BRAND_DETAILS[key];
+    }
+  }
+  return null;
+}
+
+async function downloadFile(url, destPath) {
+  const response = await axios({
+    method: 'GET',
+    url: url,
+    responseType: 'stream'
+  });
+  const writer = fs.createWriteStream(destPath);
+  response.data.pipe(writer);
+  return new Promise((resolve, reject) => {
+    writer.on('finish', resolve);
+    writer.on('error', reject);
+  });
+}
+
+function burnStoryOverlay(inputPath, outputPath, brandName) {
+  return new Promise((resolve, reject) => {
+    const brandSlug = getBrandSlug(brandName);
+    let stickerPath = path.join(__dirname, `../assets/story_sticker_${brandSlug}.png`);
+    if (!fs.existsSync(stickerPath)) {
+      stickerPath = path.join(__dirname, '../assets/new_reel_sticker.png');
+    }
+
+    console.log(`[burnStoryOverlay] Burning overlay onto story video using sticker: ${stickerPath}`);
+
+    // Query video metadata using ffprobe first to log specs and warn if invalid
+    ffmpeg.ffprobe(inputPath, (probeErr, metadata) => {
+      if (probeErr) {
+        console.warn(`[burnStoryOverlay] ffprobe failed for input ${inputPath}:`, probeErr.message);
+      } else {
+        const duration = metadata?.format?.duration;
+        console.log(`[burnStoryOverlay] Input video metadata - duration: ${duration}s, size: ${metadata?.format?.size} bytes`);
+        if (duration < 3) {
+          console.warn(`[burnStoryOverlay] WARNING: Video duration (${duration}s) is less than 3s (IG Stories min spec).`);
+        }
+        if (duration > 60) {
+          console.warn(`[burnStoryOverlay] WARNING: Video duration (${duration}s) is greater than 60s (IG Stories max spec). Truncating output to 60s.`);
+        }
+      }
+
+      // Build and run ffmpeg command
+      const ff = ffmpeg(inputPath)
+        .input(stickerPath)
+        // Ensure 1080x1920 (9:16) scaling + padding and overlay the sticker
+        .complexFilter('[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[scaled]; [scaled][1:v]overlay=x=(W-w)/2:y=H-h-200[outv]')
+        .outputOptions([
+          '-map [outv]',
+          '-map 0:a?',
+          '-c:v libx264',
+          '-preset fast',
+          '-crf 23',
+          '-pix_fmt yuv420p',
+          '-c:a aac',
+          '-b:a 128k',
+          '-t 60' // IG Stories cap at 60s
+        ])
+        .output(outputPath)
+        .on('start', (cmd) => {
+          console.log(`[burnStoryOverlay] Started FFmpeg command: ${cmd}`);
+        })
+        .on('stderr', (stderrLine) => {
+          console.log(`[FFmpeg-stderr] ${stderrLine}`);
+        })
+        .on('end', () => {
+          console.log(`[burnStoryOverlay] FFmpeg overlay complete: ${outputPath}`);
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error('[burnStoryOverlay] FFmpeg overlay error:', err.message);
+          reject(err);
+        });
+
+      ff.run();
+    });
   });
 }
 
@@ -692,7 +805,9 @@ async function checkNewDriveVideos() {
         .replace(/'/g, '')
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '');
-      SLUG_TO_BRAND[slug] = c.name;
+      if (!SLUG_TO_BRAND[slug] || (/[A-Z]/.test(c.name) && !/[A-Z]/.test(SLUG_TO_BRAND[slug]))) {
+        SLUG_TO_BRAND[slug] = c.name;
+      }
     }
 
     for (const monitor of monitors) {
@@ -834,7 +949,7 @@ async function checkNewDriveVideos() {
 
         // 3. Generate content via Groq Llama model
         console.log("DrivePoller: Generating brand-voice metadata via LLM...");
-        const brandInfo = BRAND_VOICES[brand_name] || { tag: brand_name, voice: `Professional voice for ${brand_name}` };
+        const brandInfo = findBrandVoice(brand_name) || { tag: brand_name, voice: `Professional voice for ${brand_name}` };
 
         const prompt = `You are the expert social media content writer for "${brand_name}" (${brandInfo.tag}).
 BRAND VOICE GUIDE:
@@ -1248,8 +1363,10 @@ async function publishVideoStoryToFacebook(pageId, pageAccessToken, { videoUrl }
 
     return { success: true, post_id: finishRes.data.id || video_id };
   } catch (err) {
-    console.error('Facebook video story publishing failed:', err.response?.data || err.message);
-    throw new Error(err.response?.data?.error?.message || err.message);
+    const fullError = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error('Facebook video story publishing failed. Full Meta error:', fullError);
+    const msg = err.response?.data?.error?.message || err.message;
+    throw new Error(`${msg} (Full Meta details: ${fullError})`);
   }
 }
 
@@ -1287,8 +1404,10 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
 
     return { success: true, post_id: finishRes.data.id || video_id };
   } catch (err) {
-    console.error('Facebook Reels publishing failed:', err.response?.data || err.message);
-    throw new Error(err.response?.data?.error?.message || err.message);
+    const fullError = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error('Facebook Reels publishing failed. Full Meta error:', fullError);
+    const msg = err.response?.data?.error?.message || err.message;
+    throw new Error(`${msg} (Full Meta details: ${fullError})`);
   }
 }
 
@@ -1356,18 +1475,20 @@ async function waitForInstagramContainer(containerId, accessToken, maxAttempts =
     const statusUrl = `https://graph.facebook.com/v19.0/${containerId}`;
     const res = await axios.get(statusUrl, {
       params: {
-        fields: 'status_code',
+        fields: 'status_code,status',
         access_token: accessToken
       }
     });
 
-    const { status_code } = res.data;
+    const { status_code, status } = res.data;
     console.log(`Instagram container ${containerId} check #${attempt}: status_code = ${status_code}`);
     if (status_code === 'FINISHED') {
       return true;
     }
     if (status_code === 'ERROR') {
-      throw new Error(`Instagram container failed: Container processing failed.`);
+      const details = JSON.stringify(res.data);
+      console.error(`[waitForInstagramContainer] Instagram container failed. Full Meta response:`, details);
+      throw new Error(`Instagram container failed: ${status || 'Container processing failed'} (Meta response: ${details})`);
     }
 
     // Wait 10 seconds before next check
@@ -1394,8 +1515,10 @@ async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, 
     const mediaId = await publishInstagramContainer(instagramBusinessId, accessToken, containerId);
     return { success: true, post_id: mediaId };
   } catch (err) {
-    console.error('Instagram posting failed:', err.response?.data || err.message);
-    throw new Error(err.response?.data?.error?.message || err.message);
+    const fullError = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error('Instagram posting failed. Full Meta error:', fullError);
+    const msg = err.response?.data?.error?.message || err.message;
+    throw new Error(`${msg} (Full Meta details: ${fullError})`);
   }
 }
 
@@ -1620,7 +1743,10 @@ async function publishPost(req, res) {
     }
 
     const accountsRes = await pool.query(
-      'SELECT * FROM brand_social_accounts WHERE brand_name = $1 AND is_active = true',
+      `SELECT * FROM brand_social_accounts 
+       WHERE (LOWER(REPLACE(REPLACE(brand_name, ' ', ''), '-', '_')) = LOWER(REPLACE(REPLACE($1, ' ', ''), '-', '_')) 
+          OR LOWER(REPLACE(REPLACE(brand_name, ' ', ''), '-', '')) = LOWER(REPLACE(REPLACE($1, ' ', ''), '-', '')))
+         AND is_active = true`,
       [post.brand_name]
     );
     const accounts = accountsRes.rows;
@@ -1865,25 +1991,90 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
           videoUrl: publicUrl,
           isStory: false
         });
-      } else if (channel === 'instagram_story') {
-        if (!account.instagram_business_id) {
-          throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
+      } else if (channel === 'instagram_story' || channel === 'facebook_story') {
+        console.log(`[BackgroundPublish] Preparing story video with overlay for post ${post.id} (brand: ${post.brand_name})`);
+        let channelUrl = publicUrl;
+        try {
+          // 1. Resolve local path of original video
+          let localVideoPath = null;
+          if (publicUrl.includes('/uploads/')) {
+            const filename = publicUrl.split('/uploads/')[1];
+            localVideoPath = path.join(__dirname, '../uploads', filename);
+          }
+
+          // 2. Download if it's not a local path or doesn't exist
+          if (!localVideoPath || !fs.existsSync(localVideoPath)) {
+            const tempDownloadFilename = `temp_story_source_${post.id}_${Date.now()}.mp4`;
+            const tempDownloadPath = path.join(os.tmpdir(), tempDownloadFilename);
+            console.log(`[BackgroundPublish] Local video not found. Downloading from ${publicUrl} to ${tempDownloadPath}...`);
+            await downloadFile(publicUrl, tempDownloadPath);
+            localVideoPath = tempDownloadPath;
+          }
+
+          // 3. Define output path for overlayed video
+          const outputStoryFilename = `story_overlay_${post.id}_${Date.now()}.mp4`;
+          const outputStoryPath = path.join(__dirname, '../uploads', outputStoryFilename);
+
+          // 4. Run overlay burning
+          await burnStoryOverlay(localVideoPath, outputStoryPath, post.brand_name);
+
+          // Confirm the output file exists and is fully written (size > 0)
+          let verifySuccess = false;
+          for (let attempt = 1; attempt <= 10; attempt++) {
+            if (fs.existsSync(outputStoryPath)) {
+              const stats = fs.statSync(outputStoryPath);
+              if (stats.size > 0) {
+                console.log(`[BackgroundPublish] Verified story overlay file size is ${stats.size} bytes on attempt ${attempt}`);
+                verifySuccess = true;
+                break;
+              }
+            }
+            console.log(`[BackgroundPublish] Waiting for story overlay file write completion... (attempt ${attempt}/10)`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          if (!verifySuccess) {
+            throw new Error(`Story overlay file was not fully written (size is 0 or file does not exist).`);
+          }
+
+          // 5. Build public URL for the newly generated overlay video
+          const localStoryUrl = `${reqInfo.protocol}://${reqInfo.headers['x-forwarded-host'] || reqInfo.headers['host'] || 'localhost:3500'}/uploads/${outputStoryFilename}`;
+          channelUrl = resolvePublicUrl(localStoryUrl, null, true);
+
+          console.log(`[BackgroundPublish] Story overlay successfully burned. Public URL: ${channelUrl}`);
+
+          // Verify reachability of the public URL with a HEAD request
+          console.log(`[BackgroundPublish] Verifying public URL reachability: ${channelUrl}`);
+          try {
+            const headRes = await axios.head(channelUrl, { timeout: 5000 });
+            console.log(`[BackgroundPublish] Public URL check passed. Status: ${headRes.status}`);
+          } catch (headErr) {
+            console.error(`[BackgroundPublish] Public URL check failed for ${channelUrl}:`, headErr.message);
+          }
+        } catch (overlayErr) {
+          console.error(`[BackgroundPublish] Failed to burn story overlay. Falling back to original video URL. Error:`, overlayErr.message);
+          channelUrl = publicUrl;
         }
-        console.log(`[BackgroundPublish] Publishing video story to Instagram Business for post ID ${post.id}`);
-        publishRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
-          caption: '',
-          videoUrl: publicUrl,
-          isStory: true
-        });
-      } else if (channel === 'facebook_story') {
-        const pageId = account.facebook_page_id || account.account_id;
-        if (!pageId) {
-          throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
+
+        if (channel === 'instagram_story') {
+          if (!account.instagram_business_id) {
+            throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
+          }
+          console.log(`[BackgroundPublish] Publishing video story to Instagram Business for post ID ${post.id}`);
+          publishRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
+            caption: '',
+            videoUrl: channelUrl,
+            isStory: true
+          });
+        } else {
+          const pageId = account.facebook_page_id || account.account_id;
+          if (!pageId) {
+            throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
+          }
+          console.log(`[BackgroundPublish] Publishing video story to Facebook Page for post ID ${post.id}`);
+          publishRes = await publishVideoStoryToFacebook(pageId, decryptedToken, {
+            videoUrl: channelUrl
+          });
         }
-        console.log(`[BackgroundPublish] Publishing video story to Facebook Page for post ID ${post.id}`);
-        publishRes = await publishVideoStoryToFacebook(pageId, decryptedToken, {
-          videoUrl: publicUrl
-        });
       }
 
       if (publishRes && publishRes.success) {
@@ -1994,11 +2185,11 @@ async function suggestCaptions(req, res) {
     }
     const post = postRes.rows[0];
 
-    const brandDetail = BRAND_DETAILS[post.brand_name] || {
+    const brandDetail = findBrandDetails(post.brand_name) || {
       industry: "Social Media / Business",
       targetAudience: "General social media audience"
     };
-    const brandVoice = BRAND_VOICES[post.brand_name]?.voice || "Professional and engaging";
+    const brandVoice = findBrandVoice(post.brand_name)?.voice || "Professional and engaging";
 
     let prompt = `You are an expert social media copywriter. Generate 5 unique caption suggestions for a video post based on the following details:
 - Brand Name: ${post.brand_name}
@@ -2082,11 +2273,11 @@ async function suggestStories(req, res) {
     }
     const post = postRes.rows[0];
 
-    const brandDetail = BRAND_DETAILS[post.brand_name] || {
+    const brandDetail = findBrandDetails(post.brand_name) || {
       industry: "Social Media / Business",
       targetAudience: "General social media audience"
     };
-    const brandVoice = BRAND_VOICES[post.brand_name]?.voice || "Professional and engaging";
+    const brandVoice = findBrandVoice(post.brand_name)?.voice || "Professional and engaging";
 
     let prompt = `You are an expert social media copywriter. Generate 5 unique Instagram Story sets (each set consisting of 3 slides: story_1, story_2, and story_3) to promote a video post based on the following details:
 - Brand Name: ${post.brand_name}

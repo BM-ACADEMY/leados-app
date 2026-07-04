@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import SopModal from '../../components/common/SopModal.jsx';
-import html2pdf from 'html2pdf.js';
+import html2pdf from 'html2pdf.js/dist/html2pdf.bundle.min.js';
 import { C } from '../../constants/theme.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
 import { api } from '../../services/api.js';

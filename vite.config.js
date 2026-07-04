@@ -8,12 +8,12 @@ export default defineConfig({
     proxy: {
       // Forward all /api/* requests to the local Express backend
       '/api': {
-        target: 'http://localhost:3500',
+        target: 'http://localhost:3600',
         changeOrigin: true,
       },
       // Forward webhook routes too
       '/webhook': {
-        target: 'http://localhost:3500',
+        target: 'http://localhost:3600',
         changeOrigin: true,
       },
       // Socket.io — must proxy both HTTP polling and WebSocket upgrade

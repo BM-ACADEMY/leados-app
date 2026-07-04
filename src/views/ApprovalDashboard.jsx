@@ -77,6 +77,12 @@ function parseItemJsonFields(item) {
   return parsed;
 }
 
+function isSameBrand(brandA, brandB) {
+  if (!brandA || !brandB) return false;
+  const normalize = (name) => name.toLowerCase().replace(/['"_-]/g, '').replace(/\s+/g, '');
+  return normalize(brandA) === normalize(brandB);
+}
+
 export default function ApprovalDashboard() {
   const { user } = useAuth();
   const canApprove = !user || !user.role || ['Super Admin', 'Marketing Admin', 'super_admin', 'admin', 'founder', 'Founder'].includes(user.role);
@@ -245,6 +251,32 @@ export default function ApprovalDashboard() {
     fetchAccounts();
   }, []);
 
+  // Auto-poll when any item in the list is currently publishing
+  useEffect(() => {
+    const hasPublishingItems = items.some(item => {
+      const s = (item.status || "").toUpperCase();
+      return s === "PUBLISHING" || s === "PROCESSING";
+    });
+
+    if (hasPublishingItems) {
+      const interval = setInterval(() => {
+        fetchData(false);
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [items]);
+
+  // Keep selected details view in sync when auto-poll updates items list
+  useEffect(() => {
+    if (selected) {
+      const updated = items.find(i => i.id === selected.id);
+      if (updated && JSON.stringify(updated) !== JSON.stringify(selected)) {
+        setSelected(updated);
+      }
+    }
+  }, [items, selected]);
+
+
   async function fetchData(showLoading = true) {
     if (showLoading) setLoading(true);
     try {
@@ -345,7 +377,7 @@ export default function ApprovalDashboard() {
 
     // Check connected accounts for this brand
     const connectedAccounts = (socialAccounts || []).filter(
-      s => s.brand_name === selected.brand_name && s.is_active !== false
+      s => isSameBrand(s.brand_name, selected.brand_name) && s.is_active !== false
     );
     const connectedPlatforms = new Set(connectedAccounts.map(s => s.platform.toLowerCase()));
 
@@ -405,13 +437,20 @@ export default function ApprovalDashboard() {
       return;
     }
     try {
+      if (editMode) {
+        await api.updateContent(id, editValues);
+      }
       await api.approveContent(id);
       if (filter !== "ALL" && filter !== "APPROVED") {
         setItems(prev => prev.filter(i => i.id !== id));
       } else {
-        setItems(prev => prev.map(i => i.id === id ? { ...i, status: "approved" } : i));
+        const updatedItem = editMode 
+          ? parseItemJsonFields({ ...selected, ...editValues, status: "approved" })
+          : { ...selected, status: "approved" };
+        setItems(prev => prev.map(i => i.id === id ? updatedItem : i));
       }
       setStats(prev => ({ ...prev, PENDING: Math.max(0, prev.PENDING - 1), APPROVED: prev.APPROVED + 1 }));
+      setEditMode(false);
       setSelected(null);
       showToast("Content approved — publishing queue updated ✅");
       fetchData(false);
@@ -881,8 +920,8 @@ export default function ApprovalDashboard() {
                       {isPublishing ? "Publishing..." : "🚀 Publish Now"}
                     </button>
                   )}
-                  {/* Editing allowed for all if PENDING or REJECTED */}
-                  {(["PENDING", "pending_approval", "REJECTED", "rejected"].includes(selected.status)) && (
+                   {/* Editing allowed for all if PENDING, REJECTED, or APPROVED */}
+                  {(["PENDING", "pending_approval", "REJECTED", "rejected", "approved", "APPROVED"].includes(selected.status)) && (
                     <button onClick={() => setEditMode(!editMode)} style={{
                       padding: "8px 16px", borderRadius: 8, border: "1px solid #E5E4F0",
                       background: editMode ? "#F5F3FF" : "#fff", color: editMode ? "#7C3AED" : "#1A1A2E",
@@ -1199,52 +1238,6 @@ export default function ApprovalDashboard() {
                   </div>
                 )}
 
-                {/* Stories */}
-                <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden" }}>
-                  <div style={{ padding: "12px 16px", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", fontSize: 12, fontWeight: 700, color: "#6B6B80", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    📱 Instagram Stories
-                  </div>
-                  <div style={{ padding: 16 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
-                      {["story_1","story_2","story_3"].map((s, i) => (
-                        <div key={s} style={{ background: "#F8F7FF", borderRadius: 8, padding: 12, border: "1px solid #E5E4F0" }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", marginBottom: 6, textTransform: "uppercase" }}>Slide {i+1}</div>
-                          {editMode ? (
-                            <textarea 
-                              value={editValues[s] || ""}
-                              onChange={e => setEditValues(prev => ({ ...prev, [s]: e.target.value }))}
-                              style={{ width: "100%", fontSize: 12, border: "1px solid #7C3AED44", borderRadius: 4, padding: 6, boxSizing: "border-box", minHeight: 80, outline: "none", resize: "vertical", background: "#FAFAFF", color: "#1A1A2E", fontFamily: "inherit" }}
-                            />
-                          ) : (
-                            <div style={{ fontSize: 12, color: "#1A1A2E", lineHeight: 1.5 }}>{selected[s]}</div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAiSuggestions("story")}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "6px 12px",
-                        borderRadius: 6,
-                        border: "1px solid #7C3AED",
-                        background: "#F5F3FF",
-                        color: "#7C3AED",
-                        fontSize: "11px",
-                        fontWeight: "700",
-                        cursor: "pointer",
-                        transition: "all 0.15s",
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.background = "#7C3AED"; e.currentTarget.style.color = "#fff"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; e.currentTarget.style.color = "#7C3AED"; }}
-                    >
-                      ✨ AI Suggestions
-                    </button>
-                  </div>
-                </div>
               </div>
 
               {/* RIGHT — Metadata panel */}
@@ -1344,12 +1337,12 @@ export default function ApprovalDashboard() {
                   </div>
                   <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
                     {Array.from(new Set([
-                      ...((socialAccounts.filter(s => s.brand_name === selected.brand_name).map(s => s.platform) || []).map(plat => {
+                      ...((socialAccounts.filter(s => isSameBrand(s.brand_name, selected.brand_name)).map(s => s.platform) || []).map(plat => {
                         if (plat === 'instagram') return 'instagram_post';
                         if (plat === 'facebook') return 'facebook_post';
                         return plat;
                       })),
-                      ...((socialAccounts.filter(s => s.brand_name === selected.brand_name).map(s => s.platform) || []).map(plat => plat + '_story').filter(plat => ['instagram_story', 'facebook_story'].includes(plat))),
+                      ...((socialAccounts.filter(s => isSameBrand(s.brand_name, selected.brand_name)).map(s => s.platform) || []).map(plat => plat + '_story').filter(plat => ['instagram_story', 'facebook_story'].includes(plat))),
                       ...((selected.platforms || []).map(plat => {
                         if (plat === 'instagram') return 'instagram_post';
                         if (plat === 'facebook') return 'facebook_post';
@@ -1376,7 +1369,7 @@ export default function ApprovalDashboard() {
                       let accountPlatform = key.endsWith('_story') ? key.replace('_story', '') : key;
                       if (accountPlatform === 'instagram_post') accountPlatform = 'instagram';
                       if (accountPlatform === 'facebook_post') accountPlatform = 'facebook';
-                      const brandAccounts = socialAccounts.filter(s => s.brand_name === selected.brand_name && s.platform === accountPlatform);
+                      const brandAccounts = socialAccounts.filter(s => isSameBrand(s.brand_name, selected.brand_name) && s.platform === accountPlatform);
 
                       return (
                         <div key={key} style={{

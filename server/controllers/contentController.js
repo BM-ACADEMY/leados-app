@@ -1992,8 +1992,10 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
           isStory: false
         });
       } else if (channel === 'instagram_story' || channel === 'facebook_story') {
-        console.log(`[BackgroundPublish] Preparing story video with overlay for post ${post.id} (brand: ${post.brand_name})`);
+        console.log(`[BackgroundPublish] Preparing story Option 3 (Still Frame + CTA Overlay) for post ${post.id} (brand: ${post.brand_name})`);
         let channelUrl = publicUrl;
+        let isVideoStory = false;
+        
         try {
           // 1. Resolve local path of original video
           let localVideoPath = null;
@@ -2011,36 +2013,195 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
             localVideoPath = tempDownloadPath;
           }
 
-          // 3. Define output path for overlayed video
-          const outputStoryFilename = `story_overlay_${post.id}_${Date.now()}.mp4`;
-          const outputStoryPath = path.join(__dirname, '../uploads', outputStoryFilename);
+          // 3. Extract still frame or reuse existing thumbnail
+          let stillFramePath = path.join(__dirname, `../uploads/story_still_${post.id}_${Date.now()}.jpg`);
+          let stillSuccess = false;
 
-          // 4. Run overlay burning
-          await burnStoryOverlay(localVideoPath, outputStoryPath, post.brand_name);
+          if (post.thumbnail_url) {
+            try {
+              let localThumbnailPath = null;
+              if (post.thumbnail_url.includes('/uploads/')) {
+                const filename = post.thumbnail_url.split('/uploads/')[1];
+                localThumbnailPath = path.join(__dirname, '../uploads', filename);
+              }
+              if (localThumbnailPath && fs.existsSync(localThumbnailPath)) {
+                fs.copyFileSync(localThumbnailPath, stillFramePath);
+                stillSuccess = true;
+                console.log(`[BackgroundPublish] Reused existing local thumbnail: ${localThumbnailPath}`);
+              } else {
+                console.log(`[BackgroundPublish] Local thumbnail not found, downloading from ${post.thumbnail_url} to ${stillFramePath}...`);
+                await downloadFile(post.thumbnail_url, stillFramePath);
+                stillSuccess = true;
+                console.log(`[BackgroundPublish] Downloaded existing thumbnail: ${post.thumbnail_url}`);
+              }
+            } catch (err) {
+              console.error(`[BackgroundPublish] Failed to reuse existing thumbnail:`, err.message);
+            }
+          }
 
-          // Confirm the output file exists and is fully written (size > 0)
+          if (!stillSuccess) {
+            console.log(`[BackgroundPublish] Extracting still frame from local video: ${localVideoPath}`);
+            await new Promise((resolve, reject) => {
+              ffmpeg(localVideoPath)
+                .seekInput(1) // seek to 1s
+                .frames(1)
+                .output(stillFramePath)
+                .on('end', () => {
+                  stillSuccess = true;
+                  resolve();
+                })
+                .on('error', (err) => {
+                  reject(err);
+                })
+                .run();
+            });
+            console.log(`[BackgroundPublish] Successfully extracted still frame using FFmpeg: ${stillFramePath}`);
+          }
+
+          // 4. Composite per-brand CTA overlay PNG onto still using Jimp
+          console.log(`[BackgroundPublish] Compositing story image with Jimp...`);
+          const image = await Jimp.read(stillFramePath);
+          
+          // Container must be 1080x1920 (9:16) with black background/padding
+          image.contain(1080, 1920, Jimp.HORIZONTAL_ALIGN_CENTER | Jimp.VERTICAL_ALIGN_MIDDLE);
+
+          // Find brand sticker
+          const brandId = post.brand_id || getBrandSlug(post.brand_name);
+          let stickerPath = path.join(__dirname, `../assets/story_sticker_${brandId}.png`);
+          if (!fs.existsSync(stickerPath)) {
+            stickerPath = path.join(__dirname, '../assets/new_reel_sticker.png');
+          }
+
+          if (fs.existsSync(stickerPath)) {
+            console.log(`[BackgroundPublish] Using sticker: ${stickerPath}`);
+            const sticker = await Jimp.read(stickerPath);
+            sticker.resize(500, Jimp.AUTO);
+            const stickerX = (image.bitmap.width - sticker.bitmap.width) / 2;
+            const stickerY = 1200; // bottom center
+            image.composite(sticker, stickerX, stickerY);
+          } else {
+            console.warn(`[BackgroundPublish] Sticker file not found, skipping sticker composite.`);
+          }
+
+          // Fetch per-brand CTA configuration
+          const ctaText = BRAND_CTA_CONFIG[brandId] || BRAND_CTA_CONFIG["default"];
+
+          // Draw sleek semi-transparent dark card/overlay at the bottom
+          const cardWidth = 900;
+          const cardHeight = 220;
+          const card = new Jimp(cardWidth, cardHeight, 0x000000aa); // black with transparency
+
+          // Print text on card (white bitmap fonts)
+          const fontTitle = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
+          const fontCTA = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
+
+          card.print(
+            fontTitle,
+            0,
+            40,
+            {
+              text: "New Reel - Tap to Watch",
+              alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER
+            },
+            cardWidth
+          );
+          card.print(
+            fontCTA,
+            0,
+            120,
+            {
+              text: ctaText,
+              alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER
+            },
+            cardWidth
+          );
+
+          // Composite card onto final image
+          const cardX = (image.bitmap.width - cardWidth) / 2;
+          const cardY = 1500;
+          image.composite(card, cardX, cardY);
+
+          // Save final composited image to uploads
+          const outputImageFilename = `story_composite_${post.id}_${Date.now()}.png`;
+          const outputImagePath = path.join(__dirname, '../uploads', outputImageFilename);
+          await image.writeAsync(outputImagePath);
+          console.log(`[BackgroundPublish] Jimp composite story image created at: ${outputImagePath}`);
+
+          let finalStoryPath = outputImagePath;
+
+          // 5. Check if optional royalty-free background audio exists
+          const musicPath = path.join(__dirname, `../assets/story_music_${brandId}.mp3`);
+          if (fs.existsSync(musicPath)) {
+            console.log(`[BackgroundPublish] Royalty-free music found at ${musicPath}. Muxing into video story...`);
+            const outputVideoFilename = `story_video_${post.id}_${Date.now()}.mp4`;
+            const outputVideoPath = path.join(__dirname, '../uploads', outputVideoFilename);
+            
+            await new Promise((resolve, reject) => {
+              ffmpeg()
+                .input(outputImagePath)
+                .loop()
+                .input(musicPath)
+                .outputOptions([
+                  '-c:v libx264',
+                  '-tune stillimage',
+                  '-c:a aac',
+                  '-b:a 128k',
+                  '-pix_fmt yuv420p',
+                  '-t 15', // Limit to 15s (standard story duration)
+                  '-shortest'
+                ])
+                .output(outputVideoPath)
+                .on('start', (cmd) => {
+                  console.log(`[BackgroundPublish] Started FFmpeg loop command: ${cmd}`);
+                })
+                .on('end', () => {
+                  console.log(`[BackgroundPublish] Video story muxed successfully: ${outputVideoPath}`);
+                  resolve();
+                })
+                .on('error', (err) => {
+                  console.error(`[BackgroundPublish] Video story muxing failed:`, err.message);
+                  reject(err);
+                })
+                .run();
+            });
+            
+            finalStoryPath = outputVideoPath;
+            isVideoStory = true;
+          }
+
+          // Confirm the output file exists and is fully written
           let verifySuccess = false;
           for (let attempt = 1; attempt <= 10; attempt++) {
-            if (fs.existsSync(outputStoryPath)) {
-              const stats = fs.statSync(outputStoryPath);
+            if (fs.existsSync(finalStoryPath)) {
+              const stats = fs.statSync(finalStoryPath);
               if (stats.size > 0) {
-                console.log(`[BackgroundPublish] Verified story overlay file size is ${stats.size} bytes on attempt ${attempt}`);
+                console.log(`[BackgroundPublish] Verified story file size is ${stats.size} bytes on attempt ${attempt}`);
                 verifySuccess = true;
                 break;
               }
             }
-            console.log(`[BackgroundPublish] Waiting for story overlay file write completion... (attempt ${attempt}/10)`);
+            console.log(`[BackgroundPublish] Waiting for story file write completion... (attempt ${attempt}/10)`);
             await new Promise(resolve => setTimeout(resolve, 500));
           }
           if (!verifySuccess) {
-            throw new Error(`Story overlay file was not fully written (size is 0 or file does not exist).`);
+            throw new Error(`Story file was not fully written (size is 0 or file does not exist).`);
           }
 
-          // 5. Build public URL for the newly generated overlay video
-          const localStoryUrl = `${reqInfo.protocol}://${reqInfo.headers['x-forwarded-host'] || reqInfo.headers['host'] || 'localhost:3500'}/uploads/${outputStoryFilename}`;
+          // 6. Build public URL for the newly generated asset
+          const finalStoryFilename = path.basename(finalStoryPath);
+          const localStoryUrl = `${reqInfo.protocol}://${reqInfo.headers['x-forwarded-host'] || reqInfo.headers['host'] || 'localhost:3500'}/uploads/${finalStoryFilename}`;
           channelUrl = resolvePublicUrl(localStoryUrl, null, true);
 
-          console.log(`[BackgroundPublish] Story overlay successfully burned. Public URL: ${channelUrl}`);
+          console.log(`[BackgroundPublish] Story asset prepared. Public URL: ${channelUrl} (isVideo: ${isVideoStory})`);
+
+          // Clean up temp still frame if it was generated and is different from finalStoryPath
+          if (fs.existsSync(stillFramePath) && stillFramePath !== finalStoryPath) {
+            try {
+              fs.unlinkSync(stillFramePath);
+            } catch (err) {
+              console.warn(`[BackgroundPublish] Failed to clean up temp still frame:`, err.message);
+            }
+          }
 
           // Verify reachability of the public URL with a HEAD request
           console.log(`[BackgroundPublish] Verifying public URL reachability: ${channelUrl}`);
@@ -2051,15 +2212,16 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
             console.error(`[BackgroundPublish] Public URL check failed for ${channelUrl}:`, headErr.message);
           }
         } catch (overlayErr) {
-          console.error(`[BackgroundPublish] Failed to burn story overlay. Falling back to original video URL. Error:`, overlayErr.message);
+          console.error(`[BackgroundPublish] Failed to prepare story composite. Falling back to original video URL. Error:`, overlayErr.message);
           channelUrl = publicUrl;
+          isVideoStory = true;
         }
 
         if (channel === 'instagram_story') {
           if (!account.instagram_business_id) {
             throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
           }
-          console.log(`[BackgroundPublish] Publishing video story to Instagram Business for post ID ${post.id}`);
+          console.log(`[BackgroundPublish] Publishing story to Instagram Business for post ID ${post.id} (isVideo: ${isVideoStory})`);
           publishRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
             caption: '',
             videoUrl: channelUrl,
@@ -2070,10 +2232,17 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
           if (!pageId) {
             throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
           }
-          console.log(`[BackgroundPublish] Publishing video story to Facebook Page for post ID ${post.id}`);
-          publishRes = await publishVideoStoryToFacebook(pageId, decryptedToken, {
-            videoUrl: channelUrl
-          });
+          if (isVideoStory) {
+            console.log(`[BackgroundPublish] Publishing video story to Facebook Page for post ID ${post.id}`);
+            publishRes = await publishVideoStoryToFacebook(pageId, decryptedToken, {
+              videoUrl: channelUrl
+            });
+          } else {
+            console.log(`[BackgroundPublish] Publishing photo story to Facebook Page for post ID ${post.id}`);
+            publishRes = await publishPhotoStoryToFacebook(pageId, decryptedToken, {
+              imageUrl: channelUrl
+            });
+          }
         }
       }
 
@@ -2128,6 +2297,15 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
 
   console.log(`[BackgroundPublish] Async publishing complete for post ${postId}.`);
 }
+
+const BRAND_CTA_CONFIG = {
+  "bm_academy": "WhatsApp: 94038 92971",
+  "bm_techx": "WhatsApp: 99442 88271",
+  "namma_pondy_properties": "WhatsApp: 99442 88271",
+  "dadas_kitchen": "WhatsApp: 99442 88271",
+  "abm_groups": "WhatsApp: 99442 88271",
+  "default": "WhatsApp: 99442 88271"
+};
 
 const BRAND_DETAILS = {
   "BM Academy": {

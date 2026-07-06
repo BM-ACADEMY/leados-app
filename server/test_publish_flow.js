@@ -2,16 +2,16 @@ const { publishPost } = require('./controllers/contentController');
 const pool = require('./db/connection');
 
 async function test() {
-  const targetId = 175;
+  const targetId = 174;
   console.log(`Setting up content item ${targetId}...`);
   
-  // 1. Update post to select all 4 formats and map active social accounts
+  // 1. Update post to select all 4 formats and map active social accounts for BM TechX
   const formats = ['instagram_post', 'instagram_story', 'facebook_post', 'facebook_story'];
   const selectedAccounts = {
-    "instagram_post": ["17841469214255982"],
-    "instagram_story": ["17841469214255982"],
-    "facebook_post": ["507830985738117"],
-    "facebook_story": ["507830985738117"]
+    "instagram_post": ["17841477767224558"],
+    "instagram_story": ["17841477767224558"],
+    "facebook_post": ["913716178490080"],
+    "facebook_story": ["913716178490080"]
   };
 
   await pool.query(

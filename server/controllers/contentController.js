@@ -1391,15 +1391,13 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
     });
     console.log(`Facebook Reel upload completed for video_id = ${video_id}`);
 
-    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, null, {
-      params: {
-        upload_phase: 'finish',
-        video_id: video_id,
-        video_state: 'PUBLISHED',
-        description: caption,
-        share_to_feed: true,
-        access_token: pageAccessToken
-      }
+    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, {
+      upload_phase: 'finish',
+      video_id: video_id,
+      video_state: 'PUBLISHED',
+      description: caption,
+      share_to_feed: true,
+      access_token: pageAccessToken
     });
 
     return { success: true, post_id: finishRes.data.id || video_id };

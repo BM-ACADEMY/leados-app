@@ -1407,7 +1407,6 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
       video_id: video_id,
       video_state: 'PUBLISHED',
       description: caption,
-      share_to_feed: true,
       access_token: pageAccessToken
     };
     console.log(`[publishReelToFacebook] Step (c) Payload:`, JSON.stringify({ ...finishParams, access_token: '***' }, null, 2));

@@ -225,23 +225,27 @@ router.get('/data', async (req, res) => {
               };
             });
 
-            res.json({
-              business: {
-                name: loc.title || businessName,
-                address: 'Verified Google Location',
-                phone: 'Verified Google Location',
-                rating: realReviews.length > 0 ? (realReviews.reduce((acc, r) => acc + r.rating, 0) / realReviews.length).toFixed(1) : 0,
-                totalReviews: realReviews.length,
-                profileUrl: ''
-              },
-              insights: {
-                views: 0, viewsTrend: '0%',
-                searches: 0, searchesTrend: '0%',
-                actions: 0, actionsTrend: '0%'
-              },
-              recentReviews: realReviews
-            });
-            success = true;
+            if (realReviews.length > 0) {
+              res.json({
+                business: {
+                  name: loc.title || businessName,
+                  address: 'Verified Google Location',
+                  phone: 'Verified Google Location',
+                  rating: (realReviews.reduce((acc, r) => acc + r.rating, 0) / realReviews.length).toFixed(1),
+                  totalReviews: realReviews.length,
+                  profileUrl: ''
+                },
+                insights: {
+                  views: 0, viewsTrend: '0%',
+                  searches: 0, searchesTrend: '0%',
+                  actions: 0, actionsTrend: '0%'
+                },
+                recentReviews: realReviews
+              });
+              success = true;
+            } else {
+              googleApiError = "No reviews found via official Google API.";
+            }
           } else {
             googleApiError = "No locations found for this account.";
           }

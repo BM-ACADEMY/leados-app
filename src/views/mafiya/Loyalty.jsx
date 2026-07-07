@@ -53,7 +53,7 @@ export default function Loyalty() {
   const [dataLoading, setDataLoading] = useState(false);
   const [connected, setConnected] = useState(false);
   const [data, setData] = useState(null);
-  const [dataMode, setDataMode] = useState('real'); // 'real' or 'demo'
+
 
   // Reply states
   const [replyingTo, setReplyingTo] = useState(null);
@@ -131,9 +131,9 @@ export default function Loyalty() {
 
   useEffect(() => {
     if (activeClient) {
-      fetchReviewData(activeClient.id, dataMode);
+      fetchReviewData(activeClient.id, 'real');
     }
-  }, [activeClient, dataMode]);
+  }, [activeClient]);
 
   const submitReply = async (reviewId) => {
     if (!replyText.trim()) return;
@@ -220,39 +220,6 @@ export default function Loyalty() {
 
         {/* Dropdown & Demo Mode controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* Data Mode Switcher */}
-          <div style={{ display: 'flex', background: '#0f172a', padding: 3, borderRadius: 8, border: `1px solid ${C.border}` }}>
-            <button
-              onClick={() => setDataMode('real')}
-              style={{
-                background: dataMode === 'real' ? C.accent : 'transparent',
-                color: '#fff',
-                border: 'none',
-                padding: '6px 12px',
-                borderRadius: 6,
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Live GMB
-            </button>
-            <button
-              onClick={() => setDataMode('demo')}
-              style={{
-                background: dataMode === 'demo' ? C.accent : 'transparent',
-                color: '#fff',
-                border: 'none',
-                padding: '6px 12px',
-                borderRadius: 6,
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Demo Mode
-            </button>
-          </div>
 
           <select
             value={activeClient?.id || ''}
@@ -281,14 +248,9 @@ export default function Loyalty() {
         </div>
       </div>
 
-      {dataLoading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
-          <Loader2 size={28} color={C.accent} className="spin" />
-        </div>
-      ) : (
-        <>
+      <>
           {/* GMB Warning notice if not connected */}
-          {!connected && dataMode === 'real' && (
+          {!connected && (
             <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: 16, borderRadius: 12, display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
               <AlertTriangle size={20} color="#f59e0b" />
               <div style={{ flex: 1 }}>
@@ -357,9 +319,11 @@ export default function Loyalty() {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-
-                {data?.recentReviews && data.recentReviews.length > 0 ? (
+                {dataLoading ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
+                    <Loader2 size={28} color={C.accent} className="spin" />
+                  </div>
+                ) : data?.recentReviews && data.recentReviews.length > 0 ? (
                   data.recentReviews.map(review => (
                     <div key={review.id} style={{ borderBottom: `1px solid ${C.border}50`, paddingBottom: 20 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -468,7 +432,6 @@ export default function Loyalty() {
             </div>
           </div>
         </>
-      )}
     </div>
   );
 }

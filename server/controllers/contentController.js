@@ -1327,8 +1327,10 @@ async function publishPhotoStoryToFacebook(pageId, pageAccessToken, { imageUrl }
     });
     return { success: true, post_id: publishRes.data.id || photoId };
   } catch (err) {
-    console.error('Facebook photo story publishing failed:', err.response?.data || err.message);
-    throw new Error(err.response?.data?.error?.message || err.message);
+    const fullError = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error('Facebook photo story publishing failed. Full Meta error:', fullError);
+    const msg = err.response?.data?.error?.message || err.message;
+    throw new Error(`${msg} (Full Meta details: ${fullError})`);
   }
 }
 
@@ -1993,6 +1995,7 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         console.log(`[BackgroundPublish] Preparing story Option 3 (Still Frame + CTA Overlay) for post ${post.id} (brand: ${post.brand_name})`);
         let channelUrl = publicUrl;
         let isVideoStory = false;
+        let stillFramePath;
         
         try {
           // 1. Resolve local path of original video
@@ -2012,7 +2015,7 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
           }
 
           // 3. Extract still frame or reuse existing thumbnail
-          let stillFramePath = path.join(__dirname, `../uploads/story_still_${post.id}_${Date.now()}.jpg`);
+          stillFramePath = path.join(__dirname, `../uploads/story_still_${post.id}_${Date.now()}.jpg`);
           let stillSuccess = false;
 
           if (post.thumbnail_url) {
@@ -2127,9 +2130,9 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
 
           let finalStoryPath = outputImagePath;
 
-          // 5. Check if optional royalty-free background audio exists
+          // 5. Check if optional royalty-free background audio exists (Instagram only)
           const musicPath = path.join(__dirname, `../assets/story_music_${brandId}.mp3`);
-          if (fs.existsSync(musicPath)) {
+          if (channel === 'instagram_story' && fs.existsSync(musicPath)) {
             console.log(`[BackgroundPublish] Royalty-free music found at ${musicPath}. Muxing into video story...`);
             const outputVideoFilename = `story_video_${post.id}_${Date.now()}.mp4`;
             const outputVideoPath = path.join(__dirname, '../uploads', outputVideoFilename);
@@ -2210,9 +2213,25 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
             console.error(`[BackgroundPublish] Public URL check failed for ${channelUrl}:`, headErr.message);
           }
         } catch (overlayErr) {
-          console.error(`[BackgroundPublish] Failed to prepare story composite. Falling back to original video URL. Error:`, overlayErr.message);
-          channelUrl = publicUrl;
-          isVideoStory = true;
+          console.error(`[BackgroundPublish] Failed to prepare story composite. Error:`, overlayErr.message);
+          if (channel === 'facebook_story') {
+            console.log(`[BackgroundPublish] FB story must be image only. Attempting fallback to thumbnail or still frame.`);
+            if (post.thumbnail_url) {
+              channelUrl = resolvePublicUrl(post.thumbnail_url);
+              isVideoStory = false;
+            } else if (stillFramePath && fs.existsSync(stillFramePath)) {
+              const stillFilename = path.basename(stillFramePath);
+              const localStillUrl = `${reqInfo.protocol}://${reqInfo.headers['x-forwarded-host'] || reqInfo.headers['host'] || 'localhost:3500'}/uploads/${stillFilename}`;
+              channelUrl = resolvePublicUrl(localStillUrl, null, true);
+              isVideoStory = false;
+            } else {
+              throw new Error(`Failed to generate FB story image card and no image fallback available. Original error: ${overlayErr.message}`);
+            }
+          } else {
+            console.log(`[BackgroundPublish] Instagram story falling back to original video URL.`);
+            channelUrl = publicUrl;
+            isVideoStory = true;
+          }
         }
 
         if (channel === 'instagram_story') {
@@ -2230,17 +2249,10 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
           if (!pageId) {
             throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
           }
-          if (isVideoStory) {
-            console.log(`[BackgroundPublish] Publishing video story to Facebook Page for post ID ${post.id}`);
-            publishRes = await publishVideoStoryToFacebook(pageId, decryptedToken, {
-              videoUrl: channelUrl
-            });
-          } else {
-            console.log(`[BackgroundPublish] Publishing photo story to Facebook Page for post ID ${post.id}`);
-            publishRes = await publishPhotoStoryToFacebook(pageId, decryptedToken, {
-              imageUrl: channelUrl
-            });
-          }
+          console.log(`[BackgroundPublish] Publishing photo story to Facebook Page for post ID ${post.id}`);
+          publishRes = await publishPhotoStoryToFacebook(pageId, decryptedToken, {
+            imageUrl: channelUrl
+          });
         }
       }
 

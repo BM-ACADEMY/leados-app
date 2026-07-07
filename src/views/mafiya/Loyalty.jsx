@@ -55,12 +55,6 @@ export default function Loyalty() {
   const [data, setData] = useState(null);
   const [dataMode, setDataMode] = useState('real'); // 'real' or 'demo'
 
-  // Post states
-  const [postContent, setPostContent] = useState('');
-  const [posting, setPosting] = useState(false);
-  const [postSuccess, setPostSuccess] = useState(false);
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
-
   // Reply states
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState('');
@@ -81,6 +75,9 @@ export default function Loyalty() {
         } else {
           setLoading(false);
         }
+      } else {
+        toast.error('Failed to load GMB clients (Server responded with error)');
+        setLoading(false);
       }
     } catch (err) {
       console.error('Fetch clients error:', err);
@@ -174,24 +171,6 @@ export default function Loyalty() {
     }
   };
 
-  const handlePost = async () => {
-    if (!postContent.trim()) return;
-    setPosting(true);
-    try {
-      // Create Post Mock/Simulate
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      setPostSuccess(true);
-      setPostContent('');
-      setShowPreviewModal(false);
-      toast.success('Update posted to Google Business Profile!');
-      setTimeout(() => setPostSuccess(false), 3000);
-    } catch (err) {
-      console.error(err);
-      toast.error('Failed to create GMB post.');
-    } finally {
-      setPosting(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -366,7 +345,7 @@ export default function Loyalty() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 24 }}>
+          <div style={{ width: '100%' }}>
             {/* REVIEWS MANAGER */}
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
@@ -378,19 +357,7 @@ export default function Loyalty() {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                {data?._debug_google_error && (() => {
-                  const friendly = getFriendlyGoogleError(data._debug_google_error);
-                  return (
-                    <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', padding: 18, borderRadius: 12, color: '#fca5a5', fontSize: 14, marginBottom: 20 }}>
-                      <div style={{ fontWeight: 700, marginBottom: 8, color: '#f87171', display: 'flex', alignItems: 'center', gap: 8, fontSize: 16 }}>
-                        ⚠️ {friendly.title}
-                      </div>
-                      <div style={{ marginBottom: 12, lineHeight: 1.5 }}>
-                        {friendly.desc}
-                      </div>
-                    </div>
-                  );
-                })()}
+
 
                 {data?.recentReviews && data.recentReviews.length > 0 ? (
                   data.recentReviews.map(review => (
@@ -499,133 +466,8 @@ export default function Loyalty() {
                 )}
               </div>
             </div>
-
-            {/* POST MANAGER */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-                  <Megaphone size={20} color={C.accent} />
-                  <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#fff' }}>Create a Post</h2>
-                </div>
-                
-                <textarea 
-                  value={postContent}
-                  onChange={e => setPostContent(e.target.value)}
-                  placeholder="What's new? Share updates, offers, or events directly to Google Maps..."
-                  style={{
-                    width: '100%',
-                    background: 'rgba(0,0,0,0.2)',
-                    border: `1px solid ${C.border}`,
-                    borderRadius: 12,
-                    padding: 16,
-                    color: '#fff',
-                    fontSize: 14,
-                    minHeight: 120,
-                    resize: 'vertical',
-                    outline: 'none',
-                    marginBottom: 16
-                  }}
-                  onFocus={e => e.currentTarget.style.borderColor = C.accent}
-                  onBlur={e => e.currentTarget.style.borderColor = C.border}
-                />
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <button style={{
-                    background: 'transparent',
-                    border: `1px dashed ${C.border}`,
-                    color: C.muted,
-                    padding: '8px 12px',
-                    borderRadius: 8,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: 13,
-                    cursor: 'pointer'
-                  }}>
-                    <ImageIcon size={16} /> Add Photo
-                  </button>
-                  
-                  <button 
-                    onClick={() => setShowPreviewModal(true)}
-                    disabled={posting || postSuccess || !postContent.trim()}
-                    style={{
-                      background: postSuccess ? '#10b981' : C.accent,
-                      color: '#fff',
-                      border: 'none',
-                      padding: '10px 24px',
-                      borderRadius: 8,
-                      fontSize: 14,
-                      fontWeight: 600,
-                      cursor: (posting || postSuccess || !postContent.trim()) ? 'not-allowed' : 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      opacity: (!postContent.trim() && !postSuccess) ? 0.5 : 1
-                    }}
-                  >
-                    {posting ? <Loader2 size={16} className="spin" /> : 
-                     postSuccess ? <><CheckCircle size={16} /> Posted!</> : 
-                     <><Send size={16} /> Publish</>}
-                  </button>
-                </div>
-              </div>
-              
-              <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: 16, padding: 24 }}>
-                <h3 style={{ color: '#60a5fa', fontSize: 14, fontWeight: 700, margin: '0 0 8px 0' }}>Pro Tip</h3>
-                <p style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.6, margin: 0 }}>
-                  Responding to reviews boosts local SEO signals. Recommending products and addressing concerns showcases excellent customer service.
-                </p>
-              </div>
-            </div>
           </div>
         </>
-      )}
-
-      {showPreviewModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: C.surface, width: 500, borderRadius: 16, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 25px 50px rgba(0,0,0,0.5)' }}>
-            <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#fff' }}>Confirm GMB Post Publish</h3>
-              <button onClick={() => setShowPreviewModal(false)} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20 }}>&times;</button>
-            </div>
-            
-            <div style={{ padding: 24 }}>
-              <p style={{ color: C.muted, fontSize: 13, marginBottom: 16 }}>Here is a preview of how your update will appear on Google Search and Maps:</p>
-              
-              <div style={{ background: '#fff', borderRadius: 12, padding: 20, color: '#1e293b', border: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#4285F4', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 'bold', fontSize: 14 }}>
-                    {(data?.business?.name || 'B').charAt(0)}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{data?.business?.name || 'Your Business'}</div>
-                    <div style={{ fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ background: '#f1f5f9', padding: '1px 5px', borderRadius: 4, fontWeight: 600 }}>Update</span> • Just now
-                    </div>
-                  </div>
-                </div>
-                
-                <p style={{ fontSize: 14, lineHeight: 1.6, color: '#334155', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {postContent}
-                </p>
-              </div>
-            </div>
-            
-            <div style={{ padding: '16px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 12, background: 'rgba(0,0,0,0.1)' }}>
-              <button onClick={() => setShowPreviewModal(false)} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: '#fff', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button 
-                onClick={handlePost} 
-                disabled={posting}
-                style={{ background: C.accent, color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: posting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
-              >
-                {posting ? <Loader2 size={14} className="spin" /> : <Send size={14} />}
-                Confirm & Publish
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

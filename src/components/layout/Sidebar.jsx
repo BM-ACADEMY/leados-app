@@ -457,6 +457,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                 <NavLink to="/thedal/keyword-tracking" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Turf Control')}>
                   <Target size={14} style={{ marginRight: 8 }} /> Turf Control
                 </NavLink>
+
+                <NavLink to="/mafiya/loyalty" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Loyalty (Review)')}>
+                  <Heart size={14} style={{ marginRight: 8 }} /> Loyalty (Review)
+                </NavLink>
               </div>
             )}
           </div>

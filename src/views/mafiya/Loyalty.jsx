@@ -46,6 +46,44 @@ const getFriendlyGoogleError = (err) => {
   }
 };
 
+const parseRelativeTime = (timeStr) => {
+  if (!timeStr) return 0;
+  const now = new Date();
+  const lower = timeStr.toLowerCase().trim();
+  
+  if (lower.includes('second')) {
+    const val = parseInt(lower) || 1;
+    return now.setSeconds(now.getSeconds() - val);
+  }
+  if (lower.includes('minute')) {
+    const val = parseInt(lower) || 1;
+    return now.setMinutes(now.getMinutes() - val);
+  }
+  if (lower.includes('hour')) {
+    const val = parseInt(lower) || 1;
+    return now.setHours(now.getHours() - val);
+  }
+  if (lower.includes('day')) {
+    const val = parseInt(lower) || 1;
+    return now.setDate(now.getDate() - val);
+  }
+  if (lower.includes('week')) {
+    const val = parseInt(lower) || 1;
+    return now.setDate(now.getDate() - val * 7);
+  }
+  if (lower.includes('month')) {
+    const val = parseInt(lower) || 1;
+    return now.setMonth(now.getMonth() - val);
+  }
+  if (lower.includes('year')) {
+    const val = parseInt(lower) || 1;
+    return now.setFullYear(now.getFullYear() - val);
+  }
+  
+  const parsed = Date.parse(timeStr);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
 export default function Loyalty() {
   const [clients, setClients] = useState([]);
   const [activeClient, setActiveClient] = useState(null);
@@ -60,6 +98,55 @@ export default function Loyalty() {
   const [replyText, setReplyText] = useState('');
   const [submittingReply, setSubmittingReply] = useState(false);
 
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const reviewsPerPage = 5;
+
+  const [generatingAiFor, setGeneratingAiFor] = useState(null);
+
+  const generateAiReply = async (review) => {
+    setReplyingTo(review.id);
+    setGeneratingAiFor(review.id);
+    setReplyText('Generating AI reply...');
+    try {
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch('/api/mafiya/reviews/generate-ai-reply', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          clientId: activeClient.id,
+          author: review.author,
+          rating: review.rating,
+          text: review.text
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setReplyText(data.reply);
+      } else {
+        throw new Error('AI Generation failed');
+      }
+    } catch (e) {
+      console.error("AI Generation failed, falling back to template:", e);
+      const businessName = activeClient?.business_name || 'our company';
+      const author = review.author || 'customer';
+      let text = '';
+      if (review.rating >= 5) {
+        text = `Thank you so much, ${author}! We appreciate your support and are glad you had a great experience with ${businessName}. 😊`;
+      } else if (review.rating >= 4) {
+        text = `Hi ${author}, thank you for the feedback. We are glad you had a positive experience at ${businessName} and will keep working to make it a perfect 5-star next time! 👍`;
+      } else {
+        text = `Hello ${author}, we sincerely apologize for the inconvenience. We take your feedback seriously. Please reach out to us directly so we can make this right.`;
+      }
+      setReplyText(text);
+    } finally {
+      setGeneratingAiFor(null);
+    }
+  };
+
   // 1. Fetch GMB Clients list
   const fetchClients = async () => {
     try {
@@ -72,9 +159,8 @@ export default function Loyalty() {
         setClients(clientsData);
         if (clientsData.length > 0) {
           setActiveClient(clientsData[0]);
-        } else {
-          setLoading(false);
         }
+        setLoading(false);
       } else {
         toast.error('Failed to load GMB clients (Server responded with error)');
         setLoading(false);
@@ -131,6 +217,7 @@ export default function Loyalty() {
 
   useEffect(() => {
     if (activeClient) {
+      setCurrentPage(1);
       fetchReviewData(activeClient.id, 'real');
     }
   }, [activeClient]);
@@ -163,6 +250,9 @@ export default function Loyalty() {
       toast.success('Reply submitted successfully!');
       setReplyingTo(null);
       setReplyText('');
+      
+      // Refresh backend reviews cache immediately
+      fetchReviewData(activeClient.id, 'real');
     } catch (err) {
       console.error(err);
       toast.error('Failed to submit reply.');
@@ -189,6 +279,14 @@ export default function Loyalty() {
       </div>
     );
   }
+
+  const sortedReviews = data?.recentReviews 
+    ? [...data.recentReviews].sort((a, b) => {
+        const timeA = (a.timestamp && !isNaN(new Date(a.timestamp).getTime())) ? new Date(a.timestamp).getTime() : parseRelativeTime(a.date);
+        const timeB = (b.timestamp && !isNaN(new Date(b.timestamp).getTime())) ? new Date(b.timestamp).getTime() : parseRelativeTime(b.date);
+        return timeB - timeA;
+      })
+    : [];
 
   return (
     <div style={{ padding: 40, color: C.text, height: '100%', overflowY: 'auto', background: C.background }}>
@@ -323,8 +421,8 @@ export default function Loyalty() {
                   <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
                     <Loader2 size={28} color={C.accent} className="spin" />
                   </div>
-                ) : data?.recentReviews && data.recentReviews.length > 0 ? (
-                  data.recentReviews.map(review => (
+                ) : sortedReviews && sortedReviews.length > 0 ? (
+                  sortedReviews.slice((currentPage - 1) * reviewsPerPage, currentPage * reviewsPerPage).map(review => (
                     <div key={review.id} style={{ borderBottom: `1px solid ${C.border}50`, paddingBottom: 20 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                         <span style={{ fontWeight: 600, color: '#e2e8f0' }}>{review.author}</span>
@@ -332,7 +430,7 @@ export default function Loyalty() {
                       </div>
                       <div style={{ display: 'flex', gap: 2, marginBottom: 8 }}>
                         {[1,2,3,4,5].map(star => (
-                          <Star key={star} size={14} fill={star <= review.rating ? '#facc15' : 'transparent'} color={star <= review.rating ? '#facc15' : C.border} />
+                           <Star key={star} size={14} fill={star <= review.rating ? '#facc15' : 'transparent'} color={star <= review.rating ? '#facc15' : C.border} />
                         ))}
                       </div>
                       <p style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 1.5, margin: '0 0 16px 0' }}>{review.text}</p>
@@ -400,24 +498,51 @@ export default function Loyalty() {
                               </div>
                             </div>
                           ) : (
-                            <button 
-                              onClick={() => setReplyingTo(review.id)}
-                              style={{
-                                background: 'transparent',
-                                border: `1px solid ${C.border}`,
-                                color: '#e2e8f0',
-                                padding: '6px 16px',
-                                borderRadius: 20,
-                                fontSize: 12,
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                              }}
-                              onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                              onMouseOut={e => e.currentTarget.style.background = 'transparent'}
-                            >
-                              Reply
-                            </button>
+                            <div style={{ display: 'flex', gap: 12 }}>
+                              <button 
+                                onClick={() => setReplyingTo(review.id)}
+                                style={{
+                                  background: 'transparent',
+                                  border: `1px solid ${C.border}`,
+                                  color: '#e2e8f0',
+                                  padding: '6px 16px',
+                                  borderRadius: 20,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s'
+                                }}
+                                onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                                onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+                              >
+                                Reply
+                              </button>
+
+                              <button 
+                                onClick={() => generateAiReply(review)}
+                                disabled={generatingAiFor === review.id}
+                                style={{
+                                  background: 'linear-gradient(135deg, rgba(236,72,153,0.15) 0%, rgba(239,68,68,0.15) 100%)',
+                                  border: '1px solid rgba(236,72,153,0.3)',
+                                  color: '#f472b6',
+                                  padding: '6px 16px',
+                                  borderRadius: 20,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  cursor: generatingAiFor === review.id ? 'not-allowed' : 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  transition: 'all 0.2s',
+                                  opacity: generatingAiFor === review.id ? 0.7 : 1
+                                }}
+                                onMouseOver={e => { if (generatingAiFor !== review.id) e.currentTarget.style.background = 'linear-gradient(135deg, rgba(236,72,153,0.25) 0%, rgba(239,68,68,0.25) 100%)'; }}
+                                onMouseOut={e => { if (generatingAiFor !== review.id) e.currentTarget.style.background = 'linear-gradient(135deg, rgba(236,72,153,0.15) 0%, rgba(239,68,68,0.15) 100%)'; }}
+                              >
+                                {generatingAiFor === review.id ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                                {generatingAiFor === review.id ? 'Generating...' : 'AI Reply'}
+                              </button>
+                            </div>
                           )}
                         </div>
                       )}
@@ -426,6 +551,47 @@ export default function Loyalty() {
                 ) : (
                   <div style={{ padding: '40px 0', textAlign: 'center', color: C.muted, fontSize: 14 }}>
                     No reviews found for this client.
+                  </div>
+                )}
+
+                {/* PAGINATION CONTROLS */}
+                {sortedReviews && sortedReviews.length > reviewsPerPage && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, paddingTop: 16, borderTop: `1px solid ${C.border}30` }}>
+                    <button
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                      style={{
+                        background: currentPage === 1 ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.05)',
+                        color: currentPage === 1 ? C.muted : '#fff',
+                        border: `1px solid ${C.border}`,
+                        padding: '6px 16px',
+                        borderRadius: 8,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: currentPage === 1 ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      Previous
+                    </button>
+                    <span style={{ fontSize: 13, color: C.muted }}>
+                      Page <strong style={{ color: '#fff' }}>{currentPage}</strong> of <strong style={{ color: '#fff' }}>{Math.ceil(sortedReviews.length / reviewsPerPage)}</strong>
+                    </span>
+                    <button
+                      disabled={currentPage === Math.ceil(sortedReviews.length / reviewsPerPage)}
+                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.ceil(sortedReviews.length / reviewsPerPage)))}
+                      style={{
+                        background: currentPage === Math.ceil(sortedReviews.length / reviewsPerPage) ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.05)',
+                        color: currentPage === Math.ceil(sortedReviews.length / reviewsPerPage) ? C.muted : '#fff',
+                        border: `1px solid ${C.border}`,
+                        padding: '6px 16px',
+                        borderRadius: 8,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: currentPage === Math.ceil(sortedReviews.length / reviewsPerPage) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      Next
+                    </button>
                   </div>
                 )}
               </div>

@@ -1,359 +1,688 @@
-import React, { useState, useEffect } from 'react';
-import SopModal from '../../components/common/SopModal.jsx';
+import React, { useState, useEffect, useRef } from 'react';
 import { C } from '../../constants/theme.js';
-import { Loader2, TrendingUp, TrendingDown, Minus, RefreshCw, Trash2, Plus, Globe, Type } from 'lucide-react';
-import { api } from '../../services/api.js';
+import { 
+  Loader2, TrendingUp, TrendingDown, Minus, RefreshCw, 
+  Trash2, Plus, Globe, Type, Send, Trophy, MapPin, 
+  ArrowUpRight, ArrowDownRight, AlertTriangle, Zap, Shield, Sparkles
+} from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function KeywordTracking() {
-  const [data, setData] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [activeClient, setActiveClient] = useState(null);
+  const [keywords, setKeywords] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
   const [refreshingId, setRefreshingId] = useState(null);
-  const [selectedTips, setSelectedTips] = useState(null);
   
-  // Form State
-  const [newKeyword, setNewKeyword] = useState('');
-  const [newUrl, setNewUrl] = useState('');
-  const [formError, setFormError] = useState('');
-  
-  // Table State
-  const [filterText, setFilterText] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5; // Set to 5 for easier testing with smaller datasets
+  // PageSpeed Audit State
+  const [pagespeed, setPagespeed] = useState(null);
+  const [pagespeedLoading, setPagespeedLoading] = useState(false);
 
-  const fetchData = async () => {
+  // Add Keyword Form / Modal States
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newKeyword, setNewKeyword] = useState('');
+  const [initialRank, setInitialRank] = useState('1');
+  const [packStatus, setPackStatus] = useState('In Pack');
+  const [targetLocation, setTargetLocation] = useState('Pondicherry');
+  const [adding, setAdding] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  // AI Suggestions
+  const [aiSuggestions, setAiSuggestions] = useState([]);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const modalRef = useRef(null);
+
+  // 1. Fetch GMB Clients list
+  const fetchClients = async () => {
     try {
-      const res = await api.get('/thedal/keywordtracking');
-      if (res && res.items) {
-        setData(res.items);
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch(`/api/mafiya/clients`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setClients(data);
+        if (data.length > 0) {
+          setActiveClient(data[0]); // Default to first client
+        } else {
+          setLoading(false);
+        }
       }
     } catch (err) {
-      console.error('Failed to load data', err);
+      console.error('Fetch clients error:', err);
+      toast.error('Failed to load GMB clients');
+      setLoading(false);
+    }
+  };
+
+  // 2. Fetch keywords for active client
+  const fetchKeywords = async (clientId) => {
+    if (!clientId) return;
+    try {
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch(`/api/mafiya/turf/keywords?clientId=${clientId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setKeywords(data);
+      }
+    } catch (err) {
+      console.error('Fetch keywords error:', err);
     } finally {
       setLoading(false);
     }
   };
 
+  // 3. Run PageSpeed Insights Audit
+  const runPageSpeedAudit = async (url) => {
+    if (!url) return;
+    setPagespeedLoading(true);
+    setPagespeed(null);
+    try {
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch(`/api/mafiya/turf/pagespeed?url=${encodeURIComponent(url)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPagespeed(data);
+      }
+    } catch (err) {
+      console.error('PageSpeed audit error:', err);
+    } finally {
+      setPagespeedLoading(false);
+    }
+  };
+
+  // 4. Fetch AI Suggestions
+  const fetchAiSuggestions = async (clientId, location) => {
+    if (!clientId) return;
+    setAiLoading(true);
+    try {
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch(`/api/mafiya/turf/ai-suggestions?clientId=${clientId}&location=${encodeURIComponent(location || '')}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAiSuggestions(data);
+      }
+    } catch (err) {
+      console.error('AI suggestions error:', err);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   useEffect(() => {
-    fetchData();
+    fetchClients();
   }, []);
 
-  const handleAdd = async () => {
-    if (!newKeyword.trim() || !newUrl.trim()) {
-      setFormError('Both Keyword and Target URL are required.');
+  useEffect(() => {
+    if (activeClient) {
+      setLoading(true);
+      fetchKeywords(activeClient.id);
+      runPageSpeedAudit(activeClient.website_url || activeClient.business_name);
+      fetchAiSuggestions(activeClient.id, targetLocation);
+    }
+  }, [activeClient]);
+
+  // Handle Add Keyword
+  const handleAddKeyword = async (e) => {
+    if (e) e.preventDefault();
+    if (!newKeyword.trim()) {
+      setFormError('Keyword is required');
       return;
     }
 
-    // Duplicate keyword and url check
-    const isDuplicate = data.some(item => 
-      item.keyword.toLowerCase().trim() === newKeyword.toLowerCase().trim() && 
-      item.targetUrl.toLowerCase().trim() === newUrl.toLowerCase().trim()
-    );
-    if (isDuplicate) {
-      setFormError('This keyword and URL combination is already tracked.');
-      return;
-    }
-
-    // URL regex check
-    const urlPattern = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([\/\w .-]*)*\/?$/i;
-    if (!urlPattern.test(newUrl.trim())) {
-      setFormError('Please enter a valid URL (e.g. https://yourdomain.com).');
-      return;
-    }
-
-    setFormError('');
     setAdding(true);
+    setFormError('');
     try {
-      await api.post('/thedal/keywordtracking', { keyword: newKeyword, targetUrl: newUrl });
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch('/api/mafiya/turf/keywords', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          client_id: activeClient.id,
+          keyword: newKeyword,
+          initial_rank: parseInt(initialRank, 10),
+          pack_status: packStatus
+        })
+      });
+
+      if (!res.ok) throw new Error('Failed to add keyword');
+      const saved = await res.json();
+      setKeywords([saved, ...keywords]);
+      toast.success('Keyword added! Fetching ranking...');
       setNewKeyword('');
-      setNewUrl('');
-      await fetchData();
+      setShowAddModal(false);
+      
+      // Auto-trigger live rank check
+      handleRefresh(saved.id);
     } catch (err) {
-      setFormError(err.message || 'Failed to add keyword.');
+      setFormError('Failed to save keyword');
     } finally {
       setAdding(false);
     }
   };
 
+  // Handle Refresh Rank
   const handleRefresh = async (id) => {
-    if (refreshingId !== null) return;
     setRefreshingId(id);
     try {
-      await api.post(`/thedal/keywordtracking/refresh/${id}`);
-      await fetchData();
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch(`/api/mafiya/turf/keywords/refresh/${id}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setKeywords(prevKeywords => prevKeywords.map(k => k.id === id ? updated : k));
+        toast.success('Ranking updated live!');
+      }
     } catch (err) {
-      console.error('Failed to refresh', err);
+      toast.error('Failed to update ranking');
     } finally {
       setRefreshingId(null);
     }
   };
 
-
+  // Handle Delete Keyword
   const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to stop tracking this keyword?')) return;
+    if (!confirm('Are you sure you want to stop tracking this keyword?')) return;
     try {
-      await api.delete(`/thedal/keywordtracking/${id}`);
-      await fetchData();
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch(`/api/mafiya/turf/keywords/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setKeywords(keywords.filter(k => k.id !== id));
+        toast.success('Keyword stopped tracking');
+      }
     } catch (err) {
-      console.error('Failed to delete', err);
+      toast.error('Failed to delete keyword');
     }
   };
 
-  const getTrendIcon = (current, previous) => {
-    if (current === null || previous === null) return <span style={{ color: C.muted, display: 'flex', alignItems: 'center', gap: 4 }}><Minus size={16} /></span>;
-    if (current < previous) return <span style={{ color: '#22c55e', display: 'flex', alignItems: 'center', gap: 4 }}><TrendingUp size={16} /> ⬆️ +{previous - current}</span>;
-    if (current > previous) return <span style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}><TrendingDown size={16} /> ⬇️ -{current - previous}</span>;
-    return <span style={{ color: C.muted, display: 'flex', alignItems: 'center', gap: 4 }}><Minus size={16} /> ➡️ 0</span>;
-  };
-
-  const getRankBadgeStyle = (rank) => {
-    if (rank === null) return { bg: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: 'rgba(255,255,255,0.1)' };
-    if (rank <= 3) return { bg: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', border: 'rgba(34, 197, 94, 0.3)' }; // Green
-    if (rank <= 10) return { bg: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b', border: 'rgba(245, 158, 11, 0.3)' }; // Yellow
-    return { bg: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: 'rgba(239, 68, 68, 0.3)' }; // Red
-  };
-
-  const filteredData = data.filter(item => 
-    item.targetUrl.toLowerCase().includes(filterText.toLowerCase()) || 
-    item.keyword.toLowerCase().includes(filterText.toLowerCase())
-  );
-
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
-  
+  // Close modal on outside click
   useEffect(() => {
-    if (currentPage > totalPages && totalPages > 0) {
-      setCurrentPage(totalPages);
-    }
-  }, [totalPages, currentPage]);
+    const handleClickOutside = (e) => {
+      if (modalRef.current && !modalRef.current.contains(e.target)) {
+        setShowAddModal(false);
+      }
+    };
+    if (showAddModal) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showAddModal]);
 
-  const paginatedData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  // Calculations for cards
+  const trophyLeaderCount = keywords.filter(k => k.current_rank === 1).length;
+  const localPackCount = keywords.filter(k => k.current_rank && k.current_rank <= 3).length;
+  
+  const rankGains = keywords.filter(k => {
+    if (k.current_rank === null || k.previous_rank === null) return false;
+    return k.current_rank < k.previous_rank;
+  }).length;
 
-  if (loading) {
+  const lostPositions = keywords.filter(k => {
+    if (k.current_rank === null || k.previous_rank === null) return false;
+    return k.current_rank > k.previous_rank;
+  }).length;
+
+  if (loading && clients.length > 0) {
     return (
-      <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', background: C.background }}>
+      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: C.background }}>
         <Loader2 size={32} color={C.accent} className="spin" />
+      </div>
+    );
+  }
+
+  if (clients.length === 0) {
+    return (
+      <div style={{ padding: 40, color: C.text, height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: C.background }}>
+        <Shield size={48} style={{ opacity: 0.15, marginBottom: 16 }} color="#fff" />
+        <h2 style={{ fontSize: 20, color: '#fff', marginBottom: 8 }}>No Clients Configured</h2>
+        <p style={{ color: C.muted, textAlign: 'center', maxWidth: 400 }}>Please onboard GMB clients in the Mafiya OS section first to start tracking keywords.</p>
       </div>
     );
   }
 
   return (
     <div style={{ padding: 40, color: C.text, height: '100%', overflowY: 'auto', background: C.background }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 40 }}>
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        .spin {
+          animation: spin 1s linear infinite;
+        }
+        @keyframes loadProgress {
+          0% { width: 0%; }
+          15% { width: 30%; }
+          45% { width: 65%; }
+          75% { width: 85%; }
+          95% { width: 95%; }
+          100% { width: 98%; }
+        }
+      `}</style>
+      
+      {/* HEADER SECTION */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 30 }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>Keyword Map</h1><SopModal /></div>
-          <p style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>Track your SERP rankings and map keywords to target URLs.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif", display: 'flex', alignItems: 'center', gap: 10 }}>
+              📌 Turf Control
+            </h1>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#f97316', background: 'rgba(249,115,22,0.1)', padding: '4px 10px', borderRadius: 20, textTransform: 'uppercase', letterSpacing: 0.5, border: '1px solid rgba(249,115,22,0.2)' }}>
+              Rankings
+            </span>
+          </div>
+          <p style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>
+            Google Maps keyword positions and Local Pack tracking for <strong style={{ color: '#fff' }}>{activeClient?.business_name}</strong>
+          </p>
         </div>
-      </div>
 
-      {/* Add Keyword Form */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 30, marginBottom: 40, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, color: '#fff', margin: '0 0 20px 0' }}>Add Keyword</h3>
-        
-        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-          <div style={{ flex: 1, display: 'flex', height: 46, borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.border}` }}>
-            <div style={{ background: '#3b82f6', width: 46, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Type size={20} color="#fff" /></div>
-            <input 
-              type="text" 
-              placeholder="Target Keyword (e.g., b2b marketplace)"
-              value={newKeyword}
-              onChange={(e) => setNewKeyword(e.target.value)}
-              style={{ flex: 1, background: '#060c17', border: 'none', padding: '0 16px', color: '#fff', fontSize: 15, outline: 'none' }}
-            />
-          </div>
-
-          <div style={{ flex: 1, display: 'flex', height: 46, borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.border}` }}>
-            <div style={{ background: '#8b5cf6', width: 46, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Globe size={20} color="#fff" /></div>
-            <input 
-              type="text" 
-              placeholder="Target URL (e.g., https://yourdomain.com)"
-              value={newUrl}
-              onChange={(e) => setNewUrl(e.target.value)}
-              style={{ flex: 1, background: '#060c17', border: 'none', padding: '0 16px', color: '#fff', fontSize: 15, outline: 'none' }}
-            />
-          </div>
-
-          <button 
-            onClick={handleAdd}
-            disabled={adding}
-            style={{ height: 46, background: '#3b82f6', border: 'none', padding: '0 24px', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, cursor: adding ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, opacity: adding ? 0.7 : 1 }}
+        {/* Dropdown & Add Keyword Button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <select
+            value={activeClient?.id || ''}
+            onChange={(e) => {
+              const selected = clients.find(c => c.id === parseInt(e.target.value, 10));
+              if (selected) setActiveClient(selected);
+            }}
+            style={{ 
+              background: '#0f172a', 
+              border: `1px solid ${C.border}`, 
+              borderRadius: 8, 
+              padding: '8px 16px', 
+              color: '#e2e8f0', 
+              fontSize: 13, 
+              outline: 'none', 
+              cursor: 'pointer',
+              height: 38
+            }}
           >
-            {adding ? <Loader2 size={16} className="spin" /> : <Plus size={16} />} 
-            Add Keyword
+            {clients.map(c => (
+              <option key={c.id} value={c.id}>
+                {c.business_name}
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={() => setShowAddModal(true)}
+            style={{
+              background: 'linear-gradient(135deg, #f97316, #ea580c)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
+              padding: '0 16px',
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 38,
+              boxShadow: '0 4px 12px rgba(249,115,22,0.2)'
+            }}
+          >
+            <Plus size={16} /> Add Keyword
           </button>
         </div>
-        {formError && <div style={{ color: '#ef4444', fontSize: 13, marginTop: 12 }}>{formError}</div>}
       </div>
 
-      {/* Data Table Controls */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
-        <div style={{ width: 320, display: 'flex', alignItems: 'center', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '0 12px' }}>
-          <Globe size={16} color={C.muted} />
-          <input 
-            type="text" 
-            placeholder="Filter by website URL or keyword..."
-            value={filterText}
-            onChange={(e) => {
-              setFilterText(e.target.value);
-              setCurrentPage(1);
-            }}
-            style={{ width: '100%', background: 'transparent', border: 'none', padding: '12px 10px', color: '#fff', fontSize: 14, outline: 'none' }}
-          />
+      {/* Website Performance & Speed Index (PageSpeed Insights) Card */}
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 24, marginBottom: 24 }}>
+        <h3 style={{ margin: '0 0 16px 0', fontSize: 14, fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
+          ⚡ Website Performance & Speed Index (PageSpeed Insights)
+        </h3>
+        
+        {pagespeedLoading && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 500, padding: '10px 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: C.muted }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Loader2 size={15} className="spin" color={C.accent} />
+                Running Google PageSpeed audit...
+              </span>
+              <span style={{ fontWeight: 600 }}>Please wait...</span>
+            </div>
+            <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}` }}>
+              <div 
+                style={{ 
+                  height: '100%', 
+                  background: 'linear-gradient(90deg, #f97316, #ea580c)', 
+                  borderRadius: 10,
+                  animation: 'loadProgress 10s cubic-bezier(0.1, 0.8, 0.1, 1) forwards'
+                }} 
+              />
+            </div>
+          </div>
+        )}
+
+        {!pagespeedLoading && pagespeed && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 40 }} className="flex-col-mobile">
+            {/* Circular score */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{ 
+                width: 58, 
+                height: 58, 
+                borderRadius: '50%', 
+                border: `4px solid ${pagespeed.performance >= 90 ? '#10b981' : pagespeed.performance >= 50 ? '#f59e0b' : '#ef4444'}33`, 
+                borderTopColor: pagespeed.performance >= 90 ? '#10b981' : pagespeed.performance >= 50 ? '#f59e0b' : '#ef4444',
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                fontWeight: 800, 
+                fontSize: 16,
+                color: pagespeed.performance >= 90 ? '#10b981' : pagespeed.performance >= 50 ? '#f59e0b' : '#ef4444'
+              }}>
+                {pagespeed.performance}
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Lighthouse Performance</div>
+                <div style={{ fontSize: 11, color: C.muted }}>Mobile audit check</div>
+              </div>
+            </div>
+
+            {/* Metrics grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 30, flex: 1 }}>
+              <div>
+                <div style={{ fontSize: 11, color: C.muted }}>Speed Index</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#fff', marginTop: 4 }}>{pagespeed.speedIndex}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: C.muted }}>First Contentful Paint</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#fff', marginTop: 4 }}>{pagespeed.firstContentfulPaint}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: C.muted }}>Largest Contentful Paint</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#fff', marginTop: 4 }}>{pagespeed.largestContentfulPaint}</div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* STATS CARDS GRID */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, marginBottom: 24 }} className="flex-col-mobile">
+        {/* Trophy Leader */}
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 }}>
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>#1 Captured</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 12 }}>
+            <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{trophyLeaderCount}</span>
+            <span style={{ fontSize: 13, color: '#10b981', fontWeight: 600 }}>Trophy Leader</span>
+          </div>
+        </div>
+
+        {/* Local Pack */}
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 }}>
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Top 3 Pack</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 12 }}>
+            <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{localPackCount}</span>
+            <span style={{ fontSize: 13, color: '#3b82f6', fontWeight: 600 }}>In Local Pack</span>
+          </div>
+        </div>
+
+        {/* Improved */}
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 }}>
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Improved</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 12 }}>
+            <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{rankGains}</span>
+            <span style={{ fontSize: 13, color: '#10b981', fontWeight: 600 }}>Rank gains</span>
+          </div>
+        </div>
+
+        {/* Lost */}
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 }}>
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Code Red</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 12 }}>
+            <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{lostPositions}</span>
+            <span style={{ fontSize: 13, color: '#ef4444', fontWeight: 600 }}>Lost positions</span>
+          </div>
         </div>
       </div>
 
-      {/* Data Table */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-          <thead>
-            <tr style={{ borderBottom: `1px solid ${C.border}`, background: 'rgba(255,255,255,0.02)' }}>
-              <th style={{ padding: '16px 20px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Keyword</th>
-              <th style={{ padding: '16px 20px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Target URL</th>
-              <th style={{ padding: '16px 20px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', textAlign: 'center' }}>Current Rank</th>
-              <th style={{ padding: '16px 20px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', textAlign: 'center' }}>Trend</th>
-              <th style={{ padding: '16px 20px', color: C.muted, fontSize: 12, fontWeight: 600, textTransform: 'uppercase', textAlign: 'right' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paginatedData.length > 0 ? paginatedData.map((item) => {
-              const rankBadge = getRankBadgeStyle(item.currentRank);
-              return (
-              <tr key={item.id} style={{ borderBottom: `1px solid ${C.border}55`, transition: 'background 0.2s', ':hover': { background: 'rgba(255,255,255,0.02)' } }}>
-                <td style={{ padding: '20px', fontSize: 15, color: '#fff', fontWeight: 600 }}>{item.keyword}</td>
-                <td style={{ padding: '20px', fontSize: 14, color: '#93c5fd' }}>
-                  <a href={item.targetUrl} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>{item.targetUrl}</a>
-                </td>
-                <td style={{ padding: '20px', textAlign: 'center' }}>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 36, height: 36, padding: '0 8px', borderRadius: '18px', background: rankBadge.bg, color: rankBadge.color, fontWeight: 700, fontSize: 15, border: `1px solid ${rankBadge.border}` }}>
-                    {item.currentRank !== null ? item.currentRank : 'N/A'}
-                  </div>
-                  {(item.currentRank === null || item.currentRank > 10) && (
-                    <div style={{ marginTop: 8 }}>
-                      <button 
-                        onClick={() => setSelectedTips(item)}
-                        style={{ background: 'transparent', border: 'none', color: '#a855f7', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
-                      >
-                        How to improve?
-                      </button>
-                    </div>
-                  )}
-                </td>
-                <td style={{ padding: '20px', textAlign: 'center', fontWeight: 600 }}>
-                  <div style={{ display: 'flex', justifyContent: 'center' }}>
-                    {getTrendIcon(item.currentRank, item.previousRank)}
-                  </div>
-                </td>
-                <td style={{ padding: '20px', textAlign: 'right' }}>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-                    <button 
-                      onClick={() => handleRefresh(item.id)}
-                      disabled={refreshingId !== null}
-                      style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '8px', borderRadius: 6, color: '#3b82f6', cursor: refreshingId !== null ? 'wait' : 'pointer', opacity: refreshingId !== null ? 0.6 : 1 }}
-                      title="Refresh Rank"
-                    >
-                      <RefreshCw size={16} className={refreshingId === item.id ? 'spin' : ''} />
-                    </button>
-                    <button 
-                      onClick={() => handleDelete(item.id)}
-                      style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '8px', borderRadius: 6, color: '#ef4444', cursor: 'pointer' }}
-                      title="Delete"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                  <div style={{ fontSize: 11, color: C.muted, marginTop: 8 }}>
-                    Last Checked: {item.lastChecked ? new Date(item.lastChecked).toLocaleString() : 'Never'}
-                  </div>
-                </td>
+      {/* KEYWORD TRACKING TABLE */}
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
+        <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+            📍 Keyword Rankings — {keywords.length} tracked
+          </h2>
+        </div>
+
+        {keywords.length > 0 ? (
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+            <thead>
+              <tr style={{ background: 'rgba(255,255,255,0.01)', borderBottom: `1px solid ${C.border}` }}>
+                <th style={{ padding: '14px 24px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase' }}>Keyword</th>
+                <th style={{ padding: '14px 24px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', textAlign: 'center' }}>Initial Rank</th>
+                <th style={{ padding: '14px 24px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', textAlign: 'center' }}>Current Rank</th>
+                <th style={{ padding: '14px 24px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', textAlign: 'center' }}>Maps Pack Status</th>
+                <th style={{ padding: '14px 24px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', textAlign: 'center' }}>Trend</th>
+                <th style={{ padding: '14px 24px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', textAlign: 'right' }}>Actions</th>
               </tr>
-            )}) : (
-              <tr><td colSpan={5} style={{ padding: '60px 0', textAlign: 'center', color: C.muted, fontSize: 15 }}>{filterText ? 'No keywords match your search.' : 'No keywords tracked yet. Start adding keywords to monitor your rankings!'}</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {keywords.map(kw => {
+                const diff = (kw.previous_rank !== null && kw.current_rank !== null) ? kw.previous_rank - kw.current_rank : 0;
+                
+                return (
+                  <tr key={kw.id} style={{ borderBottom: `1px solid ${C.border}50` }}>
+                    <td style={{ padding: '18px 24px', fontSize: 14, fontWeight: 600, color: '#fff' }}>{kw.keyword}</td>
+                    <td style={{ padding: '18px 24px', fontSize: 13, color: C.muted, textAlign: 'center' }}>{kw.initial_rank}</td>
+                    <td style={{ padding: '18px 24px', fontSize: 15, fontWeight: 800, color: kw.current_rank <= 3 ? '#10b981' : '#f59e0b', textAlign: 'center' }}>
+                      {kw.current_rank || '100+'}
+                    </td>
+                    <td style={{ padding: '18px 24px', textAlign: 'center' }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: kw.pack_status === 'In Pack' ? '#10b981' : '#ef4444', background: kw.pack_status === 'In Pack' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', padding: '3px 10px', borderRadius: 20 }}>
+                        {kw.pack_status}
+                      </span>
+                    </td>
+                    <td style={{ padding: '18px 24px', textAlign: 'center' }}>
+                      {diff > 0 && <span style={{ color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, fontWeight: 600 }}><TrendingUp size={14} /> +{diff}</span>}
+                      {diff < 0 && <span style={{ color: '#ef4444', display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, fontWeight: 600 }}><TrendingDown size={14} /> {diff}</span>}
+                      {diff === 0 && <span style={{ color: C.muted, display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, fontWeight: 600 }}><Minus size={14} /> 0</span>}
+                    </td>
+                    <td style={{ padding: '18px 24px', textAlign: 'right' }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                        <button
+                          onClick={() => handleRefresh(kw.id)}
+                          disabled={refreshingId === kw.id}
+                          style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 6, cursor: refreshingId === kw.id ? 'not-allowed' : 'pointer', color: '#fff' }}
+                        >
+                          <RefreshCw size={14} className={refreshingId === kw.id ? 'spin' : ''} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(kw.id)}
+                          style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 8, padding: 6, cursor: 'pointer', color: '#ef4444' }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ padding: '60px 24px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
+            No keywords tracked yet. Click "+ Add Keyword" to begin tracking.
+          </div>
+        )}
       </div>
 
-      {/* Pagination Controls */}
-      {totalPages > 1 && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, padding: '0 10px' }}>
-          <div style={{ color: C.muted, fontSize: 14 }}>
-            Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} entries
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button 
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-              style={{ padding: '8px 16px', background: currentPage === 1 ? 'rgba(255,255,255,0.02)' : C.surface, border: `1px solid ${C.border}`, color: currentPage === 1 ? C.muted : '#fff', borderRadius: 6, cursor: currentPage === 1 ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 500 }}
-            >
-              Previous
-            </button>
-            <span style={{ display: 'flex', alignItems: 'center', padding: '0 12px', color: '#93c5fd', fontSize: 14, fontWeight: 600 }}>
-              Page {currentPage} of {totalPages}
-            </span>
-            <button 
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
-              style={{ padding: '8px 16px', background: currentPage === totalPages ? 'rgba(255,255,255,0.02)' : C.surface, border: `1px solid ${C.border}`, color: currentPage === totalPages ? C.muted : '#fff', borderRadius: 6, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 500 }}
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* SEO Tips Modal */}
-      {selectedTips && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 30, width: '100%', maxWidth: 500, boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h3 style={{ margin: 0, color: '#fff', fontSize: 18 }}>How to Rank for "{selectedTips.keyword}"</h3>
-              <button onClick={() => setSelectedTips(null)} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 24 }}>&times;</button>
-            </div>
+      {/* ═══ Add Keyword Modal ═══ */}
+      {showAddModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div ref={modalRef} style={{ background: C.surface, width: '100%', maxWidth: 520, borderRadius: 16, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)' }}>
             
-            <p style={{ color: C.muted, fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
-              Your current rank is <strong>{selectedTips.currentRank || 'N/A'}</strong>. To push this URL into the Top 10 results, follow this checklist:
-            </p>
-
-            <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: 10 }}>
-              <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: 16, borderRadius: 8, marginBottom: 16 }}>
-                <h4 style={{ color: '#3b82f6', margin: '0 0 8px 0', fontSize: 15, display: 'flex', alignItems: 'center', gap: 6 }}>🧠 1. Search Intent & RankBrain AI</h4>
-                <p style={{ color: '#e2e8f0', fontSize: 13, margin: 0, lineHeight: 1.5 }}>
-                  Google's RankBrain algorithm doesn't just look for keywords; it measures <strong>user satisfaction</strong>. If someone searches for <code style={{ color: '#93c5fd' }}>{selectedTips.keyword}</code>, what do they actually want? A service page? A blog post? Pricing? Ensure your page exactly matches the user's true intent, or Google will drop your rank.
-                </p>
-              </div>
-
-              <div style={{ background: 'rgba(139, 92, 246, 0.05)', border: '1px solid rgba(139, 92, 246, 0.2)', padding: 16, borderRadius: 8, marginBottom: 16 }}>
-                <h4 style={{ color: '#8b5cf6', margin: '0 0 8px 0', fontSize: 15, display: 'flex', alignItems: 'center', gap: 6 }}>🤖 2. Semantic SEO (BERT Algorithm)</h4>
-                <p style={{ color: '#e2e8f0', fontSize: 13, margin: 0, lineHeight: 1.5 }}>
-                  Google uses Natural Language Processing (NLP) to understand context. Don't just stuff the exact keyword. You must include <strong>LSI (Latent Semantic Indexing) keywords</strong>. For example, if ranking for "digital marketing", Google actively scans your page for related entities like "SEO", "PPC", "ROI", and "social media campaigns".
-                </p>
-              </div>
-
-              <div style={{ background: 'rgba(16, 185, 129, 0.05)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: 16, borderRadius: 8, marginBottom: 16 }}>
-                <h4 style={{ color: '#10b981', margin: '0 0 8px 0', fontSize: 15, display: 'flex', alignItems: 'center', gap: 6 }}>🛡️ 3. E-E-A-T (Trust & Authority)</h4>
-                <p style={{ color: '#e2e8f0', fontSize: 13, margin: 0, lineHeight: 1.5 }}>
-                  Google strictly filters sites based on <strong>Experience, Expertise, Authoritativeness, and Trustworthiness</strong>. To prove this to the algorithm, your page needs clear author bios, physical business addresses, an easy-to-find privacy policy, and most importantly, high-quality backlinks from other trusted websites pointing to this exact URL.
-                </p>
-              </div>
-
-              <div style={{ background: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: 16, borderRadius: 8, marginBottom: 16 }}>
-                <h4 style={{ color: '#f59e0b', margin: '0 0 8px 0', fontSize: 15, display: 'flex', alignItems: 'center', gap: 6 }}>⚡ 4. Core Web Vitals</h4>
-                <p style={{ color: '#e2e8f0', fontSize: 13, margin: 0, lineHeight: 1.5 }}>
-                  Google's crawler penalizes slow sites. Your page must pass the Core Web Vitals test: <strong>LCP</strong> (main content must load under 2.5s), <strong>CLS</strong> (layout shouldn't shift as it loads), and <strong>INP</strong> (buttons must respond instantly). Compress your images and use efficient caching.
-                </p>
-              </div>
+            {/* Modal Header */}
+            <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Trophy size={18} color="#f97316" />
+              <h3 style={{ margin: 0, color: '#fff', fontSize: 16, fontWeight: 700 }}>📌 Add Keyword</h3>
             </div>
 
-            <div style={{ marginTop: 30, textAlign: 'right' }}>
-              <button 
-                onClick={() => setSelectedTips(null)}
-                style={{ background: '#3b82f6', border: 'none', padding: '10px 20px', borderRadius: 6, color: '#fff', fontWeight: 600, cursor: 'pointer' }}
-              >
-                Got it
-              </button>
-            </div>
+            {/* Modal Body */}
+            <form onSubmit={handleAddKeyword} style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Keyword Field */}
+              <div>
+                <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Keyword *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. digital skills course Pondicherry"
+                  value={newKeyword}
+                  onChange={(e) => setNewKeyword(e.target.value)}
+                  style={{ width: '100%', background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none' }}
+                />
+              </div>
+
+              {/* Initial Rank & Pack Status */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Initial Rank</label>
+                  <input
+                    type="number"
+                    value={initialRank}
+                    onChange={(e) => setInitialRank(e.target.value)}
+                    style={{ width: '100%', background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Pack Status</label>
+                  <select
+                    value={packStatus}
+                    onChange={(e) => setPackStatus(e.target.value)}
+                    style={{ width: '100%', background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none', cursor: 'pointer' }}
+                  >
+                    <option value="In Pack">In Pack</option>
+                    <option value="Not in Pack">Not in Pack</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Target Location / City Field */}
+              <div>
+                <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Target Location / City</label>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <input
+                    type="text"
+                    placeholder="e.g. Guntur"
+                    value={targetLocation}
+                    onChange={(e) => setTargetLocation(e.target.value)}
+                    onBlur={() => fetchAiSuggestions(activeClient.id, targetLocation)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), fetchAiSuggestions(activeClient.id, targetLocation))}
+                    style={{ flex: 1, background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fetchAiSuggestions(activeClient.id, targetLocation)}
+                    disabled={aiLoading}
+                    style={{
+                      background: 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 8,
+                      padding: '0 16px',
+                      color: '#fff',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {aiLoading ? <Loader2 size={14} className="spin" /> : 'Suggest'}
+                  </button>
+                </div>
+              </div>
+
+              {/* AI Suggestions Section */}
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
+                  <Sparkles size={12} color="#f97316" /> AI Keyword Suggestions
+                </label>
+                
+                {aiLoading && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
+                    <Loader2 size={12} className="spin" />
+                    <span>Analyzing client profile for suggestions...</span>
+                  </div>
+                )}
+
+                {!aiLoading && aiSuggestions.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {aiSuggestions.map((suggest, index) => (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => setNewKeyword(suggest.keyword)}
+                        style={{
+                          background: 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${C.border}`,
+                          borderRadius: 8,
+                          padding: '6px 12px',
+                          color: '#fff',
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.1)'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.3)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor = C.border; }}
+                      >
+                        <span>{suggest.keyword}</span>
+                        <span style={{ fontSize: 10, color: C.muted }}>{suggest.volume}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {formError && (
+                <div style={{ color: '#ef4444', fontSize: 12 }}>{formError}</div>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  style={{ background: 'transparent', border: 'none', color: C.muted, fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: '10px 16px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={adding}
+                  style={{
+                    background: 'linear-gradient(135deg, #f97316, #ea580c)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '10px 24px',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: adding ? 'not-allowed' : 'pointer',
+                    opacity: adding ? 0.7 : 1
+                  }}
+                >
+                  {adding ? 'Adding...' : '+ Add'}
+                </button>
+              </div>
+            </form>
+
           </div>
         </div>
       )}
+
     </div>
   );
 }

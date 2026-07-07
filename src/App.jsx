@@ -43,6 +43,8 @@ import LocalSeoBridge from './views/thedal/LocalSeoBridge.jsx';
 import PlanManagement from './views/thedal/PlanManagement.jsx';
 import PlanSubscription from './views/thedal/PlanSubscription.jsx';
 import { ClientProvider } from './contexts/ClientContext.jsx';
+import AddClientMafiya from './views/mafiya/AddClient.jsx';
+import LoyaltyMafiya from './views/mafiya/Loyalty.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -160,6 +162,9 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
               <Route path="/thedal/backlink-tracker" element={<BacklinkTracker />} />
               <Route path="/thedal/local-citations" element={<LocalCitations />} />
               <Route path="/thedal/local-seo-bridge" element={<LocalSeoBridge />} />
+
+              <Route path="/mafiya/add-client" element={<AddClientMafiya />} />
+              <Route path="/mafiya/loyalty" element={<LoyaltyMafiya />} />
 
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>

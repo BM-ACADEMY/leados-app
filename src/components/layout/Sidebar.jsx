@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, Users, LineChart, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, CheckSquare, MonitorPlay, Search, Activity, FileSearch, ShieldAlert, FileOutput, MapPin, Share2, Eye, FileJson, GitPullRequest, Link as LinkIcon, Target } from 'lucide-react';
+import { Home, Users, LineChart, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, CheckSquare, MonitorPlay, Search, Activity, FileSearch, ShieldAlert, FileOutput, MapPin, Share2, Eye, FileJson, GitPullRequest, Link as LinkIcon, Target, Shield, UserPlus, Heart } from 'lucide-react';
 import { C } from '../../constants/theme.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
 
@@ -20,6 +20,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
   const [allianceOpen, setAllianceOpen] = useState(false);
   const [contentOsOpen, setContentOsOpen] = useState(false);
   const [thedalOsOpen, setThedalOsOpen] = useState(false);
+  const [mafiyaOpen, setMafiyaOpen] = useState(false);
   const [rankDropCount, setRankDropCount] = useState(0);
   
   const { clients, plans, activeClient, setActiveClient } = useClient();
@@ -407,6 +408,54 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
 
                 <NavLink to="/thedal/local-seo-bridge" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Local SEO Bridge (GMB)')}>
                   <Share2 size={14} style={{ marginRight: 8 }} /> Local SEO Bridge
+                </NavLink>
+              </div>
+            )}
+          </div>
+
+          {/* Mafiya OS Section */}
+          <div style={{ width: '100%', marginTop: 8 }}>
+            <button
+              onClick={() => {
+                setMafiyaOpen(!mafiyaOpen);
+                if (!isExpanded) setIsExpanded(true);
+              }}
+              title={!isExpanded ? "Mafiya OS" : undefined}
+              style={{
+                width: '100%',
+                height: 42,
+                borderRadius: 9,
+                border: 'none',
+                background: mafiyaOpen ? C.accent + '11' : 'transparent',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: isExpanded ? 'space-between' : 'center',
+                padding: isExpanded ? '0 12px' : '0',
+                cursor: 'pointer',
+                color: mafiyaOpen ? C.accent : C.muted,
+                transition: 'background 0.15s',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <Shield size={17} color={mafiyaOpen ? C.accent : C.muted} />
+                {isExpanded && <span style={{ marginLeft: 12, fontSize: 13, fontWeight: mafiyaOpen ? 600 : 500 }}>Mafiya OS</span>}
+              </div>
+              {isExpanded && (
+                mafiyaOpen ? <ChevronUp size={14} color={C.muted} /> : <ChevronDown size={14} color={C.muted} />
+              )}
+            </button>
+
+            {/* Child Links */}
+            {isExpanded && mafiyaOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 24, marginTop: 4, position: 'relative' }}>
+                <div style={{ position: 'absolute', left: 20, top: 4, bottom: 10, width: 1, background: C.border }} />
+
+                <NavLink to="/mafiya/add-client" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GMB Clients')}>
+                  <UserPlus size={14} style={{ marginRight: 8 }} /> GMB Clients
+                </NavLink>
+
+                <NavLink to="/thedal/keyword-tracking" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Turf Control')}>
+                  <Target size={14} style={{ marginRight: 8 }} /> Turf Control
                 </NavLink>
               </div>
             )}

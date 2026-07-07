@@ -34,6 +34,8 @@ const io = new SocketIOServer(httpServer, {
   }
 });
 
+app.set('io', io);
+
 io.on('connection', (socket) => {
   console.log(`[Socket.io] Client connected: ${socket.id}`);
   socket.on('disconnect', () => {
@@ -136,6 +138,17 @@ app.use('/api/thedal/localseobridge', auth, thedalLocalSeoBridgeRoutes);
 app.use('/api/thedal/clients', auth, thedalClientsRoutes);
 app.use('/api/thedal/content', auth, thedalContentRoutes);
 app.use('/api/thedal', auth, thedalRoutes);
+
+// ── MAFIYA OS ROUTES ──────────────────────────────────────
+const mafiyaClientsRoutes = require('./routes/mafiya-clients');
+const { router: mafiyaGmbRoutes, handleGoogleCallback } = require('./routes/mafiya-gmb');
+const mafiyaTurfRoutes = require('./routes/mafiya-turf');
+const mafiyaReviewsRoutes = require('./routes/mafiya-reviews');
+app.use('/api/mafiya/clients', auth, mafiyaClientsRoutes);
+app.use('/api/mafiya/gmb', mafiyaGmbRoutes); // No auth — email links are clicked by external clients
+app.use('/api/mafiya/turf', auth, mafiyaTurfRoutes);
+app.use('/api/mafiya/reviews', auth, mafiyaReviewsRoutes);
+app.get('/api/auth/google/callback', handleGoogleCallback); // Map the standard OAuth callback to Mafiya GMB handler
 
 
 // ══════════════════════════════════════════════════════════

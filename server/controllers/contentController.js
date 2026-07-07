@@ -1374,38 +1374,51 @@ async function publishVideoStoryToFacebook(pageId, pageAccessToken, { videoUrl }
 
 // Facebook Reel Publishing
 async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl }) {
+  console.log(`[publishReelToFacebook] Starting 3-step Reels upload. Page ID: ${pageId}, Video URL: ${videoUrl}`);
   try {
+    // Step (a) Initialize upload session
+    console.log(`[publishReelToFacebook] Step (a): Initializing Reels upload...`);
     const initRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, {
       upload_phase: 'start',
       access_token: pageAccessToken
     });
+    console.log(`[publishReelToFacebook] Step (a) Meta response:`, JSON.stringify(initRes.data, null, 2));
+
     const { video_id, upload_url } = initRes.data;
     if (!video_id || !upload_url) {
-      throw new Error("Failed to initialize Facebook Reels session.");
+      throw new Error("Failed to initialize Facebook Reels session: no video_id or upload_url returned.");
     }
-    console.log(`Facebook Reel session initialized: video_id = ${video_id}`);
+    console.log(`[publishReelToFacebook] Step (a) Success: video_id = ${video_id}`);
 
-    await axios.post(upload_url, null, {
+    // Step (b) Upload the video data
+    console.log(`[publishReelToFacebook] Step (b): Uploading video via file_url header...`);
+    const uploadRes = await axios.post(upload_url, null, {
       headers: {
         'file_url': videoUrl,
         'Authorization': `OAuth ${pageAccessToken}`
       }
     });
-    console.log(`Facebook Reel upload completed for video_id = ${video_id}`);
+    console.log(`[publishReelToFacebook] Step (b) Meta response:`, JSON.stringify(uploadRes.data, null, 2));
 
-    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, {
+    // Step (c) Finish and publish
+    console.log(`[publishReelToFacebook] Step (c): Finishing upload and publishing Reel...`);
+    const finishParams = {
       upload_phase: 'finish',
       video_id: video_id,
       video_state: 'PUBLISHED',
       description: caption,
       share_to_feed: true,
       access_token: pageAccessToken
-    });
+    };
+    console.log(`[publishReelToFacebook] Step (c) Payload:`, JSON.stringify({ ...finishParams, access_token: '***' }, null, 2));
+
+    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, finishParams);
+    console.log(`[publishReelToFacebook] Step (c) Meta response:`, JSON.stringify(finishRes.data, null, 2));
 
     return { success: true, post_id: finishRes.data.id || video_id };
   } catch (err) {
-    const fullError = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error('Facebook Reels publishing failed. Full Meta error:', fullError);
+    const fullError = err.response?.data ? JSON.stringify(err.response.data, null, 2) : err.message;
+    console.error('[publishReelToFacebook] Facebook Reels publishing failed. Full Meta error:', fullError);
     const msg = err.response?.data?.error?.message || err.message;
     throw new Error(`${msg} (Full Meta details: ${fullError})`);
   }
@@ -1714,10 +1727,12 @@ async function publishPost(req, res) {
     }
 
     // 4. Ensure a pending job exists for all activeChannels that do NOT already have a 'success' job
+    console.log(`[publishPost] Normalized active channels:`, JSON.stringify(activeChannels));
     for (const channel of activeChannels) {
       const hasSuccessJob = existingJobs.some(job => job.channel === channel && job.status === 'success');
       if (!hasSuccessJob) {
         // Upsert to ensure it exists with status 'pending' (failed ones are reset to pending to allow retry)
+        console.log(`[publishPost] Creating/updating publish_queue job for content_id: ${post.id}, channel: ${channel}`);
         await pool.query(`
           INSERT INTO publish_queue (content_id, brand_name, channel, status)
           VALUES ($1, $2, $3, 'pending')
@@ -1732,6 +1747,7 @@ async function publishPost(req, res) {
       "SELECT * FROM publish_queue WHERE content_id = $1 AND status IN ('pending', 'failed')",
       [post.id]
     );
+    console.log(`[publishPost] Pending/failed publish queue jobs retrieved for post ${post.id}:`, JSON.stringify(jobs.map(j => ({ id: j.id, channel: j.channel, status: j.status }))));
 
     if (!jobs || jobs.length === 0) {
       return res.status(400).json({ success: false, error: 'No platforms selected for this post' });

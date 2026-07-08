@@ -476,7 +476,18 @@ router.post('/reply-review', async (req, res) => {
 // POST generate AI reply content via Groq/OpenAI API
 router.post('/generate-ai-reply', async (req, res) => {
   const { clientId, author, rating, text } = req.body;
-  if (!clientId) return res.status(400).json({ error: 'clientId is required' });
+  const fs = require('fs');
+  const path = require('path');
+  
+  fs.appendFileSync(
+    path.join(__dirname, '../debug_error.log'),
+    `[${new Date().toISOString()}] API Called: clientId=${clientId}, author=${author}, rating=${rating}, text=${text}\n`
+  );
+
+  if (!clientId) {
+    fs.appendFileSync(path.join(__dirname, '../debug_error.log'), `[${new Date().toISOString()}] Error: clientId is required\n`);
+    return res.status(400).json({ error: 'clientId is required' });
+  }
 
   try {
     const clientRes = await pool.query(
@@ -487,6 +498,7 @@ router.post('/generate-ai-reply', async (req, res) => {
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
+      fs.appendFileSync(path.join(__dirname, '../debug_error.log'), `[${new Date().toISOString()}] Error: OPENAI_API_KEY is not configured on server.\n`);
       return res.status(500).json({ error: 'OPENAI_API_KEY is not configured on server.' });
     }
 
@@ -498,7 +510,7 @@ Rating: ${rating} out of 5 stars
 Review Text: "${text || 'No comment provided.'}"
 
 Guidelines:
-- Keep the response extremely brief: exactly 1 to 2 sentences. Do not exceed 250 characters.
+- Keep the response warm and engaging: around 2 to 3 detailed sentences (about 250 to 450 characters).
 - Include 1 or 2 friendly emojis (like 😊, 👍, 🌟, 🙌) to make the message warm.
 - If the reviewer has left a comment/feedback, briefly mention the specific thing they praised.
 - If the rating is 4 or 5 stars, thank them warmly and say we look forward to working with them again.
@@ -524,9 +536,19 @@ Guidelines:
     const reply = chatRes.data?.choices?.[0]?.message?.content?.trim() || 
                   `Thank you ${author} for your review! We appreciate your feedback.`;
 
+    fs.appendFileSync(
+      path.join(__dirname, '../debug_error.log'),
+      `[${new Date().toISOString()}] AI generation success: "${reply}"\n`
+    );
+
     res.json({ reply });
   } catch (error) {
-    console.error('[Mafiya Reviews] OpenAI/Groq API generation error:', error.response?.data || error.message);
+    const errorDetails = error.response?.data || error.message;
+    console.error('[Mafiya Reviews] OpenAI/Groq API generation error:', errorDetails);
+    fs.appendFileSync(
+      path.join(__dirname, '../debug_error.log'),
+      `[${new Date().toISOString()}] API Error: ${JSON.stringify(errorDetails)}\n`
+    );
     res.status(500).json({ error: 'Failed to generate reply via AI.' });
   }
 });

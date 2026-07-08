@@ -127,22 +127,24 @@ export default function Loyalty() {
         const data = await res.json();
         const businessName = activeClient?.business_name || 'our company';
         const author = review.author || 'customer';
-        const wrappedReply = `Dear ${author},\n\n${data.reply}\n\nWarm Regards,\nTeam ${businessName}`;
+        const wrappedReply = `${author},\n\n${data.reply}\n\nWarm Regards,\nTeam ${businessName}`;
         setReplyText(wrappedReply);
       } else {
-        throw new Error('AI Generation failed');
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'AI Generation failed');
       }
     } catch (e) {
       console.error("AI Generation failed, falling back to template:", e);
+      toast.error(`AI API Limit Exceeded / Error: ${e.message}`);
       const businessName = activeClient?.business_name || 'our company';
       const author = review.author || 'customer';
       let text = '';
       if (review.rating >= 5) {
-        text = `Dear ${author},\n\nThank you so much for your wonderful 5-star review! We appreciate your support and are glad you had a great experience with us.\n\nWarm Regards,\nTeam ${businessName}`;
+        text = `${author},\n\nThank you so much for your wonderful 5-star review! 🌟 We appreciate your support and are glad you had a great experience with us. 😊\n\nWarm Regards,\nTeam ${businessName}`;
       } else if (review.rating >= 4) {
-        text = `Dear ${author},\n\nThank you for the feedback. We are glad you had a positive experience and will keep working to make it a perfect 5-star next time!\n\nWarm Regards,\nTeam ${businessName}`;
+        text = `${author},\n\nThank you for the feedback! 👍 We are glad you had a positive experience and will keep working to make it a perfect 5-star next time! 🚀\n\nWarm Regards,\nTeam ${businessName}`;
       } else {
-        text = `Dear ${author},\n\nWe sincerely apologize for the inconvenience. We take your feedback seriously. Please reach out to us directly so we can make this right.\n\nWarm Regards,\nTeam ${businessName}`;
+        text = `${author},\n\nWe sincerely apologize for the inconvenience. 😔 We take your feedback seriously. Please reach out to us directly so we can make this right. 🙏\n\nWarm Regards,\nTeam ${businessName}`;
       }
       setReplyText(text);
     } finally {

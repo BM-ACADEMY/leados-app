@@ -1526,7 +1526,7 @@ async function waitForInstagramContainer(containerId, accessToken, maxAttempts =
 }
 
 // Facebook Poll Reels Status
-async function waitForFacebookReel(videoId, pageAccessToken, maxAttempts = 20) {
+async function waitForFacebookReel(videoId, pageAccessToken, maxAttempts = 30) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const statusUrl = `https://graph.facebook.com/v19.0/${videoId}`;
     const res = await axios.get(statusUrl, {
@@ -1538,25 +1538,47 @@ async function waitForFacebookReel(videoId, pageAccessToken, maxAttempts = 20) {
 
     const { status, published, post_id } = res.data;
     const videoStatus = status?.video_status;
-    console.log(`Facebook reel ${videoId} check #${attempt}: video_status = ${videoStatus}, published = ${published}`);
+    const copyrightStatus = status?.copyright_check_status?.status;
+    const matchesFound = status?.copyright_check_status?.matches_found;
+    
+    console.log(`Facebook reel ${videoId} check #${attempt}: video_status = ${videoStatus}, published = ${published}, copyright_check_status = ${copyrightStatus}, matches_found = ${matchesFound}`);
     
     if (videoStatus === 'ready') {
       return { success: true, post_id: post_id || videoId };
     }
-    if (videoStatus === 'error') {
+
+    // Check for explicit copyright matches
+    if (matchesFound === true) {
       const details = JSON.stringify(res.data);
-      console.error(`[waitForFacebookReel] Facebook reel processing failed. Full Meta response:`, details);
-      
-      const error = new Error(`Facebook reel processing failed: status is error (Meta response: ${details})`);
+      console.error(`[waitForFacebookReel] Facebook reel copyright block. Matches found. Meta response:`, details);
+      const error = new Error(`Facebook reel copyright block. Matches found. (Meta response: ${details})`);
       error.metaResponse = res.data;
+      error.isCopyrightBlock = true;
       error.isReelProcessingError = true;
       throw error;
     }
 
-    // Wait 15 seconds before next check (processing can take a while)
-    await new Promise(resolve => setTimeout(resolve, 15000));
+    // Do NOT fail if the copyright check or processing is still in progress
+    const isCheckingCopyright = copyrightStatus === 'in_progress' || copyrightStatus === 'not_started';
+    
+    if (videoStatus === 'error') {
+      if (isCheckingCopyright) {
+        console.log(`[waitForFacebookReel] video_status is 'error' but copyright check is still '${copyrightStatus}'. Keeping poll active...`);
+      } else {
+        const details = JSON.stringify(res.data);
+        console.error(`[waitForFacebookReel] Facebook reel processing failed. Full Meta response:`, details);
+        
+        const error = new Error(`Facebook reel processing failed: status is error (Meta response: ${details})`);
+        error.metaResponse = res.data;
+        error.isReelProcessingError = true;
+        throw error;
+      }
+    }
+
+    // Wait 20 seconds before next check (copyright and processing can take a while)
+    await new Promise(resolve => setTimeout(resolve, 20000));
   }
-  throw new Error('Timeout waiting for Facebook Reel processing to complete.');
+  throw new Error('Timeout waiting for Facebook Reel processing and copyright check to complete.');
 }
 
 // Helper to identify transient Meta errors (e.g. transcoding/ingestion issues)

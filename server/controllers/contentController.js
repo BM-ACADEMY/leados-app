@@ -1500,13 +1500,74 @@ async function waitForInstagramContainer(containerId, accessToken, maxAttempts =
     if (status_code === 'ERROR') {
       const details = JSON.stringify(res.data);
       console.error(`[waitForInstagramContainer] Instagram container failed. Full Meta response:`, details);
-      throw new Error(`Instagram container failed: ${status || 'Container processing failed'} (Meta response: ${details})`);
+      
+      const statusStr = status || '';
+      const match = statusStr.match(/error code (\d+)/i);
+      const errorCode = match ? parseInt(match[1], 10) : null;
+      
+      const error = new Error(`Instagram container failed: ${status || 'Container processing failed'} (Meta response: ${details})`);
+      error.metaResponse = res.data;
+      error.errorCode = errorCode;
+      error.isContainerError = true;
+      throw error;
     }
 
     // Wait 10 seconds before next check
     await new Promise(resolve => setTimeout(resolve, 10000));
   }
   throw new Error('Timeout waiting for Instagram media container build.');
+}
+
+// Helper to identify transient Meta errors (e.g. transcoding/ingestion issues)
+function isTransientMetaError(err) {
+  // Case 1: Custom error from waitForInstagramContainer
+  if (err.isContainerError) {
+    const code = err.errorCode;
+    const status = err.metaResponse?.status || '';
+    
+    const isTransientCode = [2207082, 2207026, 9007].includes(code);
+    if (isTransientCode) return true;
+    
+    const lowercaseStatus = status.toLowerCase();
+    if (lowercaseStatus.includes('transcode') || 
+        lowercaseStatus.includes('transcoding') || 
+        lowercaseStatus.includes('media upload has failed') ||
+        lowercaseStatus.includes('upload has failed')) {
+      return true;
+    }
+    return false;
+  }
+
+  // Case 2: Axios error response from Meta Graph API
+  const metaError = err.response?.data?.error;
+  if (metaError) {
+    const code = metaError.code;
+    const subcode = metaError.error_subcode;
+    const message = metaError.message || '';
+    
+    const isTransientCode = [2207082, 2207026, 9007].includes(code) || [2207082, 2207026, 9007].includes(subcode);
+    if (isTransientCode) return true;
+    
+    const lowercaseMsg = message.toLowerCase();
+    if (lowercaseMsg.includes('transcode') || 
+        lowercaseMsg.includes('transcoding') || 
+        lowercaseMsg.includes('media upload has failed') ||
+        lowercaseMsg.includes('upload has failed')) {
+      return true;
+    }
+  }
+
+  // Case 3: Message-based check
+  const errMsg = (err.message || '').toLowerCase();
+  if (errMsg.includes('2207082') || errMsg.includes('2207026') || errMsg.includes('9007') ||
+      errMsg.includes('transcode') || 
+      errMsg.includes('transcoding') || 
+      errMsg.includes('media upload has failed') ||
+      errMsg.includes('upload has failed')) {
+    return true;
+  }
+
+  return false;
 }
 
 // Instagram Publish Container
@@ -1532,6 +1593,60 @@ async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, 
     const msg = err.response?.data?.error?.message || err.message;
     throw new Error(`${msg} (Full Meta details: ${fullError})`);
   }
+}
+
+// Publish to Instagram Coordinator with retry mechanism for transient errors
+async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false }) {
+  const maxRetries = 3;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[publishToInstagramWithRetry] Attempt ${attempt}/${maxRetries} to publish to Instagram. URL: ${videoUrl}`);
+      const res = await module.exports.publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory });
+      return res;
+    } catch (err) {
+      lastErr = err;
+      const isTransient = isTransientMetaError(err);
+      const fullError = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      console.error(`[publishToInstagramWithRetry] Attempt ${attempt}/${maxRetries} failed. Transient error: ${isTransient}. Full error details:`, fullError);
+
+      if (!isTransient || attempt === maxRetries) {
+        throw err;
+      }
+
+      console.log(`[publishToInstagramWithRetry] Waiting 30 seconds before retry attempt ${attempt + 1}...`);
+      await new Promise(resolve => setTimeout(resolve, 30000));
+    }
+  }
+  throw lastErr;
+}
+
+// Publish Facebook Reel with retry mechanism for transient errors
+async function publishReelToFacebookWithRetry(pageId, pageAccessToken, { caption, videoUrl }) {
+  const maxRetries = 3;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[publishReelToFacebookWithRetry] Attempt ${attempt}/${maxRetries} to publish Reel to Facebook. URL: ${videoUrl}`);
+      const res = await module.exports.publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl });
+      return res;
+    } catch (err) {
+      lastErr = err;
+      const isTransient = isTransientMetaError(err);
+      const fullError = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      console.error(`[publishReelToFacebookWithRetry] Attempt ${attempt}/${maxRetries} failed. Transient error: ${isTransient}. Full error details:`, fullError);
+
+      if (!isTransient || attempt === maxRetries) {
+        throw err;
+      }
+
+      console.log(`[publishReelToFacebookWithRetry] Waiting 30 seconds before retry attempt ${attempt + 1}...`);
+      await new Promise(resolve => setTimeout(resolve, 30000));
+    }
+  }
+  throw lastErr;
 }
 
 // POST /api/content/meta/callback
@@ -1993,7 +2108,7 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         if (!pageId) {
           throw new Error(`Facebook Page ID is missing for account ${account.account_name}`);
         }
-        publishRes = await publishReelToFacebook(pageId, decryptedToken, {
+        publishRes = await publishReelToFacebookWithRetry(pageId, decryptedToken, {
           caption: finalCaption,
           videoUrl: publicUrl
         });
@@ -2001,7 +2116,7 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         if (!account.instagram_business_id) {
           throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
         }
-        publishRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
+        publishRes = await publishToInstagramWithRetry(account.instagram_business_id, decryptedToken, {
           caption: finalCaption,
           videoUrl: publicUrl,
           isStory: false
@@ -2254,7 +2369,7 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
             throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
           }
           console.log(`[BackgroundPublish] Publishing story to Instagram Business for post ID ${post.id} (isVideo: ${isVideoStory})`);
-          publishRes = await publishToInstagram(account.instagram_business_id, decryptedToken, {
+          publishRes = await publishToInstagramWithRetry(account.instagram_business_id, decryptedToken, {
             caption: '',
             videoUrl: channelUrl,
             isStory: true
@@ -2568,5 +2683,10 @@ module.exports = {
   suggestCaptions,
   suggestStories,
   generateStoryCard,
-  resolvePublicUrl
+  resolvePublicUrl,
+  isTransientMetaError,
+  publishToInstagram,
+  publishReelToFacebook,
+  publishToInstagramWithRetry,
+  publishReelToFacebookWithRetry
 };

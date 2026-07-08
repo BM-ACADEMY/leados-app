@@ -1406,6 +1406,7 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
       upload_phase: 'finish',
       video_id: video_id,
       video_state: 'PUBLISHED',
+      share_to_feed: true,
       description: caption,
       access_token: pageAccessToken
     };
@@ -1414,7 +1415,12 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
     const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, finishParams);
     console.log(`[publishReelToFacebook] Step (c) Meta response:`, JSON.stringify(finishRes.data, null, 2));
 
-    return { success: true, post_id: finishRes.data.id || video_id };
+    // Wait for the Reel to be fully processed by Meta and transition to 'ready'
+    console.log(`[publishReelToFacebook] Polling video processing status for video ID ${video_id}...`);
+    const pollResult = await waitForFacebookReel(video_id, pageAccessToken);
+    console.log(`[publishReelToFacebook] Reel status check complete:`, pollResult);
+
+    return pollResult;
   } catch (err) {
     const fullError = err.response?.data ? JSON.stringify(err.response.data, null, 2) : err.message;
     console.error('[publishReelToFacebook] Facebook Reels publishing failed. Full Meta error:', fullError);
@@ -1518,8 +1524,47 @@ async function waitForInstagramContainer(containerId, accessToken, maxAttempts =
   throw new Error('Timeout waiting for Instagram media container build.');
 }
 
+// Facebook Poll Reels Status
+async function waitForFacebookReel(videoId, pageAccessToken, maxAttempts = 20) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const statusUrl = `https://graph.facebook.com/v19.0/${videoId}`;
+    const res = await axios.get(statusUrl, {
+      params: {
+        fields: 'status,published,post_id',
+        access_token: pageAccessToken
+      }
+    });
+
+    const { status, published, post_id } = res.data;
+    const videoStatus = status?.video_status;
+    console.log(`Facebook reel ${videoId} check #${attempt}: video_status = ${videoStatus}, published = ${published}`);
+    
+    if (videoStatus === 'ready') {
+      return { success: true, post_id: post_id || videoId };
+    }
+    if (videoStatus === 'error') {
+      const details = JSON.stringify(res.data);
+      console.error(`[waitForFacebookReel] Facebook reel processing failed. Full Meta response:`, details);
+      
+      const error = new Error(`Facebook reel processing failed: status is error (Meta response: ${details})`);
+      error.metaResponse = res.data;
+      error.isReelProcessingError = true;
+      throw error;
+    }
+
+    // Wait 15 seconds before next check (processing can take a while)
+    await new Promise(resolve => setTimeout(resolve, 15000));
+  }
+  throw new Error('Timeout waiting for Facebook Reel processing to complete.');
+}
+
 // Helper to identify transient Meta errors (e.g. transcoding/ingestion issues)
 function isTransientMetaError(err) {
+  // Case 0: Custom error from waitForFacebookReel
+  if (err.isReelProcessingError) {
+    return true; // Reel processing errors are transient
+  }
+
   // Case 1: Custom error from waitForInstagramContainer
   if (err.isContainerError) {
     const code = err.errorCode;
@@ -2688,5 +2733,6 @@ module.exports = {
   publishToInstagram,
   publishReelToFacebook,
   publishToInstagramWithRetry,
-  publishReelToFacebookWithRetry
+  publishReelToFacebookWithRetry,
+  waitForFacebookReel
 };

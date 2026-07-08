@@ -3,7 +3,7 @@ import { C } from '../../constants/theme.js';
 import { 
   Loader2, MapPin, Star, MessageCircle, Eye, Search, 
   MousePointerClick, CheckCircle, Megaphone, Send, LogOut,
-  Image as ImageIcon, Shield, Sparkles, AlertTriangle
+  Image as ImageIcon, Shield, Sparkles, AlertTriangle, RefreshCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -125,7 +125,10 @@ export default function Loyalty() {
       });
       if (res.ok) {
         const data = await res.json();
-        setReplyText(data.reply);
+        const businessName = activeClient?.business_name || 'our company';
+        const author = review.author || 'customer';
+        const wrappedReply = `Dear ${author},\n\n${data.reply}\n\nWarm Regards,\nTeam ${businessName}`;
+        setReplyText(wrappedReply);
       } else {
         throw new Error('AI Generation failed');
       }
@@ -135,11 +138,11 @@ export default function Loyalty() {
       const author = review.author || 'customer';
       let text = '';
       if (review.rating >= 5) {
-        text = `Thank you so much, ${author}! We appreciate your support and are glad you had a great experience with ${businessName}. 😊`;
+        text = `Dear ${author},\n\nThank you so much for your wonderful 5-star review! We appreciate your support and are glad you had a great experience with us.\n\nWarm Regards,\nTeam ${businessName}`;
       } else if (review.rating >= 4) {
-        text = `Hi ${author}, thank you for the feedback. We are glad you had a positive experience at ${businessName} and will keep working to make it a perfect 5-star next time! 👍`;
+        text = `Dear ${author},\n\nThank you for the feedback. We are glad you had a positive experience and will keep working to make it a perfect 5-star next time!\n\nWarm Regards,\nTeam ${businessName}`;
       } else {
-        text = `Hello ${author}, we sincerely apologize for the inconvenience. We take your feedback seriously. Please reach out to us directly so we can make this right.`;
+        text = `Dear ${author},\n\nWe sincerely apologize for the inconvenience. We take your feedback seriously. Please reach out to us directly so we can make this right.\n\nWarm Regards,\nTeam ${businessName}`;
       }
       setReplyText(text);
     } finally {
@@ -173,7 +176,7 @@ export default function Loyalty() {
   };
 
   // 2. Fetch Review data for selected client
-  const fetchReviewData = async (clientId, mode) => {
+  const fetchReviewData = async (clientId, mode, refresh = false) => {
     if (!clientId) return;
     setDataLoading(true);
     try {
@@ -190,7 +193,7 @@ export default function Loyalty() {
       setConnected(statusData.connected);
 
       // Get Data
-      const dataRes = await fetch(`/api/mafiya/reviews/data?clientId=${clientId}`, {
+      const dataRes = await fetch(`/api/mafiya/reviews/data?clientId=${clientId}${refresh ? '&refresh=true' : ''}`, {
         headers: { 
           Authorization: `Bearer ${token}`,
           'x-data-mode': mode
@@ -318,6 +321,29 @@ export default function Loyalty() {
 
         {/* Dropdown & Demo Mode controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            onClick={() => fetchReviewData(activeClient.id, 'real', true)}
+            disabled={dataLoading}
+            style={{
+              background: 'rgba(255, 255, 255, 0.05)',
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              padding: '8px 16px',
+              color: '#e2e8f0',
+              fontSize: 13,
+              cursor: 'pointer',
+              height: 38,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              transition: 'background 0.2s'
+            }}
+            onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+          >
+            <RefreshCw size={14} className={dataLoading ? 'spin' : ''} />
+            Sync Now
+          </button>
 
           <select
             value={activeClient?.id || ''}
@@ -417,6 +443,23 @@ export default function Loyalty() {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                {data?._debug_google_error && (() => {
+                  const friendly = getFriendlyGoogleError(data._debug_google_error);
+                  return (
+                    <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', padding: 18, borderRadius: 12, color: '#fca5a5', fontSize: 14, marginBottom: 20 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 8, color: '#f87171', display: 'flex', alignItems: 'center', gap: 8, fontSize: 16 }}>
+                        ⚠️ {friendly.title}
+                      </div>
+                      <div style={{ marginBottom: 12, lineHeight: 1.5 }}>
+                        {friendly.desc}
+                      </div>
+                      <div style={{ fontSize: 13, color: '#f87171', borderTop: '1px dashed rgba(239, 68, 68, 0.2)', paddingTop: 10 }}>
+                        We successfully authenticated your Google account, but Google's server blocked us from fetching the reviews. Please make sure the Google account you connected has Owner/Manager permissions for this Business Profile.
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {dataLoading ? (
                   <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
                     <Loader2 size={28} color={C.accent} className="spin" />
@@ -433,15 +476,35 @@ export default function Loyalty() {
                            <Star key={star} size={14} fill={star <= review.rating ? '#facc15' : 'transparent'} color={star <= review.rating ? '#facc15' : C.border} />
                         ))}
                       </div>
-                      <p style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 1.5, margin: '0 0 16px 0' }}>{review.text}</p>
+                      <p style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 1.5, margin: '0 0 16px 0', whiteSpace: 'pre-wrap' }}>
+                        {review.text?.replace(/<br\s*\/?>/gi, '\n')}
+                      </p>
                       
-                      {review.replied ? (
+                      {review.replied && replyingTo !== review.id ? (
                         <div style={{ background: 'rgba(255,255,255,0.03)', padding: 16, borderRadius: 8, borderLeft: `3px solid ${C.accent}` }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>Your Reply</span>
-                            <CheckCircle size={12} color={C.accent} />
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>Your Reply</span>
+                              <CheckCircle size={12} color={C.accent} />
+                            </div>
+                            <button
+                              onClick={() => {
+
+
+
+
+                                
+                                setReplyingTo(review.id);
+                                setReplyText(review.replyText || '');
+                              }}
+                              style={{ background: 'transparent', border: 'none', color: '#38bdf8', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                            >
+                              Edit Reply
+                            </button>
                           </div>
-                          <p style={{ color: C.muted, fontSize: 13, margin: 0, lineHeight: 1.5 }}>{review.replyText}</p>
+                          <p style={{ color: C.muted, fontSize: 13, margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                            {review.replyText?.replace(/<br\s*\/?>/gi, '\n')}
+                          </p>
                         </div>
                       ) : (
                         <div>

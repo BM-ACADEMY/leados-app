@@ -354,7 +354,9 @@ export default function LocalSeoBridge() {
                     <Star key={star} size={14} fill={star <= review.rating ? '#facc15' : 'transparent'} color={star <= review.rating ? '#facc15' : C.border} />
                   ))}
                 </div>
-                <p style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 1.5, margin: '0 0 16px 0' }}>{review.text}</p>
+                <p style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 1.5, margin: '0 0 16px 0', whiteSpace: 'pre-wrap' }}>
+                  {review.text?.replace(/<br\s*\/?>/gi, '\n')}
+                </p>
                 
                 {review.replied ? (
                   <div style={{ background: 'rgba(255,255,255,0.03)', padding: 16, borderRadius: 8, borderLeft: `3px solid ${C.accent}` }}>
@@ -362,7 +364,9 @@ export default function LocalSeoBridge() {
                       <span style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>Your Reply</span>
                       <CheckCircle size={12} color={C.accent} />
                     </div>
-                    <p style={{ color: C.muted, fontSize: 13, margin: 0, lineHeight: 1.5 }}>{review.replyText}</p>
+                    <p style={{ color: C.muted, fontSize: 13, margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                      {review.replyText?.replace(/<br\s*\/?>/gi, '\n')}
+                    </p>
                   </div>
                 ) : (
                   <div>

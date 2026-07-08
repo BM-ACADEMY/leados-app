@@ -56,6 +56,41 @@ router.post('/', async (req, res) => {
   }
 });
 
+// PUT: Update a GMB client
+router.put('/:id', async (req, res) => {
+  const { id } = req.params;
+  const {
+    business_name,
+    business_category,
+    custom_category,
+    contact_person,
+    phone_number,
+    website_url,
+    gmb_url,
+    gmb_email,
+  } = req.body;
+
+  if (!business_name || !contact_person || !phone_number) {
+    return res.status(400).json({ error: 'business_name, contact_person, and phone_number are required' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE mafiya_gmb_clients
+       SET business_name = $1, business_category = $2, custom_category = $3, contact_person = $4, phone_number = $5, website_url = $6, gmb_url = $7, gmb_email = $8
+       WHERE id = $9
+       RETURNING *`,
+      [business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, id]
+    );
+
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[Mafiya] PUT /clients/:id error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // DELETE a GMB client
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
@@ -87,6 +122,25 @@ router.post('/:id/resend-email', async (req, res) => {
     res.json({ success: true, message: 'Verification email sent successfully' });
   } catch (err) {
     console.error('[Mafiya] POST /clients/:id/resend-email error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST: Disconnect GMB connection for a client
+router.post('/:id/disconnect-gmb', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await pool.query('DELETE FROM mafiya_gmb_tokens WHERE client_id = $1', [id]);
+    const result = await pool.query(
+      `UPDATE mafiya_gmb_clients 
+       SET gmb_verified = false, reviews_cache = NULL, reviews_updated_at = NULL 
+       WHERE id = $1 RETURNING *`, 
+      [id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
+    res.json({ success: true, message: 'GMB disconnected successfully' });
+  } catch (err) {
+    console.error('[Mafiya] POST /clients/:id/disconnect-gmb error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

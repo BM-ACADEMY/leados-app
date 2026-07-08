@@ -103,7 +103,7 @@ router.get('/status', async (req, res) => {
 
 // GET review data for a client
 router.get('/data', async (req, res) => {
-  const { clientId } = req.query;
+  const { clientId, refresh } = req.query;
   if (!clientId) return res.status(400).json({ error: 'clientId is required' });
 
   try {
@@ -118,7 +118,7 @@ router.get('/data', async (req, res) => {
     const businessName = client.business_name || 'Your Business';
 
     // Check Cache first
-    if (client.reviews_cache && client.reviews_updated_at) {
+    if (client.reviews_cache && client.reviews_updated_at && refresh !== 'true') {
       const cacheAgeMs = Date.now() - new Date(client.reviews_updated_at).getTime();
       // If cache is less than 15 minutes old, return it instantly!
       if (cacheAgeMs < 15 * 60 * 1000) {
@@ -153,14 +153,28 @@ router.get('/data', async (req, res) => {
         const accRes = await axios.get('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', { headers });
         const accounts = accRes.data.accounts || [];
         if (accounts.length > 0) {
-          const accountId = accounts[0].name;
-          
-          // 2. Get Locations
-          const locRes = await axios.get(`https://mybusinessbusinessinformation.googleapis.com/v1/${accountId}/locations?readMask=name,title,storeCode`, { headers });
-          const locations = locRes.data.locations || [];
-          if (locations.length > 0) {
-            const loc = locations[0];
-            const locationId = loc.name;
+          let allLocations = [];
+          for (const acc of accounts) {
+            try {
+              const locRes = await axios.get(`https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations?readMask=name,title,storeCode`, { headers });
+              if (locRes.data.locations) {
+                const locs = locRes.data.locations.map(l => ({ ...l, accountName: acc.name }));
+                allLocations = allLocations.concat(locs);
+              }
+            } catch (err) {
+              console.error(`[Mafiya Reviews] Failed to fetch locations for account ${acc.name}:`, err.message);
+            }
+          }
+
+          if (allLocations.length > 0) {
+            // Find the location that matches the business name, or fallback to the first location
+            const cleanStr = (s) => (s || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            const loc = allLocations.find(l => {
+              const cleanTitle = cleanStr(l.title);
+              const cleanBizName = cleanStr(businessName);
+              return cleanTitle.includes(cleanBizName) || cleanBizName.includes(cleanTitle);
+            }) || allLocations[0];
+            const locationId = `${loc.accountName}/${loc.name}`;
             
             // 3. Get Reviews (with pagination to fetch all)
             let allReviews = [];
@@ -168,7 +182,7 @@ router.get('/data', async (req, res) => {
             let pageNum = 0;
             try {
               do {
-                const url = `https://mybusinessreviews.googleapis.com/v1/${locationId}/reviews?pageSize=50` + (nextPageToken ? `&pageToken=${nextPageToken}` : '');
+                const url = `https://mybusiness.googleapis.com/v4/${locationId}/reviews?pageSize=50` + (nextPageToken ? `&pageToken=${nextPageToken}` : '');
                 const revRes = await axios.get(url, { headers });
                 const reviews = revRes.data.reviews || [];
                 allReviews = allReviews.concat(reviews);
@@ -444,7 +458,7 @@ router.post('/reply-review', async (req, res) => {
   if (accessToken) {
     try {
       if (typeof reviewId === 'string' && reviewId.startsWith('accounts/')) {
-        await axios.put(`https://mybusinessreviews.googleapis.com/v1/${reviewId}/reply`, {
+        await axios.put(`https://mybusiness.googleapis.com/v4/${reviewId}/reply`, {
           comment: replyText
         }, {
           headers: { Authorization: `Bearer ${accessToken}` }
@@ -477,18 +491,19 @@ router.post('/generate-ai-reply', async (req, res) => {
     }
 
     const prompt = `You are an expert customer relations manager representing the business "${businessName}". 
-Write a highly personalized, friendly, and concise response to this Google Review.
+Write a highly personalized, friendly, and very short response to this Google Review.
 
 Reviewer Name: ${author}
 Rating: ${rating} out of 5 stars
 Review Text: "${text || 'No comment provided.'}"
 
 Guidelines:
-- If the reviewer has left a comment/feedback, you MUST explicitly mention and reference the specific things they praised or mentioned (e.g. if they praised "web development" or "SEO", mention those specific services in your reply so it looks extremely custom).
-- If the rating is 4 or 5 stars, thank the customer warmly, reference what they liked, and say we look forward to working with them again.
-- If the rating is 1, 2, or 3 stars, apologize professionally for their experience, show empathy, and invite them to contact us directly to resolve it.
-- **IMPORTANT**: Use appropriate emojis (e.g. 😊, 👍, 🌟, 🙌) to make the response warm and modern.
-- Respond with ONLY the reply text itself. Do not include quotes, greetings like "Response:", formatting, or markdown.`;
+- Keep the response extremely brief: exactly 1 to 2 sentences. Do not exceed 250 characters.
+- Include 1 or 2 friendly emojis (like 😊, 👍, 🌟, 🙌) to make the message warm.
+- If the reviewer has left a comment/feedback, briefly mention the specific thing they praised.
+- If the rating is 4 or 5 stars, thank them warmly and say we look forward to working with them again.
+- If the rating is 1, 2, or 3 stars, apologize professionally and invite them to contact us directly.
+- **IMPORTANT**: Generate ONLY the body paragraph(s) of the response. Do NOT include any greetings (like "Dear...", "Hi...") or sign-offs (like "Warm Regards", "Best Regards", "Team...") as these will be automatically added by the template.`;
 
     const chatRes = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',

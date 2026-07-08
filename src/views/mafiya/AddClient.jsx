@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { C } from '../../constants/theme.js';
-import { User, Loader2, CheckCircle2, Building, Phone, Mail, Globe, Shield, Link2, Plus, Trash2, Search, X, Users, Send } from 'lucide-react';
+import { User, Loader2, CheckCircle2, Building, Phone, Mail, Globe, Shield, Link2, Plus, Trash2, Search, X, Users, Send, MoreVertical } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { io as socketIO } from 'socket.io-client';
 
@@ -41,7 +41,28 @@ export default function AddClient() {
   const [searchQuery, setSearchQuery] = useState('');
   const [deletingId, setDeletingId] = useState(null);
   const [resendingId, setResendingId] = useState(null);
+  const [disconnectingId, setDisconnectingId] = useState(null);
+  const [activeDropdownId, setActiveDropdownId] = useState(null);
+  const [editingClient, setEditingClient] = useState(null);
   const modalRef = useRef(null);
+
+  const handleEditClick = (client) => {
+    setEditingClient(client);
+    const categoryExists = CATEGORIES.includes(client.business_category);
+    setFormData({
+      business_name: client.business_name || '',
+      business_category: categoryExists ? client.business_category : 'Other',
+      custom_category: !categoryExists ? client.business_category : '',
+      phone_number: client.phone_number || '',
+      contact_person: client.contact_person || '',
+      website_url: client.website_url || '',
+      gmb_url: client.gmb_url || '',
+      gmb_email: client.gmb_email || '',
+    });
+    setShowOtherCategory(!categoryExists && client.business_category !== '');
+    setErrors({});
+    setShowModal(true);
+  };
 
   const handleResendEmail = async (id, email) => {
     setResendingId(id);
@@ -58,6 +79,30 @@ export default function AddClient() {
       toast.error('Failed to send verification link');
     } finally {
       setResendingId(null);
+    }
+  };
+
+  const handleDisconnectGmb = async (id) => {
+    if (!confirm('Are you sure you want to disconnect this Google Business Profile?')) return;
+    setDisconnectingId(id);
+    try {
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch(`${API_URL}/api/mafiya/clients/${id}/disconnect-gmb`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Disconnect failed');
+      setClients(prevClients =>
+        prevClients.map(client =>
+          client.id === id ? { ...client, gmb_verified: false } : client
+        )
+      );
+      toast.success('Google Business Profile disconnected successfully');
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to disconnect GMB');
+    } finally {
+      setDisconnectingId(null);
     }
   };
 
@@ -80,6 +125,12 @@ export default function AddClient() {
   };
 
   useEffect(() => { fetchClients(); }, []);
+
+  useEffect(() => {
+    const closeDropdown = () => setActiveDropdownId(null);
+    document.addEventListener('click', closeDropdown);
+    return () => document.removeEventListener('click', closeDropdown);
+  }, []);
 
   // ── Listen to real-time GMB connection updates ──
   useEffect(() => {
@@ -160,25 +211,39 @@ export default function AddClient() {
         ...formData,
         business_category: showOtherCategory ? formData.custom_category : formData.business_category,
       };
-      const res = await fetch(`${API_URL}/api/mafiya/clients`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error('Failed to save');
-      const saved = await res.json();
-      setClients([saved, ...clients]);
-      toast.success('Client onboarded successfully!');
-      if (saved.email_sent) {
-        setTimeout(() => toast.success(`GMB authorization email sent to ${formData.gmb_email}`, { icon: '📧', duration: 5000 }), 600);
+      
+      if (editingClient) {
+        const res = await fetch(`${API_URL}/api/mafiya/clients/${editingClient.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error('Failed to update');
+        const updated = await res.json();
+        setClients(clients.map(c => c.id === editingClient.id ? { ...c, ...updated } : c));
+        toast.success('Client updated successfully!');
+      } else {
+        const res = await fetch(`${API_URL}/api/mafiya/clients`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error('Failed to save');
+        const saved = await res.json();
+        setClients([saved, ...clients]);
+        toast.success('Client onboarded successfully!');
+        if (saved.email_sent) {
+          setTimeout(() => toast.success(`GMB authorization email sent to ${formData.gmb_email}`, { icon: '📧', duration: 5000 }), 600);
+        }
       }
       setFormData({ ...INITIAL_FORM });
+      setEditingClient(null);
       setShowOtherCategory(false);
       setErrors({});
       setShowModal(false);
     } catch (err) {
       console.error('Save error:', err);
-      toast.error('Failed to save client');
+      toast.error(editingClient ? 'Failed to update client' : 'Failed to save client');
     } finally {
       setIsSaving(false);
     }
@@ -283,15 +348,111 @@ export default function AddClient() {
                     <span style={{ fontSize: 11, color: C.muted }}>{client.business_category || client.custom_category || '—'}</span>
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDelete(client.id)}
-                  disabled={deletingId === client.id}
-                  style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 8, padding: 6, cursor: 'pointer', opacity: deletingId === client.id ? 0.5 : 1, transition: 'background 0.15s' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.18)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'}
-                >
-                  {deletingId === client.id ? <Loader2 size={14} color="#ef4444" className="spin" /> : <Trash2 size={14} color="#ef4444" />}
-                </button>
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveDropdownId(activeDropdownId === client.id ? null : client.id);
+                    }}
+                    style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 6, cursor: 'pointer', transition: 'background 0.15s' }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                  >
+                    <MoreVertical size={16} color={C.muted} />
+                  </button>
+                  
+                  {activeDropdownId === client.id && (
+                    <div style={{
+                      position: 'absolute',
+                      right: 0,
+                      top: '100%',
+                      marginTop: 4,
+                      background: '#0a0f1d',
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 8,
+                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)',
+                      zIndex: 50,
+                      minWidth: 140,
+                      overflow: 'hidden'
+                    }}>
+                      <button
+                        onClick={() => handleEditClick(client)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          width: '100%',
+                          padding: '10px 12px',
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#e2e8f0',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          transition: 'background 0.15s'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <Building size={13} color="#f97316" />
+                        Edit Client
+                      </button>
+                      {client.gmb_verified && (
+                        <button
+                          onClick={() => handleDisconnectGmb(client.id)}
+                          disabled={disconnectingId === client.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            width: '100%',
+                            padding: '10px 12px',
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#e2e8f0',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            transition: 'background 0.15s',
+                            borderTop: `1px solid ${C.border}50`
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        >
+                          {disconnectingId === client.id ? <Loader2 size={13} className="spin" /> : <X size={13} color="#ef4444" />}
+                          Disconnect GMB
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDelete(client.id)}
+                        disabled={deletingId === client.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          width: '100%',
+                          padding: '10px 12px',
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#f87171',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          transition: 'background 0.15s',
+                          borderTop: `1px solid ${C.border}50`
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        {deletingId === client.id ? <Loader2 size={13} className="spin" color="#ef4444" /> : <Trash2 size={13} color="#ef4444" />}
+                        Delete Client
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Card Details */}
@@ -336,8 +497,8 @@ export default function AddClient() {
                           disabled={resendingId === client.id}
                           title="Resend verification email"
                           style={{
-                            background: 'rgba(245,158,11,0.08)',
-                            border: '1px solid rgba(245,158,11,0.15)',
+                            background: 'rgba(245, 158, 11, 0.08)',
+                            border: '1px solid rgba(245, 158, 11, 0.15)',
                             borderRadius: 20,
                             padding: '3px 8px',
                             cursor: 'pointer',
@@ -349,8 +510,8 @@ export default function AddClient() {
                             gap: 4,
                             transition: 'all 0.15s'
                           }}
-                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(245,158,11,0.18)'}
-                          onMouseLeave={e => e.currentTarget.style.background = 'rgba(245,158,11,0.08)'}
+                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(245, 158, 11, 0.18)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'rgba(245, 158, 11, 0.08)'}
                         >
                           {resendingId === client.id ? <Loader2 size={9} className="spin" /> : <Send size={9} />}
                           <span>Send Link</span>
@@ -380,8 +541,12 @@ export default function AddClient() {
                   <Shield size={18} color="#fff" />
                 </div>
                 <div>
-                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#fff', fontFamily: "'Syne', sans-serif" }}>Add GMB Client</h2>
-                  <p style={{ margin: 0, color: C.muted, fontSize: 11, marginTop: 2 }}>Register client & link Google Business Profile</p>
+                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#fff', fontFamily: "'Syne', sans-serif" }}>
+                    {editingClient ? 'Edit GMB Client' : 'Add GMB Client'}
+                  </h2>
+                  <p style={{ margin: 0, color: C.muted, fontSize: 11, marginTop: 2 }}>
+                    {editingClient ? 'Update client details' : 'Register client & link Google Business Profile'}
+                  </p>
                 </div>
               </div>
               <button onClick={() => setShowModal(false)} style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 6, cursor: 'pointer', transition: 'background 0.15s' }}
@@ -488,7 +653,7 @@ export default function AddClient() {
                   onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
                 >
                   {isSaving ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-                  {isSaving ? 'Saving Client...' : 'Onboard Client'}
+                  {isSaving ? (editingClient ? 'Updating Client...' : 'Saving Client...') : (editingClient ? 'Update Client' : 'Onboard Client')}
                 </button>
               </div>
             </form>

@@ -1544,7 +1544,8 @@ async function waitForFacebookReel(videoId, pageAccessToken, maxAttempts = 30) {
     console.log(`Facebook reel ${videoId} check #${attempt}: video_status = ${videoStatus}, published = ${published}, copyright_check_status = ${copyrightStatus}, matches_found = ${matchesFound}`);
     
     if (videoStatus === 'ready') {
-      return { success: true, post_id: post_id || videoId };
+      console.log(`[waitForFacebookReel] Reel is ready! Reel Video ID (Reel ID): ${videoId}, Page Feed Post ID: ${post_id}`);
+      return { success: true, post_id: videoId };
     }
 
     // Check for explicit copyright matches

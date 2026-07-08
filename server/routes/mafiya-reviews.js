@@ -23,6 +23,15 @@ pool.query(`
   );
   ALTER TABLE mafiya_gmb_clients ADD COLUMN IF NOT EXISTS reviews_cache TEXT;
   ALTER TABLE mafiya_gmb_clients ADD COLUMN IF NOT EXISTS reviews_updated_at TIMESTAMP;
+
+  CREATE TABLE IF NOT EXISTS mafiya_gmb_brain (
+    id           SERIAL PRIMARY KEY,
+    client_id    INTEGER REFERENCES mafiya_gmb_clients(id) ON DELETE CASCADE,
+    entry_type   VARCHAR(50) NOT NULL,
+    content      TEXT NOT NULL,
+    created_at   TIMESTAMP DEFAULT NOW(),
+    updated_at   TIMESTAMP DEFAULT NOW()
+  );
 `).catch(err => console.error('[Mafiya Reviews] Schema migration failed:', err));
 
 // Helper to refresh client token
@@ -502,13 +511,62 @@ router.post('/generate-ai-reply', async (req, res) => {
       return res.status(500).json({ error: 'OPENAI_API_KEY is not configured on server.' });
     }
 
+    // Fetch and incorporate GMB Brain entries for this client
+    const brainRes = await pool.query(
+      'SELECT entry_type, content FROM mafiya_gmb_brain WHERE client_id = $1',
+      [clientId]
+    );
+    
+    const brain = {
+      tone: [],
+      offer: [],
+      keyword: [],
+      qa: [],
+      blacklist: [],
+      seasonal: []
+    };
+
+    brainRes.rows.forEach(row => {
+      const typeKey = (row.entry_type || '').toLowerCase().trim();
+      if (brain[typeKey]) {
+        brain[typeKey].push(row.content);
+      }
+    });
+
+    let brainDirectives = '';
+    if (brain.tone.length > 0) {
+      brainDirectives += `\nTONE AND STYLE GUIDELINES (Adhere strictly to this tone):\n${brain.tone.map(t => `- ${t}`).join('\n')}\n`;
+    }
+    if (brain.offer.length > 0) {
+      brainDirectives += `\nPROMOTIONS / OFFERS (Incorporate or refer to these active offers if appropriate, especially for positive reviews):\n${brain.offer.map(o => `- ${o}`).join('\n')}\n`;
+    }
+    if (brain.keyword.length > 0) {
+      brainDirectives += `\nTARGET KEYWORDS (Try to naturally incorporate these keywords/phrases into the response if it fits context):\n${brain.keyword.map(k => `- ${k}`).join('\n')}\n`;
+    }
+    if (brain.qa.length > 0) {
+      brainDirectives += `\nFAQ / RESPONSE DATA (Reference this facts or information if it directly answers parts of the review content):\n${brain.qa.map(q => `- ${q}`).join('\n')}\n`;
+    }
+    if (brain.blacklist.length > 0) {
+      brainDirectives += `\nBLACKLIST / STRICT RULES (NEVER use these words, concepts, or terms in the response. Avoid them entirely):\n${brain.blacklist.map(b => `- ${b}`).join('\n')}\n`;
+    }
+    if (brain.seasonal.length > 0) {
+      brainDirectives += `\nSEASONAL PROMOTIONS (Include reference to these seasonal campaigns if relevant):\n${brain.seasonal.map(s => {
+        try {
+          const parsed = JSON.parse(s);
+          return `- [Campaign: ${parsed.title}] ${parsed.text}`;
+        } catch (e) {
+          return `- ${s}`;
+        }
+      }).join('\n')}\n`;
+    }
+
     const prompt = `You are an expert customer relations manager representing the business "${businessName}". 
 Write a highly personalized, friendly, and very short response to this Google Review.
 
 Reviewer Name: ${author}
 Rating: ${rating} out of 5 stars
 Review Text: "${text || 'No comment provided.'}"
-
+${brainDirectives}
 Guidelines:
 - Keep the response warm and engaging: around 2 to 3 detailed sentences (about 250 to 450 characters).
 - Include 1 or 2 friendly emojis (like 😊, 👍, 🌟, 🙌) to make the message warm.
@@ -550,6 +608,70 @@ Guidelines:
       `[${new Date().toISOString()}] API Error: ${JSON.stringify(errorDetails)}\n`
     );
     res.status(500).json({ error: 'Failed to generate reply via AI.' });
+  }
+});
+
+// GET GMB Brain entries
+router.get('/brain', async (req, res) => {
+  const { clientId } = req.query;
+  if (!clientId) return res.status(400).json({ error: 'clientId is required' });
+  try {
+    const result = await pool.query(
+      'SELECT * FROM mafiya_gmb_brain WHERE client_id = $1 ORDER BY created_at DESC',
+      [clientId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[Mafiya Reviews] GET /brain error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST save/update GMB Brain entry
+router.post('/brain', async (req, res) => {
+  const { id, clientId, entryType, content } = req.body;
+  if (!clientId || !entryType || !content) {
+    return res.status(400).json({ error: 'clientId, entryType, and content are required' });
+  }
+  try {
+    if (id) {
+      const result = await pool.query(
+        `UPDATE mafiya_gmb_brain
+         SET entry_type = $1, content = $2, updated_at = NOW()
+         WHERE id = $3 AND client_id = $4
+         RETURNING *`,
+        [entryType, content, id, clientId]
+      );
+      if (result.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
+      return res.json(result.rows[0]);
+    } else {
+      const result = await pool.query(
+        `INSERT INTO mafiya_gmb_brain (client_id, entry_type, content)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [clientId, entryType, content]
+      );
+      return res.status(201).json(result.rows[0]);
+    }
+  } catch (err) {
+    console.error('[Mafiya Reviews] POST /brain error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// DELETE GMB Brain entry
+router.delete('/brain/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      'DELETE FROM mafiya_gmb_brain WHERE id = $1 RETURNING *',
+      [id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
+    res.json({ message: 'Entry deleted successfully' });
+  } catch (err) {
+    console.error('[Mafiya Reviews] DELETE /brain error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

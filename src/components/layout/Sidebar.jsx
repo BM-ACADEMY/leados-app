@@ -461,6 +461,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                 <NavLink to="/mafiya/loyalty" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Loyalty (Review)')}>
                   <Heart size={14} style={{ marginRight: 8 }} /> Loyalty (Review)
                 </NavLink>
+
+                <NavLink to="/mafiya/brain" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GMB Brain')}>
+                  <Brain size={14} style={{ marginRight: 8 }} /> GMB Brain
+                </NavLink>
               </div>
             )}
           </div>

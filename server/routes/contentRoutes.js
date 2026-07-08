@@ -82,4 +82,30 @@ router.post('/:id/publish-fail', async (req, res) => {
 router.get("/monitors", ctrl.getFolderMonitors);
 router.post("/monitors", ctrl.upsertFolderMonitor);
 
+// Debug endpoint to clean up transcoded video/thumbnail from server disk
+router.post("/debug/delete-transcode", async (req, res) => {
+  const { fileId } = req.body;
+  if (!fileId) return res.status(400).json({ error: 'fileId is required' });
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const uploadsDir = path.join(__dirname, '../uploads');
+    const transcodedPath = path.join(uploadsDir, `transcoded_${fileId}.mp4`);
+    const thumbPath = path.join(uploadsDir, `thumbnail_${fileId}.jpg`);
+    let deletedVideo = false;
+    let deletedThumb = false;
+    if (fs.existsSync(transcodedPath)) {
+      fs.unlinkSync(transcodedPath);
+      deletedVideo = true;
+    }
+    if (fs.existsSync(thumbPath)) {
+      fs.unlinkSync(thumbPath);
+      deletedThumb = true;
+    }
+    res.json({ success: true, deletedVideo, deletedThumb });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -94,7 +94,8 @@ function transcodeVideo(inputPath, outputPath) {
         '-map 0:a?',
         '-c:a aac',
         '-b:a 128k',
-        '-ac 2'
+        '-ac 2',
+        '-movflags +faststart'
       ])
       .output(outputPath)
       .on('end', () => {
@@ -2324,7 +2325,8 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
                   '-b:a 128k',
                   '-pix_fmt yuv420p',
                   '-t 15', // Limit to 15s (standard story duration)
-                  '-shortest'
+                  '-shortest',
+                  '-movflags +faststart'
                 ])
                 .output(outputVideoPath)
                 .on('start', (cmd) => {

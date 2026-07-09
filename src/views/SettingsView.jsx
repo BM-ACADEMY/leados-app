@@ -41,7 +41,7 @@ export const SettingsView = () => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     if (code) {
-      window.location.href = `/admin/content-os/social-connection?code=${code}`;
+      window.location.href = `/admin/content-os/social-connection?code=${code}&via=settings`;
     }
   }, []);
   useEffect(() => {

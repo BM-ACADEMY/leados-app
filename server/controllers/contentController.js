@@ -1720,14 +1720,15 @@ async function publishReelToFacebookWithRetry(pageId, pageAccessToken, { caption
 
 // POST /api/content/meta/callback
 async function handleMetaCallback(req, res) {
-  const { code } = req.body;
+  const { code, redirectUri: reqRedirectUri } = req.body;
   if (!code) {
     return res.status(400).json({ success: false, error: 'Auth code is required' });
   }
 
   const appId = process.env.META_APP_ID || '953749850406150';
   const appSecret = process.env.META_APP_SECRET || 'dSSnlAoUGreiJ61yHAU3kSvJ';
-  const redirectUri = process.env.META_REDIRECT_URI || `${process.env.PORTAL_URL || 'https://leados-app.abmgroups.org'}/settings/meta-callback`;
+  const redirectUri = reqRedirectUri || process.env.META_REDIRECT_URI || `${process.env.PORTAL_URL || 'https://leados-app.abmgroups.org'}/settings/meta-callback`;
+
 
   try {
     console.log(`Exchanging code for short-lived token... redirectUri: ${redirectUri}`);

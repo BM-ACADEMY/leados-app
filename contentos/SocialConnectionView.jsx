@@ -36,6 +36,7 @@ export const SocialConnectionView = () => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
+    const via = params.get('via');
     if (code) {
       setLoadingMeta(true);
       // Clean query params from address bar
@@ -43,7 +44,11 @@ export const SocialConnectionView = () => {
       
       const exchangeCode = async () => {
         try {
-          const res = await api.post('/api/content/meta/callback', { code });
+          const redirectUri = via === 'settings'
+            ? window.location.origin + '/settings'
+            : window.location.origin + '/admin/content-os/social-connection';
+
+          const res = await api.post('/api/content/meta/callback', { code, redirectUri });
           if (res.success && res.accounts) {
             setDiscoveredAccounts(res.accounts);
             alert(`Successfully authenticated with Meta! Discovered ${res.accounts.length} page(s).`);
@@ -66,10 +71,11 @@ export const SocialConnectionView = () => {
       alert('Meta App ID is not configured on the backend. Please add META_APP_ID to your server .env file.');
       return;
     }
-    const redirectUri = window.location.origin + '/settings';
+    const redirectUri = window.location.origin + '/admin/content-os/social-connection';
     const fbUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${metaAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,business_management,public_profile&response_type=code`;
     window.location.href = fbUrl;
   };
+
 
   const handleLinkToBrand = async (brandName, platform, accountName, accountId, facebookPageId, instagramBusinessId, accessToken, expiresAt) => {
     setLinkingBrand(true);

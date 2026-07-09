@@ -8,5 +8,4 @@ export { AIBrainView } from './AIBrainView.jsx';
 export { ReportsView } from './ReportsView.jsx';
 export { ClientsView } from './ClientsView.jsx';
 export { SettingsView } from './SettingsView.jsx';
-export { SocialConnectionView } from './SocialConnectionView.jsx';
 

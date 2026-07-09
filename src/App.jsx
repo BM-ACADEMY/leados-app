@@ -14,7 +14,7 @@ import { AIBrainView } from './views/AIBrainView.jsx';
 import { ReportsView } from './views/ReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
 import { SettingsView } from './views/SettingsView.jsx';
-import { SocialConnectionView } from './views/SocialConnectionView.jsx';
+import { SocialConnectionView } from '../contentos/SocialConnectionView.jsx';
 
 import { AllianceDashboard } from './views/AllianceDashboard.jsx';
 import { UploadLeads } from './views/UploadLeads.jsx';

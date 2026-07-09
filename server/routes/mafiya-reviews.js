@@ -744,7 +744,7 @@ router.delete('/posts/:id', async (req, res) => {
 });
 
 router.post('/posts/generate', async (req, res) => {
-  const { clientId, postType, selectedEntryText, selectedEntryTitle } = req.body;
+  const { clientId, postType, selectedEntryText, selectedEntryTitle, customImagePrompt } = req.body;
   if (!clientId || !postType) {
     return res.status(400).json({ error: 'clientId and postType are required' });
   }
@@ -770,7 +770,8 @@ router.post('/posts/generate', async (req, res) => {
       keyword: [],
       qa: [],
       blacklist: [],
-      seasonal: []
+      seasonal: [],
+      creative_brief: []
     };
     brainRes.rows.forEach(row => {
       const k = (row.entry_type || '').toLowerCase().trim();
@@ -783,6 +784,30 @@ router.post('/posts/generate', async (req, res) => {
     let toneRules = brain.tone.length > 0 ? brain.tone.join(', ') : 'Warm, professional, engaging';
     let blacklistRules = brain.blacklist.length > 0 ? `NEVER use these words: ${brain.blacklist.join(', ')}` : '';
     let keywordRules = brain.keyword.length > 0 ? `Include these terms naturally: ${brain.keyword.join(', ')}` : '';
+
+    // Handle Creative Brief details if available
+    let creativeBriefContext = '';
+    let imageDesignPrompt = '';
+    let dallENegative = '';
+    
+    if (brain.creative_brief && brain.creative_brief.length > 0) {
+      try {
+        const briefData = JSON.parse(brain.creative_brief[0]);
+        creativeBriefContext = `AI Creative Brief Guidelines:
+- Target Audience: ${briefData.targetAudience || 'General'}
+- Core Goal: ${briefData.goal || 'Awareness'}
+- Brand Style: ${briefData.brandStyle || 'Modern'}
+- Color Palette: ${briefData.brandColors || 'Aesthetic colors'}
+- Visual Theme: ${briefData.imageStyle || 'Realistic photography'}
+- Camera Perspective: ${briefData.cameraAngle || 'Front shot'}
+- Lighting: ${briefData.lighting || 'Cinematic lighting'}`;
+        
+        imageDesignPrompt = `Theme colors: ${briefData.brandColors}. Style: ${briefData.brandStyle}. Quality/Look: ${briefData.imageStyle}, using ${briefData.cameraAngle} and ${briefData.lighting}. Make it look like a highly professional, state-of-the-art visual ad suitable for Google Business.`;
+        dallENegative = briefData.negativePrompt ? `, avoid ${briefData.negativePrompt}` : '';
+      } catch (e) {
+        console.error('Error parsing creative brief content:', e);
+      }
+    }
 
     let typeContext = '';
     if (selectedEntryText) {
@@ -813,6 +838,7 @@ ${selectedEntryTitle ? `Title: ${selectedEntryTitle}\n` : ''}Content: ${selected
     const prompt = `You are an expert customer relations and content marketer representing the business "${businessName}" (Phone: ${phoneNumber}).
 We need to generate a Google Business Profile (GMB) local post of type "${postType.toUpperCase()}".
 
+${creativeBriefContext ? `Follow this Brand Strategy:\n${creativeBriefContext}\n` : ''}
 Brand Tone/Voice: ${toneRules}
 ${blacklistRules}
 ${keywordRules}
@@ -866,42 +892,20 @@ Generate a JSON object with exactly these fields:
       };
     }
 
-    // 4. Generate AI Image or Stock Fallback based on selected entry
+    // 4. Generate AI Image using Pollinations.ai (Free, Fast, Keyless, no fallback needed)
     let imageUrl = '';
     try {
-      // Try OpenAI DALL-E image generation
-      const imageRes = await axios.post(
-        'https://api.openai.com/v1/images/generations',
-        {
-          model: 'dall-e-2', // dall-e-2 is faster and more cost-effective
-          prompt: `A vibrant professional graphic banner advertisement for "${businessName}". Theme: "${parsed.posterTitle}". Text description: "${parsed.posterSubtitle}". Marketing flyer, clean modern layout, 3D style.`,
-          n: 1,
-          size: '512x512'
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      imageUrl = imageRes.data?.data?.[0]?.url || '';
-    } catch (err) {
-      // Fallback: match keywords in the selected entry to highly relevant stock photos
-      const textToSearch = ((selectedEntryText || '') + ' ' + (selectedEntryTitle || '')).toLowerCase();
-      if (textToSearch.includes('dental') || textToSearch.includes('clinic') || textToSearch.includes('doctor')) {
-        imageUrl = 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=600&auto=format&fit=crop';
-      } else if (textToSearch.includes('marketing') || textToSearch.includes('digital marketing') || textToSearch.includes('seo')) {
-        imageUrl = 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=600&auto=format&fit=crop';
-      } else if (textToSearch.includes('video') || textToSearch.includes('editing') || textToSearch.includes('youtube')) {
-        imageUrl = 'https://images.unsplash.com/photo-1626814026160-2237a95fc5a0?w=600&auto=format&fit=crop';
-      } else if (textToSearch.includes('full stack') || textToSearch.includes('development') || textToSearch.includes('coding') || textToSearch.includes('python') || textToSearch.includes('javascript')) {
-        imageUrl = 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=600&auto=format&fit=crop';
-      } else if (textToSearch.includes('admission') || textToSearch.includes('academy') || textToSearch.includes('course') || textToSearch.includes('training')) {
-        imageUrl = 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=600&auto=format&fit=crop';
-      } else {
-        imageUrl = 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?w=600&auto=format&fit=crop';
+      // Build visual prompt integrating design instruction brief
+      let dallEPrompt = `A premium advertisement visual poster for "${businessName}". Heading: "${parsed.posterTitle}". Subheading: "${parsed.posterSubtitle}". ${imageDesignPrompt || 'Clean modern ad design, 3D style marketing flyer.'}${dallENegative}`;
+      if (customImagePrompt) {
+        dallEPrompt = `A premium advertisement visual poster for "${businessName}". Heading: "${parsed.posterTitle}". Subheading: "${parsed.posterSubtitle}". Prompt: ${customImagePrompt}`;
       }
+      
+      const encodedPrompt = encodeURIComponent(dallEPrompt);
+      imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
+    } catch (err) {
+      console.error('[Image Generation Error]:', err.message);
+      imageUrl = 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=600&auto=format&fit=crop';
     }
 
     res.json({

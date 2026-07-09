@@ -29,6 +29,7 @@ export default function StreetPosts() {
   const [generatedTitle, setGeneratedTitle] = useState('');
   const [generatedSubtitle, setGeneratedSubtitle] = useState('');
   const [generatedImageUrl, setGeneratedImageUrl] = useState('');
+  const [customImagePrompt, setCustomImagePrompt] = useState('');
 
   const setActiveClient = (client) => {
     setActiveClientState(client);
@@ -138,6 +139,7 @@ export default function StreetPosts() {
         if (cat === 'q&a bank') return type === 'qa' || type === 'q&a bank';
         if (cat === 'offers') return type === 'offer' || type === 'offers';
         if (cat === 'keywords') return type === 'keyword' || type === 'keywords';
+        if (cat === 'creative brief') return type === 'creative_brief';
         return type === cat;
       });
       if (filtered.length > 0) {
@@ -188,7 +190,8 @@ export default function StreetPosts() {
           clientId: activeClient.id,
           postType: selectedCategory,
           selectedEntryText: entryText,
-          selectedEntryTitle: entryTitle
+          selectedEntryTitle: entryTitle,
+          customImagePrompt: customImagePrompt.trim()
         })
       });
 
@@ -300,6 +303,7 @@ export default function StreetPosts() {
     if (cat === 'q&a bank') return type === 'qa' || type === 'q&a bank';
     if (cat === 'offers') return type === 'offer' || type === 'offers';
     if (cat === 'keywords') return type === 'keyword' || type === 'keywords';
+    if (cat === 'creative brief') return type === 'creative_brief';
     return type === cat;
   });
 
@@ -477,6 +481,7 @@ export default function StreetPosts() {
                         <option value="Seasonal">Seasonal</option>
                         <option value="Q&A Bank">Q&A Bank</option>
                         <option value="Keywords">Keywords</option>
+                        <option value="Creative Brief">Creative Brief</option>
                       </select>
                     </div>
 
@@ -505,6 +510,11 @@ export default function StreetPosts() {
                                 const parsed = JSON.parse(entry.content);
                                 labelText = `[${parsed.title}] ${parsed.text}`;
                               } catch(e){}
+                            } else if (selectedCategory.toLowerCase() === 'creative brief') {
+                              try {
+                                const parsed = JSON.parse(entry.content);
+                                labelText = `[Creative Brief] Style: ${parsed.brandStyle}, Colors: ${parsed.brandColors}`;
+                              } catch(e){}
                             }
                             return (
                               <option key={entry.id} value={entry.id}>
@@ -528,12 +538,34 @@ export default function StreetPosts() {
                               const parsed = JSON.parse(selectedEntry.content);
                               return <strong>{parsed.title}: <span style={{ fontWeight: 400 }}>{parsed.text}</span></strong>;
                             } catch(e){}
+                          } else if (selectedCategory.toLowerCase() === 'creative brief') {
+                            try {
+                              const parsed = JSON.parse(selectedEntry.content);
+                              return (
+                                <span>
+                                  <strong>AI Creative Brief Guidelines:</strong><br/>
+                                  • Style: {parsed.brandStyle} ({parsed.brandColors})<br/>
+                                  • Audience: {parsed.targetAudience}<br/>
+                                  • Visuals: {parsed.imageStyle} ({parsed.cameraAngle})
+                                </span>
+                              );
+                            } catch(e){}
                           }
                           return selectedEntry.content;
                         })()}
                       </p>
                     </div>
                   )}
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Custom Image Prompt (Optional overrides Creative Brief visual instructions)</label>
+                    <textarea
+                      placeholder="e.g. Create a dark theme educational poster showing a modern tech office in Pondicherry with students learning AI digital marketing"
+                      value={customImagePrompt}
+                      onChange={(e) => setCustomImagePrompt(e.target.value)}
+                      style={{ width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', color: '#fff', fontSize: 12.5, outline: 'none', resize: 'vertical', minHeight: 60 }}
+                    />
+                  </div>
 
                   <button
                     onClick={handleGenerate}
@@ -594,9 +626,22 @@ export default function StreetPosts() {
                         }}>
                           {/* Header Brand */}
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: 12, fontWeight: 800, color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.6)' }}>
-                              {clientName.substring(0, 24)}
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {activeClient?.logo_url ? (
+                                <img 
+                                  src={activeClient.logo_url} 
+                                  alt="Brand Logo" 
+                                  style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.4)' }}
+                                />
+                              ) : (
+                                <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 'bold', color: '#fff', border: '1px solid rgba(255,255,255,0.2)' }}>
+                                  {clientName.substring(0, 1)}
+                                </div>
+                              )}
+                              <span style={{ fontSize: 12, fontWeight: 800, color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.6)' }}>
+                                {clientName.substring(0, 24)}
+                              </span>
+                            </div>
                             <span style={{ fontSize: 9, fontWeight: 700, background: 'rgba(249,115,22,0.85)', color: '#fff', padding: '3px 8px', borderRadius: 4, textTransform: 'uppercase' }}>
                               {selectedCategory}
                             </span>

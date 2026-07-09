@@ -25,6 +25,16 @@ export default function GmbBrain() {
   const [seasonTitle, setSeasonTitle] = useState('');
   const [editSeasonTitle, setEditSeasonTitle] = useState('');
 
+  // Creative brief fields
+  const [briefTargetAudience, setBriefTargetAudience] = useState('');
+  const [briefGoal, setBriefGoal] = useState('Awareness');
+  const [briefBrandColors, setBriefBrandColors] = useState('');
+  const [briefBrandStyle, setBriefBrandStyle] = useState('Modern');
+  const [briefImageStyle, setBriefImageStyle] = useState('Realistic photography');
+  const [briefCameraAngle, setBriefCameraAngle] = useState('Cinematic front shot');
+  const [briefLighting, setBriefLighting] = useState('Cinematic lighting');
+  const [briefNegativePrompt, setBriefNegativePrompt] = useState('no watermark, no blur, low quality');
+
   // Active tab/filter for the list
   const [activeTab, setActiveTab] = useState('all');
 
@@ -110,7 +120,8 @@ export default function GmbBrain() {
   const handleSaveEntry = async (e) => {
     e.preventDefault();
     if (!activeClient) return;
-    if (!content.trim()) {
+
+    if (entryType !== 'creative_brief' && !content.trim()) {
       toast.error('Please enter content for the brain entry');
       return;
     }
@@ -122,9 +133,23 @@ export default function GmbBrain() {
     setSaving(true);
     try {
       const token = localStorage.getItem('leados_token');
-      const finalContent = entryType === 'seasonal' 
-        ? JSON.stringify({ title: seasonTitle.trim(), text: content.trim() })
-        : content.trim();
+      let finalContent = '';
+      if (entryType === 'seasonal') {
+        finalContent = JSON.stringify({ title: seasonTitle.trim(), text: content.trim() });
+      } else if (entryType === 'creative_brief') {
+        finalContent = JSON.stringify({
+          targetAudience: briefTargetAudience.trim(),
+          goal: briefGoal,
+          brandColors: briefBrandColors.trim(),
+          brandStyle: briefBrandStyle,
+          imageStyle: briefImageStyle.trim(),
+          cameraAngle: briefCameraAngle.trim(),
+          lighting: briefLighting.trim(),
+          negativePrompt: briefNegativePrompt.trim()
+        });
+      } else {
+        finalContent = content.trim();
+      }
 
       const res = await fetch('/api/mafiya/reviews/brain', {
         method: 'POST',
@@ -143,6 +168,9 @@ export default function GmbBrain() {
         toast.success('Saved to brain successfully!');
         setContent('');
         setSeasonTitle('');
+        // reset brief inputs
+        setBriefTargetAudience('');
+        setBriefBrandColors('');
         fetchBrainEntries(activeClient.id);
       } else {
         const err = await res.json();
@@ -224,7 +252,8 @@ export default function GmbBrain() {
     { type: 'keyword', title: 'Keywords', desc: 'Target terms', Icon: Sparkles, color: '#f59e0b' },
     { type: 'qa', title: 'Q&A Bank', desc: 'Questions + answers', Icon: HelpCircle, color: C.blue },
     { type: 'blacklist', title: 'Blacklist', desc: 'Never use words', Icon: ShieldAlert, color: C.red },
-    { type: 'seasonal', title: 'Seasonal', desc: 'Time-based focus', Icon: Calendar, color: C.pink }
+    { type: 'seasonal', title: 'Seasonal', desc: 'Time-based focus', Icon: Calendar, color: C.pink },
+    { type: 'creative_brief', title: 'AI Creative Brief', desc: 'Poster visual styles & rules', Icon: Sparkles, color: C.accent }
   ];
 
   const getBadgeStyle = (type) => {
@@ -235,6 +264,7 @@ export default function GmbBrain() {
       case 'qa': return { background: `${C.blue}22`, color: C.blue, border: `1px solid ${C.blue}44` };
       case 'blacklist': return { background: `${C.red}22`, color: C.red, border: `1px solid ${C.red}44` };
       case 'seasonal': return { background: `${C.pink}22`, color: C.pink, border: `1px solid ${C.pink}44` };
+      case 'creative_brief': return { background: `${C.accent}22`, color: C.accent, border: `1px solid ${C.accent}44` };
       default: return { background: `${C.muted}22`, color: C.text, border: `1px solid ${C.border}` };
     }
   };
@@ -387,6 +417,7 @@ export default function GmbBrain() {
                     <option value="qa">Q&A Bank</option>
                     <option value="blacklist">Blacklist</option>
                     <option value="seasonal">Seasonal</option>
+                    <option value="creative_brief">AI Creative Brief</option>
                   </select>
                 </div>
 
@@ -403,22 +434,64 @@ export default function GmbBrain() {
                   </div>
                 )}
 
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                  <label style={{ display: 'block', fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Content</label>
-                  <textarea
-                    placeholder={
-                      entryType === 'tone' ? "e.g. Friendly Tamil-English mix. Warm, confident. Never stiff formal English." :
-                      entryType === 'offer' ? "e.g. Free demo class every Saturday 11AM. Digital Marketing course Rs.8,999." :
-                      entryType === 'keyword' ? "e.g. digital marketing course Pondicherry, social media training" :
-                      entryType === 'qa' ? "e.g. Q: What is the fee? A: Courses start from Rs.4,999." :
-                      entryType === 'blacklist' ? "e.g. cheap - low-cost - discount — instead use: affordable" :
-                      "e.g. Summer special campaign, focus on high school graduates."
-                    }
-                    value={content}
-                    onChange={(e) => setContent(e.target.value)}
-                    style={{ width: '100%', flex: 1, minHeight: 120, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, color: '#fff', fontSize: 13, outline: 'none', resize: 'vertical', lineHeight: 1.6 }}
-                  />
-                </div>
+                {entryType === 'creative_brief' ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 300, overflowY: 'auto', paddingRight: 4 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, color: C.muted, fontWeight: 700, marginBottom: 4 }}>Target Audience</label>
+                      <input type="text" placeholder="e.g. College students, local homeowners" value={briefTargetAudience} onChange={(e) => setBriefTargetAudience(e.target.value)} style={{ width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, color: C.muted, fontWeight: 700, marginBottom: 4 }}>Poster Goal</label>
+                      <select value={briefGoal} onChange={(e) => setBriefGoal(e.target.value)} style={{ width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }}>
+                        <option value="Lead">Lead Generation</option>
+                        <option value="Awareness">Brand Awareness</option>
+                        <option value="Offer">Special Offers & Sales</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, color: C.muted, fontWeight: 700, marginBottom: 4 }}>Brand Style</label>
+                      <select value={briefBrandStyle} onChange={(e) => setBriefBrandStyle(e.target.value)} style={{ width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }}>
+                        <option value="Modern">Modern</option>
+                        <option value="Luxury">Luxury</option>
+                        <option value="Premium">Premium</option>
+                        <option value="Minimal">Minimalist</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, color: C.muted, fontWeight: 700, marginBottom: 4 }}>Brand Theme Colors</label>
+                      <input type="text" placeholder="e.g. Black and Gold, Teal and White" value={briefBrandColors} onChange={(e) => setBriefBrandColors(e.target.value)} style={{ width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, color: C.muted, fontWeight: 700, marginBottom: 4 }}>Image / Photo Style</label>
+                      <input type="text" placeholder="e.g. Realistic photography, 3D render illustration" value={briefImageStyle} onChange={(e) => setBriefImageStyle(e.target.value)} style={{ width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, color: C.muted, fontWeight: 700, marginBottom: 4 }}>Camera Angle & Lighting</label>
+                      <input type="text" placeholder="e.g. Cinematic front shot, warm studio light" value={briefCameraAngle} onChange={(e) => setBriefCameraAngle(e.target.value)} style={{ width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, color: C.muted, fontWeight: 700, marginBottom: 4 }}>Negative Prompt (What to Avoid)</label>
+                      <input type="text" placeholder="e.g. no watermark, no text in background, no blur" value={briefNegativePrompt} onChange={(e) => setBriefNegativePrompt(e.target.value)} style={{ width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }} />
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                    <label style={{ display: 'block', fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Content</label>
+                    <textarea
+                      placeholder={
+                        entryType === 'tone' ? "e.g. Friendly Tamil-English mix. Warm, confident. Never stiff formal English." :
+                        entryType === 'offer' ? "e.g. Free demo class every Saturday 11AM. Digital Marketing course Rs.8,999." :
+                        entryType === 'keyword' ? "e.g. digital marketing course Pondicherry, social media training" :
+                        entryType === 'qa' ? "e.g. Q: What is the fee? A: Courses start from Rs.4,999." :
+                        entryType === 'blacklist' ? "e.g. cheap - low-cost - discount — instead use: affordable" :
+                        "e.g. Summer special campaign, focus on high school graduates."
+                      }
+                      value={content}
+                      onChange={(e) => setContent(e.target.value)}
+                      style={{ width: '100%', flex: 1, minHeight: 120, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, color: '#fff', fontSize: 13, outline: 'none', resize: 'vertical', lineHeight: 1.6 }}
+                    />
+                  </div>
+                )}
 
                 <button
                   type="submit"
@@ -542,6 +615,27 @@ export default function GmbBrain() {
                                 <p style={{ fontSize: 13, color: '#cbd5e1', margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
                                   {text}
                                 </p>
+                              </div>
+                            );
+                          })() : entry.entry_type === 'creative_brief' ? (() => {
+                            let briefData = {};
+                            try {
+                              briefData = JSON.parse(entry.content);
+                            } catch (e) {}
+                            return (
+                              <div>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                                  AI Prompt Builder Guidelines
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: 12, color: '#94a3b8' }}>
+                                  <div><strong>Target Audience:</strong> {briefData.targetAudience || 'Any'}</div>
+                                  <div><strong>Goal:</strong> {briefData.goal || 'Awareness'}</div>
+                                  <div><strong>Colors:</strong> {briefData.brandColors || 'Any'}</div>
+                                  <div><strong>Style:</strong> {briefData.brandStyle || 'Modern'}</div>
+                                  <div><strong>Visual Style:</strong> {briefData.imageStyle || 'Realistic'}</div>
+                                  <div><strong>Angle/Lighting:</strong> {briefData.cameraAngle} / {briefData.lighting}</div>
+                                  <div style={{ gridColumn: 'span 2' }}><strong>Negative Prompt:</strong> {briefData.negativePrompt || 'None'}</div>
+                                </div>
                               </div>
                             );
                           })() : (

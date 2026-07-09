@@ -2073,22 +2073,6 @@ cron.schedule('*/5 * * * *', async () => {
   }
 });
 
-// ── SERVE FRONTEND BUILD (Production) ────────────────────
-// When deployed, serve the Vite-built React app from ../dist.
-// All API routes above take priority; this fallback catches client-side routes.
-const DIST_DIR = path.join(__dirname, '..', 'dist');
-if (fs.existsSync(DIST_DIR)) {
-  app.use(express.static(DIST_DIR));
-  app.get('*', (req, res) => {
-    // Don't catch API or webhook routes — those 404 on their own
-    if (req.path.startsWith('/api/') || req.path.startsWith('/webhook/') || req.path.startsWith('/socket.io/') || req.path.startsWith('/uploads/')) {
-      return res.status(404).json({ error: 'Not found' });
-    }
-    res.sendFile(path.join(DIST_DIR, 'index.html'));
-  });
-  console.log(`[Static] Serving frontend from ${DIST_DIR}`);
-}
-
 // ── START ─────────────────────────────────────────────────
 httpServer.listen(PORT, () => {
   console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);

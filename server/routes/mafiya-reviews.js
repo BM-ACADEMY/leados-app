@@ -23,6 +23,7 @@ pool.query(`
   );
   ALTER TABLE mafiya_gmb_clients ADD COLUMN IF NOT EXISTS reviews_cache TEXT;
   ALTER TABLE mafiya_gmb_clients ADD COLUMN IF NOT EXISTS reviews_updated_at TIMESTAMP;
+  ALTER TABLE mafiya_gmb_clients ADD COLUMN IF NOT EXISTS logo_url TEXT;
 
   CREATE TABLE IF NOT EXISTS mafiya_gmb_brain (
     id           SERIAL PRIMARY KEY,
@@ -32,6 +33,20 @@ pool.query(`
     created_at   TIMESTAMP DEFAULT NOW(),
     updated_at   TIMESTAMP DEFAULT NOW()
   );
+
+  CREATE TABLE IF NOT EXISTS mafiya_gmb_posts (
+    id             SERIAL PRIMARY KEY,
+    client_id      INTEGER REFERENCES mafiya_gmb_clients(id) ON DELETE CASCADE,
+    post_type      VARCHAR(50) NOT NULL,
+    caption        TEXT NOT NULL,
+    poster_title   VARCHAR(255),
+    poster_subtitle VARCHAR(255),
+    bg_theme       VARCHAR(50) DEFAULT 'orange',
+    status         VARCHAR(50) DEFAULT 'draft',
+    image_url      TEXT,
+    created_at     TIMESTAMP DEFAULT NOW()
+  );
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS image_url TEXT;
 `).catch(err => console.error('[Mafiya Reviews] Schema migration failed:', err));
 
 // Helper to refresh client token
@@ -672,6 +687,232 @@ router.delete('/brain/:id', async (req, res) => {
   } catch (err) {
     console.error('[Mafiya Reviews] DELETE /brain error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET GMB Posts for a client
+router.get('/posts', async (req, res) => {
+  const { clientId } = req.query;
+  if (!clientId) return res.status(400).json({ error: 'clientId is required' });
+  try {
+    const result = await pool.query(
+      'SELECT * FROM mafiya_gmb_posts WHERE client_id = $1 ORDER BY created_at DESC',
+      [clientId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[Mafiya Reviews] GET /posts error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST save a GMB Post (draft or published)
+router.post('/posts', async (req, res) => {
+  const { clientId, postType, caption, posterTitle, posterSubtitle, bgTheme, status, imageUrl } = req.body;
+  if (!clientId || !postType || !caption) {
+    return res.status(400).json({ error: 'clientId, postType, and caption are required' });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO mafiya_gmb_posts 
+        (client_id, post_type, caption, poster_title, poster_subtitle, bg_theme, status, image_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [clientId, postType, caption, posterTitle, posterSubtitle, bgTheme || 'orange', status || 'draft', imageUrl]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('[Mafiya Reviews] POST /posts error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// DELETE a GMB Post
+router.delete('/posts/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      'DELETE FROM mafiya_gmb_posts WHERE id = $1 RETURNING *',
+      [id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Post not found' });
+    res.json({ message: 'Post deleted successfully' });
+  } catch (err) {
+    console.error('[Mafiya Reviews] DELETE /posts error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/posts/generate', async (req, res) => {
+  const { clientId, postType, selectedEntryText, selectedEntryTitle } = req.body;
+  if (!clientId || !postType) {
+    return res.status(400).json({ error: 'clientId and postType are required' });
+  }
+
+  try {
+    // 1. Fetch GMB Client details
+    const clientRes = await pool.query(
+      'SELECT business_name, phone_number FROM mafiya_gmb_clients WHERE id = $1',
+      [clientId]
+    );
+    if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
+    const { business_name: businessName, phone_number: phoneNumber } = clientRes.rows[0];
+
+    // 2. Fetch AI Brain entries
+    const brainRes = await pool.query(
+      'SELECT entry_type, content FROM mafiya_gmb_brain WHERE client_id = $1',
+      [clientId]
+    );
+
+    const brain = {
+      tone: [],
+      offer: [],
+      keyword: [],
+      qa: [],
+      blacklist: [],
+      seasonal: []
+    };
+    brainRes.rows.forEach(row => {
+      const k = (row.entry_type || '').toLowerCase().trim();
+      // Map frontend category names to DB types
+      const mappedKey = k === 'offers' ? 'offer' : k === 'q&a bank' ? 'qa' : k === 'keywords' ? 'keyword' : k;
+      if (brain[mappedKey]) brain[mappedKey].push(row.content);
+    });
+
+    // 3. Select directives based on type
+    let toneRules = brain.tone.length > 0 ? brain.tone.join(', ') : 'Warm, professional, engaging';
+    let blacklistRules = brain.blacklist.length > 0 ? `NEVER use these words: ${brain.blacklist.join(', ')}` : '';
+    let keywordRules = brain.keyword.length > 0 ? `Include these terms naturally: ${brain.keyword.join(', ')}` : '';
+
+    let typeContext = '';
+    if (selectedEntryText) {
+      typeContext = `Based on this specific entry from our brand's AI Brain [Category: ${postType}]:
+${selectedEntryTitle ? `Title: ${selectedEntryTitle}\n` : ''}Content: ${selectedEntryText}`;
+    } else {
+      if (postType === 'offers' && brain.offer.length > 0) {
+        typeContext = `Here are active offers: \n${brain.offer.map(o => `- ${o}`).join('\n')}`;
+      } else if (postType === 'seasonal' && brain.seasonal.length > 0) {
+        typeContext = `Here are seasonal focal campaigns: \n${brain.seasonal.map(s => {
+          try {
+            const parsed = JSON.parse(s);
+            return `- Campaign [${parsed.title}]: ${parsed.text}`;
+          } catch (e) {
+            return `- ${s}`;
+          }
+        }).join('\n')}`;
+      } else if (postType === 'qa' && brain.qa.length > 0) {
+        typeContext = `Here are Q&As / facts: \n${brain.qa.map(q => `- ${q}`).join('\n')}`;
+      } else {
+        typeContext = `Active offers: ${brain.offer.slice(0,2).join('; ') || 'None'}\nQ&A Info: ${brain.qa.slice(0,2).join('; ') || 'None'}`;
+      }
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'OPENAI_API_KEY is not configured.' });
+
+    const prompt = `You are an expert customer relations and content marketer representing the business "${businessName}" (Phone: ${phoneNumber}).
+We need to generate a Google Business Profile (GMB) local post of type "${postType.toUpperCase()}".
+
+Brand Tone/Voice: ${toneRules}
+${blacklistRules}
+${keywordRules}
+
+Context Data (incorporate this info):
+${typeContext}
+
+Generate a JSON object with exactly these fields:
+1. "caption": A search-optimized GMB post caption (about 80 to 120 words). It should contain a clear call-to-action (e.g. Call us at ${phoneNumber}!).
+2. "posterTitle": A short, catchy title text optimized for a flyer/poster (max 3-4 words, uppercase, e.g. "SPECIAL OFFER!" or "JOIN NOW!").
+3. "posterSubtitle": A short subtitle highlighting the key benefit (max 5-7 words, e.g. "100% Placement Course Support").
+
+**CRITICAL**: Return ONLY the raw JSON block. Do not include markdown code block syntax (like \`\`\`json) or any wrapping text. Respond with pure JSON.`;
+
+    const chatRes = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'user', content: prompt }
+        ]
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    let rawOutput = chatRes.data?.choices?.[0]?.message?.content?.trim() || '';
+    
+    // Clean code fences if LLM ignored instructions
+    if (rawOutput.startsWith('```')) {
+      rawOutput = rawOutput.replace(/^```(json)?/, '').replace(/```$/, '').trim();
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(rawOutput);
+    } catch (e) {
+      console.warn('[Mafiya Posts] AI returned invalid JSON:', rawOutput);
+      const capMatch = rawOutput.match(/"caption":\s*"([^"]+)"/);
+      const titleMatch = rawOutput.match(/"posterTitle":\s*"([^"]+)"/);
+      const subMatch = rawOutput.match(/"posterSubtitle":\s*"([^"]+)"/);
+
+      parsed = {
+        caption: capMatch ? capMatch[1] : `Visit ${businessName} today! Call us at ${phoneNumber}.`,
+        posterTitle: titleMatch ? titleMatch[1] : 'Special Announcement',
+        posterSubtitle: subMatch ? subMatch[1] : 'Contact us for details'
+      };
+    }
+
+    // 4. Generate AI Image or Stock Fallback based on selected entry
+    let imageUrl = '';
+    try {
+      // Try OpenAI DALL-E image generation
+      const imageRes = await axios.post(
+        'https://api.openai.com/v1/images/generations',
+        {
+          model: 'dall-e-2', // dall-e-2 is faster and more cost-effective
+          prompt: `A vibrant professional graphic banner advertisement for "${businessName}". Theme: "${parsed.posterTitle}". Text description: "${parsed.posterSubtitle}". Marketing flyer, clean modern layout, 3D style.`,
+          n: 1,
+          size: '512x512'
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      imageUrl = imageRes.data?.data?.[0]?.url || '';
+    } catch (err) {
+      // Fallback: match keywords in the selected entry to highly relevant stock photos
+      const textToSearch = ((selectedEntryText || '') + ' ' + (selectedEntryTitle || '')).toLowerCase();
+      if (textToSearch.includes('dental') || textToSearch.includes('clinic') || textToSearch.includes('doctor')) {
+        imageUrl = 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=600&auto=format&fit=crop';
+      } else if (textToSearch.includes('marketing') || textToSearch.includes('digital marketing') || textToSearch.includes('seo')) {
+        imageUrl = 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=600&auto=format&fit=crop';
+      } else if (textToSearch.includes('video') || textToSearch.includes('editing') || textToSearch.includes('youtube')) {
+        imageUrl = 'https://images.unsplash.com/photo-1626814026160-2237a95fc5a0?w=600&auto=format&fit=crop';
+      } else if (textToSearch.includes('full stack') || textToSearch.includes('development') || textToSearch.includes('coding') || textToSearch.includes('python') || textToSearch.includes('javascript')) {
+        imageUrl = 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=600&auto=format&fit=crop';
+      } else if (textToSearch.includes('admission') || textToSearch.includes('academy') || textToSearch.includes('course') || textToSearch.includes('training')) {
+        imageUrl = 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=600&auto=format&fit=crop';
+      } else {
+        imageUrl = 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?w=600&auto=format&fit=crop';
+      }
+    }
+
+    res.json({
+      caption: parsed.caption,
+      posterTitle: parsed.posterTitle,
+      posterSubtitle: parsed.posterSubtitle,
+      imageUrl
+    });
+  } catch (err) {
+    console.error('[Mafiya Posts] Generate AI error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to generate post content.' });
   }
 });
 

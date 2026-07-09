@@ -3,7 +3,7 @@ import { C } from '../../constants/theme.js';
 import { 
   Loader2, MapPin, Star, MessageCircle, Eye, Search, 
   MousePointerClick, CheckCircle, Megaphone, Send, LogOut,
-  Image as ImageIcon, Shield, Sparkles, AlertTriangle, RefreshCw
+  Image as ImageIcon, Shield, Sparkles, AlertTriangle, RefreshCw, Heart
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -269,8 +269,11 @@ export default function Loyalty() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: C.background }}>
-        <Loader2 size={32} color={C.accent} className="spin" />
+      <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.text }}>
+        <div style={{ textAlign: 'center' }}>
+          <Heart size={42} className="animate-pulse" style={{ color: C.accent, marginBottom: 12 }} />
+          <p style={{ fontSize: 14 }}>Loading Loyalty & Reviews...</p>
+        </div>
       </div>
     );
   }

@@ -25,6 +25,7 @@ router.post('/', async (req, res) => {
     website_url,
     gmb_url,
     gmb_email,
+    logo_url,
   } = req.body;
 
   if (!business_name || !contact_person || !phone_number) {
@@ -34,10 +35,10 @@ router.post('/', async (req, res) => {
   try {
     const result = await pool.query(
       `INSERT INTO mafiya_gmb_clients
-        (business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email]
+      [business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url]
     );
 
     const savedClient = result.rows[0];
@@ -68,6 +69,7 @@ router.put('/:id', async (req, res) => {
     website_url,
     gmb_url,
     gmb_email,
+    logo_url,
   } = req.body;
 
   if (!business_name || !contact_person || !phone_number) {
@@ -77,10 +79,10 @@ router.put('/:id', async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE mafiya_gmb_clients
-       SET business_name = $1, business_category = $2, custom_category = $3, contact_person = $4, phone_number = $5, website_url = $6, gmb_url = $7, gmb_email = $8
-       WHERE id = $9
+       SET business_name = $1, business_category = $2, custom_category = $3, contact_person = $4, phone_number = $5, website_url = $6, gmb_url = $7, gmb_email = $8, logo_url = $9
+       WHERE id = $10
        RETURNING *`,
-      [business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, id]
+      [business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, id]
     );
 
     if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });

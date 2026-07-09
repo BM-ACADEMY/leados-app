@@ -28,6 +28,7 @@ const INITIAL_FORM = {
   website_url: '',
   gmb_url: '',
   gmb_email: '',
+  logo_url: '',
 };
 
 export default function AddClient() {
@@ -58,6 +59,7 @@ export default function AddClient() {
       website_url: client.website_url || '',
       gmb_url: client.gmb_url || '',
       gmb_email: client.gmb_email || '',
+      logo_url: client.logo_url || '',
     });
     setShowOtherCategory(!categoryExists && client.business_category !== '');
     setErrors({});
@@ -279,6 +281,17 @@ export default function AddClient() {
   const inputWrapStyle = { display: 'flex', alignItems: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '0 12px' };
   const labelStyle = { display: 'block', fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: 'uppercase' };
 
+  if (isLoading) {
+    return (
+      <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.text }}>
+        <div style={{ textAlign: 'center' }}>
+          <Users size={42} className="animate-pulse" style={{ color: C.accent, marginBottom: 12 }} />
+          <p style={{ fontSize: 14 }}>Loading GMB Clients...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: 30, color: C.text, height: '100%', overflowY: 'auto', background: 'rgba(0,0,0,0.1)' }}>
 
@@ -319,11 +332,7 @@ export default function AddClient() {
       )}
 
       {/* ═══ Client Cards ═══ */}
-      {isLoading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
-          <Loader2 size={28} color={C.accent} className="spin" />
-        </div>
-      ) : filteredClients.length === 0 ? (
+      {filteredClients.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '80px 20px' }}>
           <Users size={48} color={C.border} style={{ marginBottom: 16 }} />
           <p style={{ color: C.muted, fontSize: 14, margin: 0 }}>
@@ -639,6 +648,13 @@ export default function AddClient() {
                       <input name="gmb_email" value={formData.gmb_email} onChange={handleInputChange} placeholder="E.g. owner@gmail.com" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
                     </div>
                     {errors.gmb_email && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.gmb_email}</span>}
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Business Logo URL</label>
+                    <div style={{ ...inputWrapStyle, border: `1px solid ${C.border}` }}>
+                      <Globe size={15} color={C.muted} />
+                      <input name="logo_url" value={formData.logo_url} onChange={handleInputChange} placeholder="E.g. https://domain.com/logo.png" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
+                    </div>
                   </div>
                 </div>
               </div>

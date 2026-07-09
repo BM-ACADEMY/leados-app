@@ -43,6 +43,11 @@ import LocalSeoBridge from './views/thedal/LocalSeoBridge.jsx';
 import PlanManagement from './views/thedal/PlanManagement.jsx';
 import PlanSubscription from './views/thedal/PlanSubscription.jsx';
 import { ClientProvider } from './contexts/ClientContext.jsx';
+import AddClientMafiya from './views/mafiya/AddClient.jsx';
+import LoyaltyMafiya from './views/mafiya/Loyalty.jsx';
+import GmbBrain from './views/mafiya/GmbBrain.jsx';
+import StreetPosts from './views/mafiya/StreetPosts.jsx';
+import GbpInsights from './views/mafiya/GbpInsights.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -160,6 +165,12 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
               <Route path="/thedal/backlink-tracker" element={<BacklinkTracker />} />
               <Route path="/thedal/local-citations" element={<LocalCitations />} />
               <Route path="/thedal/local-seo-bridge" element={<LocalSeoBridge />} />
+
+              <Route path="/mafiya/add-client" element={<AddClientMafiya />} />
+              <Route path="/mafiya/loyalty" element={<LoyaltyMafiya />} />
+              <Route path="/mafiya/brain" element={<GmbBrain />} />
+              <Route path="/mafiya/street-posts" element={<StreetPosts />} />
+              <Route path="/mafiya/gbp-insights" element={<GbpInsights />} />
 
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>

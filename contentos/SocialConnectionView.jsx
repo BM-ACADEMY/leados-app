@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Share2, Link as LinkIcon, CheckCircle, AlertTriangle, ShieldCheck, Loader2 } from 'lucide-react';
-import { C } from '../constants/theme.js';
-import { api } from '../services/api.js';
+import { C } from '../src/constants/theme.js';
+import { api } from '../src/services/api.js';
+
 
 export const SocialConnectionView = () => {
   const [discoveredAccounts, setDiscoveredAccounts] = useState([]);
@@ -97,7 +98,7 @@ export const SocialConnectionView = () => {
   };
 
   return (
-    <div style={{ padding: '24px clamp(12px, 4vw, 36px)', background: C.background, minHeight: '100%', overflowY: 'auto' }}>
+    <div className="p-mobile" style={{ padding: '24px clamp(12px, 4vw, 36px)', background: C.background, height: '100%', overflowY: 'auto' }}>
       <div style={{ maxWidth: 840, margin: '0 auto' }}>
         
         {/* Header */}
@@ -242,7 +243,9 @@ export const SocialConnectionView = () => {
                       padding: '12px 16px',
                       display: 'flex',
                       justifyContent: 'space-between',
-                      alignItems: 'center'
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 12
                     }}
                   >
                     <div>

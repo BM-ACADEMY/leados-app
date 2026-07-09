@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || '';
 import { C } from '../../constants/theme.js';
 import { 
   Loader2, MapPin, Star, MessageCircle, Eye, Search, 
@@ -156,23 +159,17 @@ export default function Loyalty() {
   const fetchClients = async () => {
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/clients`, {
+      const { data: clientsData } = await axios.get(`${API_URL}/api/mafiya/clients`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const clientsData = await res.json();
-        setClients(clientsData);
-        if (clientsData.length > 0) {
-          setActiveClient(clientsData[0]);
-        }
-        setLoading(false);
-      } else {
-        toast.error('Failed to load GMB clients (Server responded with error)');
-        setLoading(false);
+      setClients(clientsData);
+      if (clientsData.length > 0) {
+        setActiveClient(clientsData[0]);
       }
     } catch (err) {
       console.error('Fetch clients error:', err);
       toast.error('Failed to load GMB clients');
+    } finally {
       setLoading(false);
     }
   };

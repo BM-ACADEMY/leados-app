@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || '';
 import { C } from '../../constants/theme.js';
 import { 
   Loader2, TrendingUp, TrendingDown, Minus, RefreshCw, 
@@ -37,17 +40,14 @@ export default function KeywordTracking() {
   const fetchClients = async () => {
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/clients`, {
+      const { data } = await axios.get(`${API_URL}/api/mafiya/clients`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setClients(data);
-        if (data.length > 0) {
-          setActiveClient(data[0]); // Default to first client
-        } else {
-          setLoading(false);
-        }
+      setClients(data);
+      if (data.length > 0) {
+        setActiveClient(data[0]); // Default to first client
+      } else {
+        setLoading(false);
       }
     } catch (err) {
       console.error('Fetch clients error:', err);

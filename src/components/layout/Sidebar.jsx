@@ -462,6 +462,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                   <Heart size={14} style={{ marginRight: 8 }} /> Loyalty (Review)
                 </NavLink>
 
+                <NavLink to="/mafiya/gbp-insights" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GBP Insights')}>
+                  <BarChart2 size={14} style={{ marginRight: 8 }} /> GBP Insights
+                </NavLink>
+                
                 <NavLink to="/mafiya/street-posts" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Street Posts')}>
                   <Megaphone size={14} style={{ marginRight: 8 }} /> Street Posts
                 </NavLink>
@@ -469,6 +473,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                 <NavLink to="/mafiya/brain" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GMB Brain')}>
                   <Brain size={14} style={{ marginRight: 8 }} /> GMB Brain
                 </NavLink>
+
               </div>
             )}
           </div>

@@ -144,10 +144,12 @@ const mafiyaClientsRoutes = require('./routes/mafiya-clients');
 const { router: mafiyaGmbRoutes, handleGoogleCallback } = require('./routes/mafiya-gmb');
 const mafiyaTurfRoutes = require('./routes/mafiya-turf');
 const mafiyaReviewsRoutes = require('./routes/mafiya-reviews');
+const mafiyaInsightsRoutes = require('./routes/mafiya-insights');
 app.use('/api/mafiya/clients', auth, mafiyaClientsRoutes);
 app.use('/api/mafiya/gmb', mafiyaGmbRoutes); // No auth — email links are clicked by external clients
 app.use('/api/mafiya/turf', auth, mafiyaTurfRoutes);
 app.use('/api/mafiya/reviews', auth, mafiyaReviewsRoutes);
+app.use('/api/mafiya/insights', auth, mafiyaInsightsRoutes);
 app.get('/api/auth/google/callback', handleGoogleCallback); // Map the standard OAuth callback to Mafiya GMB handler
 
 

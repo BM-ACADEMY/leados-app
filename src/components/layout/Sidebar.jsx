@@ -274,6 +274,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                 <NavLink to="/admin/content-os/approval" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
                   <CheckSquare size={14} style={{ marginRight: 8 }} /> Approval Dashboard
                 </NavLink>
+
+                <NavLink to="/admin/content-os/social-connection" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Share2 size={14} style={{ marginRight: 8 }} /> Social Connections
+                </NavLink>
               </div>
             )}
           </div>

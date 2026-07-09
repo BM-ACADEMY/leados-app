@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || '';
 import { C } from '../../constants/theme.js';
 import {
   BarChart2, Phone, Navigation, Globe, Search, RefreshCw,
@@ -295,22 +298,19 @@ export default function GbpInsights() {
     const fetchClients = async () => {
       try {
         const token = localStorage.getItem('leados_token');
-        const res = await fetch('/api/mafiya/clients', {
+        const { data: list } = await axios.get(`${API_URL}/api/mafiya/clients`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (res.ok) {
-          const list = await res.json();
-          setClients(list);
-          const saved = localStorage.getItem('activeGmbClient');
-          if (saved) {
-            try {
-              const parsed = JSON.parse(saved);
-              const match = list.find(c => c.id === parsed.id);
-              if (match) { setActiveClientState(match); return; }
-            } catch (_) {}
-          }
-          if (list.length > 0) setActiveClientState(list[0]);
+        setClients(list);
+        const saved = localStorage.getItem('activeGmbClient');
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            const match = list.find(c => c.id === parsed.id);
+            if (match) { setActiveClientState(match); return; }
+          } catch (_) {}
         }
+        if (list.length > 0) setActiveClientState(list[0]);
       } catch (e) {
         console.error('[GbpInsights] Clients fetch error:', e);
       }

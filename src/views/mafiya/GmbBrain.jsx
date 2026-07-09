@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || '';
 import { C } from '../../constants/theme.js';
 import { 
   Brain, Plus, Trash2, Edit2, Check, X, Sparkles, 
@@ -51,29 +54,24 @@ export default function GmbBrain() {
   const fetchClients = async () => {
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/clients`, {
+      const { data: clientsData } = await axios.get(`${API_URL}/api/mafiya/clients`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const clientsData = await res.json();
-        setClients(clientsData);
-        if (clientsData.length > 0) {
-          const savedGmbClient = localStorage.getItem('activeGmbClient');
-          if (savedGmbClient) {
-            try {
-              const parsed = JSON.parse(savedGmbClient);
-              const found = clientsData.find(c => c.id === parsed.id);
-              if (found) {
-                setActiveClient(found);
-                setLoading(false);
-                return;
-              }
-            } catch (e) {}
-          }
-          setActiveClient(clientsData[0]);
+      setClients(clientsData);
+      if (clientsData.length > 0) {
+        const savedGmbClient = localStorage.getItem('activeGmbClient');
+        if (savedGmbClient) {
+          try {
+            const parsed = JSON.parse(savedGmbClient);
+            const found = clientsData.find(c => c.id === parsed.id);
+            if (found) {
+              setActiveClient(found);
+              setLoading(false);
+              return;
+            }
+          } catch (e) {}
         }
-      } else {
-        toast.error('Failed to load GMB clients');
+        setActiveClient(clientsData[0]);
       }
     } catch (err) {
       console.error('Fetch clients error:', err);

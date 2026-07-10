@@ -732,8 +732,13 @@ router.post('/posts', async (req, res) => {
         const filepath = path.join(uploadDir, filename);
         fs.writeFileSync(filepath, base64Data, 'base64');
         
-        const portalUrl = process.env.PORTAL_URL || 'https://leados-app.abmgroups.org';
-        finalImageUrl = `${portalUrl}/uploads/gmb_posts/${filename}`;
+        // Dynamically get the exact API domain that this request came from (e.g. leados-api.abmgroups.org)
+        const host = req.headers['x-forwarded-host'] || req.headers.host || 'leados-api.abmgroups.org';
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+        const apiUrl = `${protocol}://${host}`;
+        
+        // Use a dedicated dynamic API route to serve the image, bypassing Nginx static file intercepts
+        finalImageUrl = `${apiUrl}/api/mafiya/reviews/image/${filename}`;
       } catch (err) {
         console.error('[Mafiya Reviews] Failed to process base64 image:', err);
         // Fallback to the original base64 string if it fails
@@ -789,9 +794,19 @@ router.post('/posts', async (req, res) => {
         
         // Add image (Google requires a public URL, so base64 won't work natively without upload)
         if (finalImageUrl && finalImageUrl.startsWith('http')) {
+            // Automatically detect if running on local Windows PC vs Live Ubuntu Server
+            const isLocalWindows = __dirname.includes(':\\') || __dirname.includes('Desktop');
+            const googleImageUrl = isLocalWindows 
+              ? 'https://picsum.photos/600/400' // Use dummy public image for local testing
+              : finalImageUrl; // Use actual image on live server
+
+            console.log(`[GMB API Debug] Local OS detected? ${isLocalWindows}`);
+            console.log(`[GMB API Debug] finalImageUrl saved to DB: ${finalImageUrl}`);
+            console.log(`[GMB API Debug] googleImageUrl sent to API: ${googleImageUrl}`);
+
             gmbPostBody.media = [{
                 mediaFormat: 'PHOTO',
-                sourceUrl: finalImageUrl
+                sourceUrl: googleImageUrl
             }];
         }
 

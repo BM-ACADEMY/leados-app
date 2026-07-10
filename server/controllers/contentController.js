@@ -284,7 +284,8 @@ async function fetchDriveVideoName(url) {
 // Columns the dashboard needs. Keep in sync with the JSX.
 const CONTENT_COLUMNS = `
   id, brand_name, file_name, video_url, public_video_url, thumbnail_url,
-  caption, x_caption, linkedin_caption, thumbnail_title,
+  caption, instagram_caption, facebook_caption, x_caption, linkedin_caption, 
+  youtube_title, youtube_description, thumbnail_title,
   story_1, story_2, story_3,
   platforms, selected_accounts, scheduled_at, status,
   approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
@@ -449,7 +450,8 @@ async function updateContent(req, res) {
   const { id } = req.params;
   console.log(`[updateContent] Received update request for ID ${id}. Body:`, JSON.stringify(req.body));
   const allowed = [
-    "caption", "x_caption", "linkedin_caption", "thumbnail_title", "scheduled_at",
+    "caption", "instagram_caption", "facebook_caption", "x_caption", "linkedin_caption",
+    "youtube_title", "youtube_description", "thumbnail_title", "scheduled_at",
     "platforms", "selected_channels", "selected_accounts", "video_url", "public_video_url", "description", "hashtags",
     "thumbnail_options", "key_moments", "thumbnail_url", "brand_id", "video_name", "status",
     "story_1", "story_2", "story_3"
@@ -637,17 +639,21 @@ ${inferredTopic}
 
 Generate ONE caption for EACH of these platforms: ${platformList}.
 
-Rules:
-- For Instagram / Facebook: Use emojis, Tanglish (Tamil-English mix) where the brand voice guide indicates, strong hook + CTA. 3-5 lines.
-- For LinkedIn: Professional, no excessive emojis, English. 2-4 lines.
-- For X (Twitter): Punchy, under 240 characters.
-- For YouTube: Title-style + short description.
-- Match the brand voice guide exactly.
-- Do NOT use markdown code blocks. Do NOT output any conversational text before or after the JSON.
-- Respond ONLY with a valid JSON array matching this format:
+Rules for each platform (Make it FUNNEL-AWARE):
+- Instagram (platform: "instagram"): Caption (hook + WhatsApp CTA), Tanglish (Tamil-English mix) where indicates, emojis. 3-5 lines.
+- Facebook (platform: "facebook"): Caption (hook + WhatsApp CTA), Tanglish (Tamil-English mix) where indicates, emojis. 3-5 lines.
+- LinkedIn (platform: "linkedin"): Professional B2B tone (BM TechX agency positioning), no excessive emojis, English. 2-4 lines.
+- X (Twitter) (platform: "x_twitter"): Punchy, under 240 characters.
+- YouTube (platform: "youtube"): Generate BOTH a compelling Title ("title") and description ("caption"). Make it SEO keyword-rich (searchable terms like 'digital marketing course Pondicherry', 'job guarantee training Tamil Nadu', 'LeadOS automation') + WhatsApp CTA.
+
+Output Format:
+Do NOT use markdown code blocks. Respond ONLY with a valid JSON array matching this format:
 [
-  {"platform": "instagram", "caption": "..."},
-  {"platform": "facebook", "caption": "..."}
+  {"platform": "instagram", "caption": "your instagram caption"},
+  {"platform": "facebook", "caption": "your facebook caption"},
+  {"platform": "linkedin", "caption": "your linkedin caption"},
+  {"platform": "x_twitter", "caption": "your x caption"},
+  {"platform": "youtube", "title": "your youtube video title", "caption": "your youtube video description"}
 ]`;
 
   try {
@@ -710,22 +716,34 @@ async function createBatchContent(req, res) {
     }
 
     for (const item of items) {
-      const { brand_name, platforms, selected_accounts, caption, x_caption, linkedin_caption, thumbnail_title, scheduled_at, file_name } = item;
+      const { 
+        brand_name, platforms, selected_accounts, 
+        caption, instagram_caption, facebook_caption, x_caption, linkedin_caption, 
+        youtube_title, youtube_description, 
+        thumbnail_title, scheduled_at, file_name 
+      } = item;
       const brand_id = BRAND_NAME_TO_SLUG[brand_name] || brand_name.toLowerCase().replace(/'/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 
       const { rows } = await client.query(`
         INSERT INTO content_queue (
-          brand_name, platforms, selected_accounts, caption, x_caption, linkedin_caption, thumbnail_title, scheduled_at, file_name, status,
+          brand_name, platforms, selected_accounts, 
+          caption, instagram_caption, facebook_caption, x_caption, linkedin_caption, 
+          youtube_title, youtube_description, 
+          thumbnail_title, scheduled_at, file_name, status,
           brand_id, video_name
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_approval', $10, $11)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'pending_approval', $14, $15)
         RETURNING *
       `, [
         brand_name,
         platforms ? JSON.stringify(safeJsonValue(platforms)) : '[]',
         selected_accounts ? JSON.stringify(safeJsonValue(selected_accounts)) : '{}',
         caption || '',
+        instagram_caption || caption || '',
+        facebook_caption || caption || '',
         x_caption || '',
         linkedin_caption || '',
+        youtube_title || thumbnail_title || 'Social Media Video',
+        youtube_description || '',
         thumbnail_title || '',
         scheduled_at || null,
         file_name || 'pending_upload.mp4',
@@ -1720,14 +1738,15 @@ async function publishReelToFacebookWithRetry(pageId, pageAccessToken, { caption
 
 // POST /api/content/meta/callback
 async function handleMetaCallback(req, res) {
-  const { code } = req.body;
+  const { code, redirectUri: reqRedirectUri } = req.body;
   if (!code) {
     return res.status(400).json({ success: false, error: 'Auth code is required' });
   }
 
   const appId = process.env.META_APP_ID || '953749850406150';
   const appSecret = process.env.META_APP_SECRET || 'dSSnlAoUGreiJ61yHAU3kSvJ';
-  const redirectUri = process.env.META_REDIRECT_URI || `${process.env.PORTAL_URL || 'https://leados-app.abmgroups.org'}/settings/meta-callback`;
+  const redirectUri = reqRedirectUri || process.env.META_REDIRECT_URI || `${process.env.PORTAL_URL || 'https://leados-app.abmgroups.org'}/settings/meta-callback`;
+
 
   try {
     console.log(`Exchanging code for short-lived token... redirectUri: ${redirectUri}`);
@@ -2170,7 +2189,18 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
     try {
       let publishRes;
       const hashtags = post.hashtags ? `\n\n${post.hashtags}` : '';
-      const finalCaption = `${post.caption || post.description || ''}${hashtags}`.trim();
+      let finalCaption = '';
+      if (channel === 'instagram' || channel === 'instagram_post') {
+        finalCaption = `${post.instagram_caption || post.caption || post.description || ''}${hashtags}`.trim();
+      } else if (channel === 'facebook' || channel === 'facebook_post') {
+        finalCaption = `${post.facebook_caption || post.caption || post.description || ''}${hashtags}`.trim();
+      } else if (channel === 'linkedin') {
+        finalCaption = `${post.linkedin_caption || post.caption || post.description || ''}${hashtags}`.trim();
+      } else if (channel === 'x_twitter') {
+        finalCaption = `${post.x_caption || post.caption || post.description || ''}${hashtags}`.trim();
+      } else {
+        finalCaption = `${post.caption || post.description || ''}${hashtags}`.trim();
+      }
 
       if (channel === 'facebook' || channel === 'facebook_post') {
         const pageId = account.facebook_page_id || account.account_id;
@@ -2190,6 +2220,40 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
           videoUrl: publicUrl,
           isStory: false
         });
+      } else if (channel === 'youtube') {
+        let localVideoPath = null;
+        if (publicUrl.includes('/uploads/')) {
+          const filename = publicUrl.split('/uploads/')[1];
+          localVideoPath = path.join(__dirname, '../uploads', filename);
+        }
+
+        if (!localVideoPath || !fs.existsSync(localVideoPath)) {
+          const tempDownloadFilename = `temp_youtube_source_${post.id}_${Date.now()}.mp4`;
+          const tempDownloadPath = path.join(os.tmpdir(), tempDownloadFilename);
+          console.log(`[BackgroundPublish] Local video not found. Downloading from ${publicUrl} to ${tempDownloadPath}...`);
+          await downloadFile(publicUrl, tempDownloadPath);
+          localVideoPath = tempDownloadPath;
+        }
+
+        console.log(`[BackgroundPublish] Initializing YouTube client for brand: ${post.brand_name}...`);
+        const oauth2Client = await getFreshYoutubeClient(account.access_token);
+
+        const ytTitle = post.youtube_title || post.thumbnail_title || post.video_name || 'Social Media Video';
+        const ytDesc = post.youtube_description || post.caption || post.description || '';
+        
+        publishRes = await publishVideoToYouTube(oauth2Client, {
+          title: ytTitle,
+          description: ytDesc,
+          localVideoPath: localVideoPath
+        });
+
+        if (localVideoPath.includes('temp_youtube_source_') && fs.existsSync(localVideoPath)) {
+          try {
+            fs.unlinkSync(localVideoPath);
+          } catch (unlinkErr) {
+            console.warn(`[BackgroundPublish] Failed to clean up temp youtube file:`, unlinkErr.message);
+          }
+        }
       } else if (channel === 'instagram_story' || channel === 'facebook_story') {
         console.log(`[BackgroundPublish] Preparing story Option 3 (Still Frame + CTA Overlay) for post ${post.id} (brand: ${post.brand_name})`);
         let channelUrl = publicUrl;
@@ -2735,6 +2799,216 @@ Do not write any introductory or explanatory text. Return ONLY the valid JSON ob
   }
 }
 
+function getVideoMetadata(filePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) return reject(err);
+      const stream = metadata.streams.find(s => s.codec_type === 'video');
+      if (!stream) return reject(new Error('No video stream found'));
+      const duration = metadata.format.duration || stream.duration;
+      const width = stream.width;
+      const height = stream.height;
+      resolve({ duration: parseFloat(duration), width, height });
+    });
+  });
+}
+
+function getGoogleOAuthClient(req) {
+  let apiBase = process.env.API_BASE_URL;
+  if (!apiBase) {
+    const proto = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.headers['host'] || 'localhost:3600';
+    apiBase = `${proto}://${host}`;
+  }
+  const redirectUri = `${apiBase}/api/content/youtube/callback`;
+  
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri
+  );
+}
+
+function handleYoutubeAuth(req, res) {
+  const brandName = req.query.brand_name || '';
+  const oauth2Client = getGoogleOAuthClient(req);
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: [
+      'https://www.googleapis.com/auth/youtube.upload',
+      'https://www.googleapis.com/auth/youtube.readonly',
+      'https://www.googleapis.com/auth/userinfo.profile'
+    ],
+    prompt: 'consent select_account',
+    state: brandName
+  });
+  res.redirect(url);
+}
+
+async function handleYoutubeCallback(req, res) {
+  const { code, state: brandName } = req.query;
+  const portalUrl = process.env.PORTAL_URL || 'https://leados-app.abmgroups.org';
+
+  if (!code) {
+    return res.redirect(`${portalUrl}/admin/content-os/social-connection?youtube_error=missing_code`);
+  }
+
+  try {
+    const oauth2Client = getGoogleOAuthClient(req);
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+    const channelRes = await youtube.channels.list({
+      part: 'snippet',
+      mine: true
+    });
+
+    if (!channelRes.data.items || channelRes.data.items.length === 0) {
+      throw new Error('No YouTube channel found for this Google account.');
+    }
+
+    const channel = channelRes.data.items[0];
+    const channelId = channel.id;
+    const channelTitle = channel.snippet.title;
+
+    const encryptedTokens = cryptoHelper.encrypt(JSON.stringify(tokens));
+
+    await pool.query(
+      `INSERT INTO brand_social_accounts (brand_name, platform, account_name, account_id, access_token, token_expires_at, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, true)
+       ON CONFLICT (brand_name, platform, account_name) 
+       DO UPDATE SET account_id = EXCLUDED.account_id, access_token = EXCLUDED.access_token, token_expires_at = EXCLUDED.token_expires_at, is_active = true`,
+      [
+        brandName || 'BM Academy',
+        'youtube',
+        channelTitle,
+        channelId,
+        encryptedTokens,
+        tokens.expiry_date ? new Date(tokens.expiry_date) : null
+      ]
+    );
+
+    console.log(`[YouTube OAuth] Successfully connected channel "${channelTitle}" for brand "${brandName || 'BM Academy'}"`);
+
+    res.redirect(`${portalUrl}/admin/content-os/social-connection?youtube_success=true&channel=${encodeURIComponent(channelTitle)}`);
+  } catch (err) {
+    console.error('[YouTube OAuth Callback Error]:', err);
+    res.redirect(`${portalUrl}/admin/content-os/social-connection?youtube_error=${encodeURIComponent(err.message)}`);
+  }
+}
+
+async function getFreshYoutubeClient(encryptedTokens) {
+  let tokens;
+  try {
+    tokens = JSON.parse(cryptoHelper.decrypt(encryptedTokens));
+  } catch (decErr) {
+    throw new Error(`YouTube credentials decryption failed: ${decErr.message}`);
+  }
+
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET
+  );
+  oauth2Client.setCredentials(tokens);
+
+  const isExpired = tokens.expiry_date ? (tokens.expiry_date - Date.now() < 300000) : true;
+  if (isExpired && tokens.refresh_token) {
+    console.log('[YouTube Token] Access token expired or expiring soon. Refreshing...');
+    try {
+      const refreshRes = await oauth2Client.refreshAccessToken();
+      const newCredentials = refreshRes.credentials;
+      const updatedTokens = {
+        ...tokens,
+        ...newCredentials
+      };
+      
+      const encryptedNewTokens = cryptoHelper.encrypt(JSON.stringify(updatedTokens));
+      
+      await pool.query(
+        `UPDATE brand_social_accounts 
+         SET access_token = $1, token_expires_at = $2 
+         WHERE access_token = $3`,
+        [
+          encryptedNewTokens,
+          newCredentials.expiry_date ? new Date(newCredentials.expiry_date) : null,
+          encryptedTokens
+        ]
+      );
+      
+      oauth2Client.setCredentials(updatedTokens);
+      console.log('[YouTube Token] Access token refreshed and saved successfully.');
+    } catch (refreshErr) {
+      console.error('[YouTube Token] Failed to refresh access token:', refreshErr.message);
+      throw new Error(`YouTube token refresh failed: ${refreshErr.message}`);
+    }
+  } else if (isExpired && !tokens.refresh_token) {
+    throw new Error('YouTube session expired. Please reconnect your channel to get a fresh login.');
+  }
+
+  return oauth2Client;
+}
+
+async function publishVideoToYouTube(oauth2Client, { title, description, localVideoPath }) {
+  console.log(`[YouTube Publish] Starting YouTube video upload for file: ${localVideoPath}`);
+  
+  let isShort = false;
+  try {
+    const meta = await getVideoMetadata(localVideoPath);
+    console.log(`[YouTube Publish] Video metadata: duration=${meta.duration}s, size=${meta.width}x${meta.height}`);
+    if (meta.duration <= 60 && meta.height > meta.width) {
+      isShort = true;
+      console.log(`[YouTube Publish] Video classified as YouTube SHORT.`);
+    }
+  } catch (err) {
+    console.warn(`[YouTube Publish] Failed to probe video metadata:`, err.message);
+  }
+
+  let finalDescription = description || '';
+  if (isShort && !finalDescription.toLowerCase().includes('#shorts')) {
+    finalDescription = `${finalDescription}\n\n#Shorts`.trim();
+    console.log(`[YouTube Publish] Appended #Shorts to description.`);
+  }
+
+  const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+  
+  try {
+    const response = await youtube.videos.insert({
+      part: 'snippet,status',
+      requestBody: {
+        snippet: {
+          title: title || 'New Social Video',
+          description: finalDescription,
+          categoryId: '22', // People & Blogs
+        },
+        status: {
+          privacyStatus: 'public',
+          selfDeclaredMadeForKids: false
+        }
+      },
+      media: {
+        body: fs.createReadStream(localVideoPath)
+      }
+    });
+
+    console.log(`[YouTube Publish] Upload success. Video ID: ${response.data.id}`);
+    return {
+      success: true,
+      post_id: response.data.id
+    };
+  } catch (err) {
+    console.error(`[YouTube Publish] API insertion failed:`, err);
+    const errorMsg = err.errors?.[0]?.message || err.message || '';
+    const isQuota = errorMsg.toLowerCase().includes('quota') || err.code === 403;
+    if (isQuota) {
+      const quotaErr = new Error(`YouTube API Upload Quota Exceeded (default is 10,000 units / ~6 uploads per day). Please request a quota increase from Google Cloud Console.`);
+      quotaErr.code = 'QUOTA_EXCEEDED';
+      throw quotaErr;
+    }
+    throw err;
+  }
+}
+
 module.exports = {
   getContent,
   getStats,
@@ -2759,5 +3033,9 @@ module.exports = {
   publishReelToFacebook,
   publishToInstagramWithRetry,
   publishReelToFacebookWithRetry,
-  waitForFacebookReel
+  waitForFacebookReel,
+  handleYoutubeAuth,
+  handleYoutubeCallback,
+  getFreshYoutubeClient,
+  publishVideoToYouTube
 };

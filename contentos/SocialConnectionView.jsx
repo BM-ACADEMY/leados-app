@@ -10,6 +10,7 @@ export const SocialConnectionView = () => {
   const [linkingBrand, setLinkingBrand] = useState(false);
   const [metaAppId, setMetaAppId] = useState('');
   const [connectedAccounts, setConnectedAccounts] = useState([]);
+  const [ytBrand, setYtBrand] = useState('BM Academy');
 
   const loadConnectedAccounts = async () => {
     try {
@@ -35,7 +36,23 @@ export const SocialConnectionView = () => {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const ytSuccess = params.get('youtube_success');
+    const ytError = params.get('youtube_error');
+    const channel = params.get('channel');
+    if (ytSuccess) {
+      alert(`Successfully connected YouTube channel "${channel}"!`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      loadConnectedAccounts();
+    } else if (ytError) {
+      alert(`Failed to connect YouTube channel: ${ytError}`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
+    const via = params.get('via');
     if (code) {
       setLoadingMeta(true);
       // Clean query params from address bar
@@ -43,7 +60,11 @@ export const SocialConnectionView = () => {
       
       const exchangeCode = async () => {
         try {
-          const res = await api.post('/api/content/meta/callback', { code });
+          const redirectUri = via === 'settings'
+            ? window.location.origin + '/settings'
+            : window.location.origin + '/admin/content-os/social-connection';
+
+          const res = await api.post('/api/content/meta/callback', { code, redirectUri });
           if (res.success && res.accounts) {
             setDiscoveredAccounts(res.accounts);
             alert(`Successfully authenticated with Meta! Discovered ${res.accounts.length} page(s).`);
@@ -66,10 +87,11 @@ export const SocialConnectionView = () => {
       alert('Meta App ID is not configured on the backend. Please add META_APP_ID to your server .env file.');
       return;
     }
-    const redirectUri = window.location.origin + '/settings';
+    const redirectUri = window.location.origin + '/admin/content-os/social-connection';
     const fbUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${metaAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,business_management,public_profile&response_type=code`;
     window.location.href = fbUrl;
   };
+
 
   const handleLinkToBrand = async (brandName, platform, accountName, accountId, facebookPageId, instagramBusinessId, accessToken, expiresAt) => {
     setLinkingBrand(true);
@@ -136,31 +158,103 @@ export const SocialConnectionView = () => {
             Link your brand's official Facebook Page and associated Instagram Business accounts.
           </p>
 
-          <div style={{ marginBottom: 26 }}>
-            <button
-              type="button"
-              onClick={handleConnectMeta}
-              disabled={loadingMeta}
-              style={{
-                background: '#1877F2',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 8,
-                padding: '12px 20px',
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: 'pointer',
-                opacity: loadingMeta ? 0.6 : 1,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 10,
-                boxShadow: '0 4px 14px rgba(24,119,242,0.3)',
-                transition: 'transform 0.15s, opacity 0.15s'
-              }}
-            >
-              {loadingMeta ? <Loader2 size={16} className="animate-spin" /> : <span>👍</span>}
-              {loadingMeta ? 'Connecting Account...' : 'Connect with Facebook & Instagram'}
-            </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24, marginBottom: 26 }}>
+            {/* Meta Connection */}
+            <div>
+              <p style={{ fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 8 }}>Meta Platforms (Facebook & Instagram):</p>
+              <button
+                type="button"
+                onClick={handleConnectMeta}
+                disabled={loadingMeta}
+                style={{
+                  background: '#1877F2',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '12px 20px',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  opacity: loadingMeta ? 0.6 : 1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  boxShadow: '0 4px 14px rgba(24,119,242,0.3)',
+                  transition: 'transform 0.15s, opacity 0.15s'
+                }}
+              >
+                {loadingMeta ? <Loader2 size={16} className="animate-spin" /> : <span>👍</span>}
+                {loadingMeta ? 'Connecting Account...' : 'Connect with Facebook & Instagram'}
+              </button>
+            </div>
+
+            {/* YouTube Connection */}
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 20 }}>
+              <p style={{ fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 8 }}>Google YouTube Channel:</p>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <select
+                  value={ytBrand}
+                  onChange={(e) => setYtBrand(e.target.value)}
+                  style={{
+                    background: C.card,
+                    color: C.text,
+                    border: `1px solid ${C.border}`,
+                    padding: '10px 14px',
+                    borderRadius: 8,
+                    fontSize: 13,
+                    outline: 'none',
+                    cursor: 'pointer',
+                    minWidth: 200
+                  }}
+                >
+                  <option value="BM Academy">Link to BM Academy</option>
+                  <option value="BM TechX">Link to BM TechX</option>
+                  <option value="Namma Pondy Properties">Link to Namma Pondy Properties</option>
+                  <option value="Dada's Kitchen">Link to Dada's Kitchen</option>
+                  <option value="ABM Groups">Link to ABM Groups</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const apiBase = import.meta.env.VITE_API_URL || '';
+                    window.location.href = `${apiBase}/api/content/youtube/auth?brand_name=${encodeURIComponent(ytBrand)}`;
+                  }}
+                  style={{
+                    background: '#FF0000',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '12px 20px',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    boxShadow: '0 4px 14px rgba(255,0,0,0.3)',
+                    transition: 'transform 0.15s, opacity 0.15s'
+                  }}
+                >
+                  <span>📺</span>
+                  Connect YouTube Channel
+                </button>
+              </div>
+
+              {/* YouTube quota and OAuth Warnings */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: '#f59e0b11', border: '1px solid #f59e0b22', padding: 12, borderRadius: 8, marginTop: 14 }}>
+                <p style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
+                  <AlertTriangle size={13} /> Google API Quota Warning:
+                </p>
+                <p style={{ fontSize: 10, color: C.muted, margin: 0, lineHeight: 1.4 }}>
+                  Default projects are limited to 10,000 units/day (~6 video uploads/day). For higher volume, you must request a quota increase from Google Cloud Console.
+                </p>
+                <p style={{ fontSize: 10, color: C.muted, margin: 0, lineHeight: 1.4 }}>
+                  YouTube OAuth requires adding users to your test list or performing full app verification. Test-channel publishing is recommended first.
+                </p>
+              </div>
+            </div>
           </div>
 
           {loadingMeta && (
@@ -255,8 +349,8 @@ export const SocialConnectionView = () => {
                         </span>
                         <span 
                           style={{ 
-                            background: acc.platform === 'facebook' ? '#1877F215' : '#E1306C15', 
-                            color: acc.platform === 'facebook' ? '#1877F2' : '#E1306C', 
+                            background: acc.platform === 'facebook' ? '#1877F215' : acc.platform === 'youtube' ? '#FF000015' : '#E1306C15', 
+                            color: acc.platform === 'facebook' ? '#1877F2' : acc.platform === 'youtube' ? '#FF0000' : '#E1306C', 
                             padding: '3px 8px', 
                             borderRadius: 6, 
                             fontSize: 9, 
@@ -269,7 +363,7 @@ export const SocialConnectionView = () => {
                         </span>
                       </div>
                       <p style={{ fontSize: 10, color: C.muted, marginTop: 5 }}>
-                        Brand: <strong style={{ color: C.text }}>{acc.brand_name}</strong> | ID: {acc.platform === 'facebook' ? acc.facebook_page_id : acc.instagram_business_id}
+                        Brand: <strong style={{ color: C.text }}>{acc.brand_name}</strong> | ID: {acc.platform === 'facebook' ? acc.facebook_page_id : acc.platform === 'youtube' ? acc.account_id : acc.instagram_business_id}
                       </p>
                     </div>
                     <div>

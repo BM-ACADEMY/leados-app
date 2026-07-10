@@ -41,6 +41,11 @@ router.post("/batch", ctrl.createBatchContent);
 router.post("/meta/callback", ctrl.handleMetaCallback);
 router.post("/meta/link-account", ctrl.linkBrandAccount);
 
+// YouTube OAuth routes
+router.get("/youtube/auth", ctrl.handleYoutubeAuth);
+router.get("/youtube/callback", ctrl.handleYoutubeCallback);
+
+
 // Trigger publishing
 router.post("/:id/publish", ctrl.publishPost);
 

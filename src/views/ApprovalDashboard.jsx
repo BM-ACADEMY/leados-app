@@ -342,12 +342,16 @@ export default function ApprovalDashboard() {
     };
 
     setSelected(resolvedItem);
-    setTab("description");
+    setTab("instagram_caption");
     setEditMode(false);
     setEditValues({
       caption: resolvedItem.caption,
-      x_caption: resolvedItem.x_caption,
-      linkedin_caption: resolvedItem.linkedin_caption,
+      instagram_caption: resolvedItem.instagram_caption || resolvedItem.caption || "",
+      facebook_caption: resolvedItem.facebook_caption || resolvedItem.caption || "",
+      x_caption: resolvedItem.x_caption || "",
+      linkedin_caption: resolvedItem.linkedin_caption || "",
+      youtube_title: resolvedItem.youtube_title || resolvedItem.thumbnail_title || "",
+      youtube_description: resolvedItem.youtube_description || resolvedItem.description || resolvedItem.caption || "",
       thumbnail_title: resolvedItem.thumbnail_title,
       scheduled_at: resolvedItem.scheduled_at,
       platforms: [...(resolvedItem.platforms || [])],
@@ -1121,13 +1125,16 @@ export default function ApprovalDashboard() {
                 <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden", marginBottom: 16 }}>
                   <div style={{ display: "flex", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", overflowX: "auto" }}>
                     {[
-                      { key: "description", label: "Description", icon: "📄" },
+                      { key: "instagram_caption", label: "Instagram", icon: "📸" },
+                      { key: "facebook_caption", label: "Facebook", icon: "👍" },
+                      { key: "youtube_title", label: "YouTube Title", icon: "📺 Title" },
+                      { key: "youtube_description", label: "YouTube Desc", icon: "📺 Desc" },
                       { key: "x_caption", label: "X (Twitter)", icon: "𝕏" },
                       { key: "linkedin_caption", label: "LinkedIn", icon: "in" },
-                      { key: "thumbnail_title", label: "Title", icon: "▶️" }
-                    ].filter(t => selected[t.key] || editValues[t.key] !== undefined || editMode).map(t => (
+                      { key: "description", label: "Base Description", icon: "📄" }
+                    ].filter(t => selected[t.key] !== undefined || editValues[t.key] !== undefined || editMode).map(t => (
                       <button key={t.key} onClick={() => setTab(t.key)} style={{
-                        flex: 1, padding: "12px 8px", border: "none", minWidth: 110,
+                        flex: 1, padding: "12px 8px", border: "none", minWidth: 125,
                         borderBottom: tab === t.key ? `2px solid #7C3AED` : "2px solid transparent",
                         background: "transparent", cursor: "pointer",
                         fontSize: 11, fontWeight: tab === t.key ? 700 : 500,
@@ -1139,14 +1146,12 @@ export default function ApprovalDashboard() {
                     ))}
                   </div>
                   <div style={{ padding: 16 }}>
-                    {/* If selected tab is caption or hashtags (which are now rendered in Card 1), redirect tab view */}
-                    {["caption", "hashtags"].includes(tab) && setTab("description")}
                     {editMode ? (
                       <textarea
                         value={editValues[tab] || ""}
                         onChange={e => setEditValues(prev => ({ ...prev, [tab]: e.target.value }))}
                         style={{
-                          width: "100%", minHeight: tab === "description" ? 200 : 100,
+                          width: "100%", minHeight: (tab === "description" || tab === "youtube_description" || tab.includes("caption")) ? 180 : 80,
                           border: "1px solid #7C3AED44", borderRadius: 8,
                           padding: 12, fontSize: 13, lineHeight: 1.6,
                           resize: "vertical", outline: "none", fontFamily: "inherit",
@@ -1161,6 +1166,11 @@ export default function ApprovalDashboard() {
                     {tab === "x_caption" && (
                       <div style={{ marginTop: 8, fontSize: 11, color: (editMode ? editValues.x_caption : selected.x_caption)?.length > 240 ? "#EF4444" : "#10B981", fontWeight: 600 }}>
                         {(editMode ? editValues.x_caption : selected.x_caption)?.length || 0} / 240 chars
+                      </div>
+                    )}
+                    {tab === "youtube_title" && (
+                      <div style={{ marginTop: 8, fontSize: 11, color: (editMode ? editValues.youtube_title : selected.youtube_title)?.length > 100 ? "#EF4444" : "#10B981", fontWeight: 600 }}>
+                        {(editMode ? editValues.youtube_title : selected.youtube_title)?.length || 0} / 100 chars
                       </div>
                     )}
                   </div>
@@ -1700,6 +1710,10 @@ export default function ApprovalDashboard() {
                                 setEditMode(true);
                                 setEditValues({
                                   caption: selected.caption,
+                                  instagram_caption: selected.instagram_caption || selected.caption || "",
+                                  facebook_caption: selected.facebook_caption || selected.caption || "",
+                                  youtube_title: selected.youtube_title || selected.thumbnail_title || "",
+                                  youtube_description: selected.youtube_description || selected.description || selected.caption || "",
                                   x_caption: selected.x_caption,
                                   linkedin_caption: selected.linkedin_caption,
                                   thumbnail_title: selected.thumbnail_title,
@@ -1731,8 +1745,12 @@ export default function ApprovalDashboard() {
                                 setEditMode(true);
                                 setEditValues({
                                   caption: s.caption,
+                                  instagram_caption: s.caption,
+                                  facebook_caption: s.caption,
+                                  youtube_description: s.caption,
                                   x_caption: selected.x_caption,
                                   linkedin_caption: selected.linkedin_caption,
+                                  youtube_title: selected.youtube_title || selected.thumbnail_title || "",
                                   thumbnail_title: selected.thumbnail_title,
                                   scheduled_at: selected.scheduled_at,
                                   platforms: [...(selected.platforms || [])],
@@ -1749,7 +1767,13 @@ export default function ApprovalDashboard() {
                                   story_3: selected.story_3 || "",
                                 });
                               } else {
-                                setEditValues(prev => ({ ...prev, caption: s.caption }));
+                                setEditValues(prev => ({ 
+                                  ...prev, 
+                                  caption: s.caption,
+                                  instagram_caption: s.caption,
+                                  facebook_caption: s.caption,
+                                  youtube_description: s.caption
+                                }));
                               }
                               showToast("Applied caption!");
                             }

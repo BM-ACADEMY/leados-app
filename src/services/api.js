@@ -549,10 +549,10 @@ class LeadOSAPI {
     });
   }
 
-  async getAiCaptionSuggestions(id, tone = 'engaging') {
+  async getAiCaptionSuggestions(id, tone = 'engaging', platform = null) {
     return this.request(`/api/content/${id}/suggest-captions`, {
       method: 'POST',
-      body: JSON.stringify({ tone })
+      body: JSON.stringify({ tone, platform })
     });
   }
 

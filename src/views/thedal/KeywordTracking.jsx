@@ -61,13 +61,10 @@ export default function KeywordTracking() {
     if (!clientId) return;
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/turf/keywords?clientId=${clientId}`, {
+      const { data } = await axios.get(`${API_URL}/api/mafiya/turf/keywords?clientId=${clientId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setKeywords(data);
-      }
+      setKeywords(data);
     } catch (err) {
       console.error('Fetch keywords error:', err);
     } finally {
@@ -82,13 +79,10 @@ export default function KeywordTracking() {
     setPagespeed(null);
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/turf/pagespeed?url=${encodeURIComponent(url)}`, {
+      const { data } = await axios.get(`${API_URL}/api/mafiya/turf/pagespeed?url=${encodeURIComponent(url)}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setPagespeed(data);
-      }
+      setPagespeed(data);
     } catch (err) {
       console.error('PageSpeed audit error:', err);
     } finally {
@@ -102,13 +96,10 @@ export default function KeywordTracking() {
     setAiLoading(true);
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/turf/ai-suggestions?clientId=${clientId}&location=${encodeURIComponent(location || '')}`, {
+      const { data } = await axios.get(`${API_URL}/api/mafiya/turf/ai-suggestions?clientId=${clientId}&location=${encodeURIComponent(location || '')}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setAiSuggestions(data);
-      }
+      setAiSuggestions(data);
     } catch (err) {
       console.error('AI suggestions error:', err);
     } finally {
@@ -141,22 +132,14 @@ export default function KeywordTracking() {
     setFormError('');
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch('/api/mafiya/turf/keywords', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          client_id: activeClient.id,
-          keyword: newKeyword,
-          initial_rank: parseInt(initialRank, 10),
-          pack_status: packStatus
-        })
+      const { data: saved } = await axios.post(`${API_URL}/api/mafiya/turf/keywords`, {
+        client_id: activeClient.id,
+        keyword: newKeyword,
+        initial_rank: parseInt(initialRank, 10),
+        pack_status: packStatus
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-
-      if (!res.ok) throw new Error('Failed to add keyword');
-      const saved = await res.json();
       setKeywords([saved, ...keywords]);
       toast.success('Keyword added! Fetching ranking...');
       setNewKeyword('');
@@ -176,15 +159,11 @@ export default function KeywordTracking() {
     setRefreshingId(id);
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/turf/keywords/refresh/${id}`, {
-        method: 'POST',
+      const { data: updated } = await axios.post(`${API_URL}/api/mafiya/turf/keywords/refresh/${id}`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const updated = await res.json();
-        setKeywords(prevKeywords => prevKeywords.map(k => k.id === id ? updated : k));
-        toast.success('Ranking updated live!');
-      }
+      setKeywords(prevKeywords => prevKeywords.map(k => k.id === id ? updated : k));
+      toast.success('Ranking updated live!');
     } catch (err) {
       toast.error('Failed to update ranking');
     } finally {
@@ -197,14 +176,11 @@ export default function KeywordTracking() {
     if (!confirm('Are you sure you want to stop tracking this keyword?')) return;
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/turf/keywords/${id}`, {
-        method: 'DELETE',
+      await axios.delete(`${API_URL}/api/mafiya/turf/keywords/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        setKeywords(keywords.filter(k => k.id !== id));
-        toast.success('Keyword stopped tracking');
-      }
+      setKeywords(keywords.filter(k => k.id !== id));
+      toast.success('Keyword stopped tracking');
     } catch (err) {
       toast.error('Failed to delete keyword');
     }

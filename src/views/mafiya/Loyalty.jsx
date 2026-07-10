@@ -113,29 +113,18 @@ export default function Loyalty() {
     setReplyText('Generating AI reply...');
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch('/api/mafiya/reviews/generate-ai-reply', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          clientId: activeClient.id,
-          author: review.author,
-          rating: review.rating,
-          text: review.text
-        })
+      const { data } = await axios.post(`${API_URL}/api/mafiya/reviews/generate-ai-reply`, {
+        clientId: activeClient.id,
+        author: review.author,
+        rating: review.rating,
+        text: review.text
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        const businessName = activeClient?.business_name || 'our company';
-        const author = review.author || 'customer';
-        const wrappedReply = `${author},\n\n${data.reply}\n\nWarm Regards,\nTeam ${businessName}`;
-        setReplyText(wrappedReply);
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || 'AI Generation failed');
-      }
+      const businessName = activeClient?.business_name || 'our company';
+      const author = review.author || 'customer';
+      const wrappedReply = `${author},\n\n${data.reply}\n\nWarm Regards,\nTeam ${businessName}`;
+      setReplyText(wrappedReply);
     } catch (e) {
       console.error("AI Generation failed, falling back to template:", e);
       toast.error(`AI API Limit Exceeded / Error: ${e.message}`);
@@ -182,26 +171,24 @@ export default function Loyalty() {
       const token = localStorage.getItem('leados_token');
       
       // Get Status
-      const statusRes = await fetch(`/api/mafiya/reviews/status?clientId=${clientId}`, {
+      const { data: statusData } = await axios.get(`${API_URL}/api/mafiya/reviews/status?clientId=${clientId}`, {
         headers: { 
           Authorization: `Bearer ${token}`,
           'x-data-mode': mode
         }
       });
-      const statusData = await statusRes.json();
       setConnected(statusData.connected);
 
       // Get Data
-      const dataRes = await fetch(`/api/mafiya/reviews/data?clientId=${clientId}${refresh ? '&refresh=true' : ''}`, {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          'x-data-mode': mode
-        }
-      });
-      if (dataRes.ok) {
-        const details = await dataRes.json();
+      try {
+        const { data: details } = await axios.get(`${API_URL}/api/mafiya/reviews/data?clientId=${clientId}${refresh ? '&refresh=true' : ''}`, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'x-data-mode': mode
+          }
+        });
         setData(details);
-      } else {
+      } catch (e) {
         setData(null);
       }
     } catch (err) {
@@ -229,20 +216,13 @@ export default function Loyalty() {
     setSubmittingReply(true);
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch('/api/mafiya/reviews/reply-review', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}` 
-        },
-        body: JSON.stringify({ 
-          clientId: activeClient.id, 
-          reviewId, 
-          replyText 
-        })
+      await axios.post(`${API_URL}/api/mafiya/reviews/reply-review`, {
+        clientId: activeClient.id, 
+        reviewId, 
+        replyText 
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-
-      if (!res.ok) throw new Error('Failed to submit reply');
       
       // Optimistic update
       const updatedReviews = data.recentReviews.map(r => 

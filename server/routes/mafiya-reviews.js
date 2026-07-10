@@ -732,8 +732,13 @@ router.post('/posts', async (req, res) => {
         const filepath = path.join(uploadDir, filename);
         fs.writeFileSync(filepath, base64Data, 'base64');
         
-        const portalUrl = process.env.PORTAL_URL || 'https://leados-app.abmgroups.org';
-        finalImageUrl = `${portalUrl}/api/uploads/gmb_posts/${filename}`;
+        // Dynamically get the exact API domain that this request came from (e.g. leados-api.abmgroups.org)
+        const host = req.headers['x-forwarded-host'] || req.headers.host || 'leados-api.abmgroups.org';
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+        const apiUrl = `${protocol}://${host}`;
+        
+        // Use a dedicated dynamic API route to serve the image, bypassing Nginx static file intercepts
+        finalImageUrl = `${apiUrl}/api/mafiya/reviews/image/${filename}`;
       } catch (err) {
         console.error('[Mafiya Reviews] Failed to process base64 image:', err);
         // Fallback to the original base64 string if it fails

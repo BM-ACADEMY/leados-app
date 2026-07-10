@@ -149,6 +149,16 @@ const mafiyaInsightsRoutes = require('./routes/mafiya-insights');
 app.use('/api/mafiya/clients', auth, mafiyaClientsRoutes);
 app.use('/api/mafiya/gmb', mafiyaGmbRoutes); // No auth — email links are clicked by external clients
 app.use('/api/mafiya/turf', auth, mafiyaTurfRoutes);
+
+// Public route for Google to download GMB Post images (bypassing the 'auth' middleware on the main reviews router)
+app.get('/api/mafiya/reviews/image/:filename', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const filepath = path.join(__dirname, 'uploads', 'gmb_posts', req.params.filename);
+  if (fs.existsSync(filepath)) res.sendFile(filepath);
+  else res.status(404).send('Image not found');
+});
+
 app.use('/api/mafiya/reviews', auth, mafiyaReviewsRoutes);
 app.use('/api/mafiya/insights', auth, mafiyaInsightsRoutes);
 app.get('/api/auth/google/callback', handleGoogleCallback); // Map the standard OAuth callback to Mafiya GMB handler

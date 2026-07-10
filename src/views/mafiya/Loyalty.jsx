@@ -23,6 +23,7 @@ const getFriendlyGoogleError = (err) => {
         title: 'Google API Rate Limit Exceeded',
         desc: 'Google APIs have temporarily rate-limited requests for this account. Please wait a few minutes before trying again.'
       };
+      
     }
     if (code === 403 || message.toLowerCase().includes('permission') || message.toLowerCase().includes('access denied') || message.toLowerCase().includes('forbidden')) {
       return {

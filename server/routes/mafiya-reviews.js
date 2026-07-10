@@ -753,12 +753,11 @@ router.post('/posts', async (req, res) => {
     // 2. Publish to Google My Business API (if credentials exist)
     try {
       const clientRes = await pool.query('SELECT google_account_id, google_location_id FROM mafiya_gmb_clients WHERE id = $1', [clientId]);
-      const tokenRes = await pool.query('SELECT access_token FROM mafiya_gmb_tokens WHERE client_id = $1', [clientId]);
+      const tokenString = await getClientGoogleToken(clientId);
       
       const client = clientRes.rows[0];
-      const token = tokenRes.rows[0];
 
-      if (client && client.google_account_id && client.google_location_id && token && token.access_token) {
+      if (client && client.google_account_id && client.google_location_id && tokenString) {
         // Prepare Google LocalPost body
         const gmbPostBody = {
           languageCode: 'en-US',
@@ -790,15 +789,9 @@ router.post('/posts', async (req, res) => {
         
         // Add image (Google requires a public URL, so base64 won't work natively without upload)
         if (finalImageUrl && finalImageUrl.startsWith('http')) {
-            // Because you are testing on your local machine, the image file is NOT on the live 'leados-app.abmgroups.org' server.
-            // Google will get a 404 if it tries to download it. 
-            // We use a dummy public image URL here ONLY for the Google API, so you can successfully test the connection.
-            // (Your local dashboard will still show your actual uploaded image).
-            const googleImageUrl = 'https://picsum.photos/600/400';
-
             gmbPostBody.media = [{
                 mediaFormat: 'PHOTO',
-                sourceUrl: googleImageUrl
+                sourceUrl: finalImageUrl
             }];
         }
 
@@ -807,7 +800,7 @@ router.post('/posts', async (req, res) => {
           gmbPostBody,
           {
             headers: {
-              Authorization: `Bearer ${token.access_token}`,
+              Authorization: `Bearer ${tokenString}`,
               'Content-Type': 'application/json'
             }
           }

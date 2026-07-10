@@ -347,11 +347,9 @@ export default function GbpInsights() {
       }
       if (isRefresh) url += '&refresh=true';
 
-      const res = await fetch(url, {
+      const { data: json } = await axios.get(`${API_URL}${url}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to fetch insights');
       setData(json);
     } catch (e) {
       setError(e.message);

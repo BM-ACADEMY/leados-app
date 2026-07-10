@@ -43,14 +43,12 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
         setFetchingLocations(true);
         try {
           const token = localStorage.getItem('leados_token');
-          const res = await fetch(`/api/mafiya/reviews/google-locations?clientId=${activeClient.id}`, {
+          const res = await axios.get(`${API_URL}/api/mafiya/reviews/google-locations?clientId=${activeClient.id}`, {
             headers: { Authorization: `Bearer ${token}` }
           });
-          if (res.ok) {
-            const data = await res.json();
-            setLocations(data);
-            if (data.length > 0) setSelectedLocationStr(data[0].accountId + '|' + data[0].locationId);
-          }
+          const data = res.data;
+          setLocations(data);
+          if (data.length > 0) setSelectedLocationStr(data[0].accountId + '|' + data[0].locationId);
         } catch (e) {
           console.error(e);
         } finally {
@@ -67,24 +65,17 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
     setSaving(true);
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch('/api/mafiya/reviews/google-locations', {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
+      await axios.put(`${API_URL}/api/mafiya/reviews/google-locations`, {
           clientId: activeClient.id,
           google_account_id: accId,
           google_location_id: locId
-        })
-      });
-      if (res.ok) {
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
         toast.success('Connected to GMB Location!');
         activeClient.google_account_id = accId;
         activeClient.google_location_id = locId;
         setLocations([...locations]); // force re-render
-      }
     } catch(err) {
       toast.error('Failed to connect location');
     } finally {
@@ -112,13 +103,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
     setSaving(true);
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch('/api/mafiya/reviews/posts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
+      await axios.post(`${API_URL}/api/mafiya/reviews/posts`, {
           clientId: activeClient.id,
           postType: postType,
           caption: description,
@@ -127,18 +112,15 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
           bgTheme: 'custom_stock',
           imageUrl: selectedImage || '',
           status: 'published'
-        })
-      });
-
-      if (res.ok) {
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
         toast.success('Published to GMB Successfully!');
         setShowModal(false);
         fetchGmbPosts(activeClient.id);
         setDescription('');
         setSelectedImage(null);
-      } else {
-        throw new Error('Failed to save');
-      }
+      
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -604,7 +586,7 @@ export default function StreetPosts() {
     setPostsLoading(true);
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/reviews/posts?clientId=${clientId}`, {
+      const res = await fetch(`${API_URL}/api/mafiya/reviews/posts?clientId=${clientId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -633,14 +615,11 @@ export default function StreetPosts() {
     if (!confirm('Are you sure you want to delete this GMB post record?')) return;
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/reviews/posts/${id}`, {
-        method: 'DELETE',
+      await axios.delete(`${API_URL}/api/mafiya/reviews/posts/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
         toast.success('Post deleted');
         fetchGmbPosts(activeClient.id);
-      }
     } catch (err) {
       toast.error(err.message);
     }

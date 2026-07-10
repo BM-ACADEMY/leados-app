@@ -98,7 +98,12 @@ app.use('/api/analyze', analyzeRoutes);
 // ── AUTH MIDDLEWARE ───────────────────────────────────────
 const auth = (req, res, next) => {
   // Bypass JWT auth for OAuth redirect routes where the browser doesn't send a token
-  if (req.path.includes('/auth/google') || req.path.includes('/auth/callback')) {
+  if (
+    req.path.includes('/auth/google') || 
+    req.path.includes('/auth/callback') ||
+    req.path.includes('/youtube/auth') ||
+    req.path.includes('/youtube/callback')
+  ) {
     return next();
   }
 

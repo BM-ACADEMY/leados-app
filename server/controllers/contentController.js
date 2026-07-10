@@ -290,7 +290,7 @@ const CONTENT_COLUMNS = `
   platforms, selected_accounts, scheduled_at, status,
   approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
   error_message, created_at, description, hashtags, thumbnail_options,
-  key_moments, drive_file_id, brand_id, video_name
+  key_moments, drive_file_id, brand_id, video_name, transcript
 `;
 
 // ---------------------------------------------------------------
@@ -1023,8 +1023,8 @@ Respond ONLY with a valid JSON object matching this exact format:
               brand_name, file_name, video_url, public_video_url, drive_file_id,
               caption, x_caption, linkedin_caption, description, hashtags,
               thumbnail_options, key_moments, status, thumbnail_title, platforms,
-              brand_id, video_name, thumbnail_url, story_1, story_2, story_3
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending_approval', $13, $14, $15, $16, $17, $18, $19, $20)
+              brand_id, video_name, thumbnail_url, story_1, story_2, story_3, transcript
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending_approval', $13, $14, $15, $16, $17, $18, $19, $20, $21)
           `, [
             brand_name,
             file.name,
@@ -1045,7 +1045,8 @@ Respond ONLY with a valid JSON object matching this exact format:
             publicThumbnailUrl,
             meta.story_1 || "",
             meta.story_2 || "",
-            meta.story_3 || ""
+            meta.story_3 || "",
+            transcript || ""
           ]);
 
           console.log(`DrivePoller: Successfully ingested and staged video: ${file.name}`);
@@ -2621,10 +2622,49 @@ function checkRateLimit(contentId) {
   return true;
 }
 
+async function getOrGenerateTranscript(post) {
+  let transcript = post.transcript || "";
+  if (!transcript && post.public_video_url) {
+    const fileId = extractDriveFileId(post.video_url || post.public_video_url);
+    if (fileId) {
+      const tempFilePath = path.join(os.tmpdir(), `transcribe_temp_video_${fileId}_${Date.now()}.mp4`);
+      const tempAudioPath = path.join(os.tmpdir(), `transcribe_temp_audio_${fileId}_${Date.now()}.mp3`);
+      try {
+        console.log(`[Transcript Helper] Transcribing video on-the-fly for file ID ${fileId}...`);
+        await downloadDriveFileServiceAccount(fileId, tempFilePath);
+        await extractAudio(tempFilePath, tempAudioPath);
+        const transcriptionResult = await groq.audio.transcriptions.create({
+          file: fs.createReadStream(tempAudioPath),
+          model: "whisper-large-v3"
+        });
+        transcript = transcriptionResult.text || "";
+        console.log(`[Transcript Helper] Dynamic transcription success: ${transcript.length} characters.`);
+        
+        // Cache the transcript back to the database
+        await pool.query(
+          "UPDATE content_queue SET transcript = $1, updated_at = NOW() WHERE id = $2",
+          [transcript, post.id]
+        );
+      } catch (transcribeErr) {
+        console.error(`[Transcript Helper] Dynamic transcription failed:`, transcribeErr.message);
+      } finally {
+        if (fs.existsSync(tempFilePath)) {
+          try { fs.unlinkSync(tempFilePath); } catch (e) {}
+        }
+        if (fs.existsSync(tempAudioPath)) {
+          try { fs.unlinkSync(tempAudioPath); } catch (e) {}
+        }
+      }
+    }
+  }
+  return transcript;
+}
+
 // POST /api/content/:id/suggest-captions
 async function suggestCaptions(req, res) {
   const { id } = req.params;
   const tone = req.body.tone || "engaging";
+  const platform = req.body.platform || null;
 
   if (!checkRateLimit(id)) {
     return res.status(429).json({ success: false, error: "Too many requests. Limit is 5 requests per content item per minute." });
@@ -2643,6 +2683,9 @@ async function suggestCaptions(req, res) {
     };
     const brandVoice = findBrandVoice(post.brand_name)?.voice || "Professional and engaging";
 
+    // Dynamic video transcript extraction
+    const transcript = await getOrGenerateTranscript(post);
+
     let prompt = `You are an expert social media copywriter. Generate 5 unique caption suggestions for a video post based on the following details:
 - Brand Name: ${post.brand_name}
 - Industry: ${brandDetail.industry}
@@ -2650,16 +2693,86 @@ async function suggestCaptions(req, res) {
 - Brand Voice Guidelines: ${brandVoice}
 - Video Title/File Name: ${post.file_name}
 - Video Description: ${post.description || "Not provided"}
+- Video Transcript/Speech: ${transcript || "No spoken speech detected in this video. Promote the video topic and brand."}
 - Existing Caption: ${post.caption || "Not provided"}
 - Existing Hashtags: ${post.hashtags || ""}
+`;
 
+    if (platform) {
+      const platformMap = {
+        instagram_caption: "Instagram Post",
+        facebook_caption: "Facebook Post",
+        youtube_title: "YouTube Video Title",
+        youtube_description: "YouTube Video Description",
+        x_caption: "X (Twitter) Post",
+        linkedin_caption: "LinkedIn Professional Post",
+        description: "Base Video Description"
+      };
+      prompt += `- Target Platform/Field: ${platformMap[platform] || platform}\n`;
+    }
+
+    prompt += `
+CRITICAL REQUIREMENTS:
+- Your suggestions MUST be deeply related to the actual video topic, title/file name, and the video transcript.
+- Do NOT output generic brand-only promotion text. Use the brand guidelines for styling, but write completely original hooks and CTAs centered around the specific content and topics discussed in this video.
+- Do NOT just copy the example sentences from the guidelines.
+`;
+
+    if (platform === "instagram_caption" || platform === "facebook_caption") {
+      prompt += `
+CRITICAL RULES FOR INSTAGRAM/FACEBOOK:
+- Focus heavily on an engaging, high-energy hook in the first line.
+- Use a conversational tone, mixing in local slang/Tanglish for brands that request it.
+- End with a clear call-to-action to WhatsApp (e.g. "WhatsApp 94038 02971 to join now!").
+`;
+    } else if (platform === "youtube_description") {
+      prompt += `
+CRITICAL RULES FOR YOUTUBE DESCRIPTION:
+- Generate SEO keyword-rich descriptions using search terms related to the video topic (e.g., 'digital marketing course Pondicherry', 'job guarantee training Tamil Nadu', 'LeadOS automation').
+- Include details about what is taught/shown in the video.
+- Add a Call to Action (CTA) linking to WhatsApp (e.g. "WhatsApp 94038 02971 to join now!").
+- Do NOT make it short; make it a comprehensive descriptive text.
+`;
+    } else if (platform === "youtube_title") {
+      prompt += `
+CRITICAL RULES FOR YOUTUBE TITLE:
+- Generate short, high-CTR, SEO-optimized title ideas.
+- MUST be strictly under 100 characters.
+- Do NOT use hashtags in the title.
+- Do NOT include WhatsApp phone numbers in the title.
+`;
+    } else if (platform === "x_caption") {
+      prompt += `
+CRITICAL RULES FOR X (TWITTER):
+- MUST be strictly under 240 characters.
+- Do NOT use more than 1-2 hashtags.
+- Keep it extremely punchy, short, and to the point.
+`;
+    } else if (platform === "linkedin_caption") {
+      prompt += `
+CRITICAL RULES FOR LINKEDIN:
+- Use a professional, authoritative B2B business tone.
+- Emphasize the career growth, job placement, agency positioning (BM TechX), or technical value.
+- Do NOT use excessive emojis or slang.
+`;
+    }
+
+    prompt += `
 CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
 - Do NOT generate captions in pure, formal Tamil script.
-- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters, e.g., "Ungalukku programming padikka aasaiya?", "3 madhathil job ready!", "First step edunga") mixed with English.
+- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters, e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga") mixed with English.
+`;
+
+    if (platform !== "youtube_title" && platform !== "x_caption") {
+      prompt += `
 - Across the 5 suggestions, provide a variety of language splits:
   - 1 or 2 options should be in pure conversational English.
-  - 2 or 3 options should be in English letters expressing Tanglish / local slang (e.g. "Ready-ah?", "Join pannunga", "Super option search panreengala?").
-  - 1 option can include short Tamil script words mixed with English (e.g. "3 மாதத்தில் job", "20% refund guarantee!"), but keep it informal.
+  - 2 or 3 options should be in English letters expressing Tanglish / local slang.
+  - 1 option can include short Tamil script words mixed with English (keep it informal).
+`;
+    }
+
+    prompt += `
 - The tone must be energetic, direct, and conversational. Avoid any textbook or formal tone.
 `;
 
@@ -2730,6 +2843,7 @@ async function suggestStories(req, res) {
       targetAudience: "General social media audience"
     };
     const brandVoice = findBrandVoice(post.brand_name)?.voice || "Professional and engaging";
+    const transcript = await getOrGenerateTranscript(post);
 
     let prompt = `You are an expert social media copywriter. Generate 5 unique Instagram Story sets (each set consisting of 3 slides: story_1, story_2, and story_3) to promote a video post based on the following details:
 - Brand Name: ${post.brand_name}
@@ -2738,10 +2852,13 @@ async function suggestStories(req, res) {
 - Brand Voice Guidelines: ${brandVoice}
 - Video Title/File Name: ${post.file_name}
 - Video Description: ${post.description || "Not provided"}
+- Video Transcript/Speech: ${transcript || "No spoken speech detected in this video. Promote the video topic and brand."}
 - Existing Caption: ${post.caption || "Not provided"}
 - Existing Hashtags: ${post.hashtags || ""}
-
-CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
+ 
+- Your suggestions MUST be deeply related to the actual video topic, title/file name, and the video transcript.
+- Do NOT output generic brand-only promotion text. Use the brand guidelines for styling, but write completely original hooks and CTAs centered around the specific content and topics discussed in this video.
+- Do NOT just copy the example sentences from the guidelines.
 - Do NOT generate stories in formal Tamil script unless specified.
 - For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters) mixed with English.
 - Across the 5 suggestions, provide a variety of language splits:

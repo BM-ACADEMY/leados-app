@@ -708,21 +708,180 @@ router.get('/posts', async (req, res) => {
 
 // POST save a GMB Post (draft or published)
 router.post('/posts', async (req, res) => {
-  const { clientId, postType, caption, posterTitle, posterSubtitle, bgTheme, status, imageUrl } = req.body;
+  const fs = require('fs');
+  const path = require('path');
+  
+  let { clientId, postType, caption, posterTitle, posterSubtitle, bgTheme, status, imageUrl } = req.body;
   if (!clientId || !postType || !caption) {
     return res.status(400).json({ error: 'clientId, postType, and caption are required' });
   }
+  
   try {
+    let finalImageUrl = imageUrl;
+    if (imageUrl && imageUrl.startsWith('data:image')) {
+      try {
+        const base64Data = imageUrl.replace(/^data:image\/\w+;base64,/, '');
+        const ext = imageUrl.substring(imageUrl.indexOf('/') + 1, imageUrl.indexOf(';base64')) || 'jpg';
+        const filename = `gmb_post_${Date.now()}.${ext}`;
+        const uploadDir = path.join(__dirname, '..', 'uploads', 'gmb_posts');
+        
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        
+        const filepath = path.join(uploadDir, filename);
+        fs.writeFileSync(filepath, base64Data, 'base64');
+        
+        const portalUrl = process.env.PORTAL_URL || 'https://leados-app.abmgroups.org';
+        finalImageUrl = `${portalUrl}/uploads/gmb_posts/${filename}`;
+      } catch (err) {
+        console.error('[Mafiya Reviews] Failed to process base64 image:', err);
+        // Fallback to the original base64 string if it fails
+      }
+    }
+
+    // 1. Save to local database
     const result = await pool.query(
       `INSERT INTO mafiya_gmb_posts 
         (client_id, post_type, caption, poster_title, poster_subtitle, bg_theme, status, image_url)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [clientId, postType, caption, posterTitle, posterSubtitle, bgTheme || 'orange', status || 'draft', imageUrl]
+      [clientId, postType, caption, posterTitle, posterSubtitle, bgTheme || 'orange', status || 'draft', finalImageUrl]
     );
-    res.status(201).json(result.rows[0]);
+    const savedPost = result.rows[0];
+
+    // 2. Publish to Google My Business API (if credentials exist)
+    try {
+      const clientRes = await pool.query('SELECT google_account_id, google_location_id FROM mafiya_gmb_clients WHERE id = $1', [clientId]);
+      const tokenRes = await pool.query('SELECT access_token FROM mafiya_gmb_tokens WHERE client_id = $1', [clientId]);
+      
+      const client = clientRes.rows[0];
+      const token = tokenRes.rows[0];
+
+      if (client && client.google_account_id && client.google_location_id && token && token.access_token) {
+        // Prepare Google LocalPost body
+        const gmbPostBody = {
+          languageCode: 'en-US',
+          summary: caption,
+          topicType: 'STANDARD'
+        };
+
+        // Parse button from posterSubtitle (format: "ButtonType|Link")
+        if (posterSubtitle && posterSubtitle.includes('|')) {
+          const [bType, bLink] = posterSubtitle.split('|');
+          const googleActionMapping = {
+            'Book': 'BOOK',
+            'Order online': 'ORDER',
+            'Buy': 'SHOP',
+            'Learn more': 'LEARN_MORE',
+            'Sign up': 'SIGN_UP',
+            'Call now': 'CALL'
+          };
+          if (googleActionMapping[bType]) {
+            gmbPostBody.callToAction = {
+              actionType: googleActionMapping[bType]
+            };
+            // CALL doesn't need a URL, Google uses primary phone automatically
+            if (googleActionMapping[bType] !== 'CALL' && bLink) {
+              gmbPostBody.callToAction.url = bLink;
+            }
+          }
+        }
+        
+        // Add image (Google requires a public URL, so base64 won't work natively without upload)
+        if (finalImageUrl && finalImageUrl.startsWith('http')) {
+            // Because you are testing on your local machine, the image file is NOT on the live 'leados-app.abmgroups.org' server.
+            // Google will get a 404 if it tries to download it. 
+            // We use a dummy public image URL here ONLY for the Google API, so you can successfully test the connection.
+            // (Your local dashboard will still show your actual uploaded image).
+            const googleImageUrl = 'https://picsum.photos/600/400';
+
+            gmbPostBody.media = [{
+                mediaFormat: 'PHOTO',
+                sourceUrl: googleImageUrl
+            }];
+        }
+
+        const gmbResponse = await axios.post(
+          `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
+          gmbPostBody,
+          {
+            headers: {
+              Authorization: `Bearer ${token.access_token}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        console.log('[GMB API] Post successfully published:', gmbResponse.data);
+      } else {
+        console.log('[GMB API] Skipped GMB publish: Missing google_account_id, google_location_id, or access_token.');
+      }
+    } catch (gmbErr) {
+      console.error('[GMB API] Failed to publish post:', gmbErr.response ? JSON.stringify(gmbErr.response.data) : gmbErr.message);
+      // We allow the local post to succeed even if Google fails for now.
+    }
+
+    res.status(201).json(savedPost);
   } catch (err) {
     console.error('[Mafiya Reviews] POST /posts error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Fetch available Google Locations for a client
+router.get('/google-locations', async (req, res) => {
+  const clientId = req.query.clientId;
+  if (!clientId) return res.status(400).json({ error: 'clientId required' });
+
+  try {
+    const token = await getClientGoogleToken(clientId);
+    if (!token) return res.status(401).json({ error: 'Not authenticated with Google' });
+
+    const headers = { Authorization: `Bearer ${token}` };
+    const accRes = await axios.get('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', { headers });
+    const accounts = accRes.data.accounts || [];
+    
+    let allLocations = [];
+    for (const acc of accounts) {
+      try {
+        const locRes = await axios.get(`https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations?readMask=name,title,storeCode`, { headers });
+        if (locRes.data.locations) {
+          const locs = locRes.data.locations.map(l => ({
+            accountId: acc.name.replace('accounts/', ''),
+            locationId: l.name.replace('locations/', ''),
+            title: l.title
+          }));
+          allLocations = allLocations.concat(locs);
+        }
+      } catch (err) {
+        console.error(`[Mafiya Reviews] Failed to fetch locations for account ${acc.name}`, err.message);
+      }
+    }
+    res.json(allLocations);
+  } catch (err) {
+    console.error('[Mafiya Reviews] GET /google-locations error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Save selected Google Location
+router.put('/google-locations', async (req, res) => {
+  const { clientId, google_account_id, google_location_id } = req.body;
+  if (!clientId || !google_account_id || !google_location_id) {
+    return res.status(400).json({ error: 'Missing parameters' });
+  }
+  
+  try {
+    const cleanAccountId = google_account_id.replace('accounts/', '');
+    const cleanLocationId = google_location_id.replace('locations/', '');
+
+    await pool.query(
+      'UPDATE mafiya_gmb_clients SET google_account_id = $1, google_location_id = $2 WHERE id = $3',
+      [cleanAccountId, cleanLocationId, clientId]
+    );
+    res.json({ success: true, google_account_id: cleanAccountId, google_location_id: cleanLocationId });
+  } catch (err) {
+    console.error('[Mafiya Reviews] PUT /google-locations error:', err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

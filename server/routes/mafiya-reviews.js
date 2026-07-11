@@ -59,6 +59,9 @@ pool.query(`
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS custom_days TEXT;
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS repeat_end_date DATE;
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS gmb_post_name VARCHAR(500);
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS views INTEGER DEFAULT 0;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS clicks INTEGER DEFAULT 0;
 `).catch(err => console.error('[Mafiya Reviews] Schema migration failed:', err));
 
 // Helper to refresh client token
@@ -743,7 +746,8 @@ router.post('/posts', async (req, res) => {
     repeats,
     customDays,
     repeatEndDate,
-    scheduledAt
+    scheduledAt,
+    clientNow
   } = req.body;
 
   if (!clientId || !postType || !caption) {
@@ -751,6 +755,11 @@ router.post('/posts', async (req, res) => {
   }
   
   try {
+    let finalScheduledAt = scheduledAt;
+    if (scheduledAt && clientNow) {
+      const delayMs = new Date(scheduledAt).getTime() - new Date(clientNow).getTime();
+      finalScheduledAt = new Date(Date.now() + delayMs);
+    }
     let finalImageUrl = imageUrl;
     if (imageUrl && (imageUrl.startsWith('data:image') || imageUrl.startsWith('data:video'))) {
       try {
@@ -808,7 +817,7 @@ router.post('/posts', async (req, res) => {
         repeats || 'Does not repeat',
         customDays || null,
         repeatEndDate || null,
-        scheduledAt || null
+        finalScheduledAt || null
       ]
     );
     const savedPost = result.rows[0];
@@ -978,6 +987,13 @@ router.post('/posts', async (req, res) => {
           }
         }
         console.log('[GMB API] Post successfully published:', gmbResponse.data);
+        if (gmbResponse && gmbResponse.data && gmbResponse.data.name) {
+          await pool.query(
+            "UPDATE mafiya_gmb_posts SET gmb_post_name = $1 WHERE id = $2",
+            [gmbResponse.data.name, savedPost.id]
+          );
+          savedPost.gmb_post_name = gmbResponse.data.name;
+        }
       } else {
         console.log('[GMB API] Skipped GMB publish: Missing google_account_id, google_location_id, or access_token.');
       }
@@ -990,6 +1006,81 @@ router.post('/posts', async (req, res) => {
   } catch (err) {
     console.error('[Mafiya Reviews] POST /posts error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Sync GMB Post metrics/insights from Google My Business API
+router.get('/posts/sync-metrics', async (req, res) => {
+  const clientId = req.query.clientId;
+  if (!clientId) return res.status(400).json({ error: 'clientId required' });
+
+  try {
+    const postsRes = await pool.query(
+      "SELECT id, gmb_post_name FROM mafiya_gmb_posts WHERE client_id = $1 AND status = 'published' AND gmb_post_name IS NOT NULL",
+      [clientId]
+    );
+
+    if (postsRes.rowCount === 0) {
+      return res.json({ message: 'No published GMB posts with GMB post name to sync.' });
+    }
+
+    const clientRes = await pool.query('SELECT google_account_id, google_location_id FROM mafiya_gmb_clients WHERE id = $1', [clientId]);
+    const tokenString = await getClientGoogleToken(clientId);
+    const client = clientRes.rows[0];
+
+    if (!client || !client.google_account_id || !client.google_location_id || !tokenString) {
+      return res.status(400).json({ error: 'Client not connected to Google location.' });
+    }
+
+    // Extract all post names
+    const postMap = {};
+    const localPostNames = [];
+    postsRes.rows.forEach(row => {
+      localPostNames.push(row.gmb_post_name);
+      postMap[row.gmb_post_name] = row.id;
+    });
+
+    // Make batch request to reportInsights
+    const response = await axios.post(
+      `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts:reportInsights`,
+      { localPostNames },
+      {
+        headers: {
+          Authorization: `Bearer ${tokenString}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const localPostMetrics = response.data.localPostMetrics || [];
+    for (const metric of localPostMetrics) {
+      const dbId = postMap[metric.localPostName];
+      if (!dbId) continue;
+
+      let views = 0;
+      let clicks = 0;
+
+      const metricValues = metric.metricValues || [];
+      metricValues.forEach(m => {
+        const val = m.dimensionalValues && m.dimensionalValues[0] ? parseInt(m.dimensionalValues[0].value || '0', 10) : 0;
+        if (m.metric === 'VIEWS_LOCAL_POST') {
+          views = val;
+        } else if (m.metric === 'ACTIONS_CALL_TO_ACTION_CLICKED') {
+          clicks = val;
+        }
+      });
+
+      // Update local database
+      await pool.query(
+        "UPDATE mafiya_gmb_posts SET views = $1, clicks = $2 WHERE id = $3",
+        [views, clicks, dbId]
+      );
+    }
+
+    res.json({ success: true, message: 'Sync complete.' });
+  } catch (err) {
+    console.error('[GMB API] Failed to sync insights:', err.response ? JSON.stringify(err.response.data) : err.message);
+    res.status(500).json({ error: 'Failed to sync insights from Google.' });
   }
 });
 
@@ -1015,10 +1106,16 @@ router.put('/posts/:id', async (req, res) => {
     repeats,
     customDays,
     repeatEndDate,
-    scheduledAt
+    scheduledAt,
+    clientNow
   } = req.body;
 
   try {
+    let finalScheduledAt = scheduledAt;
+    if (scheduledAt && clientNow) {
+      const delayMs = new Date(scheduledAt).getTime() - new Date(clientNow).getTime();
+      finalScheduledAt = new Date(Date.now() + delayMs);
+    }
     let finalImageUrl = imageUrl;
     const fs = require('fs');
     const path = require('path');
@@ -1076,7 +1173,7 @@ router.put('/posts/:id', async (req, res) => {
         repeats || 'Does not repeat',
         customDays || null,
         repeatEndDate || null,
-        scheduledAt || null,
+        finalScheduledAt || null,
         id
       ]
     );
@@ -1546,10 +1643,11 @@ async function publishPostToGmb(postId) {
       }
       console.log(`[GMB API] Post ${postId} successfully published:`, gmbResponse.data);
       
-      // Update status to published in the database
+      // Update status and post name in the database
+      const gmbPostName = gmbResponse && gmbResponse.data && gmbResponse.data.name ? gmbResponse.data.name : null;
       await pool.query(
-        "UPDATE mafiya_gmb_posts SET status = 'published' WHERE id = $1",
-        [postId]
+        "UPDATE mafiya_gmb_posts SET status = 'published', gmb_post_name = $1 WHERE id = $2",
+        [gmbPostName, postId]
       );
     } else {
       console.log(`[GMB API] Skipped GMB publish for post ${postId}: Missing client identifiers.`);

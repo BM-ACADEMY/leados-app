@@ -1559,9 +1559,9 @@ async function publishPostToGmb(postId) {
   }
 }
 
-// node-cron job to run every minute and publish scheduled posts
+// node-cron job to run every 5 seconds and publish scheduled posts
 const cron = require('node-cron');
-cron.schedule('* * * * *', async () => {
+cron.schedule('*/5 * * * * *', async () => {
   try {
     const result = await pool.query(
       "SELECT id FROM mafiya_gmb_posts WHERE status = 'scheduled' AND scheduled_at <= NOW()"

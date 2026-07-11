@@ -867,6 +867,23 @@ router.post('/posts', async (req, res) => {
           return null;
         };
 
+        const appendUtmParams = (originalUrl) => {
+          if (!originalUrl) return originalUrl;
+          try {
+            // Ensure URL has http/https to parse properly
+            const validUrl = originalUrl.startsWith('http') ? originalUrl : `https://${originalUrl}`;
+            const urlObj = new URL(validUrl);
+            // Append UTM parameters
+            urlObj.searchParams.set('utm_source', 'google_my_business');
+            urlObj.searchParams.set('utm_medium', 'gmb_post');
+            urlObj.searchParams.set('utm_campaign', `post_${savedPost.id}`);
+            return urlObj.toString();
+          } catch (e) {
+            console.error('[GMB API] Invalid URL for UTM appending:', originalUrl);
+            return originalUrl;
+          }
+        };
+
         if (postType === 'Offer' || postType === 'offers') {
           gmbPostBody.topicType = 'OFFER';
           const startD = parseGoogleDate(startDate);
@@ -885,7 +902,7 @@ router.post('/posts', async (req, res) => {
           };
           gmbPostBody.offer = {
             couponCode: couponCode || undefined,
-            redeemOnlineUrl: redeemLink || undefined,
+            redeemOnlineUrl: redeemLink ? appendUtmParams(redeemLink) : undefined,
             termsConditions: terms || undefined
           };
         } else if (postType === 'Event' || postType === 'events') {
@@ -925,7 +942,7 @@ router.post('/posts', async (req, res) => {
               };
               // CALL doesn't need a URL, Google uses primary phone automatically
               if (googleActionMapping[bType] !== 'CALL' && bLink) {
-                gmbPostBody.callToAction.url = bLink;
+                gmbPostBody.callToAction.url = appendUtmParams(bLink.trim());
               }
             }
           }
@@ -1024,60 +1041,14 @@ router.get('/posts/sync-metrics', async (req, res) => {
       return res.json({ message: 'No published GMB posts with GMB post name to sync.' });
     }
 
-    const clientRes = await pool.query('SELECT google_account_id, google_location_id FROM mafiya_gmb_clients WHERE id = $1', [clientId]);
-    const tokenString = await getClientGoogleToken(clientId);
-    const client = clientRes.rows[0];
-
-    if (!client || !client.google_account_id || !client.google_location_id || !tokenString) {
-      return res.status(400).json({ error: 'Client not connected to Google location.' });
-    }
-
-    // Extract all post names
-    const postMap = {};
-    const localPostNames = [];
-    postsRes.rows.forEach(row => {
-      localPostNames.push(row.gmb_post_name);
-      postMap[row.gmb_post_name] = row.id;
+    // Google Business Profile API has deprecated and removed the localPosts:reportInsights endpoint.
+    // There is no replacement for post-level insights via API. 
+    // We return a success message so the client doesn't crash, but we can't update metrics.
+    
+    res.json({ 
+      success: true, 
+      message: 'Sync complete. Note: Google has deprecated post-level metric insights, so views and clicks may not update.' 
     });
-
-    // Make batch request to reportInsights
-    const response = await axios.post(
-      `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts:reportInsights`,
-      { localPostNames },
-      {
-        headers: {
-          Authorization: `Bearer ${tokenString}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const localPostMetrics = response.data.localPostMetrics || [];
-    for (const metric of localPostMetrics) {
-      const dbId = postMap[metric.localPostName];
-      if (!dbId) continue;
-
-      let views = 0;
-      let clicks = 0;
-
-      const metricValues = metric.metricValues || [];
-      metricValues.forEach(m => {
-        const val = m.dimensionalValues && m.dimensionalValues[0] ? parseInt(m.dimensionalValues[0].value || '0', 10) : 0;
-        if (m.metric === 'VIEWS_LOCAL_POST') {
-          views = val;
-        } else if (m.metric === 'ACTIONS_CALL_TO_ACTION_CLICKED') {
-          clicks = val;
-        }
-      });
-
-      // Update local database
-      await pool.query(
-        "UPDATE mafiya_gmb_posts SET views = $1, clicks = $2 WHERE id = $3",
-        [views, clicks, dbId]
-      );
-    }
-
-    res.json({ success: true, message: 'Sync complete.' });
   } catch (err) {
     console.error('[GMB API] Failed to sync insights:', err.response ? JSON.stringify(err.response.data) : err.message);
     res.status(500).json({ error: 'Failed to sync insights from Google.' });

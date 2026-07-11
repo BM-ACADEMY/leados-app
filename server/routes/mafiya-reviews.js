@@ -47,6 +47,14 @@ pool.query(`
     created_at     TIMESTAMP DEFAULT NOW()
   );
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS image_url TEXT;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS post_title VARCHAR(255);
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS start_date DATE;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS end_date DATE;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS start_time TIME;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS end_time TIME;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS coupon_code VARCHAR(100);
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS redeem_link TEXT;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS terms TEXT;
 `).catch(err => console.error('[Mafiya Reviews] Schema migration failed:', err));
 
 // Helper to refresh client token
@@ -711,7 +719,25 @@ router.post('/posts', async (req, res) => {
   const fs = require('fs');
   const path = require('path');
   
-  let { clientId, postType, caption, posterTitle, posterSubtitle, bgTheme, status, imageUrl } = req.body;
+  let { 
+    clientId, 
+    postType, 
+    caption, 
+    posterTitle, 
+    posterSubtitle, 
+    bgTheme, 
+    status, 
+    imageUrl,
+    postTitle,
+    startDate,
+    endDate,
+    startTime,
+    endTime,
+    couponCode,
+    redeemLink,
+    terms
+  } = req.body;
+
   if (!clientId || !postType || !caption) {
     return res.status(400).json({ error: 'clientId, postType, and caption are required' });
   }
@@ -748,10 +774,28 @@ router.post('/posts', async (req, res) => {
     // 1. Save to local database
     const result = await pool.query(
       `INSERT INTO mafiya_gmb_posts 
-        (client_id, post_type, caption, poster_title, poster_subtitle, bg_theme, status, image_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (client_id, post_type, caption, poster_title, poster_subtitle, bg_theme, status, image_url,
+         post_title, start_date, end_date, start_time, end_time, coupon_code, redeem_link, terms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
-      [clientId, postType, caption, posterTitle, posterSubtitle, bgTheme || 'orange', status || 'draft', finalImageUrl]
+      [
+        clientId, 
+        postType, 
+        caption, 
+        posterTitle, 
+        posterSubtitle, 
+        bgTheme || 'orange', 
+        status || 'draft', 
+        finalImageUrl,
+        postTitle || null,
+        startDate || null,
+        endDate || null,
+        startTime || null,
+        endTime || null,
+        couponCode || null,
+        redeemLink || null,
+        terms || null
+      ]
     );
     const savedPost = result.rows[0];
 
@@ -766,28 +810,83 @@ router.post('/posts', async (req, res) => {
         // Prepare Google LocalPost body
         const gmbPostBody = {
           languageCode: 'en-US',
-          summary: caption,
-          topicType: 'STANDARD'
+          summary: caption
         };
 
-        // Parse button from posterSubtitle (format: "ButtonType|Link")
-        if (posterSubtitle && posterSubtitle.includes('|')) {
-          const [bType, bLink] = posterSubtitle.split('|');
-          const googleActionMapping = {
-            'Book': 'BOOK',
-            'Order online': 'ORDER',
-            'Buy': 'SHOP',
-            'Learn more': 'LEARN_MORE',
-            'Sign up': 'SIGN_UP',
-            'Call now': 'CALL'
-          };
-          if (googleActionMapping[bType]) {
-            gmbPostBody.callToAction = {
-              actionType: googleActionMapping[bType]
+        const parseGoogleDate = (dateStr) => {
+          if (!dateStr) return null;
+          const parts = dateStr.split('-');
+          if (parts.length === 3) {
+            return {
+              year: parseInt(parts[0], 10),
+              month: parseInt(parts[1], 10),
+              day: parseInt(parts[2], 10)
             };
-            // CALL doesn't need a URL, Google uses primary phone automatically
-            if (googleActionMapping[bType] !== 'CALL' && bLink) {
-              gmbPostBody.callToAction.url = bLink;
+          }
+          return null;
+        };
+
+        const parseGoogleTime = (timeStr) => {
+          if (!timeStr) return null;
+          const parts = timeStr.split(':');
+          if (parts.length >= 2) {
+            return {
+              hours: parseInt(parts[0], 10),
+              minutes: parseInt(parts[1], 10),
+              seconds: 0
+            };
+          }
+          return null;
+        };
+
+        if (postType === 'Offer' || postType === 'offers') {
+          gmbPostBody.topicType = 'OFFER';
+          const startD = parseGoogleDate(startDate);
+          const endD = parseGoogleDate(endDate);
+          gmbPostBody.offer = {
+            couponCode: couponCode || undefined,
+            redeemOnlineUrl: redeemLink || undefined,
+            termsConditions: terms || undefined,
+            startDate: startD || undefined,
+            endDate: endD || undefined
+          };
+        } else if (postType === 'Event' || postType === 'events') {
+          gmbPostBody.topicType = 'EVENT';
+          const startD = parseGoogleDate(startDate);
+          const endD = parseGoogleDate(endDate);
+          const startT = parseGoogleTime(startTime);
+          const endT = parseGoogleTime(endTime);
+          gmbPostBody.event = {
+            title: postTitle || posterTitle || 'Special Event',
+            schedule: {
+              startDate: startD || undefined,
+              startTime: startT || undefined,
+              endDate: endD || undefined,
+              endTime: endT || undefined
+            }
+          };
+        } else {
+          gmbPostBody.topicType = 'STANDARD';
+
+          // Parse button from posterSubtitle (format: "ButtonType|Link")
+          if (posterSubtitle && posterSubtitle.includes('|')) {
+            const [bType, bLink] = posterSubtitle.split('|');
+            const googleActionMapping = {
+              'Book': 'BOOK',
+              'Order online': 'ORDER',
+              'Buy': 'SHOP',
+              'Learn more': 'LEARN_MORE',
+              'Sign up': 'SIGN_UP',
+              'Call now': 'CALL'
+            };
+            if (googleActionMapping[bType]) {
+              gmbPostBody.callToAction = {
+                actionType: googleActionMapping[bType]
+              };
+              // CALL doesn't need a URL, Google uses primary phone automatically
+              if (googleActionMapping[bType] !== 'CALL' && bLink) {
+                gmbPostBody.callToAction.url = bLink;
+              }
             }
           }
         }

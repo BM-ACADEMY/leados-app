@@ -100,6 +100,14 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
       toast.error('Description is required');
       return;
     }
+    if ((postType === 'Offer' || postType === 'Event') && !postTitle) {
+      toast.error('Title is required for Offer/Event');
+      return;
+    }
+    if ((postType === 'Offer' || postType === 'Event') && (!startDate || !endDate)) {
+      toast.error('Start and End dates are required');
+      return;
+    }
     setSaving(true);
     try {
       const token = localStorage.getItem('leados_token');
@@ -107,11 +115,19 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
           clientId: activeClient.id,
           postType: postType,
           caption: description,
-          posterTitle: postType.toUpperCase(),
+          posterTitle: (postType === 'Offer' || postType === 'Event') ? postTitle : postType.toUpperCase(),
           posterSubtitle: buttonType !== 'None' ? `${buttonType}|${buttonLink}` : '',
           bgTheme: 'custom_stock',
           imageUrl: selectedImage || '',
-          status: 'published'
+          status: 'published',
+          postTitle: postTitle,
+          startDate: startDate || null,
+          endDate: endDate || null,
+          startTime: startTime || null,
+          endTime: endTime || null,
+          couponCode: couponCode || null,
+          redeemLink: redeemLink || null,
+          terms: terms || null
         }, {
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -120,6 +136,17 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
         fetchGmbPosts(activeClient.id);
         setDescription('');
         setSelectedImage(null);
+        setPostTitle('');
+        setStartDate('');
+        setEndDate('');
+        setStartTime('');
+        setEndTime('');
+        setCouponCode('');
+        setRedeemLink('');
+        setTerms('');
+        setHasButton(false);
+        setButtonType('None');
+        setButtonLink('');
       
     } catch (err) {
       toast.error(err.message);

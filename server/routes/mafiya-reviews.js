@@ -55,6 +55,10 @@ pool.query(`
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS coupon_code VARCHAR(100);
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS redeem_link TEXT;
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS terms TEXT;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS repeats VARCHAR(50) DEFAULT 'Does not repeat';
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS custom_days TEXT;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS repeat_end_date DATE;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP;
 `).catch(err => console.error('[Mafiya Reviews] Schema migration failed:', err));
 
 // Helper to refresh client token
@@ -735,7 +739,11 @@ router.post('/posts', async (req, res) => {
     endTime,
     couponCode,
     redeemLink,
-    terms
+    terms,
+    repeats,
+    customDays,
+    repeatEndDate,
+    scheduledAt
   } = req.body;
 
   if (!clientId || !postType || !caption) {
@@ -744,10 +752,12 @@ router.post('/posts', async (req, res) => {
   
   try {
     let finalImageUrl = imageUrl;
-    if (imageUrl && imageUrl.startsWith('data:image')) {
+    if (imageUrl && (imageUrl.startsWith('data:image') || imageUrl.startsWith('data:video'))) {
       try {
-        const base64Data = imageUrl.replace(/^data:image\/\w+;base64,/, '');
-        const ext = imageUrl.substring(imageUrl.indexOf('/') + 1, imageUrl.indexOf(';base64')) || 'jpg';
+        const isVideo = imageUrl.startsWith('data:video');
+        const match = imageUrl.match(/^data:(image|video)\/(\w+);base64,/);
+        const ext = match ? match[2] : (isVideo ? 'mp4' : 'jpg');
+        const base64Data = imageUrl.replace(/^data:(image|video)\/\w+;base64,/, '');
         const filename = `gmb_post_${Date.now()}.${ext}`;
         const uploadDir = path.join(__dirname, '..', 'uploads', 'gmb_posts');
         
@@ -766,7 +776,7 @@ router.post('/posts', async (req, res) => {
         // Use a dedicated dynamic API route to serve the image, bypassing Nginx static file intercepts
         finalImageUrl = `${apiUrl}/api/mafiya/reviews/image/${filename}`;
       } catch (err) {
-        console.error('[Mafiya Reviews] Failed to process base64 image:', err);
+        console.error('[Mafiya Reviews] Failed to process base64 file:', err);
         // Fallback to the original base64 string if it fails
       }
     }
@@ -775,8 +785,8 @@ router.post('/posts', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO mafiya_gmb_posts 
         (client_id, post_type, caption, poster_title, poster_subtitle, bg_theme, status, image_url,
-         post_title, start_date, end_date, start_time, end_time, coupon_code, redeem_link, terms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         post_title, start_date, end_date, start_time, end_time, coupon_code, redeem_link, terms, repeats, custom_days, repeat_end_date, scheduled_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
        RETURNING *`,
       [
         clientId, 
@@ -794,10 +804,19 @@ router.post('/posts', async (req, res) => {
         endTime || null,
         couponCode || null,
         redeemLink || null,
-        terms || null
+        terms || null,
+        repeats || 'Does not repeat',
+        customDays || null,
+        repeatEndDate || null,
+        scheduledAt || null
       ]
     );
     const savedPost = result.rows[0];
+
+    // If the post is scheduled for later, we do NOT publish it to GMB immediately
+    if (status === 'scheduled') {
+      return res.status(201).json(savedPost);
+    }
 
     // 2. Publish to Google My Business API (if credentials exist)
     try {
@@ -877,8 +896,10 @@ router.post('/posts', async (req, res) => {
           };
         } else {
           gmbPostBody.topicType = 'STANDARD';
+        }
 
-          // Parse button from posterSubtitle (format: "ButtonType|Link")
+        // Parse button from posterSubtitle (format: "ButtonType|Link") for non-Offer posts
+        if (postType !== 'Offer' && postType !== 'offers') {
           if (posterSubtitle && posterSubtitle.includes('|')) {
             const [bType, bLink] = posterSubtitle.split('|');
             const googleActionMapping = {
@@ -904,20 +925,21 @@ router.post('/posts', async (req, res) => {
         // Add image (Google requires a public URL, so base64 won't work natively without upload)
         if (finalImageUrl && finalImageUrl.startsWith('http')) {
             // Automatically detect if running on local Windows PC vs Live Ubuntu Server
-            const isLocalWindows = __dirname.includes(':\\') || __dirname.includes('Desktop');
-            const googleImageUrl = isLocalWindows 
-              ? 'https://picsum.photos/600/400' // Use dummy public image for local testing
-              : finalImageUrl; // Use actual image on live server
-
-            console.log(`[GMB API Debug] Local OS detected? ${isLocalWindows}`);
-            console.log(`[GMB API Debug] finalImageUrl saved to DB: ${finalImageUrl}`);
-            console.log(`[GMB API Debug] googleImageUrl sent to API: ${googleImageUrl}`);
-
-            gmbPostBody.media = [{
-                mediaFormat: 'PHOTO',
-                sourceUrl: googleImageUrl
-            }];
-        }
+             const isLocalWindows = __dirname.includes(':\\') || __dirname.includes('Desktop');
+             const isVideo = finalImageUrl.endsWith('.mp4') || finalImageUrl.endsWith('.webm') || finalImageUrl.endsWith('.mov') || finalImageUrl.endsWith('.avi');
+             let googleImageUrl = isLocalWindows 
+               ? (isVideo ? 'https://www.w3schools.com/html/mov_bbb.mp4' : 'https://picsum.photos/600/400') // Use dummy public media for local testing
+               : finalImageUrl; // Use actual media on live server
+ 
+             console.log(`[GMB API Debug] Local OS detected? ${isLocalWindows}`);
+             console.log(`[GMB API Debug] finalImageUrl saved to DB: ${finalImageUrl}`);
+             console.log(`[GMB API Debug] googleImageUrl sent to API: ${googleImageUrl}`);
+ 
+             gmbPostBody.media = [{
+                 mediaFormat: isVideo ? 'VIDEO' : 'PHOTO',
+                 sourceUrl: googleImageUrl
+             }];
+         }
 
         const gmbResponse = await axios.post(
           `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
@@ -1006,12 +1028,32 @@ router.put('/google-locations', async (req, res) => {
 // DELETE a GMB Post
 router.delete('/posts/:id', async (req, res) => {
   const { id } = req.params;
+  const fs = require('fs');
+  const path = require('path');
   try {
     const result = await pool.query(
       'DELETE FROM mafiya_gmb_posts WHERE id = $1 RETURNING *',
       [id]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Post not found' });
+
+    // Delete local image file if it exists
+    const deletedPost = result.rows[0];
+    const imageUrl = deletedPost.image_url;
+    if (imageUrl && imageUrl.includes('/api/mafiya/reviews/image/')) {
+      try {
+        const parts = imageUrl.split('/');
+        const filename = parts[parts.length - 1];
+        const filepath = path.join(__dirname, '..', 'uploads', 'gmb_posts', filename);
+        if (fs.existsSync(filepath)) {
+          fs.unlinkSync(filepath);
+          console.log(`[GMB API] Deleted local image file: ${filename}`);
+        }
+      } catch (err) {
+        console.error('[GMB API] Failed to delete local image file:', err.message);
+      }
+    }
+
     res.json({ message: 'Post deleted successfully' });
   } catch (err) {
     console.error('[Mafiya Reviews] DELETE /posts error:', err);
@@ -1193,6 +1235,184 @@ Generate a JSON object with exactly these fields:
   } catch (err) {
     console.error('[Mafiya Posts] Generate AI error:', err.response?.data || err.message);
     res.status(500).json({ error: 'Failed to generate post content.' });
+  }
+});
+
+// Helper function to publish a post from the database to GMB API
+async function publishPostToGmb(postId) {
+  try {
+    const postRes = await pool.query('SELECT * FROM mafiya_gmb_posts WHERE id = $1', [postId]);
+    if (postRes.rowCount === 0) {
+      console.error(`[GMB API] Post with ID ${postId} not found for GMB publication.`);
+      return;
+    }
+    const post = postRes.rows[0];
+    const { 
+      client_id: clientId, 
+      post_type: postType, 
+      caption, 
+      poster_title: posterTitle, 
+      poster_subtitle: posterSubtitle, 
+      image_url: finalImageUrl,
+      post_title: postTitle,
+      start_date: startDate,
+      end_date: endDate,
+      start_time: startTime,
+      end_time: endTime,
+      coupon_code: couponCode,
+      redeem_link: redeemLink,
+      terms
+    } = post;
+
+    const clientRes = await pool.query('SELECT google_account_id, google_location_id FROM mafiya_gmb_clients WHERE id = $1', [clientId]);
+    const tokenString = await getClientGoogleToken(clientId);
+    const client = clientRes.rows[0];
+
+    if (client && client.google_account_id && client.google_location_id && tokenString) {
+      const gmbPostBody = {
+        languageCode: 'en-US',
+        summary: caption
+      };
+
+      const parseGoogleDate = (dateObj) => {
+        if (!dateObj) return null;
+        let d = dateObj;
+        if (typeof dateObj === 'string') {
+          const parts = dateObj.split('-');
+          if (parts.length === 3) {
+            return {
+              year: parseInt(parts[0], 10),
+              month: parseInt(parts[1], 10),
+              day: parseInt(parts[2], 10)
+            };
+          }
+          return null;
+        }
+        // In PostgreSQL, date columns are returned as Date objects
+        return {
+          year: d.getFullYear(),
+          month: d.getMonth() + 1,
+          day: d.getDate()
+        };
+      };
+
+      const parseGoogleTime = (timeStr) => {
+        if (!timeStr) return null;
+        const parts = timeStr.split(':');
+        if (parts.length >= 2) {
+          return {
+            hours: parseInt(parts[0], 10),
+            minutes: parseInt(parts[1], 10),
+            seconds: 0
+          };
+        }
+        return null;
+      };
+
+      if (postType === 'Offer' || postType === 'offers') {
+        gmbPostBody.topicType = 'OFFER';
+        gmbPostBody.event = {
+          title: postTitle || posterTitle || 'Special Offer',
+          schedule: {
+            startDate: parseGoogleDate(startDate) || undefined,
+            startTime: parseGoogleTime(startTime) || undefined,
+            endDate: parseGoogleDate(endDate) || undefined,
+            endTime: parseGoogleTime(endTime) || undefined
+          }
+        };
+        gmbPostBody.offer = {
+          couponCode: couponCode || undefined,
+          redeemOnlineUrl: redeemLink || undefined,
+          termsConditions: terms || undefined
+        };
+      } else if (postType === 'Event' || postType === 'events') {
+        gmbPostBody.topicType = 'EVENT';
+        gmbPostBody.event = {
+          title: postTitle || posterTitle || 'Special Event',
+          schedule: {
+            startDate: parseGoogleDate(startDate) || undefined,
+            startTime: parseGoogleTime(startTime) || undefined,
+            endDate: parseGoogleDate(endDate) || undefined,
+            endTime: parseGoogleTime(endTime) || undefined
+          }
+        };
+      } else {
+        gmbPostBody.topicType = 'STANDARD';
+      }
+
+      if (postType !== 'Offer' && postType !== 'offers') {
+        if (posterSubtitle && posterSubtitle.includes('|')) {
+          const [bType, bLink] = posterSubtitle.split('|');
+          const googleActionMapping = {
+            'Book': 'BOOK',
+            'Order online': 'ORDER',
+            'Buy': 'SHOP',
+            'Learn more': 'LEARN_MORE',
+            'Sign up': 'SIGN_UP',
+            'Call now': 'CALL'
+          };
+          if (googleActionMapping[bType]) {
+            gmbPostBody.callToAction = {
+              actionType: googleActionMapping[bType]
+            };
+            if (googleActionMapping[bType] !== 'CALL' && bLink) {
+              gmbPostBody.callToAction.url = bLink;
+            }
+          }
+        }
+      }
+
+      if (finalImageUrl && finalImageUrl.startsWith('http')) {
+        const isLocalWindows = __dirname.includes(':\\') || __dirname.includes('Desktop');
+        const isVideo = finalImageUrl.endsWith('.mp4') || finalImageUrl.endsWith('.webm') || finalImageUrl.endsWith('.mov') || finalImageUrl.endsWith('.avi');
+        let googleImageUrl = isLocalWindows 
+          ? (isVideo ? 'https://www.w3schools.com/html/mov_bbb.mp4' : 'https://picsum.photos/600/400')
+          : finalImageUrl;
+
+        gmbPostBody.media = [{
+          mediaFormat: isVideo ? 'VIDEO' : 'PHOTO',
+          sourceUrl: googleImageUrl
+        }];
+      }
+
+      const gmbResponse = await axios.post(
+        `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
+        gmbPostBody,
+        {
+          headers: {
+            Authorization: `Bearer ${tokenString}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      console.log(`[GMB API] Post ${postId} successfully published:`, gmbResponse.data);
+      
+      // Update status to published in the database
+      await pool.query(
+        "UPDATE mafiya_gmb_posts SET status = 'published' WHERE id = $1",
+        [postId]
+      );
+    } else {
+      console.log(`[GMB API] Skipped GMB publish for post ${postId}: Missing client identifiers.`);
+    }
+  } catch (err) {
+    console.error(`[GMB API] Failed to publish post ${postId}:`, err.response ? JSON.stringify(err.response.data) : err.message);
+  }
+}
+
+// node-cron job to run every minute and publish scheduled posts
+const cron = require('node-cron');
+cron.schedule('* * * * *', async () => {
+  try {
+    const result = await pool.query(
+      "SELECT id FROM mafiya_gmb_posts WHERE status = 'scheduled' AND scheduled_at <= NOW()"
+    );
+    for (const row of result.rows) {
+      console.log(`[Scheduler] Processing scheduled post ID: ${row.id}`);
+      await publishPostToGmb(row.id);
+    }
+  } catch (err) {
+    console.error('[Scheduler Error] Failed to process scheduled posts:', err.message);
   }
 });
 

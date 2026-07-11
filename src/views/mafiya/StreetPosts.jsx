@@ -6,7 +6,7 @@ import { C } from '../../constants/theme.js';
 import { 
   Megaphone, Plus, Trash2, Download, Sparkles, 
   Loader2, Check, Star, X, MoreVertical, ImagePlus,
-  Play, Link
+  Play, Link, BarChart2, ArrowLeft, Calendar, TrendingUp
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -229,15 +229,10 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
-      const isVideo = file.type.startsWith('video/');
-      const limit = isVideo ? 15 * 1024 * 1024 : 5 * 1024 * 1024;
+      const limit = 5 * 1024 * 1024;
       
       if (file.size > limit) {
-        if (isVideo) {
-          toast.error('Video size must be 15MB or less');
-        } else {
-          toast.error('Image size must be 5MB or less');
-        }
+        toast.error('Upload 5MB only');
         return;
       }
       const reader = new FileReader();
@@ -311,6 +306,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
           imageUrl: selectedImage || '',
           status: schedulePost ? 'scheduled' : 'published',
           scheduledAt: schedulePost ? new Date(`${scheduledDate}T${scheduledTime}`).toISOString() : null,
+          clientNow: new Date().toISOString(),
           postTitle: postTitle,
           startDate: startDate || null,
           endDate: endDate || null,
@@ -913,6 +909,520 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
   );
 };
 
+const PostAnalyticsView = ({ post, onBack, activeClient }) => {
+  // Filters
+  const [rangeType, setRangeType] = useState('Month'); // 'Month' or 'Date'
+  
+  // Custom range dialog states
+  const [showRangePopover, setShowRangePopover] = useState(false);
+  const [tempRangeType, setTempRangeType] = useState('Month');
+  
+  // Month range values
+  const [fromMonth, setFromMonth] = useState('February, 2026');
+  const [toMonth, setToMonth] = useState('July, 2026');
+  
+  // Date range values
+  const [fromDate, setFromDate] = useState('2026-02-01');
+  const [toDate, setToDate] = useState('2026-07-31');
+
+  // Applied values
+  const [appliedRangeType, setAppliedRangeType] = useState('Month');
+  const [appliedFromMonth, setAppliedFromMonth] = useState('February, 2026');
+  const [appliedToMonth, setAppliedToMonth] = useState('July, 2026');
+  const [appliedFromDate, setAppliedFromDate] = useState('2026-02-01');
+  const [appliedToDate, setAppliedToDate] = useState('2026-07-31');
+
+  // Hover state for interactive tooltip
+  const [hoveredPointIdx, setHoveredPointIdx] = useState(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  const monthsList = [
+    'January, 2026', 'February, 2026', 'March, 2026', 'April, 2026', 
+    'May, 2026', 'June, 2026', 'July, 2026', 'August, 2026', 
+    'September, 2026', 'October, 2026', 'November, 2026', 'December, 2026'
+  ];
+
+  // Helper to get Date object from Month selection
+  const parseMonthYearString = (str) => {
+    const [monthName, yearStr] = str.split(', ');
+    const year = parseInt(yearStr, 10);
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const month = months.indexOf(monthName);
+    return new Date(year, month, 1);
+  };
+
+  // Generate mock daily data
+  const generateMockDailyData = () => {
+    const startRange = new Date('2026-01-01');
+    const data = [];
+    const totalViews = post.views || 0;
+    const totalClicks = post.clicks || 0;
+
+    // Simulate metrics day-by-day for the entire year of 2026 to allow full filtering
+    for (let i = 0; i < 365; i++) {
+      const d = new Date(startRange.getTime() + i * 24 * 3600000);
+      const seedVal = (post.id * 7 + i * 13) % 100;
+      
+      // Let's create some peaks and valleys exactly like the spline chart screenshot
+      let multiplier = 0.05;
+      if (i > 150 && i < 170) { // June peak
+        multiplier = seedVal > 70 ? 2.5 : 0.8;
+      } else if (i > 190 && i < 210) { // July peak
+        multiplier = seedVal > 60 ? 3.0 : 1.2;
+      } else if (seedVal % 15 === 0) { // Small peaks elsewhere
+        multiplier = 1.1;
+      } else {
+        multiplier = 0.05; // valleys
+      }
+
+      const dayViews = Math.round((totalViews / 30) * multiplier);
+      const dayClicks = Math.round((totalClicks / 30) * multiplier * 0.7);
+
+      data.push({
+        date: d.toISOString().split('T')[0],
+        month: d.toLocaleString('en-US', { month: 'long', year: 'numeric' }),
+        views: dayViews,
+        clicks: dayClicks
+      });
+    }
+    return data;
+  };
+
+  const allMockData = generateMockDailyData();
+
+  // Apply range filtering
+  const filteredData = allMockData.filter(item => {
+    const itemDate = new Date(item.date);
+    
+    if (appliedRangeType === 'Month') {
+      const startLimit = parseMonthYearString(appliedFromMonth);
+      const endLimit = parseMonthYearString(appliedToMonth);
+      // set to end of the month for endLimit
+      const endLimitEnd = new Date(endLimit.getFullYear(), endLimit.getMonth() + 1, 0, 23, 59, 59);
+      return itemDate >= startLimit && itemDate <= endLimitEnd;
+    } else {
+      const startLimit = new Date(appliedFromDate);
+      const endLimit = new Date(appliedToDate);
+      endLimit.setHours(23, 59, 59);
+      return itemDate >= startLimit && itemDate <= endLimit;
+    }
+  });
+
+  // Calculate aggregates
+  const filteredViews = filteredData.reduce((sum, item) => sum + item.views, 0);
+  const filteredClicks = filteredData.reduce((sum, item) => sum + item.clicks, 0);
+  const conversionRate = filteredViews ? ((filteredClicks / filteredViews) * 100).toFixed(1) : '0.0';
+
+  // Chart Scaling & SVG
+  const maxVal = Math.max(...filteredData.map(d => d.views), 1);
+  const svgWidth = 700;
+  const svgHeight = 220;
+  const paddingX = 40;
+  const paddingY = 30;
+
+  // Generate points for spline chart path (using views as primary curve like in screenshot)
+  const points = filteredData.map((d, idx) => {
+    const x = filteredData.length > 1 ? (idx / (filteredData.length - 1)) * (svgWidth - paddingX * 2) + paddingX : paddingX;
+    const y = svgHeight - ((d.views / maxVal) * (svgHeight - paddingY * 2) + paddingY);
+    return { x, y, date: d.date, value: d.views, clicks: d.clicks };
+  });
+
+  // Spline Curved Path generator (Cubic Bezier curve algorithm)
+  const getCurvePath = (pts) => {
+    if (pts.length === 0) return '';
+    let path = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i];
+      const p1 = pts[i + 1];
+      // Control points for smooth spline transition
+      const cpX1 = p0.x + (p1.x - p0.x) / 3;
+      const cpY1 = p0.y;
+      const cpX2 = p0.x + 2 * (p1.x - p0.x) / 3;
+      const cpY2 = p1.y;
+      path += ` C ${cpX1} ${cpY1}, ${cpX2} ${cpY2}, ${p1.x} ${p1.y}`;
+    }
+    return path;
+  };
+
+  const linePath = getCurvePath(points);
+  const areaPath = points.length > 0 ? `${linePath} L ${points[points.length - 1].x} ${svgHeight - 10} L ${points[0].x} ${svgHeight - 10} Z` : '';
+
+  // SVG Mouse Interaction handlers for hover tooltip
+  const handleMouseMove = (e) => {
+    if (points.length === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clientX = e.clientX - rect.left;
+    const svgX = (clientX / rect.width) * svgWidth;
+
+    // Find nearest point
+    let minDiff = Infinity;
+    let nearestIdx = 0;
+    points.forEach((p, idx) => {
+      const diff = Math.abs(p.x - svgX);
+      if (diff < minDiff) {
+        minDiff = diff;
+        nearestIdx = idx;
+      }
+    });
+
+    setHoveredPointIdx(nearestIdx);
+    // Tooltip position (above the node)
+    setTooltipPos({
+      x: (points[nearestIdx].x / svgWidth) * rect.width,
+      y: (points[nearestIdx].y / svgHeight) * rect.height - 75
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setHoveredPointIdx(null);
+  };
+
+  // Applied range label text to display
+  const getRangeLabel = () => {
+    if (appliedRangeType === 'Month') {
+      return `${appliedFromMonth} - ${appliedToMonth}`;
+    }
+    return `${new Date(appliedFromDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${new Date(appliedToDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  };
+
+  const isVideo = post.image_url && (
+    post.image_url.endsWith('.mp4') || 
+    post.image_url.endsWith('.webm') || 
+    post.image_url.endsWith('.mov') || 
+    post.image_url.endsWith('.avi')
+  );
+
+  return (
+    <div style={{ padding: 26, background: '#090a0f', height: '100vh', overflowY: 'auto', color: '#fff', position: 'relative' }}>
+      {/* Back Button */}
+      <button 
+        onClick={onBack}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', color: '#a1a1aa', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, marginBottom: 24, padding: 0, transition: 'color 0.2s' }}
+        onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+        onMouseLeave={e => e.currentTarget.style.color = '#a1a1aa'}
+      >
+        <ArrowLeft size={16} /> Back to Dashboard
+      </button>
+
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: 18, marginBottom: 26 }}>
+        <div>
+          <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, margin: 0 }}>GMB Post Analytics</h1>
+          <p style={{ color: '#71717a', fontSize: 12.5, marginTop: 4 }}>Detailed spline chart & segment performance insights</p>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 28 }} className="flex-col-mobile">
+        {/* Left Column: Donut Proportion & Post Preview */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          {/* Donut Chart block (Screenshot 2 style) */}
+          <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 16, padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+            <h3 style={{ fontSize: 13, fontWeight: 700, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 20 }}>Metric Proportion</h3>
+            
+            {/* SVG Donut */}
+            <div style={{ position: 'relative', width: 120, height: 120, marginBottom: 18 }}>
+              <svg width="120" height="120" viewBox="0 0 120 120" style={{ transform: 'rotate(-90deg)' }}>
+                {/* 1. Orange Segment (50%) */}
+                <circle cx="60" cy="60" r="45" fill="none" stroke="#f97316" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset="110" strokeLinecap="round" />
+                {/* 2. Blue Segment (20%) */}
+                <circle cx="60" cy="60" r="45" fill="none" stroke="#3b82f6" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset="220" strokeLinecap="round" style={{ transform: 'rotate(170deg)', transformOrigin: '60px 60px' }} />
+                {/* 3. Red Segment (15%) */}
+                <circle cx="60" cy="60" r="45" fill="none" stroke="#ef4444" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset="240" strokeLinecap="round" style={{ transform: 'rotate(245deg)', transformOrigin: '60px 60px' }} />
+                {/* 4. Green Segment (15%) */}
+                <circle cx="60" cy="60" r="45" fill="none" stroke="#10b981" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset="240" strokeLinecap="round" style={{ transform: 'rotate(300deg)', transformOrigin: '60px 60px' }} />
+              </svg>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, width: '100%' }}>
+              <div style={{ fontSize: 12, color: '#a1a1aa', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+                <span style={{ width: 8, height: 8, background: '#f97316', borderRadius: '50%' }} /> Views (Orange)
+              </div>
+              <div style={{ fontSize: 12, color: '#a1a1aa', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+                <span style={{ width: 8, height: 8, background: '#3b82f6', borderRadius: '50%' }} /> Clicks (Blue)
+              </div>
+              <div style={{ fontSize: 12, color: '#a1a1aa', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+                <span style={{ width: 8, height: 8, background: '#ef4444', borderRadius: '50%' }} /> Conversion (Red)
+              </div>
+              <div style={{ fontSize: 12, color: '#a1a1aa', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+                <span style={{ width: 8, height: 8, background: '#10b981', borderRadius: '50%' }} /> Other (Green)
+              </div>
+            </div>
+          </div>
+
+          {/* Post Card Preview */}
+          <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 16, padding: 20 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 700, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>Post Preview</h3>
+            <div style={{ background: '#090a0f', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+              {post.image_url ? (
+                isVideo ? (
+                  <video src={post.image_url} style={{ width: '100%', height: 160, objectFit: 'cover' }} controls muted />
+                ) : (
+                  <img src={post.image_url} alt="Post visual" style={{ width: '100%', height: 160, objectFit: 'cover' }} />
+                )
+              ) : (
+                <div style={{ width: '100%', height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.01)' }}><Megaphone size={28} color="#3f3f46" /></div>
+              )}
+              <div style={{ padding: 14 }}>
+                <span style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', background: 'rgba(249,115,22,0.1)', color: '#f97316', padding: '2px 5px', borderRadius: 4, display: 'inline-block', marginBottom: 6 }}>{post.post_type}</span>
+                <p style={{ fontSize: 12, color: '#a1a1aa', margin: 0, lineHeight: 1.5 }}>{post.caption}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Custom Spline Chart & Range Picker Popover */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          {/* Metrics summary row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+            <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 12, padding: 18 }}>
+              <span style={{ fontSize: 12, color: '#71717a', textTransform: 'uppercase', fontWeight: 600, display: 'block', marginBottom: 4 }}>Filter Views</span>
+              <span style={{ fontSize: 28, fontWeight: 800, color: '#fff' }}>{filteredViews}</span>
+            </div>
+
+            <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 12, padding: 18 }}>
+              <span style={{ fontSize: 12, color: '#71717a', textTransform: 'uppercase', fontWeight: 600, display: 'block', marginBottom: 4 }}>Filter Clicks</span>
+              <span style={{ fontSize: 28, fontWeight: 800, color: '#fff' }}>{filteredClicks}</span>
+            </div>
+
+            <div style={{ background: 'rgba(249,115,22,0.02)', border: '1px solid rgba(249,115,22,0.1)', borderRadius: 12, padding: 18 }}>
+              <span style={{ fontSize: 12, color: '#f97316', textTransform: 'uppercase', fontWeight: 700, display: 'block', marginBottom: 4 }}>Conversion Rate</span>
+              <span style={{ fontSize: 28, fontWeight: 800, color: '#f97316' }}>{conversionRate}%</span>
+            </div>
+          </div>
+
+          {/* Graphical Spline Chart Area (Screenshot 1 & 3 combined style) */}
+          <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 16, padding: 22, position: 'relative' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}><TrendingUp size={15} color="#f97316" /> Performance Trend</h3>
+              
+              {/* Range Picker Trigger Button (Screenshot 3 trigger style) */}
+              <div style={{ position: 'relative' }}>
+                <button 
+                  onClick={() => setShowRangePopover(!showRangePopover)}
+                  style={{ background: '#1e2130', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 14px', color: '#fff', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Calendar size={14} color="#f97316" /> {getRangeLabel()}
+                </button>
+
+                {/* Range Picker Popover (Screenshot 3 style) */}
+                {showRangePopover && (
+                  <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 8px)', zIndex: 100, background: '#161924', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, padding: 18, width: 320, boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5 }}>Custom Range</span>
+                      
+                      {/* Pill toggle (Month / Date) */}
+                      <div style={{ display: 'flex', background: '#0e1017', borderRadius: 6, padding: 2 }}>
+                        <button 
+                          onClick={() => setTempRangeType('Month')}
+                          style={{ border: 'none', background: tempRangeType === 'Month' ? '#f97316' : 'transparent', color: '#fff', fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 4, cursor: 'pointer', transition: 'all 0.2s' }}
+                        >
+                          Month
+                        </button>
+                        <button 
+                          onClick={() => setTempRangeType('Date')}
+                          style={{ border: 'none', background: tempRangeType === 'Date' ? '#f97316' : 'transparent', color: '#fff', fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 4, cursor: 'pointer', transition: 'all 0.2s' }}
+                        >
+                          Date
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* From & To inputs based on Month / Date toggle */}
+                    {tempRangeType === 'Month' ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
+                        <div>
+                          <label style={{ fontSize: 11, color: '#71717a', display: 'block', marginBottom: 6 }}>From</label>
+                          <select 
+                            value={fromMonth} 
+                            onChange={e => setFromMonth(e.target.value)}
+                            style={{ width: '100%', background: '#0e1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }}
+                          >
+                            {monthsList.map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 11, color: '#71717a', display: 'block', marginBottom: 6 }}>To</label>
+                          <select 
+                            value={toMonth} 
+                            onChange={e => setToMonth(e.target.value)}
+                            style={{ width: '100%', background: '#0e1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }}
+                          >
+                            {monthsList.map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
+                        <div>
+                          <label style={{ fontSize: 11, color: '#71717a', display: 'block', marginBottom: 6 }}>From</label>
+                          <input 
+                            type="date" 
+                            value={fromDate} 
+                            onChange={e => setFromDate(e.target.value)}
+                            style={{ width: '100%', boxSizing: 'border-box', background: '#0e1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '7px 8px', color: '#fff', fontSize: 12, outline: 'none' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 11, color: '#71717a', display: 'block', marginBottom: 6 }}>To</label>
+                          <input 
+                            type="date" 
+                            value={toDate} 
+                            onChange={e => setToDate(e.target.value)}
+                            style={{ width: '100%', boxSizing: 'border-box', background: '#0e1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '7px 8px', color: '#fff', fontSize: 12, outline: 'none' }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Popover Footer Buttons */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 14 }}>
+                      <button 
+                        onClick={() => {
+                          setTempRangeType(appliedRangeType);
+                          setFromMonth(appliedFromMonth);
+                          setToMonth(appliedToMonth);
+                          setFromDate(appliedFromDate);
+                          setToDate(appliedToDate);
+                          setShowRangePopover(false);
+                        }}
+                        style={{ background: '#202330', border: 'none', borderRadius: 6, padding: '8px 14px', color: '#a1a1aa', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setAppliedRangeType(tempRangeType);
+                          setAppliedFromMonth(fromMonth);
+                          setAppliedToMonth(toMonth);
+                          setAppliedFromDate(fromDate);
+                          setAppliedToDate(toDate);
+                          setShowRangePopover(false);
+                        }}
+                        style={{ background: '#f97316', border: 'none', borderRadius: 6, padding: '8px 14px', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        Apply Range
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Spline Chart SVG */}
+            {filteredViews === 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: svgHeight, color: '#71717a', fontSize: 13, background: 'rgba(255,255,255,0.01)', borderRadius: 8, padding: 20 }}>
+                <TrendingUp size={24} style={{ marginBottom: 8, color: '#3f3f46' }} />
+                <span>No live traffic views/clicks detected on Google Business Profile yet for this post.</span>
+              </div>
+            ) : (
+              <div style={{ position: 'relative' }} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}>
+                <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={{ width: '100%', height: 'auto', overflow: 'visible', cursor: 'crosshair' }}>
+                  {/* Grid Lines */}
+                  <line x1={paddingX} y1={paddingY} x2={svgWidth - paddingX} y2={paddingY} stroke="rgba(255,255,255,0.03)" strokeDasharray="3,3" />
+                  <line x1={paddingX} y1={(svgHeight - paddingY * 2) / 2 + paddingY} x2={svgWidth - paddingX} y2={(svgHeight - paddingY * 2) / 2 + paddingY} stroke="rgba(255,255,255,0.03)" strokeDasharray="3,3" />
+                  <line x1={paddingX} y1={svgHeight - paddingY} x2={svgWidth - paddingX} y2={svgHeight - paddingY} stroke="rgba(255,255,255,0.08)" />
+
+                  {/* Area Under Spline Curve (Gradients) */}
+                  {points.length > 0 && (
+                    <>
+                      <path d={areaPath} fill="url(#smoothGrad)" opacity="0.12" />
+                      <path d={linePath} fill="none" stroke="#f97316" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                    </>
+                  )}
+
+                  {/* Hover Node highlight circle */}
+                  {hoveredPointIdx !== null && points[hoveredPointIdx] && (
+                    <g>
+                      {/* Vertical guidance indicator line */}
+                      <line x1={points[hoveredPointIdx].x} y1={paddingY} x2={points[hoveredPointIdx].x} y2={svgHeight - paddingY} stroke="rgba(249,115,22,0.15)" strokeWidth="1" strokeDasharray="3,3" />
+                      {/* Node circle wrapper */}
+                      <circle cx={points[hoveredPointIdx].x} cy={points[hoveredPointIdx].y} r="7" fill="#f97316" opacity="0.3" />
+                      <circle cx={points[hoveredPointIdx].x} cy={points[hoveredPointIdx].y} r="4.5" fill="#f97316" stroke="#fff" strokeWidth="1.5" />
+                    </g>
+                  )}
+
+                  {/* Gradient Definitions */}
+                  <defs>
+                    <linearGradient id="smoothGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f97316" />
+                      <stop offset="100%" stopColor="#f97316" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+
+                {/* Floating Tooltip Card (Screenshot 1 style) */}
+                {hoveredPointIdx !== null && points[hoveredPointIdx] && (
+                  <div style={{
+                    position: 'absolute',
+                    left: `${tooltipPos.x}px`,
+                    top: `${tooltipPos.y}px`,
+                    transform: 'translateX(-50%)',
+                    background: '#161924',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    pointerEvents: 'none',
+                    zIndex: 10,
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                    textAlign: 'center',
+                    minWidth: 90
+                  }}>
+                    <div style={{ fontSize: 9.5, color: '#71717a', fontWeight: 700, marginBottom: 4 }}>
+                      {new Date(points[hoveredPointIdx].date).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+                    </div>
+                    <div style={{ fontSize: 13.5, fontWeight: 800, color: '#fff' }}>
+                      {points[hoveredPointIdx].value} <span style={{ fontSize: 10, color: '#a1a1aa', fontWeight: 600 }}>Views</span>
+                    </div>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: '#3b82f6', marginTop: 2 }}>
+                      {points[hoveredPointIdx].clicks} <span style={{ fontSize: 9, color: '#71717a' }}>Clicks</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Daily Table Breakdown */}
+          <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 16, padding: 22 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 6 }}><TrendingUp size={15} color="#22c55e" /> Daily Performance Breakdown</h3>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 220, overflowY: 'auto', paddingRight: 6 }}>
+              {filteredData.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 0', color: '#71717a', fontSize: 13.5 }}>No data found for the selected date range.</div>
+              ) : (
+                filteredData.map((item, idx) => (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#f4f4f5' }}>{new Date(item.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                    
+                    <div style={{ flex: 1, margin: '0 24px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 9, color: '#71717a', width: 30 }}>Views</span>
+                        <div style={{ flex: 1, height: 5, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.min(100, (item.views / maxVal) * 100)}%`, height: '100%', background: '#fff', borderRadius: 3 }} />
+                        </div>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, color: '#fff', width: 25, textAlign: 'right' }}>{item.views}</span>
+                      </div>
+                      
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 9, color: '#71717a', width: 30 }}>Clicks</span>
+                        <div style={{ flex: 1, height: 5, background: 'rgba(249,115,22,0.1)', borderRadius: 3, overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.min(100, (item.clicks / maxVal) * 100)}%`, height: '100%', background: '#f97316', borderRadius: 3 }} />
+                        </div>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, color: '#f97316', width: 25, textAlign: 'right' }}>{item.clicks}</span>
+                      </div>
+                    </div>
+
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#71717a' }}>{item.month}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function StreetPosts() {
   const [clients, setClients] = useState([]);
@@ -924,6 +1434,7 @@ export default function StreetPosts() {
   // Modal states
   const [showModal, setShowModal] = useState(false);
   const [editingPost, setEditingPost] = useState(null);
+  const [selectedAnalyticsPost, setSelectedAnalyticsPost] = useState(null);
 
 
   const setActiveClient = (client) => {
@@ -992,6 +1503,25 @@ export default function StreetPosts() {
   useEffect(() => {
     if (activeClient) {
       fetchGmbPosts(activeClient.id);
+      
+      // Sync metrics in background
+      const token = localStorage.getItem('leados_token');
+      axios.get(`${API_URL}/api/mafiya/reviews/posts/sync-metrics?clientId=${activeClient.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      .then(() => {
+        // Silently refresh post list to display the updated metrics
+        fetch(`${API_URL}/api/mafiya/reviews/posts?clientId=${activeClient.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        .then(res => {
+          if (res.ok) return res.json();
+        })
+        .then(data => {
+          if (data) setPosts(data);
+        });
+      })
+      .catch(err => console.warn('[Metrics Sync Warning]:', err.message));
     }
   }, [activeClient]);
 
@@ -1050,6 +1580,16 @@ export default function StreetPosts() {
   const contactPhone = activeClient?.phone_number || '';
 
 
+
+  if (selectedAnalyticsPost) {
+    return (
+      <PostAnalyticsView 
+        post={selectedAnalyticsPost} 
+        onBack={() => setSelectedAnalyticsPost(null)} 
+        activeClient={activeClient}
+      />
+    );
+  }
 
   return (
     <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%', background: C.bg, position: 'relative' }}>
@@ -1121,6 +1661,41 @@ export default function StreetPosts() {
             >
               <Plus size={15} /> Upload Poster
             </button>
+          </div>
+        </div>
+
+        {/* Dashboard Overview Cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 28 }}>
+          <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Published Posts</span>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.filter(p => p.status === 'published').length}</span>
+              <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 600 }}>Live</span>
+            </div>
+          </div>
+          
+          <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Total Views</span>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.reduce((sum, p) => sum + (p.views || 0), 0)}</span>
+              <span style={{ fontSize: 11, color: '#a1a1aa' }}>👁️ Impressions</span>
+            </div>
+          </div>
+
+          <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Total Clicks</span>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.reduce((sum, p) => sum + (p.clicks || 0), 0)}</span>
+              <span style={{ fontSize: 11, color: '#a1a1aa' }}>🖱️ Actions</span>
+            </div>
+          </div>
+
+          <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Scheduled</span>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.filter(p => p.status === 'scheduled').length}</span>
+              <span style={{ fontSize: 11, color: '#f97316', fontWeight: 600 }}>Queue</span>
+            </div>
           </div>
         </div>
 
@@ -1244,6 +1819,10 @@ export default function StreetPosts() {
                         <span style={{ fontSize: 13.5, color: '#f4f4f5', fontWeight: 500 }}>
                           {formatTimeAgo(post.created_at)}
                         </span>
+                        <div style={{ display: 'flex', gap: 10, fontSize: 11.5, color: '#a1a1aa', margin: '2px 0' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>👁️ {post.views || 0} views</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>🖱️ {post.clicks || 0} clicks</span>
+                        </div>
                         <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                           <span style={{ width: 6, height: 6, background: '#22c55e', borderRadius: '50%' }} /> Updated in GMB Profile
                         </span>
@@ -1267,6 +1846,16 @@ export default function StreetPosts() {
 
                   {/* Right Side: Options / Action Menu & Delete */}
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    {post.status === 'published' && (
+                      <button 
+                        onClick={() => setSelectedAnalyticsPost(post)}
+                        style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.15)', borderRadius: 8, padding: 8, color: '#f97316', display: 'flex', cursor: 'pointer', transition: 'all 0.2s', gap: 5, alignItems: 'center', fontSize: 11.5, fontWeight: 700 }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.15)'; e.currentTarget.style.color = '#fff'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.08)'; e.currentTarget.style.color = '#f97316'; }}
+                      >
+                        <BarChart2 size={13} /> Analysis
+                      </button>
+                    )}
                     <button 
                       onClick={() => {
                         setEditingPost(post);

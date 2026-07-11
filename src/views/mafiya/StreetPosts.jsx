@@ -229,9 +229,15 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // 5MB Limit
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error('File size exceeds the 5MB limit');
+      const isVideo = file.type.startsWith('video/');
+      const limit = isVideo ? 15 * 1024 * 1024 : 5 * 1024 * 1024;
+      
+      if (file.size > limit) {
+        if (isVideo) {
+          toast.error('Video size must be 15MB or less');
+        } else {
+          toast.error('Image size must be 5MB or less');
+        }
         return;
       }
       const reader = new FileReader();
@@ -989,6 +995,31 @@ export default function StreetPosts() {
     }
   }, [activeClient]);
 
+  // Polling to auto-refresh scheduled posts status without manual page reload
+  useEffect(() => {
+    if (!activeClient) return;
+    
+    const hasScheduled = posts.some(p => p.status === 'scheduled');
+    if (!hasScheduled) return;
+
+    // Check every 10 seconds silently (no loading spinner flicker)
+    const interval = setInterval(() => {
+      const token = localStorage.getItem('leados_token');
+      fetch(`${API_URL}/api/mafiya/reviews/posts?clientId=${activeClient.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      .then(res => {
+        if (res.ok) return res.json();
+      })
+      .then(data => {
+        if (data) setPosts(data);
+      })
+      .catch(err => console.error('[Polling Error]:', err));
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [posts, activeClient]);
+
   // Delete Post
   const handleDeletePost = async (id) => {
     if (!confirm('Are you sure you want to delete this GMB post record?')) return;
@@ -1179,7 +1210,7 @@ export default function StreetPosts() {
                         <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', background: 'rgba(249,115,22,0.1)', color: '#f97316', padding: '2px 6px', borderRadius: 4 }}>
                           {post.post_type}
                         </span>
-                        {(post.post_title || post.poster_title) && (
+                        {(post.post_title || (post.poster_title && post.poster_title !== 'UPDATE' && post.poster_title !== 'OFFER' && post.poster_title !== 'EVENT')) && (
                           <span style={{ fontSize: 12, fontWeight: 700, color: '#f4f4f5' }}>{post.post_title || post.poster_title}</span>
                         )}
                       </div>

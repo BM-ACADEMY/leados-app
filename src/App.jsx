@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { STYLE } from './constants/theme.js';
 import { Sidebar } from './components/layout/Sidebar.jsx';
 import { Header } from './components/layout/Header.jsx';
-import { LeadModal } from './components/LeadModal.jsx';
 import { useAuth } from './hooks/useAuth.js';
 import { Dashboard } from './views/Dashboard.jsx';
 import { LeadsView } from './views/LeadsView.jsx';
@@ -116,8 +115,13 @@ function LoginPage({ login, authLoading, authError }) {
 
 import { Toaster } from 'react-hot-toast';
 
-function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, setLeadRefresh }) {
+function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const handleLeadClick = (lead) => {
+    navigate('/inbox', { state: { leadId: lead.id } });
+  };
   return (
     <>
       <style>{STYLE}</style>
@@ -130,7 +134,7 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/leads" element={<LeadsView onLeadClick={setSelectedLead} refreshTrigger={leadRefresh} />} />
+              <Route path="/leads" element={<LeadsView onLeadClick={handleLeadClick} refreshTrigger={leadRefresh} />} />
               <Route path="/inbox" element={<InboxView />} />
               <Route path="/campaigns" element={<CampaignsView />} />
               <Route path="/templates" element={<TemplatesView />} />
@@ -178,13 +182,6 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
             </Routes>
           </div>
         </div>
-        {selectedLead && (
-          <LeadModal
-            lead={selectedLead}
-            onClose={() => setSelectedLead(null)}
-            onUpdate={() => setLeadRefresh(prev => prev + 1)}
-          />
-        )}
       </div>
     </>
   );
@@ -205,8 +202,6 @@ export default function App() {
         <AppLayout
           user={user}
           logout={logout}
-          selectedLead={selectedLead}
-          setSelectedLead={setSelectedLead}
           leadRefresh={leadRefresh}
           setLeadRefresh={setLeadRefresh}
         />

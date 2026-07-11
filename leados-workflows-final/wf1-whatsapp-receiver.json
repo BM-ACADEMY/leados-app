@@ -1,5 +1,5 @@
 {
-  "name": "WF1 - WhatsApp AI Agent",
+  "name": "WF1 - WhatsApp AI Agent (Gemini + Brand Flow)",
   "nodes": [
     {
       "parameters": {
@@ -12,10 +12,7 @@
       "name": "WhatsApp Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [
-        240,
-        300
-      ],
+      "position": [240, 300],
       "webhookId": "whatsapp-incoming"
     },
     {
@@ -28,38 +25,29 @@
       "name": "Respond OK",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [
-        460,
-        180
-      ]
+      "position": [460, 160]
     },
     {
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst lead_id = body.lead_id;\nconst phone = body.phone;\nconst message = body.message;\nconst phone_number_id = body.phone_number_id;\n\nif (!lead_id || !message) {\n  throw new Error('Missing lead_id or message');\n}\n\nreturn [{ json: { lead_id, phone, message, phone_number_id } }];"
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst lead_id = body.lead_id;\nconst phone = body.phone;\nconst message = body.message;\nconst phone_number_id = body.phone_number_id;\nconst gemini_api_key = body.gemini_api_key || '';\n\nif (!lead_id || !message) {\n  throw new Error('Missing lead_id or message');\n}\n\nreturn [{ json: { lead_id, phone, message, phone_number_id, gemini_api_key } }];"
       },
       "id": "extract-data",
       "name": "Extract Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        460,
-        300
-      ]
+      "position": [460, 300]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT l.*, c.name as brand_name, c.wa_access_token, c.phone_number_id,\n       bd_product.content as product_info,\n       bd_pricing.content as pricing_info,\n       bd_objections.content as objections_info,\n       bd_prompt.content as system_prompt\nFROM leads l\nLEFT JOIN clients c ON l.client_id = c.id\nLEFT JOIN brain_docs bd_product ON bd_product.client_id = c.id AND bd_product.doc_type = 'product'\nLEFT JOIN brain_docs bd_pricing ON bd_pricing.client_id = c.id AND bd_pricing.doc_type = 'pricing'\nLEFT JOIN brain_docs bd_objections ON bd_objections.client_id = c.id AND bd_objections.doc_type = 'objections'\nLEFT JOIN brain_docs bd_prompt ON bd_prompt.client_id = c.id AND bd_prompt.doc_type = 'prompt'\nWHERE l.id = {{ $json.lead_id }}",
+        "query": "SELECT l.id, l.name, l.phone, l.score, l.status, l.interest, l.flow_step,\n       c.name as brand_name, c.wa_access_token, c.phone_number_id as brand_phone_number_id,\n       COALESCE(l.flow_step, 'welcome') as current_flow_step,\n       bd_prompt.content as system_prompt\nFROM leads l\nLEFT JOIN clients c ON l.client_id = c.id\nLEFT JOIN brain_docs bd_prompt ON bd_prompt.client_id = c.id AND bd_prompt.doc_type = 'prompt'\nWHERE l.id = {{ $json.lead_id }}",
         "options": {}
       },
       "id": "get-lead",
       "name": "Get Lead + Brain",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [
-        680,
-        300
-      ],
+      "position": [680, 300],
       "credentials": {
         "postgres": {
           "name": "LeadOS DB"
@@ -69,17 +57,14 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT direction, message, sender FROM conversations\nWHERE lead_id = {{ $('Extract Data').first().json.lead_id }}\nORDER BY sent_at DESC LIMIT 10",
+        "query": "SELECT m.direction, m.content as message, m.sent_at\nFROM messages m\nJOIN conversations cv ON m.conversation_id = cv.id\nWHERE cv.lead_id = {{ $('Extract Data').first().json.lead_id }}\nORDER BY m.sent_at DESC LIMIT 12",
         "options": {}
       },
       "id": "get-history",
       "name": "Get Conversation History",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [
-        900,
-        300
-      ],
+      "position": [900, 300],
       "credentials": {
         "postgres": {
           "name": "LeadOS DB"
@@ -88,28 +73,21 @@
     },
     {
       "parameters": {
-        "jsCode": "const lead = $('Get Lead + Brain').first().json;\nconst history = $('Get Conversation History').all().map(i => i.json).reverse();\nconst userMessage = $('Extract Data').first().json.message;\n\nconst systemPrompt = lead.system_prompt || `You are an expert sales agent for ${lead.brand_name || 'ABM Groups'}. Your job is to qualify leads and guide them towards enrollment/purchase.\n\nProduct Info:\n${lead.product_info || 'Premium courses and services'}\n\nPricing:\n${lead.pricing_info || 'Contact for pricing'}\n\nHandling Objections:\n${lead.objections_info || 'Address concerns empathetically'}\n\nRules:\n- Keep replies short (2-4 lines max)\n- Use emojis sparingly\n- Always end with a question to keep conversation going\n- If lead score should increase, mention it\n- Guide towards: call booking or payment\n- Reply in the same language as the lead\n- Never make up prices not in your knowledge`;\n\nconst messages = [\n  { role: 'system', content: systemPrompt }\n];\n\nfor (const h of history) {\n  messages.push({\n    role: h.direction === 'inbound' ? 'user' : 'assistant',\n    content: h.message\n  });\n}\n\nmessages.push({ role: 'user', content: userMessage });\n\nreturn [{ json: { messages, lead, userMessage } }];"
+        "jsCode": "const lead = $('Get Lead + Brain').first().json;\nconst historyRows = $('Get Conversation History').all().map(i => i.json).reverse();\nconst userMessage = ($('Extract Data').first().json.message || '').trim();\nconst gemini_api_key = $('Extract Data').first().json.gemini_api_key;\nconst currentFlowStep = lead.current_flow_step || 'welcome';\n\n// Build system prompt\nconst brandName = lead.brand_name || 'our company';\nconst basePrompt = lead.system_prompt || `You are a friendly WhatsApp sales assistant for ${brandName}. Qualify leads by asking about their goals, background, and budget. Guide them towards enrollment or a demo call.`;\n\nconst fullSystemPrompt = basePrompt + `\n\nCURRENT LEAD:\n- Name: ${lead.name || 'Friend'}\n- Score: ${lead.score || 0}/100\n- Status: ${lead.status || 'new'}\n- Interest: ${lead.interest || 'Not captured yet'}\n- Conversation stage: ${currentFlowStep}\n\nRULES:\n- Keep replies SHORT (max 4-5 lines)\n- Be warm and conversational, not robotic\n- Always end with exactly ONE question\n- Reply in the SAME language the lead uses\n- NEVER say you are an AI`;\n\n// Build Gemini conversation history\nconst contents = [];\nfor (const h of historyRows) {\n  contents.push({\n    role: h.direction === 'inbound' ? 'user' : 'model',\n    parts: [{ text: h.message || '' }]\n  });\n}\ncontents.push({ role: 'user', parts: [{ text: userMessage }] });\n\n// Build Gemini request body as a JSON string (avoids n8n expression issues)\nconst geminiBody = JSON.stringify({\n  system_instruction: { parts: [{ text: fullSystemPrompt }] },\n  contents: contents,\n  generationConfig: { maxOutputTokens: 300, temperature: 0.75, topP: 0.9 }\n});\n\n// Score lead based on message\nlet newScore = parseInt(lead.score) || 0;\nconst msgLower = userMessage.toLowerCase();\nif (msgLower.match(/yes|interested|want|sure|ok|okay|tell me|know more/)) newScore = Math.min(newScore + 15, 100);\nif (msgLower.match(/price|cost|fee|how much|charges/)) newScore = Math.min(newScore + 10, 100);\nif (msgLower.match(/call|talk|speak|contact/)) newScore = Math.min(newScore + 20, 100);\nif (msgLower.match(/pay|enroll|join|register|book|admit/)) newScore = Math.min(newScore + 30, 100);\nif (msgLower.match(/not interested|no thanks|stop|wrong number/)) newScore = Math.max(newScore - 15, 0);\n\nlet newStatus = 'new';\nif (newScore >= 75) newStatus = 'hot';\nelse if (newScore >= 40) newStatus = 'warm';\nelse if (newScore < 5) newStatus = 'cold';\n\nreturn [{ json: {\n  geminiBody,\n  gemini_api_key,\n  lead,\n  userMessage,\n  newScore,\n  newStatus,\n  nextFlowStep: 'free_ai',\n  phone: $('Extract Data').first().json.phone,\n  phone_number_id: lead.brand_phone_number_id || $('Extract Data').first().json.phone_number_id,\n  wa_access_token: lead.wa_access_token\n} }];"
       },
       "id": "build-prompt",
       "name": "Build AI Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1120,
-        300
-      ]
+      "position": [1120, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={{ $json.gemini_api_key }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "Authorization",
-              "value": "={{ 'Bearer ' + $env.OPENAI_API_KEY }}"
-            },
             {
               "name": "Content-Type",
               "value": "application/json"
@@ -117,60 +95,36 @@
           ]
         },
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "model",
-              "value": "llama3-70b-8192"
-            },
-            {
-              "name": "messages",
-              "value": "={{ $json.messages }}"
-            },
-            {
-              "name": "max_tokens",
-              "value": "300"
-            },
-            {
-              "name": "temperature",
-              "value": "0.7"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.geminiBody }}",
         "options": {}
       },
-      "id": "openai-call",
-      "name": "OpenAI GPT-4o",
+      "id": "gemini-call",
+      "name": "Gemini AI",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [
-        1340,
-        300
-      ]
+      "position": [1340, 300]
     },
     {
       "parameters": {
-        "jsCode": "const aiResponse = $json.choices[0].message.content;\nconst lead = $('Build AI Prompt').first().json.lead;\n\nlet newScore = parseInt(lead.score) || 0;\nlet newStatus = lead.status;\n\nconst msgLower = $('Extract Data').first().json.message.toLowerCase();\n\n// Score logic\nif (msgLower.includes('yes') || msgLower.includes('interested') || msgLower.includes('want')) newScore = Math.min(newScore + 15, 100);\nif (msgLower.includes('price') || msgLower.includes('cost') || msgLower.includes('fee')) newScore = Math.min(newScore + 10, 100);\nif (msgLower.includes('call') || msgLower.includes('talk') || msgLower.includes('speak')) newScore = Math.min(newScore + 20, 100);\nif (msgLower.includes('pay') || msgLower.includes('enroll') || msgLower.includes('join')) newScore = Math.min(newScore + 25, 100);\nif (msgLower.includes('no') || msgLower.includes('not interested') || msgLower.includes('stop')) newScore = Math.max(newScore - 10, 0);\n\n// Status logic\nif (newScore >= 80) newStatus = 'hot';\nelse if (newScore >= 50) newStatus = 'warm';\nelse if (newScore >= 20) newStatus = 'new';\nelse newStatus = 'cold';\n\nreturn [{ json: { aiResponse, lead, newScore, newStatus } }];"
+        "jsCode": "const geminiResponse = $input.first().json;\nconst aiText = (geminiResponse.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, please try again.').trim();\n\nconst buildData = $('Build AI Prompt').first().json;\n\n// Build WhatsApp message body as JSON string\nconst waBody = JSON.stringify({\n  messaging_product: 'whatsapp',\n  to: buildData.phone,\n  type: 'text',\n  text: { body: aiText }\n});\n\nreturn [{ json: {\n  waBody,\n  aiText,\n  lead_id: buildData.lead.id,\n  newScore: buildData.newScore,\n  newStatus: buildData.newStatus,\n  nextFlowStep: buildData.nextFlowStep,\n  phone_number_id: buildData.phone_number_id,\n  wa_access_token: buildData.wa_access_token\n} }];"
       },
       "id": "process-response",
       "name": "Process & Score",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1560,
-        300
-      ]
+      "position": [1560, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://graph.facebook.com/v18.0/{{ $('Get Lead + Brain').first().json.phone_number_id }}/messages",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.phone_number_id }}/messages",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "={{ 'Bearer ' + $('Get Lead + Brain').first().json.wa_access_token }}"
+              "value": "=Bearer {{ $json.wa_access_token }}"
             },
             {
               "name": "Content-Type",
@@ -180,52 +134,29 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('Extract Data').first().json.phone }}\",\n  \"type\": \"text\",\n  \"text\": { \"body\": \"{{ $json.aiResponse }}\" }\n}",
+        "jsonBody": "={{ $json.waBody }}",
         "options": {}
       },
       "id": "send-whatsapp",
       "name": "Send WhatsApp Reply",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [
-        1780,
-        300
-      ]
+      "position": [1780, 300]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO conversations (lead_id, direction, message, message_type, sender, sent_at)\nVALUES ({{ $('Extract Data').first().json.lead_id }}, 'outbound', '{{ $('Process & Score').first().json.aiResponse.replace(/'/g, \"''\") }}', 'text', 'ai', NOW())",
-        "options": {}
-      },
-      "id": "save-reply",
-      "name": "Save AI Reply",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.4,
-      "position": [
-        2000,
-        300
-      ],
-      "credentials": {
-        "postgres": {
-          "name": "LeadOS DB"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE leads SET score = {{ $('Process & Score').first().json.newScore }}, status = '{{ $('Process & Score').first().json.newStatus }}', last_contact = NOW(), updated_at = NOW() WHERE id = {{ $('Extract Data').first().json.lead_id }}",
+        "query": "UPDATE leads SET score = $1, status = $2, flow_step = $3, updated_at = NOW() WHERE id = $4",
+        "additionalFields": {
+          "queryParams": "={{ JSON.stringify([$('Process & Score').first().json.newScore, $('Process & Score').first().json.newStatus, $('Process & Score').first().json.nextFlowStep, $('Process & Score').first().json.lead_id]) }}"
+        },
         "options": {}
       },
       "id": "update-lead",
-      "name": "Update Lead Score",
+      "name": "Update Lead Score + Flow",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [
-        2000,
-        460
-      ],
+      "position": [2000, 420],
       "credentials": {
         "postgres": {
           "name": "LeadOS DB"
@@ -237,109 +168,34 @@
     "WhatsApp Webhook": {
       "main": [
         [
-          {
-            "node": "Respond OK",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Extract Data",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "Respond OK", "type": "main", "index": 0 },
+          { "node": "Extract Data", "type": "main", "index": 0 }
         ]
       ]
     },
     "Extract Data": {
-      "main": [
-        [
-          {
-            "node": "Get Lead + Brain",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Get Lead + Brain", "type": "main", "index": 0 }]]
     },
     "Get Lead + Brain": {
-      "main": [
-        [
-          {
-            "node": "Get Conversation History",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Get Conversation History", "type": "main", "index": 0 }]]
     },
     "Get Conversation History": {
-      "main": [
-        [
-          {
-            "node": "Build AI Prompt",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Build AI Prompt", "type": "main", "index": 0 }]]
     },
     "Build AI Prompt": {
-      "main": [
-        [
-          {
-            "node": "OpenAI GPT-4o",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Gemini AI", "type": "main", "index": 0 }]]
     },
-    "OpenAI GPT-4o": {
-      "main": [
-        [
-          {
-            "node": "Process & Score",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Gemini AI": {
+      "main": [[{ "node": "Process & Score", "type": "main", "index": 0 }]]
     },
     "Process & Score": {
-      "main": [
-        [
-          {
-            "node": "Send WhatsApp Reply",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Send WhatsApp Reply", "type": "main", "index": 0 }]]
     },
     "Send WhatsApp Reply": {
-      "main": [
-        [
-          {
-            "node": "Save AI Reply",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Update Lead Score",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{ "node": "Update Lead Score + Flow", "type": "main", "index": 0 }]]
     }
   },
   "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "tags": [
-    {
-      "name": "LeadOS"
-    }
-  ]
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "LeadOS" }]
 }

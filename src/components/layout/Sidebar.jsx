@@ -22,7 +22,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
   const [thedalOsOpen, setThedalOsOpen] = useState(false);
   const [mafiyaOpen, setMafiyaOpen] = useState(false);
   const [rankDropCount, setRankDropCount] = useState(0);
-  
+
   const { clients, plans, activeClient, setActiveClient } = useClient();
 
   // Fetch unread rank drop alert count
@@ -31,7 +31,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
       try {
         const token = localStorage.getItem('leados_token');
         const API_URL = import.meta.env.VITE_API_URL || '';
-        const url = activeClient 
+        const url = activeClient
           ? `${API_URL}/api/thedal/rankdropalert/count?client=${encodeURIComponent(activeClient.business_name || activeClient.client_name)}`
           : `${API_URL}/api/thedal/rankdropalert/count`;
         const res = await fetch(url, {
@@ -41,7 +41,9 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
           const data = await res.json();
           setRankDropCount(data.count || 0);
         }
-      } catch (e) { /* silent */ }
+      } catch (e) {
+        console.error('Error fetching rank drop count:', e);
+       }
     };
     fetchRankDropCount();
     const interval = setInterval(fetchRankDropCount, 5 * 60 * 1000); // every 5 mins
@@ -66,10 +68,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
 
   const isFeatureEnabled = (featureName) => {
     if (!activeClient) return true; // Enable all if no client selected
-    
+
     const plan = plans.find(p => p.name === activeClient.plan);
     if (!plan || !plan.features) return false;
-    
+
     return plan.features.some(f => f.feature_name === featureName);
   };
 
@@ -333,8 +335,8 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                     <option value="" style={{ background: '#0f172a', color: '#fff' }}>All Clients (No Selection)</option>
                     {clients.map(c => (
                       <option key={c.id} value={c.id} style={{ background: '#0f172a', color: '#fff' }}>
-                        {c.business_name && c.client_name && c.business_name !== c.client_name 
-                          ? `${c.business_name} (${c.client_name})` 
+                        {c.business_name && c.client_name && c.business_name !== c.client_name
+                          ? `${c.business_name} (${c.client_name})`
                           : c.business_name || c.client_name} - {c.plan}
                       </option>
                     ))}
@@ -371,7 +373,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                 </NavLink>
 
                 <div style={{ margin: '16px 0 8px 10px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Manage</div>
-                
+
                 <NavLink to="/thedal/clients" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive)}>
                   <Target size={14} style={{ marginRight: 8 }} /> Clients
                 </NavLink>
@@ -379,7 +381,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                 <NavLink to="/thedal/plan-subscription" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive)}>
                   <Activity size={14} style={{ marginRight: 8 }} /> Plan Subscription
                 </NavLink>
-                
+
                 <NavLink to="/thedal/plans" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive)}>
                   <Activity size={14} style={{ marginRight: 8 }} /> Plans & Pricing
                 </NavLink>
@@ -469,7 +471,7 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                 <NavLink to="/mafiya/gbp-insights" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GBP Insights')}>
                   <BarChart2 size={14} style={{ marginRight: 8 }} /> GBP Insights
                 </NavLink>
-                
+
                 <NavLink to="/mafiya/street-posts" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Street Posts')}>
                   <Megaphone size={14} style={{ marginRight: 8 }} /> Street Posts
                 </NavLink>

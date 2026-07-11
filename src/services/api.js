@@ -199,6 +199,10 @@ class LeadOSAPI {
     return this.request('/api/inbox');
   }
 
+  async getMessages(leadId, limit = 20, offset = 0) {
+    return this.request(`/api/leads/${leadId}/messages?limit=${limit}&offset=${offset}`);
+  }
+
   async readConversation(leadId) {
     return this.request(`/api/conversations/${leadId}/read`, {
       method: 'PUT'

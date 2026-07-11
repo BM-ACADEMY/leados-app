@@ -1,0 +1,908 @@
+=== BM Academy ===
+[Step: academy_entry]
+Agent asks: 🎓 Welcome to BM Academy 🚀 👉 Please choose a course:
+  - If user replies "Digital Marketing" -> go to [Step: course_dm]
+  - If user replies "Full Stack Development" -> go to [Step: course_fs]
+  - If user replies "Data Analytics" -> go to [Step: course_da]
+  - If user replies "Video Editing" -> go to [Step: course_ve]
+
+[Step: course_dm]
+Agent asks: 🔥 Digital Marketing Course 📚 Key Topics: SEO, SMM, Paid Ads 💰 Fees: Starts from ₹14,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_fs]
+Agent asks: 💻 Full Stack Development 📚 Key Topics: React, Node.js, Next.js 💰 Fees: Starts from ₹18,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_da]
+Agent asks: 📊 Data Analytics 📚 Key Topics: Python, Power BI, SQL 💰 Fees: Starts from ₹22,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_ve]
+Agent asks: 🎬 Video Editing 📚 Key Topics: Premiere Pro, Reels 💰 Fees: Starts from ₹14,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: academy_syllabus]
+Agent asks: 📄 Here is the detailed syllabus: - Java: https://drive.google.com/file/d/13T7Hso7y-EyLVDQMd4lUZ-6wHI1pb-G4/view - MEAN: https://drive.google.com/file/d/1e_xuM7jeROgey-UsgIvU1SOtkzXsYr73/view - MERN: https://drive.google.com/file/d/1Qo-z9VH1UPYidbjhqGkmY6GMe2haTj66/view
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+  - If user replies "➕ Enquire More" -> go to [Step: multi_enquiry_loop]
+
+[Step: academy_mentor]
+Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9403892971 💬 https://wa.me/919944940051
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+  - If user replies "🏁 Finish & Submit" -> go to [Step: final_thank_you]
+
+[Step: academy_demo_date]
+Agent asks: 📅 Please select your preferred **date** for the demo session:
+  - Automatically go to [Step: academy_demo_time]
+
+[Step: multi_enquiry_loop]
+Agent asks: I’ve added that to your enquiry list! ✅  Would you like to enquire about **anything else** or finish?
+  - If user replies "➕ Add Another Service" -> go to [Step: main_menu]
+  - If user replies "🏁 Finish & Submit All" -> go to [Step: final_thank_you]
+
+[Step: final_thank_you]
+Agent asks: 🙏 Thank you, {name}! Our team will guide you throughout the process 🚀  If you have any questions, feel free to message us anytime 😊
+
+[Step: academy_demo_time]
+Agent asks: ✅ Now choose an available **time slot**:
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: main_menu]
+Agent asks: 📍 Got it, {name}! Thanks for sharing.  Here’s how we can help you 👇 ✨ We help you with:  👉 **What are you looking for today?**
+  - If user replies "🎓 BM Academy – Career & Courses" -> go to [Step: academy_entry]
+  - If user replies "💼 Core Talents – Jobs & Skill Development" -> go to [Step: talents_entry]
+  - If user replies "🏡 Namma Pondy Properties – Property Investment" -> go to [Step: namma_pondy_entry]
+  - If user replies "📈 BM TechX – Business Growth & Marketing" -> go to [Step: techx_entry]
+
+[Step: talents_entry]
+Agent asks: 👋 Hi {name}! Welcome to **Core Talent** 💼 Your Career Growth Partner 🚀  We help you: ✔️ Get job opportunities ✔️ Improve your skills ✔️ Get placement support ✔️ Build your career faster  👉 What are you looking for?
+  - If user replies "1️⃣ Find Jobs" -> go to [Step: talents_job_intro]
+  - If user replies "2️⃣ Skill Training" -> go to [Step: talents_training_entry]
+  - If user replies "3️⃣ Placement Support" -> go to [Step: talents_placement_intro]
+  - If user replies "4️⃣ Talk to Team" -> go to [Step: talents_team_msg]
+
+[Step: namma_pondy_entry]
+Agent asks: 👋 Hi! Welcome to **Real Estate with Kamar** 🏡 Your Trusted Property Partner in Pondicherry  👉 What are you looking for?
+  - If user replies "1️⃣ Buy Property" -> go to [Step: prop_buy_budget]
+  - If user replies "2️⃣ Sell Property" -> go to [Step: prop_sell_type]
+  - If user replies "3️⃣ Investment Advice" -> go to [Step: prop_invest_entry]
+  - If user replies "4️⃣ Talk to Expert" -> go to [Step: prop_expert_msg]
+
+[Step: techx_entry]
+Agent asks: 👋 Welcome to BM TechX 🚀 👉 What are you looking for?
+  - If user replies "1️⃣ Ads / Leads" -> go to [Step: tech_leads]
+  - If user replies "2️⃣ Social Media" -> go to [Step: tech_smm]
+  - If user replies "3️⃣ Website" -> go to [Step: tech_web]
+  - If user replies "4️⃣ Branding" -> go to [Step: tech_branding]
+
+[Step: talents_job_intro]
+Agent asks: Great 👍 Let’s help you get a job fast!  📄 **Available Opportunities:** ✔️ Fresher Jobs ✔️ Experienced Roles ✔️ Local Company Openings ✔️ Immediate Joining  👉 Let’s collect your profile details first.
+  - If user replies "Collect Basic Details" -> go to [Step: talents_job_details]
+
+[Step: talents_training_entry]
+Agent asks: 🚀 Upgrade your skills & grow your career faster!  📚 **Our Training Programs** 🎓 Includes: ✔️ Practical training ✔️ Real-time projects ✔️ Certification  👉 Choose a program to see details:
+  - If user replies "🎓 Digital Marketing" -> go to [Step: course_dm]
+  - If user replies "💻 Full Stack Development" -> go to [Step: course_fs]
+  - If user replies "📊 Data Analytics" -> go to [Step: course_da]
+  - If user replies "🎬 Video Editing" -> go to [Step: course_ve]
+  - If user replies "💼 Job-Ready Skills" -> go to [Step: academy_mentor]
+
+[Step: talents_placement_intro]
+Agent asks: We don’t just train — we place 👍  📄 **Placement Opportunities:** ✔️ Fresher Jobs | ✔️ Local Company Openings ✔️ Immediate Joining | ✔️ Expert Guidance  👉 How would you like to proceed?
+  - If user replies "Collect Basic Details" -> go to [Step: talents_job_details]
+  - If user replies "Talk to mentor" -> go to [Step: talents_team_msg]
+
+[Step: talents_team_msg]
+Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9403892971 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_buy_budget]
+Agent asks: Great choice 👍 👉 Tell me your **Budget Range**:
+  - If user replies "10L – 20L" -> go to [Step: prop_buy_location]
+  - If user replies "20L – 50L" -> go to [Step: prop_buy_location]
+  - If user replies "50L+" -> go to [Step: prop_buy_location]
+
+[Step: prop_sell_type]
+Agent asks: Property Type? (Letters only)
+  - Automatically go to [Step: prop_sell_location]
+
+[Step: prop_invest_entry]
+Agent asks: 📊 Hot Locations: ECR, Villianur 👉 What do you want?
+  - If user replies "Current Deals" -> go to [Step: prop_showcase_final]
+  - If user replies "ROI Details" -> go to [Step: prop_invest_roi]
+
+[Step: prop_expert_msg]
+Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: tech_leads]
+Agent asks: 🔥 Lead Generation 💰 Starts from ₹4,999
+  - If user replies "Case Studies" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Free Consultation" -> go to [Step: tech_demo_calendar_date]
+
+[Step: tech_smm]
+Agent asks: 📱 Social Media Growth 💰 Starts from ₹4,999/mo
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Talk to Expert" -> go to [Step: tech_expert_msg]
+
+[Step: tech_web]
+Agent asks: 🌐 Website Development 💰 Starts from ₹2,999
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Talk to Expert" -> go to [Step: tech_expert_msg]
+
+[Step: tech_branding]
+Agent asks: 🎨 Branding Services
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Free Consultation" -> go to [Step: tech_demo_calendar_date]
+
+[Step: talents_job_details]
+Agent asks: 📝 **Step 1: Profile Details** 👉 Please share your **Qualification & Experience** (Letters only):
+  - Automatically go to [Step: talents_job_location]
+
+[Step: prop_buy_location]
+Agent asks: Got it! Preferred Location? (Letters only)
+  - Automatically go to [Step: prop_buy_cta]
+
+[Step: prop_sell_location]
+Agent asks: Location? (Letters only)
+  - Automatically go to [Step: prop_sell_price]
+
+[Step: prop_showcase_final]
+Agent asks: 🏡 **Featured Properties** 🔥 Limited plots available
+  - If user replies "Photos" -> go to [Step: prop_media_msg]
+  - If user replies "👉 DOUBT" -> go to [Step: prop_objections_start]
+
+[Step: prop_invest_roi]
+Agent asks: 📈 15-20% ROI annually.
+  - If user replies "Show Deals" -> go to [Step: prop_showcase_final]
+
+[Step: tech_demo_calendar_date]
+Agent asks: 📅 Please select your preferred **date**:
+  - Automatically go to [Step: tech_demo_calendar_time]
+
+[Step: tech_expert_msg]
+Agent asks: 📞 9403892971 💬 WhatsApp: https://wa.me/919944940051
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: talents_job_location]
+Agent asks: 📍 **Preferred Location** 👉 Where would you like to work? (Letters only):
+  - Automatically go to [Step: talents_job_resume]
+
+[Step: prop_buy_cta]
+Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+  - If user replies "Show Property" -> go to [Step: prop_showcase_final]
+
+[Step: prop_sell_price]
+Agent asks: Expected Price?
+  - Automatically go to [Step: prop_sell_finish]
+
+[Step: prop_media_msg]
+Agent asks: Sending links... 👉 Trust Details?
+  - If user replies "Yes" -> go to [Step: prop_trust_final]
+
+[Step: prop_objections_start]
+Agent asks: What is your doubt?
+  - If user replies "Is this genuine?" -> go to [Step: prop_obs_genuine]
+  - If user replies "Price High" -> go to [Step: prop_obs_price]
+  - If user replies "Team" -> go to [Step: prop_expert_msg]
+
+[Step: tech_demo_calendar_time]
+Agent asks: ✅ Now choose a **time slot**:
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: talents_job_resume]
+Agent asks: 📄 **Step 2: Resume Upload** 👉 Please upload your resume (PDF/Doc):
+  - Automatically go to [Step: talents_job_finish]
+
+[Step: prop_sell_finish]
+Agent asks: ✅ Thank you!
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_trust_final]
+Agent asks: 🤝 Verified only | Transparent pricing 👉 Doubts?
+  - If user replies "DOUBT" -> go to [Step: prop_objections_start]
+
+[Step: prop_obs_genuine]
+Agent asks: 100% genuine 👍
+  - If user replies "Show Property" -> go to [Step: prop_showcase_final]
+
+[Step: prop_obs_price]
+Agent asks: Budget options available.
+  - If user replies "Under 10L" -> go to [Step: prop_showcase_final]
+
+[Step: talents_job_finish]
+Agent asks: ✅ **Thank you! Your details have been received** 🚀 Our team will: ✔️ Review your profile ✔️ Match with suitable jobs ✔️ Contact you shortly  (We have added this to your enquiry list)
+  - Automatically go to [Step: multi_enquiry_loop]
+
+
+=== Core Talents ===
+[Step: talents_entry]
+Agent asks: 👋 Hi {name}! Welcome to **Core Talent** 💼 Your Career Growth Partner 🚀  We help you: ✔️ Get job opportunities ✔️ Improve your skills ✔️ Get placement support ✔️ Build your career faster  👉 What are you looking for?
+  - If user replies "1️⃣ Find Jobs" -> go to [Step: talents_job_intro]
+  - If user replies "2️⃣ Skill Training" -> go to [Step: talents_training_entry]
+  - If user replies "3️⃣ Placement Support" -> go to [Step: talents_placement_intro]
+  - If user replies "4️⃣ Talk to Team" -> go to [Step: talents_team_msg]
+
+[Step: talents_job_intro]
+Agent asks: Great 👍 Let’s help you get a job fast!  📄 **Available Opportunities:** ✔️ Fresher Jobs ✔️ Experienced Roles ✔️ Local Company Openings ✔️ Immediate Joining  👉 Let’s collect your profile details first.
+  - If user replies "Collect Basic Details" -> go to [Step: talents_job_details]
+
+[Step: talents_training_entry]
+Agent asks: 🚀 Upgrade your skills & grow your career faster!  📚 **Our Training Programs** 🎓 Includes: ✔️ Practical training ✔️ Real-time projects ✔️ Certification  👉 Choose a program to see details:
+  - If user replies "🎓 Digital Marketing" -> go to [Step: course_dm]
+  - If user replies "💻 Full Stack Development" -> go to [Step: course_fs]
+  - If user replies "📊 Data Analytics" -> go to [Step: course_da]
+  - If user replies "🎬 Video Editing" -> go to [Step: course_ve]
+  - If user replies "💼 Job-Ready Skills" -> go to [Step: academy_mentor]
+
+[Step: talents_placement_intro]
+Agent asks: We don’t just train — we place 👍  📄 **Placement Opportunities:** ✔️ Fresher Jobs | ✔️ Local Company Openings ✔️ Immediate Joining | ✔️ Expert Guidance  👉 How would you like to proceed?
+  - If user replies "Collect Basic Details" -> go to [Step: talents_job_details]
+  - If user replies "Talk to mentor" -> go to [Step: talents_team_msg]
+
+[Step: talents_team_msg]
+Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9403892971 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: talents_job_details]
+Agent asks: 📝 **Step 1: Profile Details** 👉 Please share your **Qualification & Experience** (Letters only):
+  - Automatically go to [Step: talents_job_location]
+
+[Step: course_dm]
+Agent asks: 🔥 Digital Marketing Course 📚 Key Topics: SEO, SMM, Paid Ads 💰 Fees: Starts from ₹14,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_fs]
+Agent asks: 💻 Full Stack Development 📚 Key Topics: React, Node.js, Next.js 💰 Fees: Starts from ₹18,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_da]
+Agent asks: 📊 Data Analytics 📚 Key Topics: Python, Power BI, SQL 💰 Fees: Starts from ₹22,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_ve]
+Agent asks: 🎬 Video Editing 📚 Key Topics: Premiere Pro, Reels 💰 Fees: Starts from ₹14,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: academy_mentor]
+Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9403892971 💬 https://wa.me/919944940051
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+  - If user replies "🏁 Finish & Submit" -> go to [Step: final_thank_you]
+
+[Step: multi_enquiry_loop]
+Agent asks: I’ve added that to your enquiry list! ✅  Would you like to enquire about **anything else** or finish?
+  - If user replies "➕ Add Another Service" -> go to [Step: main_menu]
+  - If user replies "🏁 Finish & Submit All" -> go to [Step: final_thank_you]
+
+[Step: talents_job_location]
+Agent asks: 📍 **Preferred Location** 👉 Where would you like to work? (Letters only):
+  - Automatically go to [Step: talents_job_resume]
+
+[Step: academy_syllabus]
+Agent asks: 📄 Here is the detailed syllabus: - Java: https://drive.google.com/file/d/13T7Hso7y-EyLVDQMd4lUZ-6wHI1pb-G4/view - MEAN: https://drive.google.com/file/d/1e_xuM7jeROgey-UsgIvU1SOtkzXsYr73/view - MERN: https://drive.google.com/file/d/1Qo-z9VH1UPYidbjhqGkmY6GMe2haTj66/view
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+  - If user replies "➕ Enquire More" -> go to [Step: multi_enquiry_loop]
+
+[Step: academy_demo_date]
+Agent asks: 📅 Please select your preferred **date** for the demo session:
+  - Automatically go to [Step: academy_demo_time]
+
+[Step: final_thank_you]
+Agent asks: 🙏 Thank you, {name}! Our team will guide you throughout the process 🚀  If you have any questions, feel free to message us anytime 😊
+
+[Step: main_menu]
+Agent asks: 📍 Got it, {name}! Thanks for sharing.  Here’s how we can help you 👇 ✨ We help you with:  👉 **What are you looking for today?**
+  - If user replies "🎓 BM Academy – Career & Courses" -> go to [Step: academy_entry]
+  - If user replies "💼 Core Talents – Jobs & Skill Development" -> go to [Step: talents_entry]
+  - If user replies "🏡 Namma Pondy Properties – Property Investment" -> go to [Step: namma_pondy_entry]
+  - If user replies "📈 BM TechX – Business Growth & Marketing" -> go to [Step: techx_entry]
+
+[Step: talents_job_resume]
+Agent asks: 📄 **Step 2: Resume Upload** 👉 Please upload your resume (PDF/Doc):
+  - Automatically go to [Step: talents_job_finish]
+
+[Step: academy_demo_time]
+Agent asks: ✅ Now choose an available **time slot**:
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: academy_entry]
+Agent asks: 🎓 Welcome to BM Academy 🚀 👉 Please choose a course:
+  - If user replies "Digital Marketing" -> go to [Step: course_dm]
+  - If user replies "Full Stack Development" -> go to [Step: course_fs]
+  - If user replies "Data Analytics" -> go to [Step: course_da]
+  - If user replies "Video Editing" -> go to [Step: course_ve]
+
+[Step: namma_pondy_entry]
+Agent asks: 👋 Hi! Welcome to **Real Estate with Kamar** 🏡 Your Trusted Property Partner in Pondicherry  👉 What are you looking for?
+  - If user replies "1️⃣ Buy Property" -> go to [Step: prop_buy_budget]
+  - If user replies "2️⃣ Sell Property" -> go to [Step: prop_sell_type]
+  - If user replies "3️⃣ Investment Advice" -> go to [Step: prop_invest_entry]
+  - If user replies "4️⃣ Talk to Expert" -> go to [Step: prop_expert_msg]
+
+[Step: techx_entry]
+Agent asks: 👋 Welcome to BM TechX 🚀 👉 What are you looking for?
+  - If user replies "1️⃣ Ads / Leads" -> go to [Step: tech_leads]
+  - If user replies "2️⃣ Social Media" -> go to [Step: tech_smm]
+  - If user replies "3️⃣ Website" -> go to [Step: tech_web]
+  - If user replies "4️⃣ Branding" -> go to [Step: tech_branding]
+
+[Step: talents_job_finish]
+Agent asks: ✅ **Thank you! Your details have been received** 🚀 Our team will: ✔️ Review your profile ✔️ Match with suitable jobs ✔️ Contact you shortly  (We have added this to your enquiry list)
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_buy_budget]
+Agent asks: Great choice 👍 👉 Tell me your **Budget Range**:
+  - If user replies "10L – 20L" -> go to [Step: prop_buy_location]
+  - If user replies "20L – 50L" -> go to [Step: prop_buy_location]
+  - If user replies "50L+" -> go to [Step: prop_buy_location]
+
+[Step: prop_sell_type]
+Agent asks: Property Type? (Letters only)
+  - Automatically go to [Step: prop_sell_location]
+
+[Step: prop_invest_entry]
+Agent asks: 📊 Hot Locations: ECR, Villianur 👉 What do you want?
+  - If user replies "Current Deals" -> go to [Step: prop_showcase_final]
+  - If user replies "ROI Details" -> go to [Step: prop_invest_roi]
+
+[Step: prop_expert_msg]
+Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: tech_leads]
+Agent asks: 🔥 Lead Generation 💰 Starts from ₹4,999
+  - If user replies "Case Studies" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Free Consultation" -> go to [Step: tech_demo_calendar_date]
+
+[Step: tech_smm]
+Agent asks: 📱 Social Media Growth 💰 Starts from ₹4,999/mo
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Talk to Expert" -> go to [Step: tech_expert_msg]
+
+[Step: tech_web]
+Agent asks: 🌐 Website Development 💰 Starts from ₹2,999
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Talk to Expert" -> go to [Step: tech_expert_msg]
+
+[Step: tech_branding]
+Agent asks: 🎨 Branding Services
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Free Consultation" -> go to [Step: tech_demo_calendar_date]
+
+[Step: prop_buy_location]
+Agent asks: Got it! Preferred Location? (Letters only)
+  - Automatically go to [Step: prop_buy_cta]
+
+[Step: prop_sell_location]
+Agent asks: Location? (Letters only)
+  - Automatically go to [Step: prop_sell_price]
+
+[Step: prop_showcase_final]
+Agent asks: 🏡 **Featured Properties** 🔥 Limited plots available
+  - If user replies "Photos" -> go to [Step: prop_media_msg]
+  - If user replies "👉 DOUBT" -> go to [Step: prop_objections_start]
+
+[Step: prop_invest_roi]
+Agent asks: 📈 15-20% ROI annually.
+  - If user replies "Show Deals" -> go to [Step: prop_showcase_final]
+
+[Step: tech_demo_calendar_date]
+Agent asks: 📅 Please select your preferred **date**:
+  - Automatically go to [Step: tech_demo_calendar_time]
+
+[Step: tech_expert_msg]
+Agent asks: 📞 9403892971 💬 WhatsApp: https://wa.me/919944940051
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_buy_cta]
+Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+  - If user replies "Show Property" -> go to [Step: prop_showcase_final]
+
+[Step: prop_sell_price]
+Agent asks: Expected Price?
+  - Automatically go to [Step: prop_sell_finish]
+
+[Step: prop_media_msg]
+Agent asks: Sending links... 👉 Trust Details?
+  - If user replies "Yes" -> go to [Step: prop_trust_final]
+
+[Step: prop_objections_start]
+Agent asks: What is your doubt?
+  - If user replies "Is this genuine?" -> go to [Step: prop_obs_genuine]
+  - If user replies "Price High" -> go to [Step: prop_obs_price]
+  - If user replies "Team" -> go to [Step: prop_expert_msg]
+
+[Step: tech_demo_calendar_time]
+Agent asks: ✅ Now choose a **time slot**:
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_sell_finish]
+Agent asks: ✅ Thank you!
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_trust_final]
+Agent asks: 🤝 Verified only | Transparent pricing 👉 Doubts?
+  - If user replies "DOUBT" -> go to [Step: prop_objections_start]
+
+[Step: prop_obs_genuine]
+Agent asks: 100% genuine 👍
+  - If user replies "Show Property" -> go to [Step: prop_showcase_final]
+
+[Step: prop_obs_price]
+Agent asks: Budget options available.
+  - If user replies "Under 10L" -> go to [Step: prop_showcase_final]
+
+
+=== Namma Pondy ===
+[Step: namma_pondy_entry]
+Agent asks: 👋 Hi! Welcome to **Real Estate with Kamar** 🏡 Your Trusted Property Partner in Pondicherry  👉 What are you looking for?
+  - If user replies "1️⃣ Buy Property" -> go to [Step: prop_buy_budget]
+  - If user replies "2️⃣ Sell Property" -> go to [Step: prop_sell_type]
+  - If user replies "3️⃣ Investment Advice" -> go to [Step: prop_invest_entry]
+  - If user replies "4️⃣ Talk to Expert" -> go to [Step: prop_expert_msg]
+
+[Step: prop_buy_budget]
+Agent asks: Great choice 👍 👉 Tell me your **Budget Range**:
+  - If user replies "10L – 20L" -> go to [Step: prop_buy_location]
+  - If user replies "20L – 50L" -> go to [Step: prop_buy_location]
+  - If user replies "50L+" -> go to [Step: prop_buy_location]
+
+[Step: prop_sell_type]
+Agent asks: Property Type? (Letters only)
+  - Automatically go to [Step: prop_sell_location]
+
+[Step: prop_invest_entry]
+Agent asks: 📊 Hot Locations: ECR, Villianur 👉 What do you want?
+  - If user replies "Current Deals" -> go to [Step: prop_showcase_final]
+  - If user replies "ROI Details" -> go to [Step: prop_invest_roi]
+
+[Step: prop_expert_msg]
+Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_buy_location]
+Agent asks: Got it! Preferred Location? (Letters only)
+  - Automatically go to [Step: prop_buy_cta]
+
+[Step: prop_sell_location]
+Agent asks: Location? (Letters only)
+  - Automatically go to [Step: prop_sell_price]
+
+[Step: prop_showcase_final]
+Agent asks: 🏡 **Featured Properties** 🔥 Limited plots available
+  - If user replies "Photos" -> go to [Step: prop_media_msg]
+  - If user replies "👉 DOUBT" -> go to [Step: prop_objections_start]
+
+[Step: prop_invest_roi]
+Agent asks: 📈 15-20% ROI annually.
+  - If user replies "Show Deals" -> go to [Step: prop_showcase_final]
+
+[Step: multi_enquiry_loop]
+Agent asks: I’ve added that to your enquiry list! ✅  Would you like to enquire about **anything else** or finish?
+  - If user replies "➕ Add Another Service" -> go to [Step: main_menu]
+  - If user replies "🏁 Finish & Submit All" -> go to [Step: final_thank_you]
+
+[Step: prop_buy_cta]
+Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+  - If user replies "Show Property" -> go to [Step: prop_showcase_final]
+
+[Step: prop_sell_price]
+Agent asks: Expected Price?
+  - Automatically go to [Step: prop_sell_finish]
+
+[Step: prop_media_msg]
+Agent asks: Sending links... 👉 Trust Details?
+  - If user replies "Yes" -> go to [Step: prop_trust_final]
+
+[Step: prop_objections_start]
+Agent asks: What is your doubt?
+  - If user replies "Is this genuine?" -> go to [Step: prop_obs_genuine]
+  - If user replies "Price High" -> go to [Step: prop_obs_price]
+  - If user replies "Team" -> go to [Step: prop_expert_msg]
+
+[Step: main_menu]
+Agent asks: 📍 Got it, {name}! Thanks for sharing.  Here’s how we can help you 👇 ✨ We help you with:  👉 **What are you looking for today?**
+  - If user replies "🎓 BM Academy – Career & Courses" -> go to [Step: academy_entry]
+  - If user replies "💼 Core Talents – Jobs & Skill Development" -> go to [Step: talents_entry]
+  - If user replies "🏡 Namma Pondy Properties – Property Investment" -> go to [Step: namma_pondy_entry]
+  - If user replies "📈 BM TechX – Business Growth & Marketing" -> go to [Step: techx_entry]
+
+[Step: final_thank_you]
+Agent asks: 🙏 Thank you, {name}! Our team will guide you throughout the process 🚀  If you have any questions, feel free to message us anytime 😊
+
+[Step: prop_sell_finish]
+Agent asks: ✅ Thank you!
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_trust_final]
+Agent asks: 🤝 Verified only | Transparent pricing 👉 Doubts?
+  - If user replies "DOUBT" -> go to [Step: prop_objections_start]
+
+[Step: prop_obs_genuine]
+Agent asks: 100% genuine 👍
+  - If user replies "Show Property" -> go to [Step: prop_showcase_final]
+
+[Step: prop_obs_price]
+Agent asks: Budget options available.
+  - If user replies "Under 10L" -> go to [Step: prop_showcase_final]
+
+[Step: academy_entry]
+Agent asks: 🎓 Welcome to BM Academy 🚀 👉 Please choose a course:
+  - If user replies "Digital Marketing" -> go to [Step: course_dm]
+  - If user replies "Full Stack Development" -> go to [Step: course_fs]
+  - If user replies "Data Analytics" -> go to [Step: course_da]
+  - If user replies "Video Editing" -> go to [Step: course_ve]
+
+[Step: talents_entry]
+Agent asks: 👋 Hi {name}! Welcome to **Core Talent** 💼 Your Career Growth Partner 🚀  We help you: ✔️ Get job opportunities ✔️ Improve your skills ✔️ Get placement support ✔️ Build your career faster  👉 What are you looking for?
+  - If user replies "1️⃣ Find Jobs" -> go to [Step: talents_job_intro]
+  - If user replies "2️⃣ Skill Training" -> go to [Step: talents_training_entry]
+  - If user replies "3️⃣ Placement Support" -> go to [Step: talents_placement_intro]
+  - If user replies "4️⃣ Talk to Team" -> go to [Step: talents_team_msg]
+
+[Step: techx_entry]
+Agent asks: 👋 Welcome to BM TechX 🚀 👉 What are you looking for?
+  - If user replies "1️⃣ Ads / Leads" -> go to [Step: tech_leads]
+  - If user replies "2️⃣ Social Media" -> go to [Step: tech_smm]
+  - If user replies "3️⃣ Website" -> go to [Step: tech_web]
+  - If user replies "4️⃣ Branding" -> go to [Step: tech_branding]
+
+[Step: course_dm]
+Agent asks: 🔥 Digital Marketing Course 📚 Key Topics: SEO, SMM, Paid Ads 💰 Fees: Starts from ₹14,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_fs]
+Agent asks: 💻 Full Stack Development 📚 Key Topics: React, Node.js, Next.js 💰 Fees: Starts from ₹18,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_da]
+Agent asks: 📊 Data Analytics 📚 Key Topics: Python, Power BI, SQL 💰 Fees: Starts from ₹22,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_ve]
+Agent asks: 🎬 Video Editing 📚 Key Topics: Premiere Pro, Reels 💰 Fees: Starts from ₹14,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: talents_job_intro]
+Agent asks: Great 👍 Let’s help you get a job fast!  📄 **Available Opportunities:** ✔️ Fresher Jobs ✔️ Experienced Roles ✔️ Local Company Openings ✔️ Immediate Joining  👉 Let’s collect your profile details first.
+  - If user replies "Collect Basic Details" -> go to [Step: talents_job_details]
+
+[Step: talents_training_entry]
+Agent asks: 🚀 Upgrade your skills & grow your career faster!  📚 **Our Training Programs** 🎓 Includes: ✔️ Practical training ✔️ Real-time projects ✔️ Certification  👉 Choose a program to see details:
+  - If user replies "🎓 Digital Marketing" -> go to [Step: course_dm]
+  - If user replies "💻 Full Stack Development" -> go to [Step: course_fs]
+  - If user replies "📊 Data Analytics" -> go to [Step: course_da]
+  - If user replies "🎬 Video Editing" -> go to [Step: course_ve]
+  - If user replies "💼 Job-Ready Skills" -> go to [Step: academy_mentor]
+
+[Step: talents_placement_intro]
+Agent asks: We don’t just train — we place 👍  📄 **Placement Opportunities:** ✔️ Fresher Jobs | ✔️ Local Company Openings ✔️ Immediate Joining | ✔️ Expert Guidance  👉 How would you like to proceed?
+  - If user replies "Collect Basic Details" -> go to [Step: talents_job_details]
+  - If user replies "Talk to mentor" -> go to [Step: talents_team_msg]
+
+[Step: talents_team_msg]
+Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9403892971 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: tech_leads]
+Agent asks: 🔥 Lead Generation 💰 Starts from ₹4,999
+  - If user replies "Case Studies" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Free Consultation" -> go to [Step: tech_demo_calendar_date]
+
+[Step: tech_smm]
+Agent asks: 📱 Social Media Growth 💰 Starts from ₹4,999/mo
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Talk to Expert" -> go to [Step: tech_expert_msg]
+
+[Step: tech_web]
+Agent asks: 🌐 Website Development 💰 Starts from ₹2,999
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Talk to Expert" -> go to [Step: tech_expert_msg]
+
+[Step: tech_branding]
+Agent asks: 🎨 Branding Services
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Free Consultation" -> go to [Step: tech_demo_calendar_date]
+
+[Step: academy_syllabus]
+Agent asks: 📄 Here is the detailed syllabus: - Java: https://drive.google.com/file/d/13T7Hso7y-EyLVDQMd4lUZ-6wHI1pb-G4/view - MEAN: https://drive.google.com/file/d/1e_xuM7jeROgey-UsgIvU1SOtkzXsYr73/view - MERN: https://drive.google.com/file/d/1Qo-z9VH1UPYidbjhqGkmY6GMe2haTj66/view
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+  - If user replies "➕ Enquire More" -> go to [Step: multi_enquiry_loop]
+
+[Step: academy_mentor]
+Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9403892971 💬 https://wa.me/919944940051
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+  - If user replies "🏁 Finish & Submit" -> go to [Step: final_thank_you]
+
+[Step: academy_demo_date]
+Agent asks: 📅 Please select your preferred **date** for the demo session:
+  - Automatically go to [Step: academy_demo_time]
+
+[Step: talents_job_details]
+Agent asks: 📝 **Step 1: Profile Details** 👉 Please share your **Qualification & Experience** (Letters only):
+  - Automatically go to [Step: talents_job_location]
+
+[Step: tech_demo_calendar_date]
+Agent asks: 📅 Please select your preferred **date**:
+  - Automatically go to [Step: tech_demo_calendar_time]
+
+[Step: tech_expert_msg]
+Agent asks: 📞 9403892971 💬 WhatsApp: https://wa.me/919944940051
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: academy_demo_time]
+Agent asks: ✅ Now choose an available **time slot**:
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: talents_job_location]
+Agent asks: 📍 **Preferred Location** 👉 Where would you like to work? (Letters only):
+  - Automatically go to [Step: talents_job_resume]
+
+[Step: tech_demo_calendar_time]
+Agent asks: ✅ Now choose a **time slot**:
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: talents_job_resume]
+Agent asks: 📄 **Step 2: Resume Upload** 👉 Please upload your resume (PDF/Doc):
+  - Automatically go to [Step: talents_job_finish]
+
+[Step: talents_job_finish]
+Agent asks: ✅ **Thank you! Your details have been received** 🚀 Our team will: ✔️ Review your profile ✔️ Match with suitable jobs ✔️ Contact you shortly  (We have added this to your enquiry list)
+  - Automatically go to [Step: multi_enquiry_loop]
+
+
+=== BM TechX ===
+[Step: techx_entry]
+Agent asks: 👋 Welcome to BM TechX 🚀 👉 What are you looking for?
+  - If user replies "1️⃣ Ads / Leads" -> go to [Step: tech_leads]
+  - If user replies "2️⃣ Social Media" -> go to [Step: tech_smm]
+  - If user replies "3️⃣ Website" -> go to [Step: tech_web]
+  - If user replies "4️⃣ Branding" -> go to [Step: tech_branding]
+
+[Step: tech_leads]
+Agent asks: 🔥 Lead Generation 💰 Starts from ₹4,999
+  - If user replies "Case Studies" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Free Consultation" -> go to [Step: tech_demo_calendar_date]
+
+[Step: tech_smm]
+Agent asks: 📱 Social Media Growth 💰 Starts from ₹4,999/mo
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Talk to Expert" -> go to [Step: tech_expert_msg]
+
+[Step: tech_web]
+Agent asks: 🌐 Website Development 💰 Starts from ₹2,999
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Talk to Expert" -> go to [Step: tech_expert_msg]
+
+[Step: tech_branding]
+Agent asks: 🎨 Branding Services
+  - If user replies "Portfolio" -> go to [Step: tech_demo_calendar_date]
+  - If user replies "Free Consultation" -> go to [Step: tech_demo_calendar_date]
+
+[Step: tech_demo_calendar_date]
+Agent asks: 📅 Please select your preferred **date**:
+  - Automatically go to [Step: tech_demo_calendar_time]
+
+[Step: tech_expert_msg]
+Agent asks: 📞 9403892971 💬 WhatsApp: https://wa.me/919944940051
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: tech_demo_calendar_time]
+Agent asks: ✅ Now choose a **time slot**:
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: multi_enquiry_loop]
+Agent asks: I’ve added that to your enquiry list! ✅  Would you like to enquire about **anything else** or finish?
+  - If user replies "➕ Add Another Service" -> go to [Step: main_menu]
+  - If user replies "🏁 Finish & Submit All" -> go to [Step: final_thank_you]
+
+[Step: main_menu]
+Agent asks: 📍 Got it, {name}! Thanks for sharing.  Here’s how we can help you 👇 ✨ We help you with:  👉 **What are you looking for today?**
+  - If user replies "🎓 BM Academy – Career & Courses" -> go to [Step: academy_entry]
+  - If user replies "💼 Core Talents – Jobs & Skill Development" -> go to [Step: talents_entry]
+  - If user replies "🏡 Namma Pondy Properties – Property Investment" -> go to [Step: namma_pondy_entry]
+  - If user replies "📈 BM TechX – Business Growth & Marketing" -> go to [Step: techx_entry]
+
+[Step: final_thank_you]
+Agent asks: 🙏 Thank you, {name}! Our team will guide you throughout the process 🚀  If you have any questions, feel free to message us anytime 😊
+
+[Step: academy_entry]
+Agent asks: 🎓 Welcome to BM Academy 🚀 👉 Please choose a course:
+  - If user replies "Digital Marketing" -> go to [Step: course_dm]
+  - If user replies "Full Stack Development" -> go to [Step: course_fs]
+  - If user replies "Data Analytics" -> go to [Step: course_da]
+  - If user replies "Video Editing" -> go to [Step: course_ve]
+
+[Step: talents_entry]
+Agent asks: 👋 Hi {name}! Welcome to **Core Talent** 💼 Your Career Growth Partner 🚀  We help you: ✔️ Get job opportunities ✔️ Improve your skills ✔️ Get placement support ✔️ Build your career faster  👉 What are you looking for?
+  - If user replies "1️⃣ Find Jobs" -> go to [Step: talents_job_intro]
+  - If user replies "2️⃣ Skill Training" -> go to [Step: talents_training_entry]
+  - If user replies "3️⃣ Placement Support" -> go to [Step: talents_placement_intro]
+  - If user replies "4️⃣ Talk to Team" -> go to [Step: talents_team_msg]
+
+[Step: namma_pondy_entry]
+Agent asks: 👋 Hi! Welcome to **Real Estate with Kamar** 🏡 Your Trusted Property Partner in Pondicherry  👉 What are you looking for?
+  - If user replies "1️⃣ Buy Property" -> go to [Step: prop_buy_budget]
+  - If user replies "2️⃣ Sell Property" -> go to [Step: prop_sell_type]
+  - If user replies "3️⃣ Investment Advice" -> go to [Step: prop_invest_entry]
+  - If user replies "4️⃣ Talk to Expert" -> go to [Step: prop_expert_msg]
+
+[Step: course_dm]
+Agent asks: 🔥 Digital Marketing Course 📚 Key Topics: SEO, SMM, Paid Ads 💰 Fees: Starts from ₹14,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_fs]
+Agent asks: 💻 Full Stack Development 📚 Key Topics: React, Node.js, Next.js 💰 Fees: Starts from ₹18,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_da]
+Agent asks: 📊 Data Analytics 📚 Key Topics: Python, Power BI, SQL 💰 Fees: Starts from ₹22,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: course_ve]
+Agent asks: 🎬 Video Editing 📚 Key Topics: Premiere Pro, Reels 💰 Fees: Starts from ₹14,999
+  - If user replies "Syllabus" -> go to [Step: academy_syllabus]
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+
+[Step: talents_job_intro]
+Agent asks: Great 👍 Let’s help you get a job fast!  📄 **Available Opportunities:** ✔️ Fresher Jobs ✔️ Experienced Roles ✔️ Local Company Openings ✔️ Immediate Joining  👉 Let’s collect your profile details first.
+  - If user replies "Collect Basic Details" -> go to [Step: talents_job_details]
+
+[Step: talents_training_entry]
+Agent asks: 🚀 Upgrade your skills & grow your career faster!  📚 **Our Training Programs** 🎓 Includes: ✔️ Practical training ✔️ Real-time projects ✔️ Certification  👉 Choose a program to see details:
+  - If user replies "🎓 Digital Marketing" -> go to [Step: course_dm]
+  - If user replies "💻 Full Stack Development" -> go to [Step: course_fs]
+  - If user replies "📊 Data Analytics" -> go to [Step: course_da]
+  - If user replies "🎬 Video Editing" -> go to [Step: course_ve]
+  - If user replies "💼 Job-Ready Skills" -> go to [Step: academy_mentor]
+
+[Step: talents_placement_intro]
+Agent asks: We don’t just train — we place 👍  📄 **Placement Opportunities:** ✔️ Fresher Jobs | ✔️ Local Company Openings ✔️ Immediate Joining | ✔️ Expert Guidance  👉 How would you like to proceed?
+  - If user replies "Collect Basic Details" -> go to [Step: talents_job_details]
+  - If user replies "Talk to mentor" -> go to [Step: talents_team_msg]
+
+[Step: talents_team_msg]
+Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9403892971 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_buy_budget]
+Agent asks: Great choice 👍 👉 Tell me your **Budget Range**:
+  - If user replies "10L – 20L" -> go to [Step: prop_buy_location]
+  - If user replies "20L – 50L" -> go to [Step: prop_buy_location]
+  - If user replies "50L+" -> go to [Step: prop_buy_location]
+
+[Step: prop_sell_type]
+Agent asks: Property Type? (Letters only)
+  - Automatically go to [Step: prop_sell_location]
+
+[Step: prop_invest_entry]
+Agent asks: 📊 Hot Locations: ECR, Villianur 👉 What do you want?
+  - If user replies "Current Deals" -> go to [Step: prop_showcase_final]
+  - If user replies "ROI Details" -> go to [Step: prop_invest_roi]
+
+[Step: prop_expert_msg]
+Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: academy_syllabus]
+Agent asks: 📄 Here is the detailed syllabus: - Java: https://drive.google.com/file/d/13T7Hso7y-EyLVDQMd4lUZ-6wHI1pb-G4/view - MEAN: https://drive.google.com/file/d/1e_xuM7jeROgey-UsgIvU1SOtkzXsYr73/view - MERN: https://drive.google.com/file/d/1Qo-z9VH1UPYidbjhqGkmY6GMe2haTj66/view
+  - If user replies "Contact Mentor" -> go to [Step: academy_mentor]
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+  - If user replies "➕ Enquire More" -> go to [Step: multi_enquiry_loop]
+
+[Step: academy_mentor]
+Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9403892971 💬 https://wa.me/919944940051
+  - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
+  - If user replies "🏁 Finish & Submit" -> go to [Step: final_thank_you]
+
+[Step: academy_demo_date]
+Agent asks: 📅 Please select your preferred **date** for the demo session:
+  - Automatically go to [Step: academy_demo_time]
+
+[Step: talents_job_details]
+Agent asks: 📝 **Step 1: Profile Details** 👉 Please share your **Qualification & Experience** (Letters only):
+  - Automatically go to [Step: talents_job_location]
+
+[Step: prop_buy_location]
+Agent asks: Got it! Preferred Location? (Letters only)
+  - Automatically go to [Step: prop_buy_cta]
+
+[Step: prop_sell_location]
+Agent asks: Location? (Letters only)
+  - Automatically go to [Step: prop_sell_price]
+
+[Step: prop_showcase_final]
+Agent asks: 🏡 **Featured Properties** 🔥 Limited plots available
+  - If user replies "Photos" -> go to [Step: prop_media_msg]
+  - If user replies "👉 DOUBT" -> go to [Step: prop_objections_start]
+
+[Step: prop_invest_roi]
+Agent asks: 📈 15-20% ROI annually.
+  - If user replies "Show Deals" -> go to [Step: prop_showcase_final]
+
+[Step: academy_demo_time]
+Agent asks: ✅ Now choose an available **time slot**:
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: talents_job_location]
+Agent asks: 📍 **Preferred Location** 👉 Where would you like to work? (Letters only):
+  - Automatically go to [Step: talents_job_resume]
+
+[Step: prop_buy_cta]
+Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+  - If user replies "Show Property" -> go to [Step: prop_showcase_final]
+
+[Step: prop_sell_price]
+Agent asks: Expected Price?
+  - Automatically go to [Step: prop_sell_finish]
+
+[Step: prop_media_msg]
+Agent asks: Sending links... 👉 Trust Details?
+  - If user replies "Yes" -> go to [Step: prop_trust_final]
+
+[Step: prop_objections_start]
+Agent asks: What is your doubt?
+  - If user replies "Is this genuine?" -> go to [Step: prop_obs_genuine]
+  - If user replies "Price High" -> go to [Step: prop_obs_price]
+  - If user replies "Team" -> go to [Step: prop_expert_msg]
+
+[Step: talents_job_resume]
+Agent asks: 📄 **Step 2: Resume Upload** 👉 Please upload your resume (PDF/Doc):
+  - Automatically go to [Step: talents_job_finish]
+
+[Step: prop_sell_finish]
+Agent asks: ✅ Thank you!
+  - Automatically go to [Step: multi_enquiry_loop]
+
+[Step: prop_trust_final]
+Agent asks: 🤝 Verified only | Transparent pricing 👉 Doubts?
+  - If user replies "DOUBT" -> go to [Step: prop_objections_start]
+
+[Step: prop_obs_genuine]
+Agent asks: 100% genuine 👍
+  - If user replies "Show Property" -> go to [Step: prop_showcase_final]
+
+[Step: prop_obs_price]
+Agent asks: Budget options available.
+  - If user replies "Under 10L" -> go to [Step: prop_showcase_final]
+
+[Step: talents_job_finish]
+Agent asks: ✅ **Thank you! Your details have been received** 🚀 Our team will: ✔️ Review your profile ✔️ Match with suitable jobs ✔️ Contact you shortly  (We have added this to your enquiry list)
+  - Automatically go to [Step: multi_enquiry_loop]
+
+

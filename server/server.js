@@ -582,6 +582,31 @@ app.get('/api/leads/:id', auth, async (req, res) => {
   }
 });
 
+// GET /api/leads/:id/messages
+app.get('/api/leads/:id/messages', auth, async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const conversations = await pool.query(`
+      SELECT m.id, m.direction, m.content, m.msg_type as type, m.media_url, m.wa_msg_id,
+             m.status, m.is_ai, m.sent_at as timestamp, m.read_at, m.is_deleted, m.is_forwarded, m.pinned_until, m.is_starred, m.reactions,
+             CASE WHEN m.reply_to_wa_id IS NOT NULL THEN (
+               SELECT json_build_object('direction', r.direction, 'media_url', r.media_url, 'content', r.content, 'msg_type', r.msg_type)
+               FROM messages r WHERE r.wa_msg_id = m.reply_to_wa_id LIMIT 1
+             ) ELSE NULL END as reply_to
+      FROM messages m
+      JOIN conversations cv ON m.conversation_id = cv.id
+      WHERE cv.lead_id = $1
+      ORDER BY m.sent_at DESC
+      LIMIT $2 OFFSET $3
+    `, [req.params.id, parseInt(limit), parseInt(offset)]);
+
+    res.json({ messages: conversations.rows.reverse() });
+  } catch (err) {
+    console.error('Messages fetch error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST /api/leads
 app.post('/api/leads', auth, async (req, res) => {
   try {
@@ -616,10 +641,13 @@ app.post('/api/leads', auth, async (req, res) => {
 // PATCH /api/leads/:id
 app.patch('/api/leads/:id', auth, async (req, res) => {
   try {
-    const { status, score, assigned_to, interest, notes } = req.body;
+    const { name, phone, email, status, score, assigned_to, interest, notes } = req.body;
     const updates = [];
     const params = [];
 
+    if (name !== undefined) { params.push(name); updates.push(`name = $${params.length}`); }
+    if (phone !== undefined) { params.push(phone); updates.push(`phone = $${params.length}`); }
+    if (email !== undefined) { params.push(email); updates.push(`email = $${params.length}`); }
     if (status !== undefined) { params.push(status); updates.push(`status = $${params.length}`); }
     if (score !== undefined) { params.push(score); updates.push(`score = $${params.length}`); }
     if (assigned_to !== undefined) { params.push(assigned_to); updates.push(`assigned_to = $${params.length}`); }
@@ -657,6 +685,23 @@ app.delete('/api/leads/:id', auth, async (req, res) => {
   }
 });
 
+// POST /api/leads/migrate-flow-step — one-time migration
+app.post('/api/leads/migrate-flow-step', auth, async (req, res) => {
+  try {
+    // 1. Add flow_step to leads
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS flow_step VARCHAR(100) DEFAULT 'welcome'`);
+    await pool.query(`UPDATE leads SET flow_step = 'welcome' WHERE flow_step IS NULL`);
+    
+    // 2. Fix brain_docs constraint to allow 'training' and 'welcome_template'
+    await pool.query(`ALTER TABLE brain_docs DROP CONSTRAINT IF EXISTS brain_docs_doc_type_check`);
+    
+    res.json({ success: true, message: 'DB migration successful! flow_step added and constraints updated.' });
+  } catch (err) {
+    console.error('Migration error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════
 // WHATSAPP ROUTES
 // ══════════════════════════════════════════════════════════
@@ -682,6 +727,36 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
     if (!phoneNumberId || !waAccessToken) {
       return res.status(400).json({ error: 'WhatsApp not configured for this brand. Please add phone_number_id and wa_access_token in Clients settings or server .env file.' });
     }
+
+    // --- Check 24-hour window ---
+    const windowRes = await pool.query(`
+      SELECT 1 FROM messages m
+      JOIN conversations c ON m.conversation_id = c.id
+      WHERE c.lead_id = $1 AND m.direction = 'inbound' AND m.sent_at > NOW() - INTERVAL '24 HOURS'
+      LIMIT 1
+    `, [lead_id]);
+
+    const isWindowOpen = windowRes.rows.length > 0;
+
+    if (!isWindowOpen) {
+      // Trigger n8n new lead webhook instead of sending message to wake up chat
+      if (process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
+        axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
+          lead_id: lead.id,
+          name: lead.name,
+          phone: lead.phone,
+          client_id: lead.client_id,
+          phone_number_id: phoneNumberId,
+          wa_access_token: waAccessToken
+        }).catch(e => console.error('[n8n reengagement error]', e.message));
+      }
+      
+      return res.status(403).json({ 
+        error: '24-hour window closed. Triggered template automation to wake up chat.',
+        reason: 'window_closed'
+      });
+    }
+    // ----------------------------
 
     const type = msg_type && msg_type !== 'text' ? msg_type : 'text';
     const payload = {
@@ -816,21 +891,48 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
             // Emit real-time status update to CRM
             io.emit('message_status', { wa_message_id: wamid, status: newStatus });
-            console.log(`[Webhook Status] ${wamid} → ${newStatus}`);
+            if (newStatus === 'failed') {
+              console.log(`[Webhook Status] ${wamid} → ${newStatus} (Error: ${errorMsg})`);
+            } else {
+              console.log(`[Webhook Status] ${wamid} → ${newStatus}`);
+            }
           }
         }
 
-        // Handle incoming text messages from customers
+        // Handle ALL incoming messages from customers (text, image, audio, video, document)
         for (const msg of value.messages || []) {
-          if (msg.type !== 'text') {
-            console.log(`[Webhook] Unsupported message type: ${msg.type} from ${msg.from}`);
-            continue;
-          }
-
           const phone = msg.from;       // e.g. '919876543210'
-          const text = msg.text.body;
           const phoneNumberId = value.metadata.phone_number_id;
           const isForwarded = msg.context?.forwarded || msg.context?.frequently_forwarded || false;
+          const waMessageId = msg.id;
+
+          // Extract text and media info based on message type
+          let text = '';
+          let mediaUrl = null;
+          let msgType = msg.type || 'text';
+
+          if (msg.type === 'text') {
+            text = msg.text?.body || '';
+          } else if (msg.type === 'image') {
+            text = msg.image?.caption || '[Image]';
+            mediaUrl = msg.image?.id ? `https://graph.facebook.com/v18.0/${msg.image.id}` : null;
+          } else if (msg.type === 'audio') {
+            text = '[Voice Message]';
+            mediaUrl = msg.audio?.id ? `https://graph.facebook.com/v18.0/${msg.audio.id}` : null;
+          } else if (msg.type === 'video') {
+            text = msg.video?.caption || '[Video]';
+            mediaUrl = msg.video?.id ? `https://graph.facebook.com/v18.0/${msg.video.id}` : null;
+          } else if (msg.type === 'document') {
+            text = msg.document?.filename || '[Document]';
+            mediaUrl = msg.document?.id ? `https://graph.facebook.com/v18.0/${msg.document.id}` : null;
+          } else if (msg.type === 'button') {
+            text = msg.button?.text || '[Button Reply]';
+          } else if (msg.type === 'interactive') {
+            text = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '[Interactive Reply]';
+          } else {
+            console.log(`[Webhook] Message type: ${msg.type} from ${phone}`);
+            text = `[${msg.type}]`;
+          }
 
           // Find matching client by phone_number_id
           const client = (await pool.query(
@@ -838,19 +940,34 @@ app.post('/webhook/whatsapp', async (req, res) => {
           )).rows[0];
 
           // Find or auto-create lead by phone number
-          let lead = (await pool.query('SELECT * FROM leads WHERE phone = $1', [phone])).rows[0];
+          const phoneDigits = phone.replace(/\D/g, '');
+          let lead = (await pool.query(
+            `SELECT l.*, c.wa_access_token as client_wa_token, c.phone_number_id as client_phone_number_id
+             FROM leads l
+             LEFT JOIN clients c ON l.client_id = c.id
+             WHERE REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g') = $1
+             ORDER BY l.created_at ASC LIMIT 1`,
+            [phoneDigits]
+          )).rows[0];
 
           if (!lead) {
             const newLead = await pool.query(`
-              INSERT INTO leads (name, phone, source, client_id, status, score, created_at)
-              VALUES ($1, $2, 'WhatsApp', $3, 'new', 10, NOW())
+              INSERT INTO leads (name, phone, source, client_id, status, score, flow_step, created_at)
+              VALUES ($1, $2, 'WhatsApp', $3, 'new', 10, 'welcome', NOW())
               RETURNING *
             `, [phone, phone, client?.id || null]);
             lead = newLead.rows[0];
+            lead.client_wa_token = client?.wa_access_token;
+            lead.client_phone_number_id = client?.phone_number_id;
             console.log(`[Webhook] Auto-created lead for phone: ${phone}`);
+          } else {
+            if (lead.phone !== phone) {
+              await pool.query('UPDATE leads SET phone = $1 WHERE id = $2', [phone, lead.id]);
+              lead.phone = phone;
+            }
           }
 
-                    // Upsert conversation thread (unique per phone+tenant)
+          // Upsert conversation thread
           const tenantId = lead.tenant_id || 1;
           const convRes = await pool.query(`
             INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
@@ -866,23 +983,25 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
           // Save incoming message to messages table
           const { rows: savedRows } = await pool.query(`
-            INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at, is_forwarded)
-            VALUES ($1, 'inbound', $2, 'text', $3, 'delivered', false, NOW(), $4)
-            RETURNING id, direction, content, msg_type as type, wa_msg_id, status, sent_at as timestamp, is_forwarded
-          `, [conversationId, text, msg.id, isForwarded]);
-
+            INSERT INTO messages (conversation_id, direction, content, msg_type, media_url, wa_msg_id, status, is_ai, sent_at, is_forwarded)
+            VALUES ($1, 'inbound', $2, $3, $4, $5, 'delivered', false, NOW(), $6)
+            RETURNING id, direction, content, msg_type as type, media_url, wa_msg_id, status, sent_at as timestamp, is_forwarded
+          `, [conversationId, text, msgType, mediaUrl, waMessageId, isForwarded]);
 
           // ── REAL-TIME: push to CRM Inbox immediately ─────────
           io.emit('incoming_message', { lead_id: lead.id, message: savedRows[0] });
-          console.log(`[Webhook] Inbound message from ${phone} saved & emitted via Socket.io`);
+          console.log(`[Webhook] Inbound ${msgType} from ${phone} → lead ${lead.id}`);
 
-          // ── Forward to n8n for AI auto-reply processing ──────
-          if (process.env.N8N_WEBHOOK_URL) {
+          // ── Forward to n8n for AI auto-reply (only for text/button/interactive) ──
+          const shouldTriggerAI = ['text', 'button', 'interactive'].includes(msg.type);
+          if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL) {
             axios.post(process.env.N8N_WEBHOOK_URL, {
               lead_id: lead.id,
               phone,
               message: text,
-              phone_number_id: phoneNumberId
+              phone_number_id: lead.client_phone_number_id || phoneNumberId,
+              wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN,
+              gemini_api_key: process.env.GEMINI_API_KEY
             }).catch(e => console.error('[n8n forward error]', e.message));
           }
         }
@@ -929,13 +1048,31 @@ app.post('/webhook/meta-leads', async (req, res) => {
 
         if (!phone) continue;
 
-        const existing = await pool.query('SELECT id FROM leads WHERE phone = $1', [phone]);
+        const existing = await pool.query(
+          `SELECT id FROM leads WHERE REGEXP_REPLACE(phone, '[^0-9]', '', 'g') = $1`,
+          [phone]
+        );
         if (existing.rows.length) continue;
 
-        await pool.query(`
+        const newLeadRes = await pool.query(`
           INSERT INTO leads (name, phone, email, source, status, score, created_at)
           VALUES ($1, $2, $3, 'Meta Ads', 'new', 20, NOW())
+          RETURNING *
         `, [name, phone, email]);
+        
+        const newLead = newLeadRes.rows[0];
+
+        // Trigger n8n webhook for Meta leads to send welcome template
+        if (process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
+          axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
+            lead_id: newLead.id,
+            name: newLead.name,
+            phone: newLead.phone,
+            client_id: newLead.client_id || null,
+            phone_number_id: process.env.WA_PHONE_NUMBER_ID,
+            wa_access_token: process.env.META_PAGE_ACCESS_TOKEN
+          }).catch(e => console.error('[n8n Webhook Error - Meta Lead]', e.message));
+        }
       }
     }
   } catch (err) {
@@ -1317,10 +1454,6 @@ app.patch('/api/clients/:id', auth, async (req, res) => {
 });
 
 app.delete('/api/clients/:id', auth, async (req, res) => {
-  if (req.user?.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden: Only administrators can delete clients' });
-  }
-
   const clientDb = await pool.connect();
   try {
     await clientDb.query('BEGIN');
@@ -1458,6 +1591,7 @@ app.post('/api/brain', auth, async (req, res) => {
     `, [client_id, doc_type, content]);
     res.json({ doc: rows[0] });
   } catch (err) {
+    console.error('Brain Doc Save Error:', err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

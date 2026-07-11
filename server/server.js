@@ -2081,6 +2081,29 @@ cron.schedule('*/5 * * * *', async () => {
 // ── START ─────────────────────────────────────────────────
 httpServer.listen(PORT, () => {
   console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);
+
+  // Reset any stuck publishing jobs on startup to prevent limbo states
+  pool.query(`
+    UPDATE publish_queue 
+    SET status = 'failed', 
+        error_message = 'Publishing interrupted by server restart', 
+        updated_at = NOW() 
+    WHERE status = 'publishing'
+  `).then(async (res) => {
+    if (res.rowCount > 0) {
+      console.log(`[Startup] Cleaned up ${res.rowCount} stuck publishing jobs.`);
+      const { rows } = await pool.query(`
+        SELECT DISTINCT content_id FROM publish_queue 
+        WHERE error_message = 'Publishing interrupted by server restart'
+      `);
+      const { updateOverallPostStatus } = require("./controllers/contentController");
+      for (const r of rows) {
+        await updateOverallPostStatus(r.content_id);
+      }
+    }
+  }).catch(err => {
+    console.error('[Startup] Failed to clean up stuck publishing jobs:', err.message);
+  });
 });
 
 module.exports = { app, httpServer, io };

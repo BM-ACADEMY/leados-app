@@ -786,7 +786,7 @@ router.post('/posts', async (req, res) => {
       `INSERT INTO mafiya_gmb_posts 
         (client_id, post_type, caption, poster_title, poster_subtitle, bg_theme, status, image_url,
          post_title, start_date, end_date, start_time, end_time, coupon_code, redeem_link, terms, repeats, custom_days, repeat_end_date, scheduled_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING *`,
       [
         clientId, 

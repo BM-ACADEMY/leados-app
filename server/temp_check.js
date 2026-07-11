@@ -7,13 +7,12 @@ const pool = new Pool({
   port: 5432
 });
 
-const axios = require('axios');
 async function run() {
   try {
     const res = await pool.query(
-      "SELECT id, brand_name, status, platforms FROM content_queue ORDER BY id DESC LIMIT 10"
+      "SELECT id, brand_name, status, platforms, published_at FROM content_queue WHERE brand_name ILIKE '%ABM%' ORDER BY id DESC LIMIT 10"
     );
-    console.log("AVAILABLE CONTENT QUEUE ITEMS:");
+    console.log("ABM GROUPS CONTENT QUEUE:");
     console.log(JSON.stringify(res.rows, null, 2));
   } catch (e) {
     console.error('Error:', e.message);

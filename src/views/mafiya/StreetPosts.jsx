@@ -29,6 +29,11 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
   const [couponCode, setCouponCode] = useState('');
   const [redeemLink, setRedeemLink] = useState('');
   const [terms, setTerms] = useState('');
+  const [repeats, setRepeats] = useState('Does not repeat');
+  const [customDays, setCustomDays] = useState([]);
+  const [repeatEndDate, setRepeatEndDate] = useState('');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [scheduledTime, setScheduledTime] = useState('');
   
   const [showCoupon, setShowCoupon] = useState(false);
   const [showRedeem, setShowRedeem] = useState(false);
@@ -58,6 +63,10 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
       fetchLocs();
     }
   }, [showModal, activeClient]);
+
+  useEffect(() => {
+    setRepeats('Does not repeat');
+  }, [startDate]);
 
   const handleSaveConnection = async () => {
     if (!selectedLocationStr) return;
@@ -116,6 +125,29 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
         return;
       }
     }
+    if (postType !== 'Offer' && hasButton && buttonType !== 'None' && buttonType !== 'Call now') {
+      if (!buttonLink) {
+        toast.error('Button Link is required');
+        return;
+      }
+      try {
+        new URL(buttonLink);
+      } catch (_) {
+        toast.error('Please enter a valid URL (starting with http:// or https://) for the button link');
+        return;
+      }
+    }
+    if (schedulePost) {
+      if (!scheduledDate || !scheduledTime) {
+        toast.error('Schedule Date and Time are required');
+        return;
+      }
+      const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+      if (scheduledDateTime <= new Date()) {
+        toast.error('Scheduled date/time must be in the future');
+        return;
+      }
+    }
     setSaving(true);
     try {
       const token = localStorage.getItem('leados_token');
@@ -127,7 +159,8 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
           posterSubtitle: buttonType !== 'None' ? `${buttonType}|${buttonLink}` : '',
           bgTheme: 'custom_stock',
           imageUrl: selectedImage || '',
-          status: 'published',
+          status: schedulePost ? 'scheduled' : 'published',
+          scheduledAt: schedulePost ? `${scheduledDate} ${scheduledTime}:00` : null,
           postTitle: postTitle,
           startDate: startDate || null,
           endDate: endDate || null,
@@ -135,11 +168,14 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
           endTime: endTime || null,
           couponCode: couponCode || null,
           redeemLink: redeemLink || null,
-          terms: terms || null
+          terms: terms || null,
+          repeats: repeats,
+          customDays: customDays.join(','),
+          repeatEndDate: repeatEndDate || null
         }, {
           headers: { Authorization: `Bearer ${token}` }
         });
-        toast.success('Published to GMB Successfully!');
+        toast.success(schedulePost ? 'Post scheduled successfully!' : 'Published to GMB Successfully!');
         setShowModal(false);
         fetchGmbPosts(activeClient.id);
         setDescription('');
@@ -152,6 +188,12 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
         setCouponCode('');
         setRedeemLink('');
         setTerms('');
+        setRepeats('Does not repeat');
+        setCustomDays([]);
+        setRepeatEndDate('');
+        setSchedulePost(false);
+        setScheduledDate('');
+        setScheduledTime('');
         setHasButton(false);
         setButtonType('None');
         setButtonLink('');
@@ -166,400 +208,557 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
 
 
 
+  const getLocalDayAndOccurrence = (dateStr) => {
+    if (!dateStr) return { dayName: 'Wednesday', occurrence: 'the first Wednesday' };
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+    const dayNum = date.getDate();
+    const index = Math.ceil(dayNum / 7);
+    const ordinal = ['first', 'second', 'third', 'fourth', 'fifth'][index - 1] || 'first';
+    return {
+      dayName,
+      occurrence: `the ${ordinal} ${dayName}`
+    };
+  };
+
+  const { dayName, occurrence } = getLocalDayAndOccurrence(startDate);
+
+  const toggleDay = (day) => {
+    if (customDays.includes(day)) {
+      setCustomDays(customDays.filter(d => d !== day));
+    } else {
+      setCustomDays([...customDays, day]);
+    }
+  };
+
   const clientName = activeClient?.business_name || 'GMB Profile';
   const contactPhone = activeClient?.phone_number || '';
 
   return (
     <>
-              {showModal && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: 20 }}>
-            <div style={{ background: '#202124', width: '100%', maxWidth: 760, maxHeight: '90vh', borderRadius: 8, overflow: 'hidden', boxShadow: '0 24px 38px 3px rgba(0,0,0,0.14)', display: 'flex', flexDirection: 'column' }}>
-              
-              {/* Header */}
-              <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #3c4043' }}>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 500, color: '#e8eaed' }}>Add post</h2>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <X size={24} color="#9aa0a6" style={{ cursor: 'pointer' }} onClick={() => setShowModal(false)} />
+      {showModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(9, 9, 11, 0.8)', backdropFilter: 'blur(8px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: 20 }}>
+          <div style={{ background: '#18181b', width: '100%', maxWidth: 840, maxHeight: '90vh', borderRadius: 16, border: '1px solid rgba(255, 255, 255, 0.08)', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column' }}>
+            
+            {/* Header */}
+            <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ background: 'rgba(249,115,22,0.1)', padding: 8, borderRadius: 8 }}>
+                  <Megaphone size={20} color="#f97316" />
                 </div>
+                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: '#f4f4f5', fontFamily: "'Syne', sans-serif" }}>Create GMB Post</h2>
               </div>
+              <button 
+                onClick={() => setShowModal(false)}
+                style={{ background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+              >
+                <X size={18} color="#a1a1aa" />
+              </button>
+            </div>
 
-              <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
+            <div style={{ padding: '28px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 24 }}>
 
-                {!activeClient?.google_location_id ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: 40, textAlign: 'center' }}>
-                    <div style={{ background: '#f973161a', padding: 16, borderRadius: '50%', marginBottom: 16 }}>
-                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-                    </div>
-                    <h3 style={{ color: '#e8eaed', fontSize: 20, margin: '0 0 12px 0' }}>Connect Google Business Location</h3>
-                    <p style={{ color: '#9aa0a6', fontSize: 14, maxWidth: 400, marginBottom: 24 }}>
-                      To publish posts to Google, please select the specific business location for {clientName} from your Google Account.
-                    </p>
-                    
-                    {fetchingLocations ? (
-                      <p style={{ color: '#8ab4f8' }}>Fetching your locations...</p>
-                    ) : locations.length > 0 ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 350 }}>
-                        <select 
-                          value={selectedLocationStr}
-                          onChange={e => setSelectedLocationStr(e.target.value)}
-                          style={{ background: '#202124', border: '1px solid #5f6368', color: '#e8eaed', padding: '12px 16px', borderRadius: 6, fontSize: 14, outline: 'none' }}
-                        >
-                          {locations.map((loc, i) => (
-                            <option key={i} value={loc.accountId + '|' + loc.locationId}>{loc.title}</option>
-                          ))}
-                        </select>
-                        <button 
-                          onClick={handleSaveConnection}
-                          disabled={saving}
-                          style={{ background: '#f97316', color: '#fff', border: 'none', padding: '12px', borderRadius: 6, fontWeight: 500, cursor: saving ? 'not-allowed' : 'pointer' }}
-                        >
-                          {saving ? 'Connecting...' : 'Save Connection'}
-                        </button>
-                      </div>
-                    ) : (
-                      <div style={{ background: 'rgba(239,68,68,0.1)', padding: 16, borderRadius: 8, border: '1px solid rgba(239,68,68,0.3)', width: '100%', maxWidth: 400 }}>
-                        <p style={{ color: '#ef4444', margin: 0, fontSize: 14 }}>
-                          We couldn't find any locations in your Google Account. Please ensure you have connected an account that manages Google Business Profiles in the Local SEO Bridge.
-                        </p>
-                      </div>
-                    )}
+              {!activeClient?.google_location_id ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '40px 20px', textAlign: 'center' }}>
+                  <div style={{ background: 'rgba(249,115,22,0.1)', padding: 20, borderRadius: '50%', marginBottom: 20, border: '1px solid rgba(249,115,22,0.2)' }}>
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
                   </div>
-                ) : (
-                  <>
-
-                {/* Tabs */}
-                <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
-                  {['Update', 'Offer', 'Event'].map(tab => (
-                    <button 
-                      key={tab}
-                      onClick={() => setPostType(tab)}
-                      style={{ 
-                        background: postType === tab ? '#3a3f4b' : 'transparent', 
-                        border: `1px solid ${postType === tab ? '#8ab4f8' : '#5f6368'}`,
-                        color: postType === tab ? '#8ab4f8' : '#e8eaed',
-                        padding: '6px 16px',
-                        borderRadius: 16,
-                        fontSize: 14,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6
-                      }}
-                    >
-                      {postType === tab && <Check size={16} />}
-                      {tab}
-                    </button>
-                  ))}
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 24 }}>
-                  {/* Left Column */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                    
-                    {/* Dynamic Fields for Offer & Event */}
-                    {(postType === 'Offer' || postType === 'Event') && (
-                      <div style={{ position: 'relative' }}>
-                        <input 
-                          type="text"
-                          value={postTitle}
-                          onChange={(e) => setPostTitle(e.target.value.slice(0, 58))}
-                          placeholder="Title*"
-                          style={{ 
-                            width: '100%',
-                            background: 'transparent', 
-                            border: '1px solid #5f6368', 
-                            borderRadius: 4, 
-                            padding: '16px 12px 24px 12px', 
-                            color: '#e8eaed', 
-                            fontSize: 14, 
-                            outline: 'none',
-                            boxSizing: 'border-box'
-                          }}
-                        />
-                        <div style={{ position: 'absolute', bottom: 6, right: 10, fontSize: 11, color: '#9aa0a6' }}>
-                          {postTitle.length}/58
-                        </div>
-                      </div>
-                    )}
-
-                    <div style={{ position: 'relative' }}>
-                      <textarea
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value.slice(0, 1500))}
-                        placeholder="Description"
-                        style={{ 
-                          width: '100%', 
-                          height: 100, 
-                          background: 'transparent', 
-                          border: '1px solid #5f6368', 
-                          borderRadius: 4, 
-                          padding: '16px 12px', 
-                          color: '#e8eaed', 
-                          fontSize: 14, 
-                          outline: 'none', 
-                          resize: 'none',
-                          boxSizing: 'border-box'
-                        }}
-                      />
-                      <div style={{ position: 'absolute', bottom: 8, right: 10, fontSize: 11, color: '#9aa0a6' }}>
-                        {description.length}/1,500
-                      </div>
+                  <h3 style={{ color: '#f4f4f5', fontSize: 20, fontWeight: 700, margin: '0 0 12px 0' }}>Connect Google Business Location</h3>
+                  <p style={{ color: '#a1a1aa', fontSize: 14, maxWidth: 440, marginBottom: 28, lineHeight: 1.6 }}>
+                    To publish posts directly to Google, please connect the specific business location for <strong style={{ color: '#fff' }}>{clientName}</strong>.
+                  </p>
+                  
+                  {fetchingLocations ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f97316' }}>
+                      <Loader2 size={18} className="animate-spin" />
+                      <span>Fetching verified locations...</span>
                     </div>
-
-                    {(postType === 'Offer' || postType === 'Event') && (
-                      <>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 8 }}>
-                          <div style={{ position: 'relative' }}>
-                            <div style={{ position: 'absolute', top: -8, left: 10, background: '#202124', padding: '0 4px', fontSize: 11, color: '#9aa0a6' }}>Start date*</div>
-                            <input 
-                              type="date"
-                              value={startDate}
-                              onChange={(e) => setStartDate(e.target.value)}
-                              style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14, outline: 'none' }}
-                            />
-                          </div>
-                          <div style={{ position: 'relative' }}>
-                            <div style={{ position: 'absolute', top: -8, left: 10, background: '#202124', padding: '0 4px', fontSize: 11, color: '#9aa0a6' }}>Start time</div>
-                            <input 
-                              type="time"
-                              value={startTime}
-                              onChange={(e) => setStartTime(e.target.value)}
-                              style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14, outline: 'none' }}
-                            />
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 8 }}>
-                          <div style={{ position: 'relative' }}>
-                            <div style={{ position: 'absolute', top: -8, left: 10, background: '#202124', padding: '0 4px', fontSize: 11, color: '#9aa0a6' }}>End Date*</div>
-                            <input 
-                              type="date"
-                              value={endDate}
-                              onChange={(e) => setEndDate(e.target.value)}
-                              style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14, outline: 'none' }}
-                            />
-                          </div>
-                          <div style={{ position: 'relative' }}>
-                            <div style={{ position: 'absolute', top: -8, left: 10, background: '#202124', padding: '0 4px', fontSize: 11, color: '#9aa0a6' }}>End time</div>
-                            <input 
-                              type="time"
-                              value={endTime}
-                              onChange={(e) => setEndTime(e.target.value)}
-                              style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14, outline: 'none' }}
-                            />
-                          </div>
-                        </div>
-
-                        <div style={{ position: 'relative', marginTop: 8 }}>
-                          <div style={{ position: 'absolute', top: -8, left: 10, background: '#202124', padding: '0 4px', fontSize: 11, color: '#9aa0a6' }}>Repeats</div>
-                          <select 
-                            style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14, outline: 'none', appearance: 'none', cursor: 'pointer' }}
-                          >
-                            <option style={{background: '#202124'}}>Does not repeat</option>
-                          </select>
-                        </div>
-                      </>
-                    )}
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
-                      <span style={{ fontSize: 15, color: '#e8eaed', fontWeight: 600 }}>Schedule this post</span>
-                      <div 
-                        onClick={() => setSchedulePost(!schedulePost)}
-                        style={{ 
-                          width: 36, height: 20, 
-                          background: schedulePost ? '#8ab4f8' : '#5f6368', 
-                          borderRadius: 12, 
-                          position: 'relative',
-                          cursor: 'pointer',
-                          transition: 'background 0.3s'
-                        }}
+                  ) : locations.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 380 }}>
+                      <select 
+                        value={selectedLocationStr}
+                        onChange={e => setSelectedLocationStr(e.target.value)}
+                        style={{ background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', color: '#f4f4f5', padding: '14px 18px', borderRadius: 8, fontSize: 14, outline: 'none', cursor: 'pointer' }}
                       >
-                        <div style={{ 
-                          width: 16, height: 16, 
-                          background: '#fff', 
-                          borderRadius: '50%',
-                          position: 'absolute',
-                          top: 2, left: schedulePost ? 18 : 2,
-                          transition: 'left 0.3s'
-                        }} />
-                      </div>
+                        {locations.map((loc, i) => (
+                          <option key={i} value={loc.accountId + '|' + loc.locationId}>{loc.title}</option>
+                        ))}
+                      </select>
+                      <button 
+                        onClick={handleSaveConnection}
+                        disabled={saving}
+                        style={{ background: 'linear-gradient(135deg, #f97316, #ea580c)', color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer', boxShadow: '0 4px 14px rgba(249,115,22,0.3)', transition: 'all 0.2s' }}
+                      >
+                        {saving ? 'Connecting...' : 'Connect Location'}
+                      </button>
                     </div>
+                  ) : (
+                    <div style={{ background: 'rgba(239,68,68,0.06)', padding: 20, borderRadius: 12, border: '1px solid rgba(239,68,68,0.2)', width: '100%', maxWidth: 460 }}>
+                      <p style={{ color: '#ef4444', margin: 0, fontSize: 13.5, lineHeight: 1.6 }}>
+                        We couldn't find any locations in your Google Account. Please ensure you have connected an account that manages Google Business Profiles in the Local SEO Bridge.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {/* Tabs */}
+                  <div style={{ display: 'flex', gap: 10, background: '#27272a', padding: 6, borderRadius: 10, width: 'fit-content' }}>
+                    {['Update', 'Offer', 'Event'].map(tab => {
+                      const isActive = postType === tab;
+                      return (
+                        <button 
+                          key={tab}
+                          onClick={() => setPostType(tab)}
+                          style={{ 
+                            background: isActive ? 'linear-gradient(135deg, #f97316, #ea580c)' : 'transparent', 
+                            border: 'none',
+                            color: isActive ? '#fff' : '#a1a1aa',
+                            padding: '8px 20px',
+                            borderRadius: 8,
+                            fontSize: 13.5,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            transition: 'all 0.2s',
+                            boxShadow: isActive ? '0 4px 12px rgba(249,115,22,0.2)' : 'none'
+                          }}
+                        >
+                          {isActive && <Check size={14} strokeWidth={3} />}
+                          {tab}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 32 }}>
                     
-                    <div style={{ height: 1, background: '#3c4043', margin: '4px 0' }} />
-
-                    {/* Add more details section */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: '#e8eaed' }}>Add more details</h3>
+                    {/* Left Column (Inputs) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                       
-                      {postType === 'Offer' ? (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                          <button onClick={() => setShowTerms(!showTerms)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: showTerms ? 'rgba(138,180,248,0.1)' : 'transparent', border: `1px solid ${showTerms ? '#8ab4f8' : '#5f6368'}`, borderRadius: 16, padding: '6px 14px', color: showTerms ? '#8ab4f8' : '#e8eaed', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-                            {showTerms ? <X size={14}/> : <Plus size={14}/>} Terms
-                          </button>
-                          <button onClick={() => setShowCoupon(!showCoupon)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: showCoupon ? 'rgba(138,180,248,0.1)' : 'transparent', border: `1px solid ${showCoupon ? '#8ab4f8' : '#5f6368'}`, borderRadius: 16, padding: '6px 14px', color: showCoupon ? '#8ab4f8' : '#e8eaed', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-                            {showCoupon ? <X size={14}/> : <Plus size={14}/>} Coupon code
-                          </button>
-                          <button onClick={() => setShowRedeem(!showRedeem)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: showRedeem ? 'rgba(138,180,248,0.1)' : 'transparent', border: `1px solid ${showRedeem ? '#8ab4f8' : '#5f6368'}`, borderRadius: 16, padding: '6px 14px', color: showRedeem ? '#8ab4f8' : '#e8eaed', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-                            {showRedeem ? <X size={14}/> : <Plus size={14}/>} Link to redeem offer
-                          </button>
+                      {/* Dynamic Title for Offer & Event */}
+                      {(postType === 'Offer' || postType === 'Event') && (
+                        <div style={{ position: 'relative' }}>
+                          <input 
+                            type="text"
+                            value={postTitle}
+                            onChange={(e) => setPostTitle(e.target.value.slice(0, 58))}
+                            placeholder="Title*"
+                            style={{ 
+                              width: '100%',
+                              background: '#27272a', 
+                              border: '1px solid rgba(255,255,255,0.12)', 
+                              borderRadius: 8, 
+                              padding: '16px 16px 20px 16px', 
+                              color: '#fff', 
+                              fontSize: 14, 
+                              outline: 'none',
+                              boxSizing: 'border-box',
+                              transition: 'border-color 0.2s'
+                            }}
+                            onFocus={e => e.target.style.borderColor = '#f97316'}
+                            onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
+                          />
+                          <div style={{ position: 'absolute', bottom: 6, right: 12, fontSize: 10, color: '#71717a' }}>
+                            {postTitle.length}/58
+                          </div>
+                        </div>
+                      )}
 
-                          {showTerms && (
-                            <div style={{ width: '100%', marginTop: 8 }}>
-                              <input type="text" value={terms} onChange={e => setTerms(e.target.value)} placeholder="Terms and conditions" style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14, outline: 'none' }} />
+                      {/* Description */}
+                      <div style={{ position: 'relative' }}>
+                        <textarea
+                          value={description}
+                          onChange={(e) => setDescription(e.target.value.slice(0, 1500))}
+                          placeholder="What's new? (Description)*"
+                          style={{ 
+                            width: '100%', 
+                            height: 120, 
+                            background: '#27272a', 
+                            border: '1px solid rgba(255,255,255,0.12)', 
+                            borderRadius: 8, 
+                            padding: '16px 16px 24px 16px', 
+                            color: '#fff', 
+                            fontSize: 14, 
+                            outline: 'none', 
+                            resize: 'none',
+                            boxSizing: 'border-box',
+                            lineHeight: 1.5,
+                            transition: 'border-color 0.2s'
+                          }}
+                          onFocus={e => e.target.style.borderColor = '#f97316'}
+                          onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
+                        />
+                        <div style={{ position: 'absolute', bottom: 8, right: 12, fontSize: 10, color: '#71717a' }}>
+                          {description.length}/1,500
+                        </div>
+                      </div>
+
+                      {/* Date and Time Fields for Offer / Event */}
+                      {(postType === 'Offer' || postType === 'Event') && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, background: '#27272a4d', padding: 16, borderRadius: 12, border: '1px solid rgba(255,255,255,0.04)' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                            <div style={{ position: 'relative' }}>
+                              <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Start Date*</label>
+                              <input 
+                                type="date"
+                                value={startDate}
+                                onChange={(e) => setStartDate(e.target.value)}
+                                style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }}
+                              />
                             </div>
-                          )}
-                          {showCoupon && (
-                            <div style={{ width: '100%', marginTop: 8 }}>
-                              <input type="text" value={couponCode} onChange={e => setCouponCode(e.target.value)} placeholder="Coupon code" style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14, outline: 'none' }} />
+                            <div style={{ position: 'relative' }}>
+                              <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Start Time</label>
+                              <input 
+                                type="time"
+                                value={startTime}
+                                onChange={(e) => setStartTime(e.target.value)}
+                                style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }}
+                              />
                             </div>
-                          )}
-                          {showRedeem && (
-                            <div style={{ width: '100%', marginTop: 8 }}>
-                              <input type="url" value={redeemLink} onChange={e => setRedeemLink(e.target.value)} placeholder="Link to redeem offer" style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14, outline: 'none' }} />
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                            <div style={{ position: 'relative' }}>
+                              <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>End Date*</label>
+                              <input 
+                                type="date"
+                                value={endDate}
+                                onChange={(e) => setEndDate(e.target.value)}
+                                style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }}
+                              />
+                            </div>
+                            <div style={{ position: 'relative' }}>
+                              <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>End Time</label>
+                              <input 
+                                type="time"
+                                value={endTime}
+                                onChange={(e) => setEndTime(e.target.value)}
+                                style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Repeats Cadence */}
+                          <div style={{ position: 'relative' }}>
+                            <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Repeats</label>
+                            <select 
+                              value={repeats}
+                              onChange={(e) => setRepeats(e.target.value)}
+                              style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none', cursor: 'pointer' }}
+                            >
+                              <option value="Does not repeat" style={{background: '#202124'}}>Does not repeat</option>
+                              <option value="Daily" style={{background: '#202124'}}>Daily</option>
+                              <option value={`Weekly on ${dayName}`} style={{background: '#202124'}}>{`Weekly on ${dayName}`}</option>
+                              <option value="Custom weekly" style={{background: '#202124'}}>Custom weekly</option>
+                              <option value={`Monthly on ${occurrence}`} style={{background: '#202124'}}>{`Monthly on ${occurrence}`}</option>
+                            </select>
+                          </div>
+
+                          {/* Custom Repeat Days */}
+                          {repeats === 'Custom weekly' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 4, background: '#1e1e21', padding: 14, borderRadius: 8 }}>
+                              <label style={{ fontSize: 12, color: '#a1a1aa', fontWeight: 600 }}>Select days that the post repeats on</label>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => {
+                                  const isSelected = customDays.includes(day);
+                                  return (
+                                    <button
+                                      key={day}
+                                      type="button"
+                                      onClick={() => toggleDay(day)}
+                                      style={{
+                                        background: isSelected ? 'linear-gradient(135deg, #f97316, #ea580c)' : 'rgba(255,255,255,0.05)',
+                                        border: isSelected ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                                        color: isSelected ? '#fff' : '#a1a1aa',
+                                        padding: '6px 12px',
+                                        borderRadius: 6,
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s'
+                                      }}
+                                    >
+                                      {day}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              
+                              <div style={{ position: 'relative', marginTop: 8 }}>
+                                <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Repeating post will end on</label>
+                                <input 
+                                  type="date"
+                                  value={repeatEndDate}
+                                  onChange={(e) => setRepeatEndDate(e.target.value)}
+                                  style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '10px 12px', color: '#fff', fontSize: 13, outline: 'none' }}
+                                />
+                              </div>
                             </div>
                           )}
                         </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                          <button 
-                            onClick={() => { setHasButton(!hasButton); if(!hasButton) setButtonType('Call now'); }}
-                            style={{ 
-                              display: 'inline-flex', alignItems: 'center', gap: 6,
-                              background: hasButton ? 'rgba(138,180,248,0.1)' : 'transparent', 
-                              border: `1px solid ${hasButton ? '#8ab4f8' : '#5f6368'}`,
-                              borderRadius: 16, padding: '6px 14px', 
-                              color: hasButton ? '#8ab4f8' : '#e8eaed', 
-                              fontSize: 13, fontWeight: 500, cursor: 'pointer',
-                              alignSelf: 'flex-start'
-                            }}
-                          >
-                            {hasButton ? <X size={14}/> : <Plus size={14}/>} Button
-                          </button>
-                          
-                          {hasButton && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#e8eaed' }}>Add a button (optional)</h4>
-                                <select 
-                                  value={buttonType}
-                                  onChange={(e) => setButtonType(e.target.value)}
-                                  style={{
-                                    background: 'transparent',
-                                    border: '1px solid #5f6368',
-                                    borderRadius: 4,
-                                    padding: '16px 12px',
-                                    color: '#e8eaed',
-                                    fontSize: 14,
-                                    outline: 'none',
-                                    cursor: 'pointer',
-                                    width: '100%',
-                                    boxSizing: 'border-box'
-                                  }}
-                                >
-                                  <option value="None" style={{ background: '#202124' }}>None</option>
-                                  <option value="Book" style={{ background: '#202124' }}>Book</option>
-                                  <option value="Order online" style={{ background: '#202124' }}>Order online</option>
-                                  <option value="Buy" style={{ background: '#202124' }}>Buy</option>
-                                  <option value="Learn more" style={{ background: '#202124' }}>Learn more</option>
-                                  <option value="Sign up" style={{ background: '#202124' }}>Sign up</option>
-                                  <option value="Call now" style={{ background: '#202124' }}>Call now</option>
-                                </select>
-                              </div>
+                      )}
 
-                              {buttonType === 'Call now' ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                  <div style={{ position: 'relative', marginTop: 4 }}>
-                                    <div style={{ position: 'absolute', top: -8, left: 10, background: '#202124', padding: '0 4px', fontSize: 11, color: '#9aa0a6' }}>Phone number</div>
-                                    <div style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14 }}>
+                      {/* Schedule switch */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#27272a4d', padding: '14px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
+                        <div>
+                          <span style={{ fontSize: 14.5, color: '#fff', fontWeight: 600, display: 'block' }}>Schedule this post</span>
+                          <span style={{ fontSize: 11.5, color: '#71717a' }}>Publish at a customized future date</span>
+                        </div>
+                        <div 
+                          onClick={() => setSchedulePost(!schedulePost)}
+                          style={{ 
+                            width: 40, height: 22, 
+                            background: schedulePost ? '#f97316' : '#3f3f46', 
+                            borderRadius: 100, 
+                            position: 'relative',
+                            cursor: 'pointer',
+                            transition: 'background 0.2s'
+                          }}
+                        >
+                          <div style={{ 
+                            width: 16, height: 16, 
+                            background: '#fff', 
+                            borderRadius: '50%',
+                            position: 'absolute',
+                            top: 3, left: schedulePost ? 21 : 3,
+                            transition: 'left 0.2s',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                          }} />
+                        </div>
+                      </div>
+
+                      {schedulePost && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, background: '#27272a4d', padding: 16, borderRadius: 12, border: '1px solid rgba(255,255,255,0.04)', marginTop: -8 }}>
+                          <div>
+                            <label style={{ fontSize: 11.5, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Schedule Date*</label>
+                            <input 
+                              type="date"
+                              value={scheduledDate}
+                              onChange={(e) => setScheduledDate(e.target.value)}
+                              style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 11.5, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Schedule Time*</label>
+                            <input 
+                              type="time"
+                              value={scheduledTime}
+                              onChange={(e) => setScheduledTime(e.target.value)}
+                              style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Add more details (Buttons/Offers specific) */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#27272a4d', padding: 18, borderRadius: 12, border: '1px solid rgba(255,255,255,0.04)' }}>
+                        <h3 style={{ margin: 0, fontSize: 14.5, fontWeight: 700, color: '#fff' }}>Add more details</h3>
+                        
+                        {postType === 'Offer' ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                              <button onClick={() => setShowTerms(!showTerms)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: showTerms ? 'rgba(249,115,22,0.1)' : 'rgba(255,255,255,0.04)', border: `1px solid ${showTerms ? '#f97316' : 'rgba(255,255,255,0.1)'}`, borderRadius: 20, padding: '6px 14px', color: showTerms ? '#f97316' : '#a1a1aa', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                {showTerms ? <X size={13}/> : <Plus size={13}/>} Terms
+                              </button>
+                              <button onClick={() => setShowCoupon(!showCoupon)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: showCoupon ? 'rgba(249,115,22,0.1)' : 'rgba(255,255,255,0.04)', border: `1px solid ${showCoupon ? '#f97316' : 'rgba(255,255,255,0.1)'}`, borderRadius: 20, padding: '6px 14px', color: showCoupon ? '#f97316' : '#a1a1aa', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                {showCoupon ? <X size={13}/> : <Plus size={13}/>} Coupon code
+                              </button>
+                              <button onClick={() => setShowRedeem(!showRedeem)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: showRedeem ? 'rgba(249,115,22,0.1)' : 'rgba(255,255,255,0.04)', border: `1px solid ${showRedeem ? '#f97316' : 'rgba(255,255,255,0.1)'}`, borderRadius: 20, padding: '6px 14px', color: showRedeem ? '#f97316' : '#a1a1aa', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                {showRedeem ? <X size={13}/> : <Plus size={13}/>} Link to redeem
+                              </button>
+                            </div>
+
+                            {showTerms && (
+                              <input type="text" value={terms} onChange={e => setTerms(e.target.value)} placeholder="Terms and conditions" style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }} />
+                            )}
+                            {showCoupon && (
+                              <input type="text" value={couponCode} onChange={e => setCouponCode(e.target.value)} placeholder="Coupon code" style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }} />
+                            )}
+                            {showRedeem && (
+                              <input type="url" value={redeemLink} onChange={e => setRedeemLink(e.target.value)} placeholder="Link to redeem offer (e.g. https://yourstore.com/offer)" style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }} />
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                            <button 
+                              onClick={() => { setHasButton(!hasButton); if(!hasButton) setButtonType('Call now'); }}
+                              style={{ 
+                                display: 'inline-flex', alignItems: 'center', gap: 6,
+                                background: hasButton ? 'rgba(249,115,22,0.1)' : 'rgba(255,255,255,0.04)', 
+                                border: `1px solid ${hasButton ? '#f97316' : 'rgba(255,255,255,0.1)'}`,
+                                borderRadius: 20, padding: '6px 14px', 
+                                color: hasButton ? '#f97316' : '#a1a1aa', 
+                                fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+                                alignSelf: 'flex-start',
+                                transition: 'all 0.2s'
+                              }}
+                            >
+                              {hasButton ? <X size={13}/> : <Plus size={13}/>} Action Button
+                            </button>
+                            
+                            {hasButton && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#1e1e21', padding: 16, borderRadius: 8 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  <label style={{ fontSize: 12, color: '#a1a1aa' }}>Select Button Type</label>
+                                  <select 
+                                    value={buttonType}
+                                    onChange={(e) => setButtonType(e.target.value)}
+                                    style={{
+                                      background: '#27272a',
+                                      border: '1px solid rgba(255,255,255,0.1)',
+                                      borderRadius: 6,
+                                      padding: '12px 14px',
+                                      color: '#fff',
+                                      fontSize: 13.5,
+                                      outline: 'none',
+                                      cursor: 'pointer',
+                                      width: '100%',
+                                      boxSizing: 'border-box'
+                                    }}
+                                  >
+                                    <option value="None" style={{ background: '#202124' }}>None</option>
+                                    <option value="Book" style={{ background: '#202124' }}>Book</option>
+                                    <option value="Order online" style={{ background: '#202124' }}>Order online</option>
+                                    <option value="Buy" style={{ background: '#202124' }}>Buy</option>
+                                    <option value="Learn more" style={{ background: '#202124' }}>Learn more</option>
+                                    <option value="Sign up" style={{ background: '#202124' }}>Sign up</option>
+                                    <option value="Call now" style={{ background: '#202124' }}>Call now</option>
+                                  </select>
+                                </div>
+
+                                {buttonType === 'Call now' ? (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    <label style={{ fontSize: 11.5, color: '#a1a1aa' }}>Connected Number</label>
+                                    <div style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5 }}>
                                       {contactPhone || 'No phone number available'}
                                     </div>
+                                    <span style={{ fontSize: 11, color: '#71717a' }}>Customers will call this number directly from Google.</span>
                                   </div>
-                                  <span style={{ fontSize: 11, color: '#9aa0a6' }}>Customers will call this number</span>
-                                </div>
-                              ) : buttonType !== 'None' ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                  <div style={{ position: 'relative', marginTop: 4 }}>
-                                    <div style={{ position: 'absolute', top: -8, left: 10, background: '#202124', padding: '0 4px', fontSize: 11, color: '#9aa0a6' }}>Link for your button</div>
+                                ) : buttonType !== 'None' ? (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    <label style={{ fontSize: 11.5, color: '#a1a1aa' }}>Button Link Destination*</label>
                                     <input 
                                       type="url"
                                       value={buttonLink}
                                       onChange={(e) => setButtonLink(e.target.value)}
-                                      style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', border: '1px solid #5f6368', borderRadius: 4, padding: '16px 12px', color: '#e8eaed', fontSize: 14, outline: 'none' }}
+                                      placeholder="https://example.com/link"
+                                      style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none' }}
                                     />
                                   </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
                     </div>
 
+                    {/* Right Column (Image/Media Upload) */}
+                    <div style={{ width: '100%' }}>
+                      <div style={{ position: 'sticky', top: 0, width: '100%' }}>
+                        <label style={{ fontSize: 13.5, color: '#a1a1aa', display: 'block', marginBottom: 8, fontWeight: 600 }}>Media (Image / Video)</label>
+                        <label style={{ 
+                          display: 'flex', 
+                          flexDirection: 'column', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          height: 240,
+                          width: '100%',
+                          boxSizing: 'border-box',
+                          border: '2px dashed rgba(255,255,255,0.15)',
+                          borderRadius: 12,
+                          background: 'rgba(255,255,255,0.02)',
+                          cursor: 'pointer',
+                          overflow: 'hidden',
+                          position: 'relative',
+                          transition: 'all 0.2s'
+                        }}
+                          onMouseEnter={e => e.currentTarget.style.borderColor = '#f97316'}
+                          onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'}
+                        >
+                          {selectedImage ? (
+                            <>
+                              {selectedImage.startsWith('data:video/') ? (
+                                <video src={selectedImage} style={{ width: '100%', height: '100%', objectFit: 'cover' }} controls />
+                              ) : (
+                                <img src={selectedImage} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              )}
+                              <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0, transition: 'opacity 0.2s' }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0}>
+                                <span style={{ color: '#fff', fontSize: 13, fontWeight: 600, background: '#f97316', padding: '6px 14px', borderRadius: 6 }}>Change Media</span>
+                              </div>
+                            </>
+                          ) : (
+                            <div style={{ textAlign: 'center', padding: 20 }}>
+                              <div style={{ background: 'rgba(249,115,22,0.08)', padding: 12, borderRadius: '50%', width: 'fit-content', margin: '0 auto 16px auto' }}>
+                                <ImagePlus size={24} color="#f97316" />
+                              </div>
+                              <span style={{ color: '#f4f4f5', fontSize: 14, fontWeight: 600, display: 'block', marginBottom: 4 }}>Drag visual media here</span>
+                              <span style={{ color: '#71717a', fontSize: 12, display: 'block', marginBottom: 12 }}>PNG, JPG, or MP4 formats</span>
+                              <span style={{ color: '#f97316', fontSize: 13, fontWeight: 700 }}>Browse Files</span>
+                            </div>
+                          )}
+                          <input type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={handleImageUpload} />
+                        </label>
+                      </div>
+                    </div>
                   </div>
-
-                  {/* Right Column (Image Upload) */}
-                  <div>
-                    <label style={{ 
-                      display: 'flex', 
-                      flexDirection: 'column', 
-                      alignItems: 'center', 
-                      justifyContent: 'center',
-                      height: 220,
-                      border: '1px solid #5f6368',
-                      borderRadius: 4,
-                      background: 'transparent',
-                      cursor: 'pointer',
-                      overflow: 'hidden',
-                      position: 'relative'
-                    }}>
-                      {selectedImage ? (
-                        <>
-                          <img src={selectedImage} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0, transition: 'opacity 0.2s' }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0}>
-                            <span style={{ color: '#fff', fontSize: 13, fontWeight: 500 }}>Change image</span>
-                          </div>
-                        </>
-                      ) : (
-                        <div style={{ textAlign: 'center', padding: 20 }}>
-                          <span style={{ color: '#e8eaed', fontSize: 15, fontWeight: 600, display: 'block', marginBottom: 24 }}>Drag images and videos here</span>
-                          <span style={{ color: '#9aa0a6', fontSize: 13, display: 'block', marginBottom: 24 }}>or</span>
-                          <span style={{ color: '#8ab4f8', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center' }}>
-                            <ImagePlus size={18} /> Select images and videos
-                          </span>
-                        </div>
-                      )}
-                      <input type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={handleImageUpload} />
-                    </label>
-                  </div>
-                </div>
-
-                  </>
-                )}
-              </div>
-              {/* Footer */}
-              <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #3c4043' }}>
-                <button
-                  onClick={handleSavePost}
-                  disabled={saving || !description}
-                  style={{ 
-                    background: '#8ab4f8', 
-                    color: '#202124', 
-                    border: 'none', 
-                    borderRadius: 4, 
-                    padding: '8px 24px', 
-                    fontSize: 14, 
-                    fontWeight: 500, 
-                    cursor: (saving || !description) ? 'not-allowed' : 'pointer',
-                    opacity: (saving || !description) ? 0.6 : 1
-                  }}
-                >
-                  {saving ? 'Posting...' : 'Post'}
-                </button>
-              </div>
-
+                </>
+              )}
             </div>
+
+            {/* Footer */}
+            <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: '1px solid rgba(255, 255, 255, 0.08)', background: '#1c1c1f' }}>
+              <button
+                onClick={() => setShowModal(false)}
+                style={{ 
+                  background: 'transparent', 
+                  color: '#a1a1aa', 
+                  border: '1px solid rgba(255,255,255,0.1)', 
+                  borderRadius: 8, 
+                  padding: '10px 22px', 
+                  fontSize: 13.5, 
+                  fontWeight: 600, 
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = '#fff'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#a1a1aa'; }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSavePost}
+                disabled={saving || !description}
+                style={{ 
+                  background: (saving || !description) ? '#27272a' : 'linear-gradient(135deg, #f97316, #ea580c)', 
+                  color: (saving || !description) ? '#71717a' : '#fff', 
+                  border: 'none', 
+                  borderRadius: 8, 
+                  padding: '10px 24px', 
+                  fontSize: 13.5, 
+                  fontWeight: 700, 
+                  cursor: (saving || !description) ? 'not-allowed' : 'pointer',
+                  opacity: (saving || !description) ? 0.6 : 1,
+                  boxShadow: (saving || !description) ? 'none' : '0 4px 14px rgba(249,115,22,0.3)',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={e => { if(!saving && description) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={e => { if(!saving && description) e.currentTarget.style.transform = 'translateY(0)'; }}
+              >
+                {saving ? 'Publishing...' : 'Publish Post'}
+              </button>
+            </div>
+
           </div>
-        )}
+        </div>
+      )}
     </>
   );
 };
@@ -695,14 +894,29 @@ export default function StreetPosts() {
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: 12, width: '100%', maxWidth: 450, justifyContent: 'flex-end' }} className="flex-col-mobile">
+          <div style={{ display: 'flex', gap: 12, width: '100%', maxWidth: 500, justifyContent: 'flex-end', alignItems: 'center' }} className="flex-col-mobile">
             <select 
               value={activeClient ? activeClient.id : ''} 
               onChange={(e) => {
                 const c = clients.find(cl => cl.id === parseInt(e.target.value));
                 if (c) setActiveClient(c);
               }} 
-              style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, padding: '10px 14px', fontSize: 13, outline: 'none', cursor: 'pointer', flex: 1 }}
+              style={{ 
+                background: C.card, 
+                border: `1px solid ${C.border}`, 
+                borderRadius: 10, 
+                color: C.text, 
+                padding: '10px 14px', 
+                fontSize: 13, 
+                outline: 'none', 
+                cursor: 'pointer', 
+                flex: 1,
+                maxWidth: '320px',
+                width: '100%',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden'
+              }}
             >
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>{c.business_name}</option>
@@ -712,7 +926,21 @@ export default function StreetPosts() {
               onClick={() => {
                 setShowModal(true);
               }}
-              style={{ background: 'linear-gradient(135deg,#f97316,#ea580c)', border: 'none', borderRadius: 10, padding: '10px 18px', color: '#fff', fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', boxShadow: '0 4px 14px rgba(249,115,22,0.25)' }}
+              style={{ 
+                background: 'linear-gradient(135deg,#f97316,#ea580c)', 
+                border: 'none', 
+                borderRadius: 10, 
+                padding: '10px 18px', 
+                color: '#fff', 
+                fontSize: 13, 
+                fontWeight: 700, 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 6, 
+                cursor: 'pointer', 
+                boxShadow: '0 4px 14px rgba(249,115,22,0.25)',
+                whiteSpace: 'nowrap'
+              }}
             >
               <Plus size={15} /> Upload Poster
             </button>
@@ -748,16 +976,21 @@ export default function StreetPosts() {
                 {/* Poster visual representation mock */}
                 <div style={{ 
                   height: 200, 
-                  backgroundImage: post.image_url ? `url(${post.image_url})` : 'none',
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center',
                   padding: 20,
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
-                  position: 'relative'
+                  position: 'relative',
+                  overflow: 'hidden'
                 }}>
-                  <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(15,23,42,0.85) 0%, rgba(15,23,42,0.3) 100%)' }} />
+                  {post.image_url ? (
+                    (post.image_url.endsWith('.mp4') || post.image_url.endsWith('.webm') || post.image_url.endsWith('.mov') || post.image_url.endsWith('.avi')) ? (
+                      <video src={post.image_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0, zIndex: 0 }} muted loop playsInline />
+                    ) : (
+                      <div style={{ position: 'absolute', inset: 0, backgroundImage: `url(${post.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center', zIndex: 0 }} />
+                    )
+                  ) : null}
+                  <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(15,23,42,0.85) 0%, rgba(15,23,42,0.3) 100%)', zIndex: 0 }} />
                   
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 1 }}>
                     <span style={{ fontSize: 12, fontWeight: 800, color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>{clientName.substring(0, 20)}</span>

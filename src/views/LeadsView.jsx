@@ -216,7 +216,15 @@ function AddLeadModal({ open, onClose, onSaved, clients, users, sources }) {
 export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
-  const { leads: apiLeads, loading, error, refetch } = useLeads({ status: filter !== 'all' ? filter : undefined, search });
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  const { leads: apiLeads, total, loading, error, refetch } = useLeads({ 
+    status: filter !== 'all' ? filter : undefined, 
+    search,
+    limit: itemsPerPage,
+    offset: (currentPage - 1) * itemsPerPage
+  });
 
   useEffect(() => {
     if (refetch) refetch();
@@ -225,17 +233,14 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const tabs = ['all', 'new', 'hot', 'warm', 'cold', 'converted'];
   // Deduplicate by id (safeguard against API returning duplicate rows)
   const leads = Array.from(new Map((apiLeads || []).map(l => [l.id, l])).values());
-  const filtered = leads.filter((l) => (filter === 'all' || l.status === filter) && (l.name.toLowerCase().includes(search.toLowerCase()) || l.phone.includes(search)));
-
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const filtered = leads;
+  const paginatedLeads = leads;
 
   useEffect(() => {
     setCurrentPage(1);
   }, [filter, search]);
 
-  const totalPages = Math.ceil(filtered.length / itemsPerPage);
-  const paginatedLeads = filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const totalPages = Math.ceil((total || 0) / itemsPerPage);
 
   const fileInputRef = useRef(null);
   const [importing, setImporting] = useState(false);
@@ -435,7 +440,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
         {loading && <div style={{ textAlign: 'center', padding: 32, color: C.muted }}>Loading leads...</div>}
         {filtered.length > 0 && (
           <div style={{ padding: '12px 14px', borderTop: '1px solid ' + C.border, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: C.muted }}>Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filtered.length)} of {filtered.length} entries</span>
+            <span style={{ fontSize: 11, color: C.muted }}>Showing {total > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} to {Math.min(currentPage * itemsPerPage, total || 0)} of {total || 0} entries</span>
             <div style={{ display: 'flex', gap: 6 }}>
               <button
                 disabled={currentPage === 1}

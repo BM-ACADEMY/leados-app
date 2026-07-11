@@ -58,36 +58,6 @@ export const LeadModal = ({lead, onClose, onUpdate}) => {
     }
   };
 
-  const handleUpdateStatus = async (status) => {
-    try {
-      await api.updateLead(displayLead.id, { status });
-      if (onUpdate) onUpdate();
-      onClose();
-    } catch (err) {
-      alert('Failed to update lead status: ' + err.message);
-    }
-  };
-
-  const handleGeneratePaymentLink = async () => {
-    try {
-      const amountStr = prompt("Enter amount in INR:");
-      if (!amountStr) return;
-      const amount = parseFloat(amountStr);
-      if (isNaN(amount) || amount <= 0) return alert("Invalid amount");
-      
-      const desc = prompt("Payment description:");
-      
-      const res = await api.createPaymentLink(displayLead.id, amount, desc || 'LeadOS Payment');
-      alert(`Payment link generated: ${res.payment_link}`);
-      
-      // Send it automatically via whatsapp
-      if (confirm("Send payment link to lead via WhatsApp?")) {
-        await api.sendWhatsAppMessage(displayLead.id, `Here is your payment link for Rs ${amount}: ${res.payment_link}`);
-      }
-    } catch (err) {
-      alert('Failed to generate payment link: ' + err.message);
-    }
-  };
 
   return (
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(3px)'}} onClick={onClose}>
@@ -123,7 +93,12 @@ export const LeadModal = ({lead, onClose, onUpdate}) => {
                       {!isLead && m.sender === 'ai' && <p style={{fontSize:8,color:C.accent,fontWeight:700,letterSpacing:0.8,marginBottom:4}}>AI AGENT</p>}
                       {!isLead && m.sender === 'human' && <p style={{fontSize:8,color:C.blue,fontWeight:700,letterSpacing:0.8,marginBottom:4}}>HUMAN</p>}
                       <p style={{fontSize:12,color:C.text,whiteSpace:'pre-wrap',lineHeight:1.6}}>{m.message}</p>
-                      <p style={{fontSize:9,color:C.muted,marginTop:3,textAlign:'right'}}>{new Date(m.sent_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                      <p style={{fontSize:9,color:C.muted,marginTop:3,textAlign:'right'}}>{(() => {
+                        const raw = m.timestamp || m.sent_at || m.time || m.created_at;
+                        if (!raw) return '';
+                        const d = new Date(raw);
+                        return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                      })()}</p>
                     </div>
                   </div>
                 );
@@ -144,12 +119,7 @@ export const LeadModal = ({lead, onClose, onUpdate}) => {
                 <p style={{fontSize:12,color:C.text,fontWeight:500}}>{v}</p>
               </div>
             ))}
-            <div style={{height:1,background:C.border,margin:'14px 0'}} />
-            <p style={{fontSize:9,color:C.muted,letterSpacing:0.8,fontWeight:600,marginBottom:11}}>QUICK ACTIONS</p>
-            <button onClick={handleGeneratePaymentLink} style={{width:'100%',background:'transparent',border:'1px solid '+C.border,borderRadius:7,color:C.green,padding:'7px 11px',fontSize:11,fontWeight:600,marginBottom:7,textAlign:'left',cursor:'pointer'}}>Send Payment Link</button>
-            <button style={{width:'100%',background:'transparent',border:'1px solid '+C.border,borderRadius:7,color:C.blue,padding:'7px 11px',fontSize:11,fontWeight:600,marginBottom:7,textAlign:'left',cursor:'pointer'}}>Book Call</button>
-            <button onClick={() => handleUpdateStatus('converted')} style={{width:'100%',background:'transparent',border:'1px solid '+C.border,borderRadius:7,color:C.accent,padding:'7px 11px',fontSize:11,fontWeight:600,marginBottom:7,textAlign:'left',cursor:'pointer'}}>Mark Converted</button>
-            <button onClick={() => handleUpdateStatus('lost')} style={{width:'100%',background:'transparent',border:'1px solid '+C.border,borderRadius:7,color:C.red,padding:'7px 11px',fontSize:11,fontWeight:600,marginBottom:7,textAlign:'left',cursor:'pointer'}}>Mark Lost</button>
+
           </div>
         </div>
       </div>

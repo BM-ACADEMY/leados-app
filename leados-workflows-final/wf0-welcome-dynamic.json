@@ -1,0 +1,121 @@
+{
+  "name": "WF0 - Welcome Message on New Lead",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-lead",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-new-lead",
+      "name": "Webhook - New Lead Added",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "leados-new-lead-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n\nconst lead_id = body.lead_id;\nconst name = body.name || 'Friend';\nconst rawPhone = (body.phone || '').replace(/\\D/g, '');\nconst client_id = body.client_id || null;\nconst phone_number_id = body.phone_number_id || '';\nconst wa_access_token = body.wa_access_token || '';\n\nif (!rawPhone) throw new Error('No phone number provided');\nif (!client_id) throw new Error('No client_id provided — cannot determine brand');\n\nreturn [{ json: { lead_id, name, phone: rawPhone, client_id, phone_number_id, wa_access_token } }];"
+      },
+      "id": "extract-lead",
+      "name": "Extract Lead Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.name as brand_name, c.phone_number_id, c.wa_access_token, bd_welcome.content as welcome_template FROM clients c LEFT JOIN brain_docs bd_welcome ON bd_welcome.client_id = c.id AND bd_welcome.doc_type = 'welcome_template' WHERE c.id = {{ $json.client_id }}",
+        "options": {}
+      },
+      "id": "get-brand-config",
+      "name": "Get Brand Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [680, 300],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const leadInfo = $('Extract Lead Info').first().json;\nconst brand = $input.first().json;\n\n// Template name from brain_docs, fallback to hello_world\nconst templateName = (brand.welcome_template || 'hello_world').trim();\n\n// Use brand WA credentials, fallback to what server sent\nconst phoneNumberId = brand.phone_number_id || leadInfo.phone_number_id;\nconst waToken = brand.wa_access_token || leadInfo.wa_access_token;\n\nif (!phoneNumberId || !waToken) {\n  throw new Error('Missing WhatsApp credentials for brand: ' + (brand.brand_name || 'unknown') + '. Set phone_number_id and wa_access_token in Clients.');\n}\n\nreturn [{\n  json: {\n    lead_id: leadInfo.lead_id,\n    phone: leadInfo.phone,\n    name: leadInfo.name,\n    templateName,\n    phoneNumberId,\n    waToken,\n    brandName: brand.brand_name || 'Unknown Brand'\n  }\n}];"
+      },
+      "id": "prepare-template",
+      "name": "Prepare Template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.waToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.phone }}\",\n  \"type\": \"template\",\n  \"template\": {\n    \"name\": \"{{ $json.templateName }}\",\n    \"language\": { \"code\": \"en\" }\n  }\n}",
+        "options": {}
+      },
+      "id": "send-welcome-template",
+      "name": "Send Welcome Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE leads SET flow_step = 'welcome', updated_at = NOW() WHERE id = {{ $('Extract Lead Info').first().json.lead_id }}",
+        "options": {}
+      },
+      "id": "set-flow-step",
+      "name": "Set Initial Flow Step",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1340, 300],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - New Lead Added": {
+      "main": [[{ "node": "Extract Lead Info", "type": "main", "index": 0 }]]
+    },
+    "Extract Lead Info": {
+      "main": [[{ "node": "Get Brand Config", "type": "main", "index": 0 }]]
+    },
+    "Get Brand Config": {
+      "main": [[{ "node": "Prepare Template", "type": "main", "index": 0 }]]
+    },
+    "Prepare Template": {
+      "main": [[{ "node": "Send Welcome Template", "type": "main", "index": 0 }]]
+    },
+    "Send Welcome Template": {
+      "main": [[{ "node": "Set Initial Flow Step", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "LeadOS" }]
+}

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { Virtuoso } from 'react-virtuoso';
+import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut, Phone, Video, User } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 import { io as socketIO } from 'socket.io-client';
 import { C } from '../constants/theme.js';
@@ -33,10 +35,11 @@ const formatBytes = (bytes) => {
 };
 
 export const InboxView = () => {
+  const location = useLocation();
   const [search, setSearch] = useState('');
-  const { leads, loading: loadingLeads, refetch: refetchLeadsList } = useLeads({ search });
-  const [activeLeadId, setActiveLeadId] = useState(null);
-  const { lead: activeLead, conversations, refetch: refetchLead, loading: loadingLead } = useLead(activeLeadId);
+  const { leads, loading: loadingLeads, hasMore: hasMoreLeads, loadingMore: loadingMoreLeads, loadMoreLeads, refetch: refetchLeadsList } = useLeads({ search });
+  const [activeLeadId, setActiveLeadId] = useState(location.state?.leadId || null);
+  const { lead: activeLead, conversations, loadingMore, hasMore, loadMoreMessages, refetch: refetchLead, loading: loadingLead } = useLead(activeLeadId);
   const [msg, setMsg] = useState('');
   const [sending, setSending] = useState(false);
   const [showChatOnMobile, setShowChatOnMobile] = useState(false);
@@ -79,6 +82,12 @@ export const InboxView = () => {
   const [showMessageSearchPanel, setShowMessageSearchPanel] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [highlightedMessageId, setHighlightedMessageId] = useState(null);
+
+  // Contact Info states
+  const [showContactInfoPanel, setShowContactInfoPanel] = useState(false);
+  const [showEditContactModal, setShowEditContactModal] = useState(false);
+  const [editContactData, setEditContactData] = useState({});
+  const [savingContact, setSavingContact] = useState(false);
 
   // Lightbox state
   const [zoomedImageIndex, setZoomedImageIndex] = useState(null);
@@ -180,14 +189,16 @@ export const InboxView = () => {
     setLocalMessages(conversations || []);
   }, [conversations]);
 
-  // Auto-scroll to bottom when messages change
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [localMessages]);
+  // Removed old auto-scroll as Virtuoso handles it natively
 
   // Refs to hold latest values for socket listeners without causing re-connects
   const activeLeadIdRef = useRef(activeLeadId);
   const refetchLeadsListRef = useRef(refetchLeadsList);
+
+  useEffect(() => {
+    activeLeadIdRef.current = activeLeadId;
+    refetchLeadsListRef.current = refetchLeadsList;
+  });
 
   // Separate effect for reading the conversation to prevent infinite loop
   useEffect(() => {
@@ -263,6 +274,22 @@ export const InboxView = () => {
     };
   }, []); // Empty dependency array ensures it connects only once!
 
+  const handleSaveContact = async (e) => {
+    e.preventDefault();
+    if (!editContactData?.id) return;
+    setSavingContact(true);
+    try {
+      await api.updateLead(editContactData.id, editContactData);
+      refetchLeadsList(); // Use direct hook reference
+      refetchLead(); // Update active lead data as well
+      setShowEditContactModal(false);
+    } catch (err) {
+      alert("Failed to update contact: " + (err.message || 'Unknown error'));
+    } finally {
+      setSavingContact(false);
+    }
+  };
+
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
       setAttachedFile(e.target.files[0]);
@@ -285,6 +312,8 @@ export const InboxView = () => {
     let mediaUrl = null;
     let msgType = 'text';
 
+    let optimisticId = null;
+
     try {
       if (attachedFile) {
         setUploadProgress(0);
@@ -302,7 +331,7 @@ export const InboxView = () => {
         else msgType = 'document';
       }
 
-      const optimisticId = `optimistic-${Date.now()}`;
+      optimisticId = `optimistic-${Date.now()}`;
       const optimisticMsg = {
         id: optimisticId,
         direction: 'outbound',
@@ -325,7 +354,12 @@ export const InboxView = () => {
     } catch (err) {
       // On error, remove the optimistic message
       setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
-      alert('Failed to send message: ' + (err.response?.data?.error || err.message));
+      
+      const errorData = err.response?.data;
+      // Do not show an alert if the window is closed, as the template handles it silently in the background
+      if (errorData?.reason !== 'window_closed') {
+        alert('Failed to send message: ' + (errorData?.error || err.message));
+      }
     } finally {
       setSending(false);
     }
@@ -578,8 +612,19 @@ export const InboxView = () => {
           </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {displayLeads.map((l) => (
-            <div
+          <Virtuoso
+            style={{ flex: 1 }}
+            data={displayLeads}
+            endReached={() => {
+              if (hasMoreLeads && !loadingMoreLeads) {
+                loadMoreLeads();
+              }
+            }}
+            components={{
+              Footer: () => loadingMoreLeads ? <div style={{ padding: 10, textAlign: 'center', color: C.muted, fontSize: 11 }}>Loading more...</div> : null
+            }}
+            itemContent={(index, l) => (
+              <div
               key={l.id}
               onClick={() => { setActiveLeadId(l.id); setShowChatOnMobile(true); }}
               style={{ padding: '13px 14px', borderBottom: '1px solid ' + C.border, cursor: 'pointer', background: activeLeadId === l.id ? C.accent + '10' : 'transparent', borderLeft: activeLeadId === l.id ? '3px solid ' + C.accent : '3px solid transparent' }}
@@ -607,15 +652,22 @@ export const InboxView = () => {
                 {renderLastMessage(l)}
               </p>
             </div>
-          ))}
+            )}
+          />
         </div>
       </div>
 
       {/* ── CHAT PANEL ──────────────────────────────── */}
       <div className={!showChatOnMobile ? 'hide-mobile' : 'w-full-mobile'} style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '13px 18px', borderBottom: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-            <button className="show-mobile" onClick={() => setShowChatOnMobile(false)} style={{ background: 'transparent', border: 'none', color: C.muted, display: 'none' }}>
+          <div 
+            style={{ display: 'flex', alignItems: 'center', gap: 11, cursor: 'pointer' }}
+            onClick={() => {
+              setShowContactInfoPanel(true);
+              setShowMessageSearchPanel(false);
+            }}
+          >
+            <button className="show-mobile" onClick={(e) => { e.stopPropagation(); setShowChatOnMobile(false); }} style={{ background: 'transparent', border: 'none', color: C.muted, display: 'none' }}>
               <ChevronLeft size={20} />
             </button>
             <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.accent + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: C.accent }}>
@@ -722,18 +774,35 @@ export const InboxView = () => {
         })()}
 
         {/* Messages area */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '60px 18px 18px 18px', display: 'flex', flexDirection: 'column', gap: 11, background: C.bg + '88' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: C.bg + '88' }}>
           {loadingLead && localMessages.length === 0 && (
-            <p style={{ textAlign: 'center', color: C.muted, fontSize: 11 }}>Loading conversation…</p>
+            <p style={{ textAlign: 'center', color: C.muted, fontSize: 11, marginTop: 60 }}>Loading conversation…</p>
           )}
           {!loadingLead && localMessages.length === 0 && (
-            <p style={{ textAlign: 'center', color: C.muted, fontSize: 11 }}>No messages yet. Start the conversation!</p>
+            <p style={{ textAlign: 'center', color: C.muted, fontSize: 11, marginTop: 60 }}>No messages yet. Start the conversation!</p>
           )}
-          {localMessages.filter(m => !deletedForMeIds.includes(m.id)).map((m, i) => {
-            const isLead = m.direction === 'inbound' || m.from === 'lead';
-            const isAI = m.sender === 'ai' || m.from === 'ai';
-            const isSending = m.id?.toString().startsWith('optimistic-');
-            return (
+          {localMessages.length > 0 && (
+            <Virtuoso
+              style={{ flex: 1 }}
+              data={localMessages.filter(m => !deletedForMeIds.includes(m.id))}
+              firstItemIndex={Math.max(0, 10000 - localMessages.length)}
+              initialTopMostItemIndex={localMessages.length - 1}
+              startReached={() => {
+                if (hasMore && !loadingMore) {
+                  loadMoreMessages();
+                }
+              }}
+              components={{
+                Header: () => loadingMore ? <div style={{ padding: 10, textAlign: 'center', color: C.muted, fontSize: 11 }}>Loading older messages...</div> : <div style={{ height: 60 }} />,
+                Footer: () => <div style={{ height: 18 }} />
+              }}
+              itemContent={(i, m) => {
+                const isLead = m.direction === 'inbound' || m.from === 'lead';
+                const isAI = m.sender === 'ai' || m.from === 'ai';
+                const isSending = m.id?.toString().startsWith('optimistic-');
+                return (
+                  <div style={{ padding: '0 18px', marginBottom: 11 }}>
+                    
               <div
                 id={`msg-${m.id}`}
                 key={m.id || i}
@@ -1055,9 +1124,13 @@ export const InboxView = () => {
                 )}
               </div>
             </div>
-            );
-          })}
-          <div ref={bottomRef} />
+            
+                  </div>
+                );
+              }}
+              followOutput="smooth"
+            />
+          )}
         </div>
 
         {/* Action Bar (Select Mode) or Input */}
@@ -1330,6 +1403,91 @@ export const InboxView = () => {
               </div>
             </div>
           )}
+
+          {/* Contact Info Side Panel */}
+          {showContactInfoPanel && (
+            <div style={{ width: 340, borderLeft: '1px solid ' + C.border, background: C.card, display: 'flex', flexDirection: 'column', zIndex: 10, flexShrink: 0 }}>
+              <div style={{ padding: '16px 18px', borderBottom: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <button onClick={() => setShowContactInfoPanel(false)} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: 0, display: 'flex' }}>
+                    <X size={20} />
+                  </button>
+                  <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Contact info</span>
+                </div>
+                <button 
+                  onClick={() => { 
+                    setEditContactData({ ...activeObj }); 
+                    setShowEditContactModal(true); 
+                  }} 
+                  style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: 0, display: 'flex' }} 
+                  title="Edit Contact"
+                >
+                  <Edit2 size={18} />
+                </button>
+              </div>
+
+              <div style={{ padding: '24px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', borderBottom: '1px solid ' + C.border }}>
+                <div style={{ width: 100, height: 100, borderRadius: '50%', background: C.bg, border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+                  <User size={48} color={C.muted} />
+                </div>
+                <h2 style={{ margin: '0 0 8px 0', fontSize: 20, fontWeight: 600, color: C.text }}>{activeObj?.name}</h2>
+                <p style={{ margin: 0, fontSize: 14, color: C.muted }}>{activeObj?.phone || '+1 234 567 8900'}</p>
+
+                <div style={{ display: 'flex', gap: 24, marginTop: 24 }}>
+                  <a
+                    href={`tel:${(activeObj?.phone || '').replace(/\D/g, '')}`}
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textDecoration: 'none', cursor: 'pointer' }}
+                    title={`Call ${activeObj?.phone}`}
+                  >
+                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#22c55e22', border: '1px solid #22c55e55', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>
+                      <Phone size={20} color='#22c55e' />
+                    </div>
+                    <span style={{ fontSize: 12, color: C.text }}>Voice</span>
+                  </a>
+                  <a
+                    href={`https://wa.me/${(activeObj?.phone || '').replace(/\D/g, '')}?videocall=1`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textDecoration: 'none', cursor: 'pointer' }}
+                    title={`Video call ${activeObj?.phone}`}
+                  >
+                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#3b82f622', border: '1px solid #3b82f655', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>
+                      <Video size={20} color='#3b82f6' />
+                    </div>
+                    <span style={{ fontSize: 12, color: C.text }}>Video</span>
+                  </a>
+                  <button 
+                    onClick={() => {
+                      setShowContactInfoPanel(false);
+                      setShowMessageSearchPanel(true);
+                      setMessageSearchQuery('');
+                    }}
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', cursor: 'pointer' }}
+                  >
+                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: C.bg, border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Search size={20} color={C.text} />
+                    </div>
+                    <span style={{ fontSize: 12, color: C.text }}>Search</span>
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ padding: '18px' }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 600, color: C.text }}>About</h3>
+                <p style={{ margin: 0, fontSize: 13, color: C.muted, lineHeight: 1.5 }}>
+                  {activeObj?.interest ? `Interest: ${activeObj.interest}` : 'No additional information available.'}
+                </p>
+                {activeObj?.email && (
+                  <p style={{ margin: '8px 0 0 0', fontSize: 13, color: C.muted, lineHeight: 1.5 }}>
+                    Email: {activeObj.email}
+                  </p>
+                )}
+                <p style={{ margin: '8px 0 0 0', fontSize: 13, color: C.muted, lineHeight: 1.5 }}>
+                  Brand: {activeObj?.brand_name || activeObj?.brand || 'Manual'}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1585,6 +1743,42 @@ export const InboxView = () => {
           </div>
         );
       })()}
+
+      {/* Edit Contact Modal */}
+      {showEditContactModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: C.card, borderRadius: 12, width: '100%', maxWidth: 400, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid ' + C.border, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, color: C.text, fontSize: 18, fontWeight: 600 }}>Edit Contact Info</h3>
+              <button onClick={() => setShowEditContactModal(false)} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex' }}><X size={20} /></button>
+            </div>
+            <form onSubmit={handleSaveContact} style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: C.text, fontWeight: 500 }}>Name</label>
+                  <input type="text" value={editContactData.name || ''} onChange={(e) => setEditContactData({...editContactData, name: e.target.value})} style={{ width: '100%', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 12px', color: C.text, fontSize: 14, outline: 'none' }} required />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: C.text, fontWeight: 500 }}>Phone</label>
+                  <input type="text" value={editContactData.phone || ''} onChange={(e) => setEditContactData({...editContactData, phone: e.target.value})} style={{ width: '100%', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 12px', color: C.text, fontSize: 14, outline: 'none' }} required />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: C.text, fontWeight: 500 }}>Email</label>
+                  <input type="email" value={editContactData.email || ''} onChange={(e) => setEditContactData({...editContactData, email: e.target.value})} style={{ width: '100%', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 12px', color: C.text, fontSize: 14, outline: 'none' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: C.text, fontWeight: 500 }}>Interest / Notes</label>
+                  <textarea value={editContactData.interest || ''} onChange={(e) => setEditContactData({...editContactData, interest: e.target.value})} style={{ width: '100%', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8, padding: '10px 12px', color: C.text, fontSize: 14, outline: 'none', minHeight: 80, resize: 'vertical' }} />
+                </div>
+              </div>
+              <div style={{ padding: '16px 24px', borderTop: '1px solid ' + C.border, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                <button type="button" onClick={() => setShowEditContactModal(false)} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 14, fontWeight: 500, cursor: 'pointer', padding: '8px 16px' }}>Cancel</button>
+                <button type="submit" disabled={savingContact} style={{ background: C.accent, color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: savingContact ? 'not-allowed' : 'pointer', padding: '8px 24px', opacity: savingContact ? 0.7 : 1 }}>{savingContact ? 'Saving...' : 'Save Changes'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   )

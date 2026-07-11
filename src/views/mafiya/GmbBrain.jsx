@@ -87,15 +87,10 @@ export default function GmbBrain() {
     setEntriesLoading(true);
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/reviews/brain?clientId=${clientId}`, {
+      const { data } = await axios.get(`${API_URL}/api/mafiya/reviews/brain?clientId=${clientId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setEntries(data);
-      } else {
-        toast.error('Failed to load brain entries');
-      }
+      setEntries(data);
     } catch (err) {
       console.error('Fetch brain error:', err);
       toast.error('Failed to load brain entries');
@@ -149,31 +144,21 @@ export default function GmbBrain() {
         finalContent = content.trim();
       }
 
-      const res = await fetch('/api/mafiya/reviews/brain', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          clientId: activeClient.id,
-          entryType,
-          content: finalContent
-        })
+      await axios.post(`${API_URL}/api/mafiya/reviews/brain`, {
+        clientId: activeClient.id,
+        entryType,
+        content: finalContent
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
       });
 
-      if (res.ok) {
-        toast.success('Saved to brain successfully!');
-        setContent('');
-        setSeasonTitle('');
-        // reset brief inputs
-        setBriefTargetAudience('');
-        setBriefBrandColors('');
-        fetchBrainEntries(activeClient.id);
-      } else {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to save entry');
-      }
+      toast.success('Saved to brain successfully!');
+      setContent('');
+      setSeasonTitle('');
+      // reset brief inputs
+      setBriefTargetAudience('');
+      setBriefBrandColors('');
+      fetchBrainEntries(activeClient.id);
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -195,29 +180,20 @@ export default function GmbBrain() {
         ? JSON.stringify({ title: editSeasonTitle.trim(), text: editContent.trim() })
         : editContent.trim();
 
-      const res = await fetch('/api/mafiya/reviews/brain', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          id,
-          clientId: activeClient.id,
-          entryType: type,
-          content: finalContent
-        })
+      await axios.post(`${API_URL}/api/mafiya/reviews/brain`, {
+        id,
+        clientId: activeClient.id,
+        entryType: type,
+        content: finalContent
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
       });
 
-      if (res.ok) {
-        toast.success('Updated brain entry!');
-        setEditingId(null);
-        setEditContent('');
-        setEditSeasonTitle('');
-        fetchBrainEntries(activeClient.id);
-      } else {
-        throw new Error('Failed to update');
-      }
+      toast.success('Updated brain entry!');
+      setEditingId(null);
+      setEditContent('');
+      setEditSeasonTitle('');
+      fetchBrainEntries(activeClient.id);
     } catch (err) {
       toast.error(err.message);
     }
@@ -228,16 +204,11 @@ export default function GmbBrain() {
     if (!window.confirm('Are you sure you want to delete this brain entry?')) return;
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await fetch(`/api/mafiya/reviews/brain/${id}`, {
-        method: 'DELETE',
+      await axios.delete(`${API_URL}/api/mafiya/reviews/brain/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        toast.success('Entry deleted from brain');
-        fetchBrainEntries(activeClient.id);
-      } else {
-        throw new Error('Failed to delete');
-      }
+      toast.success('Entry deleted from brain');
+      fetchBrainEntries(activeClient.id);
     } catch (err) {
       toast.error(err.message);
     }

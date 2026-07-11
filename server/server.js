@@ -63,6 +63,7 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── ALLIANCE OS ROUTES ────────────────────────────────────
 const knowledgeRoutes = require('./routes/knowledge');
@@ -98,7 +99,12 @@ app.use('/api/analyze', analyzeRoutes);
 // ── AUTH MIDDLEWARE ───────────────────────────────────────
 const auth = (req, res, next) => {
   // Bypass JWT auth for OAuth redirect routes where the browser doesn't send a token
-  if (req.path.includes('/auth/google') || req.path.includes('/auth/callback')) {
+  if (
+    req.path.includes('/auth/google') || 
+    req.path.includes('/auth/callback') ||
+    req.path.includes('/youtube/auth') ||
+    req.path.includes('/youtube/callback')
+  ) {
     return next();
   }
 
@@ -148,6 +154,16 @@ const mafiyaInsightsRoutes = require('./routes/mafiya-insights');
 app.use('/api/mafiya/clients', auth, mafiyaClientsRoutes);
 app.use('/api/mafiya/gmb', mafiyaGmbRoutes); // No auth — email links are clicked by external clients
 app.use('/api/mafiya/turf', auth, mafiyaTurfRoutes);
+
+// Public route for Google to download GMB Post images (bypassing the 'auth' middleware on the main reviews router)
+app.get('/api/mafiya/reviews/image/:filename', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const filepath = path.join(__dirname, 'uploads', 'gmb_posts', req.params.filename);
+  if (fs.existsSync(filepath)) res.sendFile(filepath);
+  else res.status(404).send('Image not found');
+});
+
 app.use('/api/mafiya/reviews', auth, mafiyaReviewsRoutes);
 app.use('/api/mafiya/insights', auth, mafiyaInsightsRoutes);
 app.get('/api/auth/google/callback', handleGoogleCallback); // Map the standard OAuth callback to Mafiya GMB handler

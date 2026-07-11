@@ -127,6 +127,7 @@ export default function ApprovalDashboard() {
   const [suggestionsError, setSuggestionsError] = useState(null);
   const [selectedTone, setSelectedTone] = useState("engaging");
   const [suggestionType, setSuggestionType] = useState("caption");
+  const [suggestionPlatform, setSuggestionPlatform] = useState(null);
 
   async function fetchMonitors() {
     setLoadingMonitors(true);
@@ -342,12 +343,32 @@ export default function ApprovalDashboard() {
     };
 
     setSelected(resolvedItem);
-    setTab("description");
+
+    // Find the first connected platform to select as default tab
+    let defaultTab = "description";
+    const brandPlats = socialAccounts.filter(s => isSameBrand(s.brand_name, resolvedItem.brand_name) && s.is_active).map(s => s.platform);
+    if (brandPlats.includes("instagram")) {
+      defaultTab = "instagram_caption";
+    } else if (brandPlats.includes("facebook")) {
+      defaultTab = "facebook_caption";
+    } else if (brandPlats.includes("youtube")) {
+      defaultTab = "youtube_title";
+    } else if (brandPlats.includes("linkedin")) {
+      defaultTab = "linkedin_caption";
+    } else if (brandPlats.includes("twitter") || brandPlats.includes("x")) {
+      defaultTab = "x_caption";
+    }
+    setTab(defaultTab);
+
     setEditMode(false);
     setEditValues({
       caption: resolvedItem.caption,
-      x_caption: resolvedItem.x_caption,
-      linkedin_caption: resolvedItem.linkedin_caption,
+      instagram_caption: resolvedItem.instagram_caption || resolvedItem.caption || "",
+      facebook_caption: resolvedItem.facebook_caption || resolvedItem.caption || "",
+      x_caption: resolvedItem.x_caption || "",
+      linkedin_caption: resolvedItem.linkedin_caption || "",
+      youtube_title: resolvedItem.youtube_title || resolvedItem.thumbnail_title || "",
+      youtube_description: resolvedItem.youtube_description || resolvedItem.description || resolvedItem.caption || "",
       thumbnail_title: resolvedItem.thumbnail_title,
       scheduled_at: resolvedItem.scheduled_at,
       platforms: [...(resolvedItem.platforms || [])],
@@ -558,29 +579,30 @@ export default function ApprovalDashboard() {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  const handleOpenAiSuggestions = (type = "caption", forceTone = null) => {
+  const handleOpenAiSuggestions = (type = "caption", forceTone = null, platform = null) => {
     if (!selected) return;
     const toneToUse = forceTone || selectedTone;
     setSuggestionType(type);
+    setSuggestionPlatform(platform);
     setIsSuggestModalOpen(true);
     
-    const cacheKey = `${selected.id}_${toneToUse}_${type}`;
+    const cacheKey = `${selected.id}_${toneToUse}_${type}_${platform || 'all'}`;
     if (suggestCache[cacheKey]) {
       return;
     }
     
-    fetchAiSuggestions(selected.id, toneToUse, type);
+    fetchAiSuggestions(selected.id, toneToUse, type, platform);
   };
 
-  const fetchAiSuggestions = async (itemId, tone, type = "caption") => {
+  const fetchAiSuggestions = async (itemId, tone, type = "caption", platform = null) => {
     setLoadingSuggestions(true);
     setSuggestionsError(null);
     try {
       const res = type === "story"
         ? await api.getAiStorySuggestions(itemId, tone)
-        : await api.getAiCaptionSuggestions(itemId, tone);
+        : await api.getAiCaptionSuggestions(itemId, tone, platform);
       if (res.success && res.suggestions) {
-        const cacheKey = `${itemId}_${tone}_${type}`;
+        const cacheKey = `${itemId}_${tone}_${type}_${platform || 'all'}`;
         setSuggestCache(prev => ({
           ...prev,
           [cacheKey]: res.suggestions
@@ -1121,13 +1143,31 @@ export default function ApprovalDashboard() {
                 <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E4F0", overflow: "hidden", marginBottom: 16 }}>
                   <div style={{ display: "flex", borderBottom: "1px solid #E5E4F0", background: "#F8F7FF", overflowX: "auto" }}>
                     {[
-                      { key: "description", label: "Description", icon: "📄" },
+                      { key: "instagram_caption", label: "Instagram", icon: "📸" },
+                      { key: "facebook_caption", label: "Facebook", icon: "👍" },
+                      { key: "youtube_title", label: "YouTube Title", icon: "📺 Title" },
+                      { key: "youtube_description", label: "YouTube Desc", icon: "📺 Desc" },
                       { key: "x_caption", label: "X (Twitter)", icon: "𝕏" },
                       { key: "linkedin_caption", label: "LinkedIn", icon: "in" },
-                      { key: "thumbnail_title", label: "Title", icon: "▶️" }
-                    ].filter(t => selected[t.key] || editValues[t.key] !== undefined || editMode).map(t => (
+                      { key: "description", label: "Base Description", icon: "📄" }
+                    ].filter(t => {
+                      if (t.key === "description") return true;
+
+                      let plat = t.key;
+                      if (t.key.includes("instagram")) plat = "instagram";
+                      if (t.key.includes("facebook")) plat = "facebook";
+                      if (t.key.includes("youtube")) plat = "youtube";
+                      if (t.key === "x_caption") plat = "twitter";
+                      if (t.key.includes("linkedin")) plat = "linkedin";
+
+                      return socialAccounts.some(s => 
+                        isSameBrand(s.brand_name, selected?.brand_name) && 
+                        (s.platform === plat || (plat === "twitter" && s.platform === "x")) && 
+                        s.is_active
+                      );
+                    }).map(t => (
                       <button key={t.key} onClick={() => setTab(t.key)} style={{
-                        flex: 1, padding: "12px 8px", border: "none", minWidth: 110,
+                        flex: 1, padding: "12px 8px", border: "none", minWidth: 125,
                         borderBottom: tab === t.key ? `2px solid #7C3AED` : "2px solid transparent",
                         background: "transparent", cursor: "pointer",
                         fontSize: 11, fontWeight: tab === t.key ? 700 : 500,
@@ -1139,14 +1179,12 @@ export default function ApprovalDashboard() {
                     ))}
                   </div>
                   <div style={{ padding: 16 }}>
-                    {/* If selected tab is caption or hashtags (which are now rendered in Card 1), redirect tab view */}
-                    {["caption", "hashtags"].includes(tab) && setTab("description")}
                     {editMode ? (
                       <textarea
                         value={editValues[tab] || ""}
                         onChange={e => setEditValues(prev => ({ ...prev, [tab]: e.target.value }))}
                         style={{
-                          width: "100%", minHeight: tab === "description" ? 200 : 100,
+                          width: "100%", minHeight: (tab === "description" || tab === "youtube_description" || tab.includes("caption")) ? 180 : 80,
                           border: "1px solid #7C3AED44", borderRadius: 8,
                           padding: 12, fontSize: 13, lineHeight: 1.6,
                           resize: "vertical", outline: "none", fontFamily: "inherit",
@@ -1163,6 +1201,42 @@ export default function ApprovalDashboard() {
                         {(editMode ? editValues.x_caption : selected.x_caption)?.length || 0} / 240 chars
                       </div>
                     )}
+                    {tab === "youtube_title" && (
+                      <div style={{ marginTop: 8, fontSize: 11, color: (editMode ? editValues.youtube_title : selected.youtube_title)?.length > 100 ? "#EF4444" : "#10B981", fontWeight: 600 }}>
+                        {(editMode ? editValues.youtube_title : selected.youtube_title)?.length || 0} / 100 chars
+                      </div>
+                    )}
+                    <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAiSuggestions("caption", null, tab)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "6px 12px",
+                          borderRadius: 6,
+                          border: "1px solid #7C3AED",
+                          background: "#F5F3FF",
+                          color: "#7C3AED",
+                          fontSize: "11px",
+                          fontWeight: "700",
+                          cursor: "pointer",
+                          transition: "all 0.15s",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "#7C3AED"; e.currentTarget.style.color = "#fff"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "#F5F3FF"; e.currentTarget.style.color = "#7C3AED"; }}
+                      >
+                        ✨ AI Suggestions for {
+                          tab === "instagram_caption" ? "Instagram" :
+                          tab === "facebook_caption" ? "Facebook" :
+                          tab === "youtube_title" ? "YouTube Title" :
+                          tab === "youtube_description" ? "YouTube Desc" :
+                          tab === "x_caption" ? "X (Twitter)" :
+                          tab === "linkedin_caption" ? "LinkedIn" : "Base Description"
+                        }
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1603,7 +1677,7 @@ export default function ApprovalDashboard() {
                     key={t.value}
                     onClick={() => {
                       setSelectedTone(t.value);
-                      handleOpenAiSuggestions(suggestionType, t.value);
+                      handleOpenAiSuggestions(suggestionType, t.value, suggestionPlatform);
                     }}
                     style={{
                       padding: "5px 10px", borderRadius: 20, border: `1px solid ${isActive ? "#7C3AED" : "#E5E4F0"}`,
@@ -1630,12 +1704,12 @@ export default function ApprovalDashboard() {
                 <div style={{ padding: "30px 20px", textAlign: "center", background: "#FEF2F2", borderRadius: 8, border: "1px solid #EF444444" }}>
                   <div style={{ fontSize: 13, color: "#EF4444", marginBottom: 12 }}>{suggestionsError}</div>
                   <button 
-                    onClick={() => fetchAiSuggestions(selected.id, selectedTone, suggestionType)}
+                    onClick={() => fetchAiSuggestions(selected.id, selectedTone, suggestionType, suggestionPlatform)}
                     style={{ padding: "6px 16px", background: "#EF4444", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
                   >Retry</button>
                 </div>
               ) : (
-                (suggestCache[`${selected.id}_${selectedTone}_${suggestionType}`] || []).map((s, idx) => {
+                (suggestCache[`${selected.id}_${selectedTone}_${suggestionType}_${suggestionPlatform || 'all'}`] || []).map((s, idx) => {
                   const toneLabel = s.tone ? s.tone.charAt(0).toUpperCase() + s.tone.slice(1) : "AI Suggestions";
                   return (
                     <div 
@@ -1700,6 +1774,10 @@ export default function ApprovalDashboard() {
                                 setEditMode(true);
                                 setEditValues({
                                   caption: selected.caption,
+                                  instagram_caption: selected.instagram_caption || selected.caption || "",
+                                  facebook_caption: selected.facebook_caption || selected.caption || "",
+                                  youtube_title: selected.youtube_title || selected.thumbnail_title || "",
+                                  youtube_description: selected.youtube_description || selected.description || selected.caption || "",
                                   x_caption: selected.x_caption,
                                   linkedin_caption: selected.linkedin_caption,
                                   thumbnail_title: selected.thumbnail_title,
@@ -1727,31 +1805,77 @@ export default function ApprovalDashboard() {
                               }
                               showToast("Applied stories!");
                             } else {
-                              if (!editMode) {
-                                setEditMode(true);
-                                setEditValues({
-                                  caption: s.caption,
-                                  x_caption: selected.x_caption,
-                                  linkedin_caption: selected.linkedin_caption,
-                                  thumbnail_title: selected.thumbnail_title,
-                                  scheduled_at: selected.scheduled_at,
-                                  platforms: [...(selected.platforms || [])],
-                                  selected_accounts: selected.selected_accounts ? { ...selected.selected_accounts } : {},
-                                  video_url: selected.video_url || "",
-                                  public_video_url: selected.public_video_url || "",
-                                  description: selected.description || "",
-                                  hashtags: selected.hashtags || "",
-                                  thumbnail_options: selected.thumbnail_options || [],
-                                  key_moments: selected.key_moments || [],
-                                  thumbnail_url: selected.thumbnail_url || "",
-                                  story_1: selected.story_1 || "",
-                                  story_2: selected.story_2 || "",
-                                  story_3: selected.story_3 || "",
-                                });
+                              if (suggestionPlatform) {
+                                if (!editMode) {
+                                  setEditMode(true);
+                                  setEditValues({
+                                    caption: selected.caption,
+                                    instagram_caption: selected.instagram_caption || selected.caption || "",
+                                    facebook_caption: selected.facebook_caption || selected.caption || "",
+                                    youtube_title: selected.youtube_title || selected.thumbnail_title || "",
+                                    youtube_description: selected.youtube_description || selected.description || selected.caption || "",
+                                    x_caption: selected.x_caption,
+                                    linkedin_caption: selected.linkedin_caption,
+                                    thumbnail_title: selected.thumbnail_title,
+                                    scheduled_at: selected.scheduled_at,
+                                    platforms: [...(selected.platforms || [])],
+                                    selected_accounts: selected.selected_accounts ? { ...selected.selected_accounts } : {},
+                                    video_url: selected.video_url || "",
+                                    public_video_url: selected.public_video_url || "",
+                                    description: selected.description || "",
+                                    hashtags: selected.hashtags || "",
+                                    thumbnail_options: selected.thumbnail_options || [],
+                                    key_moments: selected.key_moments || [],
+                                    thumbnail_url: selected.thumbnail_url || "",
+                                    story_1: selected.story_1 || "",
+                                    story_2: selected.story_2 || "",
+                                    story_3: selected.story_3 || "",
+                                    [suggestionPlatform]: s.caption
+                                  });
+                                } else {
+                                  setEditValues(prev => ({ 
+                                    ...prev, 
+                                    [suggestionPlatform]: s.caption
+                                  }));
+                                }
+                                showToast(`Applied to ${suggestionPlatform.replace("_", " ")}!`);
                               } else {
-                                setEditValues(prev => ({ ...prev, caption: s.caption }));
+                                if (!editMode) {
+                                  setEditMode(true);
+                                  setEditValues({
+                                    caption: s.caption,
+                                    instagram_caption: s.caption,
+                                    facebook_caption: s.caption,
+                                    youtube_description: s.caption,
+                                    x_caption: selected.x_caption,
+                                    linkedin_caption: selected.linkedin_caption,
+                                    youtube_title: selected.youtube_title || selected.thumbnail_title || "",
+                                    thumbnail_title: selected.thumbnail_title,
+                                    scheduled_at: selected.scheduled_at,
+                                    platforms: [...(selected.platforms || [])],
+                                    selected_accounts: selected.selected_accounts ? { ...selected.selected_accounts } : {},
+                                    video_url: selected.video_url || "",
+                                    public_video_url: selected.public_video_url || "",
+                                    description: selected.description || "",
+                                    hashtags: selected.hashtags || "",
+                                    thumbnail_options: selected.thumbnail_options || [],
+                                    key_moments: selected.key_moments || [],
+                                    thumbnail_url: selected.thumbnail_url || "",
+                                    story_1: selected.story_1 || "",
+                                    story_2: selected.story_2 || "",
+                                    story_3: selected.story_3 || "",
+                                  });
+                                } else {
+                                  setEditValues(prev => ({ 
+                                    ...prev, 
+                                    caption: s.caption,
+                                    instagram_caption: s.caption,
+                                    facebook_caption: s.caption,
+                                    youtube_description: s.caption
+                                  }));
+                                }
+                                showToast("Applied caption!");
                               }
-                              showToast("Applied caption!");
                             }
                             setIsSuggestModalOpen(false);
                           }}
@@ -1774,13 +1898,13 @@ export default function ApprovalDashboard() {
               <button
                 disabled={loadingSuggestions}
                 onClick={() => {
-                  const cacheKey = `${selected.id}_${selectedTone}_${suggestionType}`;
+                  const cacheKey = `${selected.id}_${selectedTone}_${suggestionType}_${suggestionPlatform || 'all'}`;
                   setSuggestCache(prev => {
                     const newCache = { ...prev };
                     delete newCache[cacheKey];
                     return newCache;
                   });
-                  fetchAiSuggestions(selected.id, selectedTone, suggestionType);
+                  fetchAiSuggestions(selected.id, selectedTone, suggestionType, suggestionPlatform);
                 }}
                 style={{
                   padding: "8px 16px", borderRadius: 8, border: "1px solid #7C3AED",

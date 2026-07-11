@@ -284,12 +284,13 @@ async function fetchDriveVideoName(url) {
 // Columns the dashboard needs. Keep in sync with the JSX.
 const CONTENT_COLUMNS = `
   id, brand_name, file_name, video_url, public_video_url, thumbnail_url,
-  caption, x_caption, linkedin_caption, thumbnail_title,
+  caption, instagram_caption, facebook_caption, x_caption, linkedin_caption, 
+  youtube_title, youtube_description, thumbnail_title,
   story_1, story_2, story_3,
   platforms, selected_accounts, scheduled_at, status,
   approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
   error_message, created_at, description, hashtags, thumbnail_options,
-  key_moments, drive_file_id, brand_id, video_name
+  key_moments, drive_file_id, brand_id, video_name, transcript
 `;
 
 // ---------------------------------------------------------------
@@ -449,7 +450,8 @@ async function updateContent(req, res) {
   const { id } = req.params;
   console.log(`[updateContent] Received update request for ID ${id}. Body:`, JSON.stringify(req.body));
   const allowed = [
-    "caption", "x_caption", "linkedin_caption", "thumbnail_title", "scheduled_at",
+    "caption", "instagram_caption", "facebook_caption", "x_caption", "linkedin_caption",
+    "youtube_title", "youtube_description", "thumbnail_title", "scheduled_at",
     "platforms", "selected_channels", "selected_accounts", "video_url", "public_video_url", "description", "hashtags",
     "thumbnail_options", "key_moments", "thumbnail_url", "brand_id", "video_name", "status",
     "story_1", "story_2", "story_3"
@@ -637,17 +639,21 @@ ${inferredTopic}
 
 Generate ONE caption for EACH of these platforms: ${platformList}.
 
-Rules:
-- For Instagram / Facebook: Use emojis, Tanglish (Tamil-English mix) where the brand voice guide indicates, strong hook + CTA. 3-5 lines.
-- For LinkedIn: Professional, no excessive emojis, English. 2-4 lines.
-- For X (Twitter): Punchy, under 240 characters.
-- For YouTube: Title-style + short description.
-- Match the brand voice guide exactly.
-- Do NOT use markdown code blocks. Do NOT output any conversational text before or after the JSON.
-- Respond ONLY with a valid JSON array matching this format:
+Rules for each platform (Make it FUNNEL-AWARE):
+- Instagram (platform: "instagram"): Caption (hook + WhatsApp CTA), Tanglish (Tamil-English mix) where indicates, emojis. 3-5 lines.
+- Facebook (platform: "facebook"): Caption (hook + WhatsApp CTA), Tanglish (Tamil-English mix) where indicates, emojis. 3-5 lines.
+- LinkedIn (platform: "linkedin"): Professional B2B tone (BM TechX agency positioning), no excessive emojis, English. 2-4 lines.
+- X (Twitter) (platform: "x_twitter"): Punchy, under 240 characters.
+- YouTube (platform: "youtube"): Generate BOTH a compelling Title ("title") and description ("caption"). Make it SEO keyword-rich (searchable terms like 'digital marketing course Pondicherry', 'job guarantee training Tamil Nadu', 'LeadOS automation') + WhatsApp CTA.
+
+Output Format:
+Do NOT use markdown code blocks. Respond ONLY with a valid JSON array matching this format:
 [
-  {"platform": "instagram", "caption": "..."},
-  {"platform": "facebook", "caption": "..."}
+  {"platform": "instagram", "caption": "your instagram caption"},
+  {"platform": "facebook", "caption": "your facebook caption"},
+  {"platform": "linkedin", "caption": "your linkedin caption"},
+  {"platform": "x_twitter", "caption": "your x caption"},
+  {"platform": "youtube", "title": "your youtube video title", "caption": "your youtube video description"}
 ]`;
 
   try {
@@ -710,22 +716,34 @@ async function createBatchContent(req, res) {
     }
 
     for (const item of items) {
-      const { brand_name, platforms, selected_accounts, caption, x_caption, linkedin_caption, thumbnail_title, scheduled_at, file_name } = item;
+      const { 
+        brand_name, platforms, selected_accounts, 
+        caption, instagram_caption, facebook_caption, x_caption, linkedin_caption, 
+        youtube_title, youtube_description, 
+        thumbnail_title, scheduled_at, file_name 
+      } = item;
       const brand_id = BRAND_NAME_TO_SLUG[brand_name] || brand_name.toLowerCase().replace(/'/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 
       const { rows } = await client.query(`
         INSERT INTO content_queue (
-          brand_name, platforms, selected_accounts, caption, x_caption, linkedin_caption, thumbnail_title, scheduled_at, file_name, status,
+          brand_name, platforms, selected_accounts, 
+          caption, instagram_caption, facebook_caption, x_caption, linkedin_caption, 
+          youtube_title, youtube_description, 
+          thumbnail_title, scheduled_at, file_name, status,
           brand_id, video_name
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_approval', $10, $11)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'pending_approval', $14, $15)
         RETURNING *
       `, [
         brand_name,
         platforms ? JSON.stringify(safeJsonValue(platforms)) : '[]',
         selected_accounts ? JSON.stringify(safeJsonValue(selected_accounts)) : '{}',
         caption || '',
+        instagram_caption || caption || '',
+        facebook_caption || caption || '',
         x_caption || '',
         linkedin_caption || '',
+        youtube_title || thumbnail_title || 'Social Media Video',
+        youtube_description || '',
         thumbnail_title || '',
         scheduled_at || null,
         file_name || 'pending_upload.mp4',
@@ -1005,8 +1023,8 @@ Respond ONLY with a valid JSON object matching this exact format:
               brand_name, file_name, video_url, public_video_url, drive_file_id,
               caption, x_caption, linkedin_caption, description, hashtags,
               thumbnail_options, key_moments, status, thumbnail_title, platforms,
-              brand_id, video_name, thumbnail_url, story_1, story_2, story_3
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending_approval', $13, $14, $15, $16, $17, $18, $19, $20)
+              brand_id, video_name, thumbnail_url, story_1, story_2, story_3, transcript
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending_approval', $13, $14, $15, $16, $17, $18, $19, $20, $21)
           `, [
             brand_name,
             file.name,
@@ -1027,7 +1045,8 @@ Respond ONLY with a valid JSON object matching this exact format:
             publicThumbnailUrl,
             meta.story_1 || "",
             meta.story_2 || "",
-            meta.story_3 || ""
+            meta.story_3 || "",
+            transcript || ""
           ]);
 
           console.log(`DrivePoller: Successfully ingested and staged video: ${file.name}`);
@@ -1720,14 +1739,15 @@ async function publishReelToFacebookWithRetry(pageId, pageAccessToken, { caption
 
 // POST /api/content/meta/callback
 async function handleMetaCallback(req, res) {
-  const { code } = req.body;
+  const { code, redirectUri: reqRedirectUri } = req.body;
   if (!code) {
     return res.status(400).json({ success: false, error: 'Auth code is required' });
   }
 
   const appId = process.env.META_APP_ID || '953749850406150';
   const appSecret = process.env.META_APP_SECRET || 'dSSnlAoUGreiJ61yHAU3kSvJ';
-  const redirectUri = process.env.META_REDIRECT_URI || `${process.env.PORTAL_URL || 'https://leados-app.abmgroups.org'}/settings/meta-callback`;
+  const redirectUri = reqRedirectUri || process.env.META_REDIRECT_URI || `${process.env.PORTAL_URL || 'https://leados-app.abmgroups.org'}/settings/meta-callback`;
+
 
   try {
     console.log(`Exchanging code for short-lived token... redirectUri: ${redirectUri}`);
@@ -2170,7 +2190,18 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
     try {
       let publishRes;
       const hashtags = post.hashtags ? `\n\n${post.hashtags}` : '';
-      const finalCaption = `${post.caption || post.description || ''}${hashtags}`.trim();
+      let finalCaption = '';
+      if (channel === 'instagram' || channel === 'instagram_post') {
+        finalCaption = `${post.instagram_caption || post.caption || post.description || ''}${hashtags}`.trim();
+      } else if (channel === 'facebook' || channel === 'facebook_post') {
+        finalCaption = `${post.facebook_caption || post.caption || post.description || ''}${hashtags}`.trim();
+      } else if (channel === 'linkedin') {
+        finalCaption = `${post.linkedin_caption || post.caption || post.description || ''}${hashtags}`.trim();
+      } else if (channel === 'x_twitter') {
+        finalCaption = `${post.x_caption || post.caption || post.description || ''}${hashtags}`.trim();
+      } else {
+        finalCaption = `${post.caption || post.description || ''}${hashtags}`.trim();
+      }
 
       if (channel === 'facebook' || channel === 'facebook_post') {
         const pageId = account.facebook_page_id || account.account_id;
@@ -2190,6 +2221,40 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
           videoUrl: publicUrl,
           isStory: false
         });
+      } else if (channel === 'youtube') {
+        let localVideoPath = null;
+        if (publicUrl.includes('/uploads/')) {
+          const filename = publicUrl.split('/uploads/')[1];
+          localVideoPath = path.join(__dirname, '../uploads', filename);
+        }
+
+        if (!localVideoPath || !fs.existsSync(localVideoPath)) {
+          const tempDownloadFilename = `temp_youtube_source_${post.id}_${Date.now()}.mp4`;
+          const tempDownloadPath = path.join(os.tmpdir(), tempDownloadFilename);
+          console.log(`[BackgroundPublish] Local video not found. Downloading from ${publicUrl} to ${tempDownloadPath}...`);
+          await downloadFile(publicUrl, tempDownloadPath);
+          localVideoPath = tempDownloadPath;
+        }
+
+        console.log(`[BackgroundPublish] Initializing YouTube client for brand: ${post.brand_name}...`);
+        const oauth2Client = await getFreshYoutubeClient(account.access_token);
+
+        const ytTitle = post.youtube_title || post.thumbnail_title || post.video_name || 'Social Media Video';
+        const ytDesc = post.youtube_description || post.caption || post.description || '';
+        
+        publishRes = await publishVideoToYouTube(oauth2Client, {
+          title: ytTitle,
+          description: ytDesc,
+          localVideoPath: localVideoPath
+        });
+
+        if (localVideoPath.includes('temp_youtube_source_') && fs.existsSync(localVideoPath)) {
+          try {
+            fs.unlinkSync(localVideoPath);
+          } catch (unlinkErr) {
+            console.warn(`[BackgroundPublish] Failed to clean up temp youtube file:`, unlinkErr.message);
+          }
+        }
       } else if (channel === 'instagram_story' || channel === 'facebook_story') {
         console.log(`[BackgroundPublish] Preparing story Option 3 (Still Frame + CTA Overlay) for post ${post.id} (brand: ${post.brand_name})`);
         let channelUrl = publicUrl;
@@ -2557,10 +2622,49 @@ function checkRateLimit(contentId) {
   return true;
 }
 
+async function getOrGenerateTranscript(post) {
+  let transcript = post.transcript || "";
+  if (!transcript && post.public_video_url) {
+    const fileId = extractDriveFileId(post.video_url || post.public_video_url);
+    if (fileId) {
+      const tempFilePath = path.join(os.tmpdir(), `transcribe_temp_video_${fileId}_${Date.now()}.mp4`);
+      const tempAudioPath = path.join(os.tmpdir(), `transcribe_temp_audio_${fileId}_${Date.now()}.mp3`);
+      try {
+        console.log(`[Transcript Helper] Transcribing video on-the-fly for file ID ${fileId}...`);
+        await downloadDriveFileServiceAccount(fileId, tempFilePath);
+        await extractAudio(tempFilePath, tempAudioPath);
+        const transcriptionResult = await groq.audio.transcriptions.create({
+          file: fs.createReadStream(tempAudioPath),
+          model: "whisper-large-v3"
+        });
+        transcript = transcriptionResult.text || "";
+        console.log(`[Transcript Helper] Dynamic transcription success: ${transcript.length} characters.`);
+        
+        // Cache the transcript back to the database
+        await pool.query(
+          "UPDATE content_queue SET transcript = $1, updated_at = NOW() WHERE id = $2",
+          [transcript, post.id]
+        );
+      } catch (transcribeErr) {
+        console.error(`[Transcript Helper] Dynamic transcription failed:`, transcribeErr.message);
+      } finally {
+        if (fs.existsSync(tempFilePath)) {
+          try { fs.unlinkSync(tempFilePath); } catch (e) {}
+        }
+        if (fs.existsSync(tempAudioPath)) {
+          try { fs.unlinkSync(tempAudioPath); } catch (e) {}
+        }
+      }
+    }
+  }
+  return transcript;
+}
+
 // POST /api/content/:id/suggest-captions
 async function suggestCaptions(req, res) {
   const { id } = req.params;
   const tone = req.body.tone || "engaging";
+  const platform = req.body.platform || null;
 
   if (!checkRateLimit(id)) {
     return res.status(429).json({ success: false, error: "Too many requests. Limit is 5 requests per content item per minute." });
@@ -2579,6 +2683,9 @@ async function suggestCaptions(req, res) {
     };
     const brandVoice = findBrandVoice(post.brand_name)?.voice || "Professional and engaging";
 
+    // Dynamic video transcript extraction
+    const transcript = await getOrGenerateTranscript(post);
+
     let prompt = `You are an expert social media copywriter. Generate 5 unique caption suggestions for a video post based on the following details:
 - Brand Name: ${post.brand_name}
 - Industry: ${brandDetail.industry}
@@ -2586,16 +2693,86 @@ async function suggestCaptions(req, res) {
 - Brand Voice Guidelines: ${brandVoice}
 - Video Title/File Name: ${post.file_name}
 - Video Description: ${post.description || "Not provided"}
+- Video Transcript/Speech: ${transcript || "No spoken speech detected in this video. Promote the video topic and brand."}
 - Existing Caption: ${post.caption || "Not provided"}
 - Existing Hashtags: ${post.hashtags || ""}
+`;
 
+    if (platform) {
+      const platformMap = {
+        instagram_caption: "Instagram Post",
+        facebook_caption: "Facebook Post",
+        youtube_title: "YouTube Video Title",
+        youtube_description: "YouTube Video Description",
+        x_caption: "X (Twitter) Post",
+        linkedin_caption: "LinkedIn Professional Post",
+        description: "Base Video Description"
+      };
+      prompt += `- Target Platform/Field: ${platformMap[platform] || platform}\n`;
+    }
+
+    prompt += `
+CRITICAL REQUIREMENTS:
+- Your suggestions MUST be deeply related to the actual video topic, title/file name, and the video transcript.
+- Do NOT output generic brand-only promotion text. Use the brand guidelines for styling, but write completely original hooks and CTAs centered around the specific content and topics discussed in this video.
+- Do NOT just copy the example sentences from the guidelines.
+`;
+
+    if (platform === "instagram_caption" || platform === "facebook_caption") {
+      prompt += `
+CRITICAL RULES FOR INSTAGRAM/FACEBOOK:
+- Focus heavily on an engaging, high-energy hook in the first line.
+- Use a conversational tone, mixing in local slang/Tanglish for brands that request it.
+- End with a clear call-to-action to WhatsApp (e.g. "WhatsApp 94038 02971 to join now!").
+`;
+    } else if (platform === "youtube_description") {
+      prompt += `
+CRITICAL RULES FOR YOUTUBE DESCRIPTION:
+- Generate SEO keyword-rich descriptions using search terms related to the video topic (e.g., 'digital marketing course Pondicherry', 'job guarantee training Tamil Nadu', 'LeadOS automation').
+- Include details about what is taught/shown in the video.
+- Add a Call to Action (CTA) linking to WhatsApp (e.g. "WhatsApp 94038 02971 to join now!").
+- Do NOT make it short; make it a comprehensive descriptive text.
+`;
+    } else if (platform === "youtube_title") {
+      prompt += `
+CRITICAL RULES FOR YOUTUBE TITLE:
+- Generate short, high-CTR, SEO-optimized title ideas.
+- MUST be strictly under 100 characters.
+- Do NOT use hashtags in the title.
+- Do NOT include WhatsApp phone numbers in the title.
+`;
+    } else if (platform === "x_caption") {
+      prompt += `
+CRITICAL RULES FOR X (TWITTER):
+- MUST be strictly under 240 characters.
+- Do NOT use more than 1-2 hashtags.
+- Keep it extremely punchy, short, and to the point.
+`;
+    } else if (platform === "linkedin_caption") {
+      prompt += `
+CRITICAL RULES FOR LINKEDIN:
+- Use a professional, authoritative B2B business tone.
+- Emphasize the career growth, job placement, agency positioning (BM TechX), or technical value.
+- Do NOT use excessive emojis or slang.
+`;
+    }
+
+    prompt += `
 CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
 - Do NOT generate captions in pure, formal Tamil script.
-- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters, e.g., "Ungalukku programming padikka aasaiya?", "3 madhathil job ready!", "First step edunga") mixed with English.
+- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters, e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga") mixed with English.
+`;
+
+    if (platform !== "youtube_title" && platform !== "x_caption") {
+      prompt += `
 - Across the 5 suggestions, provide a variety of language splits:
   - 1 or 2 options should be in pure conversational English.
-  - 2 or 3 options should be in English letters expressing Tanglish / local slang (e.g. "Ready-ah?", "Join pannunga", "Super option search panreengala?").
-  - 1 option can include short Tamil script words mixed with English (e.g. "3 மாதத்தில் job", "20% refund guarantee!"), but keep it informal.
+  - 2 or 3 options should be in English letters expressing Tanglish / local slang.
+  - 1 option can include short Tamil script words mixed with English (keep it informal).
+`;
+    }
+
+    prompt += `
 - The tone must be energetic, direct, and conversational. Avoid any textbook or formal tone.
 `;
 
@@ -2666,6 +2843,7 @@ async function suggestStories(req, res) {
       targetAudience: "General social media audience"
     };
     const brandVoice = findBrandVoice(post.brand_name)?.voice || "Professional and engaging";
+    const transcript = await getOrGenerateTranscript(post);
 
     let prompt = `You are an expert social media copywriter. Generate 5 unique Instagram Story sets (each set consisting of 3 slides: story_1, story_2, and story_3) to promote a video post based on the following details:
 - Brand Name: ${post.brand_name}
@@ -2674,10 +2852,13 @@ async function suggestStories(req, res) {
 - Brand Voice Guidelines: ${brandVoice}
 - Video Title/File Name: ${post.file_name}
 - Video Description: ${post.description || "Not provided"}
+- Video Transcript/Speech: ${transcript || "No spoken speech detected in this video. Promote the video topic and brand."}
 - Existing Caption: ${post.caption || "Not provided"}
 - Existing Hashtags: ${post.hashtags || ""}
-
-CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
+ 
+- Your suggestions MUST be deeply related to the actual video topic, title/file name, and the video transcript.
+- Do NOT output generic brand-only promotion text. Use the brand guidelines for styling, but write completely original hooks and CTAs centered around the specific content and topics discussed in this video.
+- Do NOT just copy the example sentences from the guidelines.
 - Do NOT generate stories in formal Tamil script unless specified.
 - For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters) mixed with English.
 - Across the 5 suggestions, provide a variety of language splits:
@@ -2735,6 +2916,216 @@ Do not write any introductory or explanatory text. Return ONLY the valid JSON ob
   }
 }
 
+function getVideoMetadata(filePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) return reject(err);
+      const stream = metadata.streams.find(s => s.codec_type === 'video');
+      if (!stream) return reject(new Error('No video stream found'));
+      const duration = metadata.format.duration || stream.duration;
+      const width = stream.width;
+      const height = stream.height;
+      resolve({ duration: parseFloat(duration), width, height });
+    });
+  });
+}
+
+function getGoogleOAuthClient(req) {
+  let apiBase = process.env.API_BASE_URL;
+  if (!apiBase) {
+    const proto = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.headers['host'] || 'localhost:3600';
+    apiBase = `${proto}://${host}`;
+  }
+  const redirectUri = `${apiBase}/api/content/youtube/callback`;
+  
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri
+  );
+}
+
+function handleYoutubeAuth(req, res) {
+  const brandName = req.query.brand_name || '';
+  const oauth2Client = getGoogleOAuthClient(req);
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: [
+      'https://www.googleapis.com/auth/youtube.upload',
+      'https://www.googleapis.com/auth/youtube.readonly',
+      'https://www.googleapis.com/auth/userinfo.profile'
+    ],
+    prompt: 'consent select_account',
+    state: brandName
+  });
+  res.redirect(url);
+}
+
+async function handleYoutubeCallback(req, res) {
+  const { code, state: brandName } = req.query;
+  const portalUrl = process.env.PORTAL_URL || 'https://leados-app.abmgroups.org';
+
+  if (!code) {
+    return res.redirect(`${portalUrl}/admin/content-os/social-connection?youtube_error=missing_code`);
+  }
+
+  try {
+    const oauth2Client = getGoogleOAuthClient(req);
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+    const channelRes = await youtube.channels.list({
+      part: 'snippet',
+      mine: true
+    });
+
+    if (!channelRes.data.items || channelRes.data.items.length === 0) {
+      throw new Error('No YouTube channel found for this Google account.');
+    }
+
+    const channel = channelRes.data.items[0];
+    const channelId = channel.id;
+    const channelTitle = channel.snippet.title;
+
+    const encryptedTokens = cryptoHelper.encrypt(JSON.stringify(tokens));
+
+    await pool.query(
+      `INSERT INTO brand_social_accounts (brand_name, platform, account_name, account_id, access_token, token_expires_at, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, true)
+       ON CONFLICT (brand_name, platform, account_name) 
+       DO UPDATE SET account_id = EXCLUDED.account_id, access_token = EXCLUDED.access_token, token_expires_at = EXCLUDED.token_expires_at, is_active = true`,
+      [
+        brandName || 'BM Academy',
+        'youtube',
+        channelTitle,
+        channelId,
+        encryptedTokens,
+        tokens.expiry_date ? new Date(tokens.expiry_date) : null
+      ]
+    );
+
+    console.log(`[YouTube OAuth] Successfully connected channel "${channelTitle}" for brand "${brandName || 'BM Academy'}"`);
+
+    res.redirect(`${portalUrl}/admin/content-os/social-connection?youtube_success=true&channel=${encodeURIComponent(channelTitle)}`);
+  } catch (err) {
+    console.error('[YouTube OAuth Callback Error]:', err);
+    res.redirect(`${portalUrl}/admin/content-os/social-connection?youtube_error=${encodeURIComponent(err.message)}`);
+  }
+}
+
+async function getFreshYoutubeClient(encryptedTokens) {
+  let tokens;
+  try {
+    tokens = JSON.parse(cryptoHelper.decrypt(encryptedTokens));
+  } catch (decErr) {
+    throw new Error(`YouTube credentials decryption failed: ${decErr.message}`);
+  }
+
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET
+  );
+  oauth2Client.setCredentials(tokens);
+
+  const isExpired = tokens.expiry_date ? (tokens.expiry_date - Date.now() < 300000) : true;
+  if (isExpired && tokens.refresh_token) {
+    console.log('[YouTube Token] Access token expired or expiring soon. Refreshing...');
+    try {
+      const refreshRes = await oauth2Client.refreshAccessToken();
+      const newCredentials = refreshRes.credentials;
+      const updatedTokens = {
+        ...tokens,
+        ...newCredentials
+      };
+      
+      const encryptedNewTokens = cryptoHelper.encrypt(JSON.stringify(updatedTokens));
+      
+      await pool.query(
+        `UPDATE brand_social_accounts 
+         SET access_token = $1, token_expires_at = $2 
+         WHERE access_token = $3`,
+        [
+          encryptedNewTokens,
+          newCredentials.expiry_date ? new Date(newCredentials.expiry_date) : null,
+          encryptedTokens
+        ]
+      );
+      
+      oauth2Client.setCredentials(updatedTokens);
+      console.log('[YouTube Token] Access token refreshed and saved successfully.');
+    } catch (refreshErr) {
+      console.error('[YouTube Token] Failed to refresh access token:', refreshErr.message);
+      throw new Error(`YouTube token refresh failed: ${refreshErr.message}`);
+    }
+  } else if (isExpired && !tokens.refresh_token) {
+    throw new Error('YouTube session expired. Please reconnect your channel to get a fresh login.');
+  }
+
+  return oauth2Client;
+}
+
+async function publishVideoToYouTube(oauth2Client, { title, description, localVideoPath }) {
+  console.log(`[YouTube Publish] Starting YouTube video upload for file: ${localVideoPath}`);
+  
+  let isShort = false;
+  try {
+    const meta = await getVideoMetadata(localVideoPath);
+    console.log(`[YouTube Publish] Video metadata: duration=${meta.duration}s, size=${meta.width}x${meta.height}`);
+    if (meta.duration <= 60 && meta.height > meta.width) {
+      isShort = true;
+      console.log(`[YouTube Publish] Video classified as YouTube SHORT.`);
+    }
+  } catch (err) {
+    console.warn(`[YouTube Publish] Failed to probe video metadata:`, err.message);
+  }
+
+  let finalDescription = description || '';
+  if (isShort && !finalDescription.toLowerCase().includes('#shorts')) {
+    finalDescription = `${finalDescription}\n\n#Shorts`.trim();
+    console.log(`[YouTube Publish] Appended #Shorts to description.`);
+  }
+
+  const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+  
+  try {
+    const response = await youtube.videos.insert({
+      part: 'snippet,status',
+      requestBody: {
+        snippet: {
+          title: title || 'New Social Video',
+          description: finalDescription,
+          categoryId: '22', // People & Blogs
+        },
+        status: {
+          privacyStatus: 'public',
+          selfDeclaredMadeForKids: false
+        }
+      },
+      media: {
+        body: fs.createReadStream(localVideoPath)
+      }
+    });
+
+    console.log(`[YouTube Publish] Upload success. Video ID: ${response.data.id}`);
+    return {
+      success: true,
+      post_id: response.data.id
+    };
+  } catch (err) {
+    console.error(`[YouTube Publish] API insertion failed:`, err);
+    const errorMsg = err.errors?.[0]?.message || err.message || '';
+    const isQuota = errorMsg.toLowerCase().includes('quota') || err.code === 403;
+    if (isQuota) {
+      const quotaErr = new Error(`YouTube API Upload Quota Exceeded (default is 10,000 units / ~6 uploads per day). Please request a quota increase from Google Cloud Console.`);
+      quotaErr.code = 'QUOTA_EXCEEDED';
+      throw quotaErr;
+    }
+    throw err;
+  }
+}
+
 module.exports = {
   getContent,
   getStats,
@@ -2759,5 +3150,9 @@ module.exports = {
   publishReelToFacebook,
   publishToInstagramWithRetry,
   publishReelToFacebookWithRetry,
-  waitForFacebookReel
+  waitForFacebookReel,
+  handleYoutubeAuth,
+  handleYoutubeCallback,
+  getFreshYoutubeClient,
+  publishVideoToYouTube
 };

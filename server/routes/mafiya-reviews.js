@@ -47,6 +47,14 @@ pool.query(`
     created_at     TIMESTAMP DEFAULT NOW()
   );
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS image_url TEXT;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS post_title VARCHAR(255);
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS start_date DATE;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS end_date DATE;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS start_time TIME;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS end_time TIME;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS coupon_code VARCHAR(100);
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS redeem_link TEXT;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS terms TEXT;
 `).catch(err => console.error('[Mafiya Reviews] Schema migration failed:', err));
 
 // Helper to refresh client token
@@ -708,21 +716,289 @@ router.get('/posts', async (req, res) => {
 
 // POST save a GMB Post (draft or published)
 router.post('/posts', async (req, res) => {
-  const { clientId, postType, caption, posterTitle, posterSubtitle, bgTheme, status, imageUrl } = req.body;
+  const fs = require('fs');
+  const path = require('path');
+  
+  let { 
+    clientId, 
+    postType, 
+    caption, 
+    posterTitle, 
+    posterSubtitle, 
+    bgTheme, 
+    status, 
+    imageUrl,
+    postTitle,
+    startDate,
+    endDate,
+    startTime,
+    endTime,
+    couponCode,
+    redeemLink,
+    terms
+  } = req.body;
+
   if (!clientId || !postType || !caption) {
     return res.status(400).json({ error: 'clientId, postType, and caption are required' });
   }
+  
   try {
+    let finalImageUrl = imageUrl;
+    if (imageUrl && imageUrl.startsWith('data:image')) {
+      try {
+        const base64Data = imageUrl.replace(/^data:image\/\w+;base64,/, '');
+        const ext = imageUrl.substring(imageUrl.indexOf('/') + 1, imageUrl.indexOf(';base64')) || 'jpg';
+        const filename = `gmb_post_${Date.now()}.${ext}`;
+        const uploadDir = path.join(__dirname, '..', 'uploads', 'gmb_posts');
+        
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        
+        const filepath = path.join(uploadDir, filename);
+        fs.writeFileSync(filepath, base64Data, 'base64');
+        
+        // Dynamically get the exact API domain that this request came from (e.g. leados-api.abmgroups.org)
+        const host = req.headers['x-forwarded-host'] || req.headers.host || 'leados-api.abmgroups.org';
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+        const apiUrl = `${protocol}://${host}`;
+        
+        // Use a dedicated dynamic API route to serve the image, bypassing Nginx static file intercepts
+        finalImageUrl = `${apiUrl}/api/mafiya/reviews/image/${filename}`;
+      } catch (err) {
+        console.error('[Mafiya Reviews] Failed to process base64 image:', err);
+        // Fallback to the original base64 string if it fails
+      }
+    }
+
+    // 1. Save to local database
     const result = await pool.query(
       `INSERT INTO mafiya_gmb_posts 
-        (client_id, post_type, caption, poster_title, poster_subtitle, bg_theme, status, image_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (client_id, post_type, caption, poster_title, poster_subtitle, bg_theme, status, image_url,
+         post_title, start_date, end_date, start_time, end_time, coupon_code, redeem_link, terms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
-      [clientId, postType, caption, posterTitle, posterSubtitle, bgTheme || 'orange', status || 'draft', imageUrl]
+      [
+        clientId, 
+        postType, 
+        caption, 
+        posterTitle, 
+        posterSubtitle, 
+        bgTheme || 'orange', 
+        status || 'draft', 
+        finalImageUrl,
+        postTitle || null,
+        startDate || null,
+        endDate || null,
+        startTime || null,
+        endTime || null,
+        couponCode || null,
+        redeemLink || null,
+        terms || null
+      ]
     );
-    res.status(201).json(result.rows[0]);
+    const savedPost = result.rows[0];
+
+    // 2. Publish to Google My Business API (if credentials exist)
+    try {
+      const clientRes = await pool.query('SELECT google_account_id, google_location_id FROM mafiya_gmb_clients WHERE id = $1', [clientId]);
+      const tokenString = await getClientGoogleToken(clientId);
+      
+      const client = clientRes.rows[0];
+
+      if (client && client.google_account_id && client.google_location_id && tokenString) {
+        // Prepare Google LocalPost body
+        const gmbPostBody = {
+          languageCode: 'en-US',
+          summary: caption
+        };
+
+        const parseGoogleDate = (dateStr) => {
+          if (!dateStr) return null;
+          const parts = dateStr.split('-');
+          if (parts.length === 3) {
+            return {
+              year: parseInt(parts[0], 10),
+              month: parseInt(parts[1], 10),
+              day: parseInt(parts[2], 10)
+            };
+          }
+          return null;
+        };
+
+        const parseGoogleTime = (timeStr) => {
+          if (!timeStr) return null;
+          const parts = timeStr.split(':');
+          if (parts.length >= 2) {
+            return {
+              hours: parseInt(parts[0], 10),
+              minutes: parseInt(parts[1], 10),
+              seconds: 0
+            };
+          }
+          return null;
+        };
+
+        if (postType === 'Offer' || postType === 'offers') {
+          gmbPostBody.topicType = 'OFFER';
+          const startD = parseGoogleDate(startDate);
+          const endD = parseGoogleDate(endDate);
+          const startT = parseGoogleTime(startTime);
+          const endT = parseGoogleTime(endTime);
+          
+          gmbPostBody.event = {
+            title: postTitle || posterTitle || 'Special Offer',
+            schedule: {
+              startDate: startD || undefined,
+              startTime: startT || undefined,
+              endDate: endD || undefined,
+              endTime: endT || undefined
+            }
+          };
+          gmbPostBody.offer = {
+            couponCode: couponCode || undefined,
+            redeemOnlineUrl: redeemLink || undefined,
+            termsConditions: terms || undefined
+          };
+        } else if (postType === 'Event' || postType === 'events') {
+          gmbPostBody.topicType = 'EVENT';
+          const startD = parseGoogleDate(startDate);
+          const endD = parseGoogleDate(endDate);
+          const startT = parseGoogleTime(startTime);
+          const endT = parseGoogleTime(endTime);
+          gmbPostBody.event = {
+            title: postTitle || posterTitle || 'Special Event',
+            schedule: {
+              startDate: startD || undefined,
+              startTime: startT || undefined,
+              endDate: endD || undefined,
+              endTime: endT || undefined
+            }
+          };
+        } else {
+          gmbPostBody.topicType = 'STANDARD';
+
+          // Parse button from posterSubtitle (format: "ButtonType|Link")
+          if (posterSubtitle && posterSubtitle.includes('|')) {
+            const [bType, bLink] = posterSubtitle.split('|');
+            const googleActionMapping = {
+              'Book': 'BOOK',
+              'Order online': 'ORDER',
+              'Buy': 'SHOP',
+              'Learn more': 'LEARN_MORE',
+              'Sign up': 'SIGN_UP',
+              'Call now': 'CALL'
+            };
+            if (googleActionMapping[bType]) {
+              gmbPostBody.callToAction = {
+                actionType: googleActionMapping[bType]
+              };
+              // CALL doesn't need a URL, Google uses primary phone automatically
+              if (googleActionMapping[bType] !== 'CALL' && bLink) {
+                gmbPostBody.callToAction.url = bLink;
+              }
+            }
+          }
+        }
+        
+        // Add image (Google requires a public URL, so base64 won't work natively without upload)
+        if (finalImageUrl && finalImageUrl.startsWith('http')) {
+            // Automatically detect if running on local Windows PC vs Live Ubuntu Server
+            const isLocalWindows = __dirname.includes(':\\') || __dirname.includes('Desktop');
+            const googleImageUrl = isLocalWindows 
+              ? 'https://picsum.photos/600/400' // Use dummy public image for local testing
+              : finalImageUrl; // Use actual image on live server
+
+            console.log(`[GMB API Debug] Local OS detected? ${isLocalWindows}`);
+            console.log(`[GMB API Debug] finalImageUrl saved to DB: ${finalImageUrl}`);
+            console.log(`[GMB API Debug] googleImageUrl sent to API: ${googleImageUrl}`);
+
+            gmbPostBody.media = [{
+                mediaFormat: 'PHOTO',
+                sourceUrl: googleImageUrl
+            }];
+        }
+
+        const gmbResponse = await axios.post(
+          `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
+          gmbPostBody,
+          {
+            headers: {
+              Authorization: `Bearer ${tokenString}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        console.log('[GMB API] Post successfully published:', gmbResponse.data);
+      } else {
+        console.log('[GMB API] Skipped GMB publish: Missing google_account_id, google_location_id, or access_token.');
+      }
+    } catch (gmbErr) {
+      console.error('[GMB API] Failed to publish post:', gmbErr.response ? JSON.stringify(gmbErr.response.data) : gmbErr.message);
+      // We allow the local post to succeed even if Google fails for now.
+    }
+
+    res.status(201).json(savedPost);
   } catch (err) {
     console.error('[Mafiya Reviews] POST /posts error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Fetch available Google Locations for a client
+router.get('/google-locations', async (req, res) => {
+  const clientId = req.query.clientId;
+  if (!clientId) return res.status(400).json({ error: 'clientId required' });
+
+  try {
+    const token = await getClientGoogleToken(clientId);
+    if (!token) return res.status(401).json({ error: 'Not authenticated with Google' });
+
+    const headers = { Authorization: `Bearer ${token}` };
+    const accRes = await axios.get('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', { headers });
+    const accounts = accRes.data.accounts || [];
+    
+    let allLocations = [];
+    for (const acc of accounts) {
+      try {
+        const locRes = await axios.get(`https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations?readMask=name,title,storeCode`, { headers });
+        if (locRes.data.locations) {
+          const locs = locRes.data.locations.map(l => ({
+            accountId: acc.name.replace('accounts/', ''),
+            locationId: l.name.replace('locations/', ''),
+            title: l.title
+          }));
+          allLocations = allLocations.concat(locs);
+        }
+      } catch (err) {
+        console.error(`[Mafiya Reviews] Failed to fetch locations for account ${acc.name}`, err.message);
+      }
+    }
+    res.json(allLocations);
+  } catch (err) {
+    console.error('[Mafiya Reviews] GET /google-locations error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Save selected Google Location
+router.put('/google-locations', async (req, res) => {
+  const { clientId, google_account_id, google_location_id } = req.body;
+  if (!clientId || !google_account_id || !google_location_id) {
+    return res.status(400).json({ error: 'Missing parameters' });
+  }
+  
+  try {
+    const cleanAccountId = google_account_id.replace('accounts/', '');
+    const cleanLocationId = google_location_id.replace('locations/', '');
+
+    await pool.query(
+      'UPDATE mafiya_gmb_clients SET google_account_id = $1, google_location_id = $2 WHERE id = $3',
+      [cleanAccountId, cleanLocationId, clientId]
+    );
+    res.json({ success: true, google_account_id: cleanAccountId, google_location_id: cleanLocationId });
+  } catch (err) {
+    console.error('[Mafiya Reviews] PUT /google-locations error:', err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

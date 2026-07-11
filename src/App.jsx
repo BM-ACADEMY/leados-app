@@ -13,6 +13,7 @@ import { AIBrainView } from './views/AIBrainView.jsx';
 import { ReportsView } from './views/ReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
 import { SettingsView } from './views/SettingsView.jsx';
+import { SocialConnectionView } from '../contentos/SocialConnectionView.jsx';
 
 import { AllianceDashboard } from './views/AllianceDashboard.jsx';
 import { UploadLeads } from './views/UploadLeads.jsx';
@@ -151,6 +152,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/prompt-manager" element={<PromptManager />} />
               <Route path="/alliance-inbox" element={<AllianceInboxView />} />
               <Route path="/admin/content-os/approval" element={<ApprovalDashboard />} />
+              <Route path="/admin/content-os/social-connection" element={<SocialConnectionView />} />
 
               <Route path="/thedal/clients" element={<ClientOnboard />} />
               <Route path="/thedal/plan-subscription" element={<PlanSubscription />} />

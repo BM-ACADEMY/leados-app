@@ -5,11 +5,60 @@ const API_URL = import.meta.env.VITE_API_URL || '';
 import { C } from '../../constants/theme.js';
 import { 
   Megaphone, Plus, Trash2, Download, Sparkles, 
-  Loader2, Check, Star, X, MoreVertical, ImagePlus 
+  Loader2, Check, Star, X, MoreVertical, ImagePlus,
+  Play, Link
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) => {
+const formatTimeAgo = (dateStr) => {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  if (diffMins < 1) return 'Published just now';
+  if (diffMins < 60) return `Published ${diffMins}m ago`;
+  if (diffHours < 24) return `Published ${diffHours}h ago`;
+  if (diffDays === 1) return 'Published yesterday';
+  if (diffDays < 30) return `Published ${diffDays} days ago`;
+  
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths === 1) return 'Published last month';
+  return `Published ${diffMonths} months ago`;
+};
+
+const PostCountdown = ({ scheduledAt }) => {
+  const [timeLeft, setTimeLeft] = useState('');
+
+  useEffect(() => {
+    const calculateTime = () => {
+      const diff = new Date(scheduledAt) - new Date();
+      if (diff <= 0) {
+        setTimeLeft('Publishing...');
+        return;
+      }
+      const hrs = Math.floor(diff / 3600000);
+      const mins = Math.floor((diff % 3600000) / 60000);
+      const secs = Math.floor((diff % 60000) / 1000);
+      
+      let str = '';
+      if (hrs > 0) str += `${hrs}h `;
+      if (mins > 0 || hrs > 0) str += `${mins}m `;
+      str += `${secs}s`;
+      setTimeLeft(`Scheduled in ${str}`);
+    };
+    
+    calculateTime();
+    const interval = setInterval(calculateTime, 1000);
+    return () => clearInterval(interval);
+  }, [scheduledAt]);
+
+  return <span style={{ color: '#f97316', fontWeight: 600, fontSize: 13 }}>{timeLeft}</span>;
+};
+
+const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, editingPost, setEditingPost }) => {
   const [saving, setSaving] = useState(false);
   // Upload Poster states
   const [postType, setPostType] = useState('Update');
@@ -68,6 +117,91 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
     setRepeats('Does not repeat');
   }, [startDate]);
 
+  // Pre-populate state fields when editing a post
+  useEffect(() => {
+    if (showModal) {
+      if (editingPost) {
+        setPostType(editingPost.post_type || 'Update');
+        setDescription(editingPost.caption || '');
+        setSelectedImage(editingPost.image_url || null);
+        setPostTitle(editingPost.post_title || editingPost.poster_title || '');
+        
+        const formatDate = (dateVal) => {
+          if (!dateVal) return '';
+          const d = new Date(dateVal);
+          return d.toISOString().split('T')[0];
+        };
+        const formatTime = (timeVal) => {
+          if (!timeVal) return '';
+          return timeVal.substring(0, 5); // HH:MM
+        };
+        
+        setStartDate(formatDate(editingPost.start_date));
+        setEndDate(formatDate(editingPost.end_date));
+        setStartTime(formatTime(editingPost.start_time));
+        setEndTime(formatTime(editingPost.end_time));
+        setCouponCode(editingPost.coupon_code || '');
+        setRedeemLink(editingPost.redeem_link || '');
+        setTerms(editingPost.terms || '');
+        setRepeats(editingPost.repeats || 'Does not repeat');
+        setCustomDays(editingPost.custom_days ? editingPost.custom_days.split(',') : []);
+        setRepeatEndDate(formatDate(editingPost.repeat_end_date));
+        
+        if (editingPost.scheduled_at) {
+          setSchedulePost(true);
+          const d = new Date(editingPost.scheduled_at);
+          const localISO = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString();
+          setScheduledDate(localISO.split('T')[0]);
+          setScheduledTime(localISO.split('T')[1].substring(0, 5));
+        } else {
+          setSchedulePost(false);
+          setScheduledDate('');
+          setScheduledTime('');
+        }
+
+        if (editingPost.poster_subtitle && editingPost.poster_subtitle.includes('|')) {
+          const [bType, bLink] = editingPost.poster_subtitle.split('|');
+          setHasButton(true);
+          setButtonType(bType);
+          setButtonLink(bLink || '');
+        } else {
+          setHasButton(false);
+          setButtonType('None');
+          setButtonLink('');
+        }
+
+        setShowCoupon(!!editingPost.coupon_code);
+        setShowRedeem(!!editingPost.redeem_link);
+        setShowTerms(!!editingPost.terms);
+      } else {
+        // Reset states for new post
+        setPostType('Update');
+        setDescription('');
+        setSelectedImage(null);
+        setPostTitle('');
+        setStartDate('');
+        setEndDate('');
+        setStartTime('');
+        setEndTime('');
+        setCouponCode('');
+        setRedeemLink('');
+        setTerms('');
+        setRepeats('Does not repeat');
+        setCustomDays([]);
+        setRepeatEndDate('');
+        setSchedulePost(false);
+        setScheduledDate('');
+        setScheduledTime('');
+        setHasButton(false);
+        setButtonType('None');
+        setButtonLink('');
+        setShowCoupon(false);
+        setShowRedeem(false);
+        setShowTerms(false);
+      }
+    }
+  }, [showModal, editingPost]);
+
   const handleSaveConnection = async () => {
     if (!selectedLocationStr) return;
     const [accId, locId] = selectedLocationStr.split('|');
@@ -95,6 +229,11 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      // 5MB Limit
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error('File size exceeds the 5MB limit');
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         setSelectedImage(reader.result);
@@ -103,7 +242,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
     }
   };
 
-  // Save Uploaded Post
+  // Save Uploaded / Edited Post
   const handleSavePost = async () => {
     if (!description) {
       toast.error('Description is required');
@@ -151,16 +290,21 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
     setSaving(true);
     try {
       const token = localStorage.getItem('leados_token');
-      await axios.post(`${API_URL}/api/mafiya/reviews/posts`, {
+      const url = editingPost 
+        ? `${API_URL}/api/mafiya/reviews/posts/${editingPost.id}` 
+        : `${API_URL}/api/mafiya/reviews/posts`;
+      const method = editingPost ? 'put' : 'post';
+
+      await axios[method](url, {
           clientId: activeClient.id,
           postType: postType,
           caption: description,
           posterTitle: (postType === 'Offer' || postType === 'Event') ? postTitle : postType.toUpperCase(),
-          posterSubtitle: buttonType !== 'None' ? `${buttonType}|${buttonLink}` : '',
+          posterSubtitle: (hasButton && buttonType !== 'None') ? `${buttonType}|${buttonLink}` : '',
           bgTheme: 'custom_stock',
           imageUrl: selectedImage || '',
           status: schedulePost ? 'scheduled' : 'published',
-          scheduledAt: schedulePost ? `${scheduledDate} ${scheduledTime}:00` : null,
+          scheduledAt: schedulePost ? new Date(`${scheduledDate}T${scheduledTime}`).toISOString() : null,
           postTitle: postTitle,
           startDate: startDate || null,
           endDate: endDate || null,
@@ -175,8 +319,9 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
         }, {
           headers: { Authorization: `Bearer ${token}` }
         });
-        toast.success(schedulePost ? 'Post scheduled successfully!' : 'Published to GMB Successfully!');
+        toast.success(editingPost ? 'Post updated successfully!' : (schedulePost ? 'Post scheduled successfully!' : 'Published to GMB Successfully!'));
         setShowModal(false);
+        if (setEditingPost) setEditingPost(null);
         fetchGmbPosts(activeClient.id);
         setDescription('');
         setSelectedImage(null);
@@ -197,7 +342,6 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
         setHasButton(false);
         setButtonType('None');
         setButtonLink('');
-      
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -773,6 +917,7 @@ export default function StreetPosts() {
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
+  const [editingPost, setEditingPost] = useState(null);
 
 
   const setActiveClient = (client) => {
@@ -924,6 +1069,7 @@ export default function StreetPosts() {
             </select>
             <button
               onClick={() => {
+                setEditingPost(null);
                 setShowModal(true);
               }}
               style={{ 
@@ -947,7 +1093,7 @@ export default function StreetPosts() {
           </div>
         </div>
 
-        {/* Existing posts grid */}
+        {/* Existing GMB posts horizontal list */}
         {postsLoading ? (
           <div style={{ padding: 60, textAlign: 'center', color: C.muted }}>
             <Loader2 size={24} className="spin" style={{ color: C.accent, margin: '0 auto 10px auto' }} />
@@ -957,93 +1103,175 @@ export default function StreetPosts() {
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: '60px 20px', textAlign: 'center', color: C.muted }}>
             <Megaphone size={40} style={{ color: C.border, marginBottom: 14 }} />
             <h3 style={{ color: '#fff', fontSize: 15, margin: '0 0 4px 0' }}>No GMB Posts Yet</h3>
-            <p style={{ fontSize: 12.5, margin: 0 }}>Click "Generate Post" above to create your first GMB Post.</p>
+            <p style={{ fontSize: 12.5, margin: 0 }}>Click "Upload Poster" above to create your first GMB Post.</p>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 20 }}>
-            {posts.map((post) => (
-              <div 
-                key={post.id} 
-                style={{ 
-                  background: C.surface, 
-                  border: `1px solid ${C.border}`, 
-                  borderRadius: 16, 
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column'
-                }}
-              >
-                {/* Poster visual representation mock */}
-                <div style={{ 
-                  height: 200, 
-                  padding: 20,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  position: 'relative',
-                  overflow: 'hidden'
-                }}>
-                  {post.image_url ? (
-                    (post.image_url.endsWith('.mp4') || post.image_url.endsWith('.webm') || post.image_url.endsWith('.mov') || post.image_url.endsWith('.avi')) ? (
-                      <video src={post.image_url} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0, zIndex: 0 }} muted loop playsInline />
-                    ) : (
-                      <div style={{ position: 'absolute', inset: 0, backgroundImage: `url(${post.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center', zIndex: 0 }} />
-                    )
-                  ) : null}
-                  <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(15,23,42,0.85) 0%, rgba(15,23,42,0.3) 100%)', zIndex: 0 }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {posts.map((post) => {
+              const isVideo = post.image_url && (
+                post.image_url.endsWith('.mp4') || 
+                post.image_url.endsWith('.webm') || 
+                post.image_url.endsWith('.mov') || 
+                post.image_url.endsWith('.avi')
+              );
+              
+              const hasCta = post.poster_subtitle && post.poster_subtitle.includes('|');
+              const ctaText = hasCta ? post.poster_subtitle.split('|')[0] : '';
+              
+              return (
+                <div 
+                  key={post.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: '#18181b',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: 12,
+                    padding: 16,
+                    gap: 20,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    position: 'relative'
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; e.currentTarget.style.background = '#1e1e21'; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)'; e.currentTarget.style.background = '#18181b'; }}
+                  onClick={() => {
+                    setEditingPost(post);
+                    setShowModal(true);
+                  }}
+                >
                   
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 1 }}>
-                    <span style={{ fontSize: 12, fontWeight: 800, color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>{clientName.substring(0, 20)}</span>
-                    <span style={{ fontSize: 9, fontWeight: 700, background: 'rgba(255,255,255,0.2)', color: '#fff', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase' }}>
-                      {post.post_type}
-                    </span>
-                  </div>
-
-                  <div style={{ textAlign: 'center', color: '#fff', position: 'relative', zIndex: 1 }}>
-                    <h3 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 4px 0', letterSpacing: 0.5, textShadow: '0 2px 4px rgba(0,0,0,0.6)' }}>
-                      {post.poster_title || 'UPDATE'}
-                    </h3>
-                    <p style={{ fontSize: 12, color: '#e2e8f0', margin: 0, textShadow: '0 2px 4px rgba(0,0,0,0.6)' }}>
-                      {post.poster_subtitle || 'Contact us for details'}
-                    </p>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#f1f5f9', fontWeight: 600, position: 'relative', zIndex: 1 }}>
-                    <span>📞 {activeClient?.phone_number}</span>
-                    <span>Google Business</span>
-                  </div>
-                </div>
-
-                {/* Caption / description */}
-                <div style={{ padding: 18, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div>
-                    <p style={{ fontSize: 13, color: '#cbd5e1', margin: '0 0 14px 0', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                      {post.caption}
-                    </p>
-                  </div>
-
-                  {/* Actions */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${C.border}`, paddingTop: 14 }}>
-                    <span style={{ fontSize: 11, color: post.status === 'published' ? C.green : C.muted, fontWeight: 600 }}>
-                      • {post.status === 'published' ? 'Published' : 'Draft'}
-                    </span>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button 
-                        onClick={() => handleDeletePost(post.id)}
-                        style={{ background: `${C.red}12`, border: 'none', borderRadius: 6, padding: 6, color: C.red, display: 'flex', cursor: 'pointer' }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                  {/* Left Side: Mock Google Post card (Media preview + details) */}
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flex: 1, maxWidth: '65%', minWidth: 280 }}>
+                    {/* Media Container */}
+                    <div style={{ 
+                      width: 120, 
+                      height: 100, 
+                      borderRadius: 8, 
+                      overflow: 'hidden', 
+                      position: 'relative',
+                      background: 'rgba(255,255,255,0.02)',
+                      flexShrink: 0,
+                      border: '1px solid rgba(255,255,255,0.06)'
+                    }}>
+                      {post.image_url ? (
+                        isVideo ? (
+                          <>
+                            <video src={post.image_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted />
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
+                              <Play size={16} color="#fff" fill="#fff" />
+                            </div>
+                          </>
+                        ) : (
+                          <img src={post.image_url} alt="Post Visual" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        )
+                      ) : (
+                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.04)' }}>
+                          <Megaphone size={20} color="#71717a" />
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Text / Details Container */}
+                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', background: 'rgba(249,115,22,0.1)', color: '#f97316', padding: '2px 6px', borderRadius: 4 }}>
+                          {post.post_type}
+                        </span>
+                        {(post.post_title || post.poster_title) && (
+                          <span style={{ fontSize: 12, fontWeight: 700, color: '#f4f4f5' }}>{post.post_title || post.poster_title}</span>
+                        )}
+                      </div>
+                      
+                      <p style={{ 
+                        fontSize: 13, 
+                        color: '#a1a1aa', 
+                        margin: '0 0 6px 0', 
+                        lineHeight: 1.5,
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}>
+                        {post.caption}
+                      </p>
+                      
+                      {hasCta && (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#f97316', fontSize: 12.5, fontWeight: 700 }}>
+                          <Link size={12} /> {ctaText}
+                        </div>
+                      )}
                     </div>
                   </div>
+
+                  {/* Middle Side: Relative time / Countdown + GMB Profile live update status */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start', width: '25%', minWidth: 160 }}>
+                    {post.status === 'published' ? (
+                      <>
+                        <span style={{ fontSize: 13.5, color: '#f4f4f5', fontWeight: 500 }}>
+                          {formatTimeAgo(post.created_at)}
+                        </span>
+                        <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          <span style={{ width: 6, height: 6, background: '#22c55e', borderRadius: '50%' }} /> Updated in GMB Profile
+                        </span>
+                      </>
+                    ) : post.status === 'scheduled' ? (
+                      <>
+                        <PostCountdown scheduledAt={post.scheduled_at} />
+                        <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          <span style={{ width: 6, height: 6, background: '#ef4444', borderRadius: '50%' }} /> Not updated GMB profile
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ fontSize: 13.5, color: '#a1a1aa', fontWeight: 500 }}>Draft</span>
+                        <span style={{ fontSize: 11, color: '#71717a', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          <span style={{ width: 6, height: 6, background: '#71717a', borderRadius: '50%' }} /> Not updated GMB profile
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Right Side: Options / Action Menu & Delete */}
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    <button 
+                      onClick={() => {
+                        setEditingPost(post);
+                        setShowModal(true);
+                      }}
+                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 8, color: '#a1a1aa', display: 'flex', cursor: 'pointer', transition: 'all 0.2s' }}
+                      onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+                      onMouseLeave={e => e.currentTarget.style.color = '#a1a1aa'}
+                    >
+                      <Plus size={14} style={{ transform: 'rotate(45deg)' }} />
+                    </button>
+                    <button 
+                      onClick={() => handleDeletePost(post.id)}
+                      style={{ background: 'rgba(239, 68, 68, 0.08)', border: 'none', borderRadius: 8, padding: 8, color: '#ef4444', display: 'flex', cursor: 'pointer', transition: 'all 0.2s' }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)'}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
         {/* ═══ GMB Upload Post Modal ═══ */}
-        <GmbPostModal activeClient={activeClient} fetchGmbPosts={fetchGmbPosts} showModal={showModal} setShowModal={setShowModal} />
+        <GmbPostModal 
+          activeClient={activeClient} 
+          fetchGmbPosts={fetchGmbPosts} 
+          showModal={showModal} 
+          setShowModal={setShowModal} 
+          editingPost={editingPost}
+          setEditingPost={setEditingPost}
+        />
 
       </div>
     </div>

@@ -993,6 +993,113 @@ router.post('/posts', async (req, res) => {
   }
 });
 
+// PUT/EDIT a GMB Post
+router.put('/posts/:id', async (req, res) => {
+  const { id } = req.params;
+  let { 
+    postType, 
+    caption, 
+    posterTitle, 
+    posterSubtitle, 
+    bgTheme, 
+    status, 
+    imageUrl,
+    postTitle,
+    startDate,
+    endDate,
+    startTime,
+    endTime,
+    couponCode,
+    redeemLink,
+    terms,
+    repeats,
+    customDays,
+    repeatEndDate,
+    scheduledAt
+  } = req.body;
+
+  try {
+    let finalImageUrl = imageUrl;
+    const fs = require('fs');
+    const path = require('path');
+    
+    if (imageUrl && (imageUrl.startsWith('data:image') || imageUrl.startsWith('data:video'))) {
+      try {
+        const isVideo = imageUrl.startsWith('data:video');
+        const match = imageUrl.match(/^data:(image|video)\/(\w+);base64,/);
+        const ext = match ? match[2] : (isVideo ? 'mp4' : 'jpg');
+        const base64Data = imageUrl.replace(/^data:(image|video)\/\w+;base64,/, '');
+        const filename = `gmb_post_${Date.now()}.${ext}`;
+        const uploadDir = path.join(__dirname, '..', 'uploads', 'gmb_posts');
+        
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        
+        const filepath = path.join(uploadDir, filename);
+        fs.writeFileSync(filepath, base64Data, 'base64');
+        
+        const host = req.headers['x-forwarded-host'] || req.headers.host || 'leados-api.abmgroups.org';
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+        const apiUrl = `${protocol}://${host}`;
+        
+        finalImageUrl = `${apiUrl}/api/mafiya/reviews/image/${filename}`;
+      } catch (err) {
+        console.error('[Mafiya Reviews] Failed to process base64 file:', err);
+      }
+    }
+
+    const result = await pool.query(
+      `UPDATE mafiya_gmb_posts 
+       SET post_type = $1, caption = $2, poster_title = $3, poster_subtitle = $4, bg_theme = $5, 
+           status = $6, image_url = $7, post_title = $8, start_date = $9, end_date = $10, 
+           start_time = $11, end_time = $12, coupon_code = $13, redeem_link = $14, terms = $15, 
+           repeats = $16, custom_days = $17, repeat_end_date = $18, scheduled_at = $19
+       WHERE id = $20
+       RETURNING *`,
+      [
+        postType, 
+        caption, 
+        posterTitle, 
+        posterSubtitle, 
+        bgTheme || 'orange', 
+        status || 'draft', 
+        finalImageUrl,
+        postTitle || null,
+        startDate || null,
+        endDate || null,
+        startTime || null,
+        endTime || null,
+        couponCode || null,
+        redeemLink || null,
+        terms || null,
+        repeats || 'Does not repeat',
+        customDays || null,
+        repeatEndDate || null,
+        scheduledAt || null,
+        id
+      ]
+    );
+
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Post not found' });
+    const updatedPost = result.rows[0];
+
+    // If status is published, trigger GMB publish immediately
+    if (status === 'published') {
+      try {
+        await publishPostToGmb(updatedPost.id);
+      } catch (gmbErr) {
+        console.error('[GMB API] Failed to publish post:', gmbErr.message);
+      }
+    }
+
+    res.json(updatedPost);
+  } catch (err) {
+    console.error('[Mafiya Reviews] PUT /posts error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Fetch available Google Locations for a client
 router.get('/google-locations', async (req, res) => {
   const clientId = req.query.clientId;

@@ -108,6 +108,14 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal }) 
       toast.error('Start and End dates are required');
       return;
     }
+    if (postType === 'Offer' || postType === 'Event') {
+      const startDateTime = new Date(`${startDate}T${startTime || '00:00'}`);
+      const endDateTime = new Date(`${endDate}T${endTime || '00:00'}`);
+      if (startDateTime >= endDateTime) {
+        toast.error('End date/time must be strictly after start date/time');
+        return;
+      }
+    }
     setSaving(true);
     try {
       const token = localStorage.getItem('leados_token');

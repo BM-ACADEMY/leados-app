@@ -941,16 +941,42 @@ router.post('/posts', async (req, res) => {
              }];
          }
 
-        const gmbResponse = await axios.post(
-          `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
-          gmbPostBody,
-          {
-            headers: {
-              Authorization: `Bearer ${tokenString}`,
-              'Content-Type': 'application/json'
+        let activeToken = tokenString;
+        let gmbResponse;
+        try {
+          gmbResponse = await axios.post(
+            `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
+            gmbPostBody,
+            {
+              headers: {
+                Authorization: `Bearer ${activeToken}`,
+                'Content-Type': 'application/json'
+              }
             }
+          );
+        } catch (postErr) {
+          if (postErr.response && postErr.response.status === 401) {
+            console.log('[GMB API] Access token expired or rejected. Attempting automatic refresh...');
+            const refreshedToken = await refreshClientToken(clientId);
+            if (refreshedToken) {
+              console.log('[GMB API] Token refreshed successfully. Retrying publication...');
+              gmbResponse = await axios.post(
+                `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
+                gmbPostBody,
+                {
+                  headers: {
+                    Authorization: `Bearer ${refreshedToken}`,
+                    'Content-Type': 'application/json'
+                  }
+                }
+              );
+            } else {
+              throw postErr;
+            }
+          } else {
+            throw postErr;
           }
-        );
+        }
         console.log('[GMB API] Post successfully published:', gmbResponse.data);
       } else {
         console.log('[GMB API] Skipped GMB publish: Missing google_account_id, google_location_id, or access_token.');
@@ -1375,16 +1401,42 @@ async function publishPostToGmb(postId) {
         }];
       }
 
-      const gmbResponse = await axios.post(
-        `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
-        gmbPostBody,
-        {
-          headers: {
-            Authorization: `Bearer ${tokenString}`,
-            'Content-Type': 'application/json'
+      let activeToken = tokenString;
+      let gmbResponse;
+      try {
+        gmbResponse = await axios.post(
+          `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
+          gmbPostBody,
+          {
+            headers: {
+              Authorization: `Bearer ${activeToken}`,
+              'Content-Type': 'application/json'
+            }
           }
+        );
+      } catch (postErr) {
+        if (postErr.response && postErr.response.status === 401) {
+          console.log(`[GMB API] Access token expired or rejected for post ${postId}. Attempting automatic refresh...`);
+          const refreshedToken = await refreshClientToken(clientId);
+          if (refreshedToken) {
+            console.log(`[GMB API] Token refreshed successfully for post ${postId}. Retrying publication...`);
+            gmbResponse = await axios.post(
+              `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
+              gmbPostBody,
+              {
+                headers: {
+                  Authorization: `Bearer ${refreshedToken}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+          } else {
+            throw postErr;
+          }
+        } else {
+          throw postErr;
         }
-      );
+      }
       console.log(`[GMB API] Post ${postId} successfully published:`, gmbResponse.data);
       
       // Update status to published in the database

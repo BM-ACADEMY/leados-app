@@ -843,12 +843,22 @@ router.post('/posts', async (req, res) => {
           gmbPostBody.topicType = 'OFFER';
           const startD = parseGoogleDate(startDate);
           const endD = parseGoogleDate(endDate);
+          const startT = parseGoogleTime(startTime);
+          const endT = parseGoogleTime(endTime);
+          
+          gmbPostBody.event = {
+            title: postTitle || posterTitle || 'Special Offer',
+            schedule: {
+              startDate: startD || undefined,
+              startTime: startT || undefined,
+              endDate: endD || undefined,
+              endTime: endT || undefined
+            }
+          };
           gmbPostBody.offer = {
             couponCode: couponCode || undefined,
             redeemOnlineUrl: redeemLink || undefined,
-            termsConditions: terms || undefined,
-            startDate: startD || undefined,
-            endDate: endD || undefined
+            termsConditions: terms || undefined
           };
         } else if (postType === 'Event' || postType === 'events') {
           gmbPostBody.topicType = 'EVENT';

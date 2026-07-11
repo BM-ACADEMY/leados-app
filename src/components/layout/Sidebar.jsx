@@ -273,11 +273,39 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                 <div style={{ position: 'absolute', left: 20, top: 4, bottom: 10, width: 1, background: C.border }} />
 
                 <NavLink to="/admin/content-os/approval" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
-                  <CheckSquare size={14} style={{ marginRight: 8 }} /> Approval Dashboard
+                  <CheckSquare size={14} style={{ marginRight: 8 }} /> Approval Room
+                </NavLink>
+
+                <NavLink to="/admin/content-os/monitors" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <FileSearch size={14} style={{ marginRight: 8 }} /> Folder Monitors
+                </NavLink>
+
+                <NavLink to="/admin/content-os/scheduler" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Target size={14} style={{ marginRight: 8 }} /> Scheduler
+                </NavLink>
+
+                <NavLink to="/admin/content-os/captions" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Sparkles size={14} style={{ marginRight: 8 }} /> Caption Studio
                 </NavLink>
 
                 <NavLink to="/admin/content-os/social-connection" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
-                  <Share2 size={14} style={{ marginRight: 8 }} /> Social Connections
+                  <Share2 size={14} style={{ marginRight: 8 }} /> Social Accounts
+                </NavLink>
+
+                <NavLink to="/admin/content-os/tokens" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <Shield size={14} style={{ marginRight: 8 }} /> Token Health
+                </NavLink>
+
+                <NavLink to="/admin/content-os/logs" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <FileText size={14} style={{ marginRight: 8 }} /> Publish Logs
+                </NavLink>
+
+                <NavLink to="/admin/content-os/reach" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <BarChart2 size={14} style={{ marginRight: 8 }} /> Reach Report
+                </NavLink>
+
+                <NavLink to="/admin/content-os/failed" onClick={handleNavClick} style={({ isActive }) => ({ width: '100%', height: 36, borderRadius: 6, display: 'flex', alignItems: 'center', padding: '0 10px', fontSize: 13, color: isActive ? C.accent : C.muted, background: isActive ? C.accent + '11' : 'transparent', textDecoration: 'none', fontWeight: 500 })}>
+                  <ShieldAlert size={14} style={{ marginRight: 8 }} /> Failed Jobs
                 </NavLink>
               </div>
             )}

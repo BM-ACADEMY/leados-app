@@ -14,7 +14,7 @@ import { AIBrainView } from './views/AIBrainView.jsx';
 import { ReportsView } from './views/ReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
 import { SettingsView } from './views/SettingsView.jsx';
-import { SocialConnectionView } from '../contentos/SocialConnectionView.jsx';
+
 
 import { AllianceDashboard } from './views/AllianceDashboard.jsx';
 import { UploadLeads } from './views/UploadLeads.jsx';
@@ -24,7 +24,7 @@ import { LeadProfile } from './views/LeadProfile.jsx';
 import { KnowledgeBase } from './views/KnowledgeBase.jsx';
 import { PromptManager } from './views/PromptManager.jsx';
 import { AllianceInboxView } from './views/AllianceInboxView.jsx';
-import ApprovalDashboard from './views/ApprovalDashboard.jsx';
+import ContentOSDashboard from '../contentos/ContentOSDashboard.jsx';
 
 import KeywordTracking from './views/thedal/KeywordTracking.jsx';
 import ThedalHQ from './views/thedal/ThedalHQ.jsx';
@@ -147,8 +147,15 @@ function AppLayout({ user, logout, selectedLead, setSelectedLead, leadRefresh, s
               <Route path="/knowledge-base" element={<KnowledgeBase />} />
               <Route path="/prompt-manager" element={<PromptManager />} />
               <Route path="/alliance-inbox" element={<AllianceInboxView />} />
-              <Route path="/admin/content-os/approval" element={<ApprovalDashboard />} />
-              <Route path="/admin/content-os/social-connection" element={<SocialConnectionView />} />
+              <Route path="/admin/content-os/approval" element={<ContentOSDashboard defaultPage="approval" />} />
+              <Route path="/admin/content-os/monitors" element={<ContentOSDashboard defaultPage="monitors" />} />
+              <Route path="/admin/content-os/scheduler" element={<ContentOSDashboard defaultPage="scheduler" />} />
+              <Route path="/admin/content-os/captions" element={<ContentOSDashboard defaultPage="captions" />} />
+              <Route path="/admin/content-os/social-connection" element={<ContentOSDashboard defaultPage="accounts" />} />
+              <Route path="/admin/content-os/tokens" element={<ContentOSDashboard defaultPage="tokens" />} />
+              <Route path="/admin/content-os/logs" element={<ContentOSDashboard defaultPage="logs" />} />
+              <Route path="/admin/content-os/reach" element={<ContentOSDashboard defaultPage="reach" />} />
+              <Route path="/admin/content-os/failed" element={<ContentOSDashboard defaultPage="failed" />} />
 
               <Route path="/thedal/clients" element={<ClientOnboard />} />
               <Route path="/thedal/plan-subscription" element={<PlanSubscription />} />

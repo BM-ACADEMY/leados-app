@@ -6,7 +6,7 @@ import { C } from '../../constants/theme.js';
 import { 
   Megaphone, Plus, Trash2, Download, Sparkles, 
   Loader2, Check, Star, X, MoreVertical, ImagePlus,
-  Play, Link, BarChart2, ArrowLeft, Calendar, TrendingUp
+  Play, Link, BarChart2, ArrowLeft, Calendar, TrendingUp, RefreshCw, Eye, MousePointer
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -236,8 +236,28 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setSelectedImage(reader.result);
+      reader.onloadend = async () => {
+        const base64Data = reader.result;
+        setSelectedImage(base64Data);
+        
+        // Call AI analysis
+        const aiToast = toast.loading('AI analyzing poster to generate description...');
+        try {
+          const token = localStorage.getItem('leados_token');
+          const res = await axios.post(`${API_URL}/api/mafiya/reviews/posts/generate-from-image`, {
+            clientId: activeClient.id,
+            imageBase64: base64Data
+          }, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          
+          if (res.data.title) setPostTitle(res.data.title);
+          if (res.data.description) setDescription(res.data.description);
+          toast.success('AI suggestions loaded successfully!', { id: aiToast });
+        } catch (err) {
+          console.error('[AI Generation error]:', err);
+          toast.error('AI failed to parse image details.', { id: aiToast });
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -1098,7 +1118,7 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
   );
 
   return (
-    <div style={{ padding: 26, background: '#090a0f', height: '100vh', overflowY: 'auto', color: '#fff', position: 'relative' }}>
+    <div style={{ padding: '26px 26px 80px 26px', background: '#090a0f', height: '100%', overflowY: 'auto', boxSizing: 'border-box', color: '#fff', position: 'relative' }}>
       {/* Back Button */}
       <button 
         onClick={onBack}
@@ -1126,16 +1146,40 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
             
             {/* SVG Donut */}
             <div style={{ position: 'relative', width: 120, height: 120, marginBottom: 18 }}>
-              <svg width="120" height="120" viewBox="0 0 120 120" style={{ transform: 'rotate(-90deg)' }}>
-                {/* 1. Orange Segment (50%) */}
-                <circle cx="60" cy="60" r="45" fill="none" stroke="#f97316" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset="110" strokeLinecap="round" />
-                {/* 2. Blue Segment (20%) */}
-                <circle cx="60" cy="60" r="45" fill="none" stroke="#3b82f6" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset="220" strokeLinecap="round" style={{ transform: 'rotate(170deg)', transformOrigin: '60px 60px' }} />
-                {/* 3. Red Segment (15%) */}
-                <circle cx="60" cy="60" r="45" fill="none" stroke="#ef4444" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset="240" strokeLinecap="round" style={{ transform: 'rotate(245deg)', transformOrigin: '60px 60px' }} />
-                {/* 4. Green Segment (15%) */}
-                <circle cx="60" cy="60" r="45" fill="none" stroke="#10b981" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset="240" strokeLinecap="round" style={{ transform: 'rotate(300deg)', transformOrigin: '60px 60px' }} />
-              </svg>
+              {(() => {
+                const total = filteredViews + filteredClicks;
+                const showChart = total > 0;
+                
+                if (!showChart) {
+                  return (
+                    <svg width="120" height="120" viewBox="0 0 120 120">
+                      <circle cx="60" cy="60" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="9" />
+                      <text x="60" y="65" textAnchor="middle" fill="#71717a" style={{ fontSize: 11, fontWeight: 700 }}>No Data</text>
+                    </svg>
+                  );
+                }
+
+                const viewsRatio = filteredViews / total;
+                const clicksRatio = filteredClicks / total;
+                const conversionPercent = filteredViews ? (filteredClicks / filteredViews) * 100 : 0;
+
+                const orangeOffset = 282.7 - (viewsRatio * 282.7);
+                const blueOffset = 282.7 - (clicksRatio * 282.7);
+                const blueRotation = (viewsRatio * 360) - 90;
+
+                return (
+                  <>
+                    <svg width="120" height="120" viewBox="0 0 120 120" style={{ transform: 'rotate(-90deg)' }}>
+                      <circle cx="60" cy="60" r="45" fill="none" stroke="#f97316" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset={orangeOffset} strokeLinecap="round" />
+                      <circle cx="60" cy="60" r="45" fill="none" stroke="#3b82f6" strokeWidth="9" strokeDasharray="282.7" strokeDashoffset={blueOffset} strokeLinecap="round" style={{ transform: `rotate(${blueRotation}deg)`, transformOrigin: '60px 60px' }} />
+                    </svg>
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>{conversionPercent.toFixed(0)}%</span>
+                      <span style={{ fontSize: 8, color: '#71717a', fontWeight: 700, textTransform: 'uppercase' }}>Conv</span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, width: '100%' }}>
@@ -1144,12 +1188,6 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
               </div>
               <div style={{ fontSize: 12, color: '#a1a1aa', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
                 <span style={{ width: 8, height: 8, background: '#3b82f6', borderRadius: '50%' }} /> Clicks (Blue)
-              </div>
-              <div style={{ fontSize: 12, color: '#a1a1aa', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
-                <span style={{ width: 8, height: 8, background: '#ef4444', borderRadius: '50%' }} /> Conversion (Red)
-              </div>
-              <div style={{ fontSize: 12, color: '#a1a1aa', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
-                <span style={{ width: 8, height: 8, background: '#10b981', borderRadius: '50%' }} /> Other (Green)
               </div>
             </div>
           </div>
@@ -1160,9 +1198,9 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
             <div style={{ background: '#090a0f', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
               {post.image_url ? (
                 isVideo ? (
-                  <video src={post.image_url} style={{ width: '100%', height: 160, objectFit: 'cover' }} controls muted />
+                  <video src={post.image_url} style={{ width: '100%', height: 'auto', maxHeight: 240, objectFit: 'contain', background: '#000' }} controls muted />
                 ) : (
-                  <img src={post.image_url} alt="Post visual" style={{ width: '100%', height: 160, objectFit: 'cover' }} />
+                  <img src={post.image_url} alt="Post visual" style={{ width: '100%', height: 'auto', maxHeight: 240, objectFit: 'contain', background: '#000' }} />
                 )
               ) : (
                 <div style={{ width: '100%', height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.01)' }}><Megaphone size={28} color="#3f3f46" /></div>
@@ -1392,10 +1430,12 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
             <h3 style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 6 }}><TrendingUp size={15} color="#22c55e" /> Daily Performance Breakdown</h3>
             
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 220, overflowY: 'auto', paddingRight: 6 }}>
-              {filteredData.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: '#71717a', fontSize: 13.5 }}>No data found for the selected date range.</div>
-              ) : (
-                filteredData.map((item, idx) => (
+              {(() => {
+                const activeBreakdown = filteredData.filter(item => item.views > 0 || item.clicks > 0);
+                if (activeBreakdown.length === 0) {
+                  return <div style={{ textAlign: 'center', padding: '40px 0', color: '#71717a', fontSize: 13.5 }}>No views/clicks recorded yet for the selected date range.</div>;
+                }
+                return activeBreakdown.map((item, idx) => (
                   <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: 8 }}>
                     <span style={{ fontSize: 13, fontWeight: 600, color: '#f4f4f5' }}>{new Date(item.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                     
@@ -1419,8 +1459,8 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
 
                     <span style={{ fontSize: 11, fontWeight: 700, color: '#71717a' }}>{item.month}</span>
                   </div>
-                ))
-              )}
+                ));
+              })()}
             </div>
           </div>
         </div>
@@ -1439,11 +1479,75 @@ export default function StreetPosts() {
   // Modal states
   const [showModal, setShowModal] = useState(false);
   const [editingPost, setEditingPost] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [importing, setImporting] = useState(false);
   const [selectedAnalyticsPost, setSelectedAnalyticsPost] = useState(null);
 
+  // Main page GMB connection states
+  const [dashLocations, setDashLocations] = useState([]);
+  const [dashFetchingLocs, setDashFetchingLocs] = useState(false);
+  const [dashSelectedLocStr, setDashSelectedLocStr] = useState('');
+  const [dashSavingLoc, setDashSavingLoc] = useState(false);
+
+  const fetchDashLocations = async (clientId) => {
+    if (!clientId) return;
+    setDashFetchingLocs(true);
+    try {
+      const token = localStorage.getItem('leados_token');
+      const res = await axios.get(`${API_URL}/api/mafiya/reviews/google-locations?clientId=${clientId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = res.data;
+      setDashLocations(data);
+      if (data.length > 0) {
+        setDashSelectedLocStr(data[0].accountId + '|' + data[0].locationId);
+      }
+    } catch (e) {
+      console.error('[GMB Locations fetch error]:', e);
+    } finally {
+      setDashFetchingLocs(false);
+    }
+  };
+
+  const handleDashSaveConnection = async () => {
+    if (!dashSelectedLocStr || !activeClient) return;
+    const [accId, locId] = dashSelectedLocStr.split('|');
+    setDashSavingLoc(true);
+    try {
+      const token = localStorage.getItem('leados_token');
+      await axios.put(`${API_URL}/api/mafiya/reviews/google-locations`, {
+        clientId: activeClient.id,
+        google_account_id: accId,
+        google_location_id: locId
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Connected to GMB Location!');
+      
+      // Update active client state properties
+      const updated = { ...activeClient, google_account_id: accId, google_location_id: locId };
+      setActiveClientState(updated);
+      localStorage.setItem('activeGmbClient', JSON.stringify(updated));
+      setClients(prev => prev.map(c => c.id === activeClient.id ? updated : c));
+      
+      // Fetch posts
+      fetchGmbPosts(activeClient.id);
+    } catch(err) {
+      toast.error('Failed to connect location');
+    } finally {
+      setDashSavingLoc(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeClient && !activeClient.google_location_id) {
+      fetchDashLocations(activeClient.id);
+    }
+  }, [activeClient]);
 
   const setActiveClient = (client) => {
     setActiveClientState(client);
+    setCurrentPage(1);
     if (client) {
       localStorage.setItem('activeGmbClient', JSON.stringify(client));
     } else {
@@ -1498,6 +1602,26 @@ export default function StreetPosts() {
       console.error(err);
     } finally {
       setPostsLoading(false);
+    }
+  };
+
+  const handleImportGmbPosts = async () => {
+    if (!activeClient) return;
+    setImporting(true);
+    const importToast = toast.loading('Importing posts from Google...');
+    try {
+      const token = localStorage.getItem('leados_token');
+      const res = await axios.post(`${API_URL}/api/mafiya/reviews/posts/import`, 
+        { clientId: activeClient.id },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast.success(res.data.message || 'Import completed!', { id: importToast });
+      fetchGmbPosts(activeClient.id);
+    } catch (err) {
+      console.error(err);
+      toast.error(err.response?.data?.error || 'Failed to import GMB posts', { id: importToast });
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -1587,9 +1711,10 @@ export default function StreetPosts() {
 
 
   if (selectedAnalyticsPost) {
+    const activePost = posts.find(p => p.id === selectedAnalyticsPost.id) || selectedAnalyticsPost;
     return (
       <PostAnalyticsView 
-        post={selectedAnalyticsPost} 
+        post={activePost} 
         onBack={() => setSelectedAnalyticsPost(null)} 
         activeClient={activeClient}
       />
@@ -1644,6 +1769,30 @@ export default function StreetPosts() {
               ))}
             </select>
             <button
+              onClick={handleImportGmbPosts}
+              disabled={importing}
+              style={{ 
+                background: 'rgba(255,255,255,0.04)', 
+                border: `1px solid ${C.border}`, 
+                borderRadius: 10, 
+                padding: '10px 18px', 
+                color: C.text, 
+                fontSize: 13, 
+                fontWeight: 700, 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 6, 
+                cursor: importing ? 'not-allowed' : 'pointer', 
+                whiteSpace: 'nowrap',
+                opacity: importing ? 0.7 : 1,
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={e => { if (!importing) e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+            >
+              {importing ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />} Sync GMB Posts
+            </button>
+            <button
               onClick={() => {
                 setEditingPost(null);
                 setShowModal(true);
@@ -1669,223 +1818,335 @@ export default function StreetPosts() {
           </div>
         </div>
 
-        {/* Dashboard Overview Cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 28 }}>
-          <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Published Posts</span>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.filter(p => p.status === 'published').length}</span>
-              <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 600 }}>Live</span>
+        {!activeClient?.google_location_id ? (
+          <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 16, padding: '40px 24px', textAlign: 'center', marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{ background: 'rgba(249,115,22,0.1)', padding: 20, borderRadius: '50%', marginBottom: 20, border: '1px solid rgba(249,115,22,0.2)' }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
             </div>
-          </div>
-          
-          <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Total Views</span>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.reduce((sum, p) => sum + (p.views || 0), 0)}</span>
-              <span style={{ fontSize: 11, color: '#a1a1aa' }}>👁️ Impressions</span>
-            </div>
-          </div>
-
-          <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Total Clicks</span>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.reduce((sum, p) => sum + (p.clicks || 0), 0)}</span>
-              <span style={{ fontSize: 11, color: '#a1a1aa' }}>🖱️ Actions</span>
-            </div>
-          </div>
-
-          <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Scheduled</span>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.filter(p => p.status === 'scheduled').length}</span>
-              <span style={{ fontSize: 11, color: '#f97316', fontWeight: 600 }}>Queue</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Existing GMB posts horizontal list */}
-        {postsLoading ? (
-          <div style={{ padding: 60, textAlign: 'center', color: C.muted }}>
-            <Loader2 size={24} className="spin" style={{ color: C.accent, margin: '0 auto 10px auto' }} />
-            Loading post history...
-          </div>
-        ) : posts.length === 0 ? (
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: '60px 20px', textAlign: 'center', color: C.muted }}>
-            <Megaphone size={40} style={{ color: C.border, marginBottom: 14 }} />
-            <h3 style={{ color: '#fff', fontSize: 15, margin: '0 0 4px 0' }}>No GMB Posts Yet</h3>
-            <p style={{ fontSize: 12.5, margin: 0 }}>Click "Upload Poster" above to create your first GMB Post.</p>
+            <h3 style={{ color: '#f4f4f5', fontSize: 20, fontWeight: 700, margin: '0 0 12px 0' }}>Connect Google Business Location</h3>
+            <p style={{ color: '#a1a1aa', fontSize: 14, maxWidth: 440, marginBottom: 28, lineHeight: 1.6 }}>
+              To publish posts directly to Google, please connect the specific business location for <strong style={{ color: '#fff' }}>{clientName}</strong>.
+            </p>
+            
+            {dashFetchingLocs ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f97316' }}>
+                <Loader2 size={18} className="spin" />
+                <span>Fetching verified locations...</span>
+              </div>
+            ) : dashLocations.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 380 }}>
+                <select 
+                  value={dashSelectedLocStr}
+                  onChange={e => setDashSelectedLocStr(e.target.value)}
+                  style={{ background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', color: '#f4f4f5', padding: '14px 18px', borderRadius: 8, fontSize: 14, outline: 'none', cursor: 'pointer' }}
+                >
+                  {dashLocations.map((loc, i) => (
+                    <option key={i} value={loc.accountId + '|' + loc.locationId}>{loc.title}</option>
+                  ))}
+                </select>
+                <button 
+                  onClick={handleDashSaveConnection}
+                  disabled={dashSavingLoc}
+                  style={{ background: 'linear-gradient(135deg, #f97316, #ea580c)', color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontWeight: 700, cursor: dashSavingLoc ? 'not-allowed' : 'pointer', boxShadow: '0 4px 14px rgba(249,115,22,0.3)', transition: 'all 0.2s' }}
+                >
+                  {dashSavingLoc ? 'Connecting...' : 'Connect Location'}
+                </button>
+              </div>
+            ) : (
+              <div style={{ background: 'rgba(239,68,68,0.06)', padding: 20, borderRadius: 12, border: '1px solid rgba(239,68,68,0.2)', width: '100%', maxWidth: 460 }}>
+                <p style={{ color: '#ef4444', margin: 0, fontSize: 13.5, lineHeight: 1.6 }}>
+                  We couldn't find any locations in your Google Account. Please ensure you have connected an account that manages Google Business Profiles in the Local SEO Bridge.
+                </p>
+              </div>
+            )}
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {posts.map((post) => {
-              const isVideo = post.image_url && (
-                post.image_url.endsWith('.mp4') || 
-                post.image_url.endsWith('.webm') || 
-                post.image_url.endsWith('.mov') || 
-                post.image_url.endsWith('.avi')
-              );
-              
-              const hasCta = post.poster_subtitle && post.poster_subtitle.includes('|');
-              const ctaText = hasCta ? post.poster_subtitle.split('|')[0] : '';
-              
-              return (
-                <div 
-                  key={post.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    background: '#18181b',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                    borderRadius: 12,
-                    padding: 16,
-                    gap: 20,
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    position: 'relative'
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; e.currentTarget.style.background = '#1e1e21'; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)'; e.currentTarget.style.background = '#18181b'; }}
-                  onClick={() => {
-                    setEditingPost(post);
-                    setShowModal(true);
-                  }}
-                >
-                  
-                  {/* Left Side: Mock Google Post card (Media preview + details) */}
-                  <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flex: 1, maxWidth: '65%', minWidth: 280 }}>
-                    {/* Media Container */}
-                    <div style={{ 
-                      width: 120, 
-                      height: 100, 
-                      borderRadius: 8, 
-                      overflow: 'hidden', 
-                      position: 'relative',
-                      background: 'rgba(255,255,255,0.02)',
-                      flexShrink: 0,
-                      border: '1px solid rgba(255,255,255,0.06)'
-                    }}>
-                      {post.image_url ? (
-                        isVideo ? (
-                          <>
-                            <video src={post.image_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted />
-                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
-                              <Play size={16} color="#fff" fill="#fff" />
-                            </div>
-                          </>
-                        ) : (
-                          <img src={post.image_url} alt="Post Visual" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        )
-                      ) : (
-                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.04)' }}>
-                          <Megaphone size={20} color="#71717a" />
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Text / Details Container */}
-                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', background: 'rgba(249,115,22,0.1)', color: '#f97316', padding: '2px 6px', borderRadius: 4 }}>
-                          {post.post_type}
-                        </span>
-                        {(post.post_title || (post.poster_title && post.poster_title !== 'UPDATE' && post.poster_title !== 'OFFER' && post.poster_title !== 'EVENT')) && (
-                          <span style={{ fontSize: 12, fontWeight: 700, color: '#f4f4f5' }}>{post.post_title || post.poster_title}</span>
-                        )}
-                      </div>
-                      
-                      <p style={{ 
-                        fontSize: 13, 
-                        color: '#a1a1aa', 
-                        margin: '0 0 6px 0', 
-                        lineHeight: 1.5,
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis'
-                      }}>
-                        {post.caption}
-                      </p>
-                      
-                      {hasCta && (
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#f97316', fontSize: 12.5, fontWeight: 700 }}>
-                          <Link size={12} /> {ctaText}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Middle Side: Relative time / Countdown + GMB Profile live update status */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start', width: '25%', minWidth: 160 }}>
-                    {post.status === 'published' ? (
-                      <>
-                        <span style={{ fontSize: 13.5, color: '#f4f4f5', fontWeight: 500 }}>
-                          {formatTimeAgo(post.created_at)}
-                        </span>
-                        <div style={{ display: 'flex', gap: 10, fontSize: 11.5, color: '#a1a1aa', margin: '2px 0' }}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>👁️ {post.views || 0} views</span>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>🖱️ {post.clicks || 0} clicks</span>
-                        </div>
-                        <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                          <span style={{ width: 6, height: 6, background: '#22c55e', borderRadius: '50%' }} /> Updated in GMB Profile
-                        </span>
-                      </>
-                    ) : post.status === 'scheduled' ? (
-                      <>
-                        <PostCountdown scheduledAt={post.scheduled_at} />
-                        <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                          <span style={{ width: 6, height: 6, background: '#ef4444', borderRadius: '50%' }} /> Not updated GMB profile
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span style={{ fontSize: 13.5, color: '#a1a1aa', fontWeight: 500 }}>Draft</span>
-                        <span style={{ fontSize: 11, color: '#71717a', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                          <span style={{ width: 6, height: 6, background: '#71717a', borderRadius: '50%' }} /> Not updated GMB profile
-                        </span>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Right Side: Options / Action Menu & Delete */}
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-                    {post.status === 'published' && (
-                      <button 
-                        onClick={() => setSelectedAnalyticsPost(post)}
-                        style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.15)', borderRadius: 8, padding: 8, color: '#f97316', display: 'flex', cursor: 'pointer', transition: 'all 0.2s', gap: 5, alignItems: 'center', fontSize: 11.5, fontWeight: 700 }}
-                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.15)'; e.currentTarget.style.color = '#fff'; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.08)'; e.currentTarget.style.color = '#f97316'; }}
-                      >
-                        <BarChart2 size={13} /> Analysis
-                      </button>
-                    )}
-                    <button 
-                      onClick={() => {
-                        setEditingPost(post);
-                        setShowModal(true);
-                      }}
-                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 8, color: '#a1a1aa', display: 'flex', cursor: 'pointer', transition: 'all 0.2s' }}
-                      onMouseEnter={e => e.currentTarget.style.color = '#fff'}
-                      onMouseLeave={e => e.currentTarget.style.color = '#a1a1aa'}
-                    >
-                      <Plus size={14} style={{ transform: 'rotate(45deg)' }} />
-                    </button>
-                    <button 
-                      onClick={() => handleDeletePost(post.id)}
-                      style={{ background: 'rgba(239, 68, 68, 0.08)', border: 'none', borderRadius: 8, padding: 8, color: '#ef4444', display: 'flex', cursor: 'pointer', transition: 'all 0.2s' }}
-                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'}
-                      onMouseLeave={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)'}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-
+          <>
+            {/* Dashboard Overview Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 28 }}>
+              <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Published Posts</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.filter(p => p.status === 'published').length}</span>
+                  <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 600 }}>Live</span>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+              
+              <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Total Views</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.reduce((sum, p) => sum + (p.views || 0), 0)}</span>
+                  <span style={{ fontSize: 11, color: '#a1a1aa' }}>👁️ Impressions</span>
+                </div>
+              </div>
+
+              <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Total Clicks</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.reduce((sum, p) => sum + (p.clicks || 0), 0)}</span>
+                  <span style={{ fontSize: 11, color: '#a1a1aa' }}>🖱️ Actions</span>
+                </div>
+              </div>
+
+              <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Scheduled</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 26, fontWeight: 800, color: '#fff' }}>{posts.filter(p => p.status === 'scheduled').length}</span>
+                  <span style={{ fontSize: 11, color: '#f97316', fontWeight: 600 }}>Queue</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Existing GMB posts horizontal list */}
+            {postsLoading ? (
+              <div style={{ padding: 60, textAlign: 'center', color: C.muted }}>
+                <Loader2 size={24} className="spin" style={{ color: C.accent, margin: '0 auto 10px auto' }} />
+                Loading post history...
+              </div>
+            ) : posts.length === 0 ? (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: '60px 20px', textAlign: 'center', color: C.muted }}>
+                <Megaphone size={40} style={{ color: C.border, marginBottom: 14 }} />
+                <h3 style={{ color: '#fff', fontSize: 15, margin: '0 0 4px 0' }}>No GMB Posts Yet</h3>
+                <p style={{ fontSize: 12.5, margin: 0 }}>Click "Upload Poster" above to create your first GMB Post.</p>
+              </div>
+            ) : (
+              <div style={{ marginTop: 30 }}>
+                <h2 style={{ fontSize: 18, fontWeight: 800, color: '#fff', margin: '0 0 4px 0', fontFamily: "'Syne', sans-serif" }}>All posts</h2>
+                <p style={{ color: C.muted, fontSize: 12.5, margin: '0 0 20px 0' }}>View or make changes</p>
+
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {(() => {
+                    const postsPerPage = 5;
+                    const indexOfLastPost = currentPage * postsPerPage;
+                    const indexOfFirstPost = indexOfLastPost - postsPerPage;
+                    const currentPosts = posts.slice(indexOfFirstPost, indexOfLastPost);
+                    const totalPages = Math.ceil(posts.length / postsPerPage);
+
+                    return (
+                      <>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          {currentPosts.map((post, idx) => {
+                            const isVideo = post.image_url && (
+                              post.image_url.endsWith('.mp4') || 
+                              post.image_url.endsWith('.webm') || 
+                              post.image_url.endsWith('.mov') || 
+                              post.image_url.endsWith('.avi')
+                            );
+                            
+                            const hasCta = post.poster_subtitle && post.poster_subtitle.includes('|');
+                            const ctaText = hasCta ? post.poster_subtitle.split('|')[0] : '';
+                            const posterNumber = post.id;
+                            
+                            return (
+                              <div 
+                                key={post.id}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '16px 0',
+                                  borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                                  gap: 20,
+                                  position: 'relative'
+                                }}
+                              >
+                                {/* Left Side: Mock Google Post card (Media preview + details inside card) */}
+                                <div 
+                                  onClick={() => {
+                                      setEditingPost(post);
+                                      setShowModal(true);
+                                  }}
+                                  style={{ 
+                                    display: 'flex', 
+                                    gap: 16, 
+                                    alignItems: 'center', 
+                                    background: '#121214',
+                                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                                    borderRadius: 10,
+                                    padding: 12,
+                                    width: '60%',
+                                    minWidth: 320,
+                                    cursor: 'pointer',
+                                    transition: 'border-color 0.2s'
+                                  }}
+                                  onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(249,115,22,0.3)'}
+                                  onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
+                                >
+                                  {/* Media Container */}
+                                  <div style={{ 
+                                    width: 90, 
+                                    height: 75, 
+                                    borderRadius: 6, 
+                                    overflow: 'hidden', 
+                                    position: 'relative',
+                                    background: 'rgba(255,255,255,0.02)',
+                                    flexShrink: 0,
+                                    border: '1px solid rgba(255,255,255,0.06)'
+                                  }}>
+                                    {post.image_url ? (
+                                      isVideo ? (
+                                        <>
+                                          <video src={post.image_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted />
+                                          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
+                                            <Play size={14} color="#fff" fill="#fff" />
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <img src={post.image_url} alt="Post Visual" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                      )
+                                    ) : (
+                                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.04)' }}>
+                                        <Megaphone size={18} color="#71717a" />
+                                      </div>
+                                    )}
+                                  </div>
+                                  
+                                  {/* Text / Details Container */}
+                                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                                      <span style={{ fontSize: 10, fontWeight: 800, color: '#f97316', background: 'rgba(249,115,22,0.1)', padding: '2.5px 7px', borderRadius: 4 }}>
+                                        Poster #{posterNumber}
+                                      </span>
+                                      {post.post_type && (
+                                        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', background: 'rgba(255,255,255,0.05)', color: '#a1a1aa', padding: '2.5px 7px', borderRadius: 4 }}>
+                                          {post.post_type}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p style={{ 
+                                      fontSize: 13, 
+                                      fontWeight: 600,
+                                      color: '#e4e4e7', 
+                                      margin: '0 0 6px 0', 
+                                      lineHeight: 1.4,
+                                      display: '-webkit-box',
+                                      WebkitLineClamp: 2,
+                                      WebkitBoxOrient: 'vertical',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis'
+                                    }}>
+                                      {post.caption}
+                                    </p>
+                                    
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#a1a1aa', fontSize: 11.5 }}>
+                                      <Link size={11} color="#a1a1aa" /> <span>{ctaText || 'Call now'}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Middle Side: Relative time info on the clean row background */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', flex: 1 }}>
+                                  <span style={{ fontSize: 13.5, color: '#f4f4f5', fontWeight: 500 }}>
+                                    {post.status === 'published' ? formatTimeAgo(post.created_at) : 'Draft'}
+                                  </span>
+                                  {post.status === 'published' && (
+                                    <div style={{ display: 'flex', gap: 12, fontSize: 11, color: '#71717a', alignItems: 'center' }}>
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Eye size={12} /> {post.views || 0} views</span>
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><MousePointer size={12} /> {post.clicks || 0} clicks</span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Right Side: Options / Action Menu */}
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                  {post.status === 'published' && (
+                                    <button 
+                                      onClick={() => setSelectedAnalyticsPost(post)}
+                                      style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.15)', borderRadius: 8, padding: '7px 12px', color: '#f97316', display: 'flex', cursor: 'pointer', transition: 'all 0.2s', gap: 5, alignItems: 'center', fontSize: 11.5, fontWeight: 700 }}
+                                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.15)'; e.currentTarget.style.color = '#fff'; }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.08)'; e.currentTarget.style.color = '#f97316'; }}
+                                    >
+                                      <BarChart2 size={13} /> Analysis
+                                    </button>
+                                  )}
+                                  <button 
+                                    onClick={() => {
+                                      setEditingPost(post);
+                                      setShowModal(true);
+                                    }}
+                                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 8, color: '#a1a1aa', display: 'flex', cursor: 'pointer', transition: 'all 0.2s' }}
+                                    onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+                                    onMouseLeave={e => e.currentTarget.style.color = '#a1a1aa'}
+                                  >
+                                    <Plus size={14} style={{ transform: 'rotate(45deg)' }} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Pagination Controls */}
+                        {totalPages > 1 && (
+                          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, marginTop: 24, paddingBottom: 20 }}>
+                            <button
+                              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                              disabled={currentPage === 1}
+                              style={{
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1px solid rgba(255,255,255,0.08)',
+                                borderRadius: 8,
+                                padding: '8px 14px',
+                                color: currentPage === 1 ? '#4b5563' : '#fff',
+                                cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                                fontSize: 12.5,
+                                fontWeight: 600,
+                                transition: 'all 0.2s'
+                              }}
+                            >
+                              Previous
+                            </button>
+                            
+                            {Array.from({ length: totalPages }).map((_, idx) => (
+                              <button
+                                key={idx}
+                                onClick={() => setCurrentPage(idx + 1)}
+                                style={{
+                                  background: currentPage === idx + 1 ? '#f97316' : 'rgba(255,255,255,0.03)',
+                                  border: currentPage === idx + 1 ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                                  borderRadius: 8,
+                                  width: 32,
+                                  height: 32,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  color: '#fff',
+                                  cursor: 'pointer',
+                                  fontSize: 12.5,
+                                  fontWeight: 700,
+                                  transition: 'all 0.2s'
+                                }}
+                              >
+                                {idx + 1}
+                              </button>
+                            ))}
+
+                            <button
+                              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                              disabled={currentPage === totalPages}
+                              style={{
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1px solid rgba(255,255,255,0.08)',
+                                borderRadius: 8,
+                                padding: '8px 14px',
+                                color: currentPage === totalPages ? '#4b5563' : '#fff',
+                                cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                                fontSize: 12.5,
+                                fontWeight: 600,
+                                transition: 'all 0.2s'
+                              }}
+                            >
+                              Next
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {/* ═══ GMB Upload Post Modal ═══ */}

@@ -955,36 +955,41 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
   const generateMockDailyData = () => {
     const startRange = new Date('2026-01-01');
     const data = [];
-    const totalViews = post.views || 0;
     const totalClicks = post.clicks || 0;
+    const totalViews = Math.max(post.views || 0, totalClicks); // Click implies at least a view
 
-    // Simulate metrics day-by-day for the entire year of 2026 to allow full filtering
+    // Simulate metrics day-by-day for the entire year of 2026
     for (let i = 0; i < 365; i++) {
       const d = new Date(startRange.getTime() + i * 24 * 3600000);
-      const seedVal = (post.id * 7 + i * 13) % 100;
-      
-      // Let's create some peaks and valleys exactly like the spline chart screenshot
-      let multiplier = 0.05;
-      if (i > 150 && i < 170) { // June peak
-        multiplier = seedVal > 70 ? 2.5 : 0.8;
-      } else if (i > 190 && i < 210) { // July peak
-        multiplier = seedVal > 60 ? 3.0 : 1.2;
-      } else if (seedVal % 15 === 0) { // Small peaks elsewhere
-        multiplier = 1.1;
-      } else {
-        multiplier = 0.05; // valleys
-      }
-
-      const dayViews = Math.round((totalViews / 30) * multiplier);
-      const dayClicks = Math.round((totalClicks / 30) * multiplier * 0.7);
-
       data.push({
         date: d.toISOString().split('T')[0],
         month: d.toLocaleString('en-US', { month: 'long', year: 'numeric' }),
-        views: dayViews,
-        clicks: dayClicks
+        views: 0,
+        clicks: 0
       });
     }
+
+    // Distribute clicks and views to matching indices so they sum up correctly without rounding to 0
+    let viewsRemaining = totalViews;
+    let clicksRemaining = totalClicks;
+
+    if (clicksRemaining > 0) {
+      for (let i = 0; i < clicksRemaining; i++) {
+        // Distribute to days around June/July peaks (e.g. day 150 to 210)
+        const dayIdx = (165 + (i * 7)) % 365;
+        data[dayIdx].clicks += 1;
+        data[dayIdx].views += 1;
+        if (viewsRemaining > 0) viewsRemaining--;
+      }
+    }
+
+    if (viewsRemaining > 0) {
+      for (let i = 0; i < viewsRemaining; i++) {
+        const dayIdx = (180 + (i * 3)) % 365;
+        data[dayIdx].views += 1;
+      }
+    }
+
     return data;
   };
 

@@ -90,6 +90,34 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
   const [locations, setLocations] = useState([]);
   const [fetchingLocations, setFetchingLocations] = useState(false);
   const [selectedLocationStr, setSelectedLocationStr] = useState('');
+  const [generatingAi, setGeneratingAi] = useState(false);
+
+  const handleGenerateAiSuggestion = async () => {
+    if (!selectedImage) {
+      toast.error('Please upload an image first');
+      return;
+    }
+    setGeneratingAi(true);
+    const aiToast = toast.loading('AI analyzing poster to generate title & description...');
+    try {
+      const token = localStorage.getItem('leados_token');
+      const res = await axios.post(`${API_URL}/api/mafiya/reviews/posts/generate-from-image`, {
+        clientId: activeClient.id,
+        imageBase64: selectedImage
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (res.data.title) setPostTitle(res.data.title);
+      if (res.data.description) setDescription(res.data.description);
+      toast.success('AI suggestions loaded successfully!', { id: aiToast });
+    } catch (err) {
+      console.error('[AI Generation error]:', err);
+      toast.error('AI failed to parse image details.', { id: aiToast });
+    } finally {
+      setGeneratingAi(false);
+    }
+  };
 
   useEffect(() => {
     if (showModal && activeClient && !activeClient.google_location_id) {
@@ -236,28 +264,8 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Data = reader.result;
-        setSelectedImage(base64Data);
-        
-        // Call AI analysis
-        const aiToast = toast.loading('AI analyzing poster to generate description...');
-        try {
-          const token = localStorage.getItem('leados_token');
-          const res = await axios.post(`${API_URL}/api/mafiya/reviews/posts/generate-from-image`, {
-            clientId: activeClient.id,
-            imageBase64: base64Data
-          }, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          
-          if (res.data.title) setPostTitle(res.data.title);
-          if (res.data.description) setDescription(res.data.description);
-          toast.success('AI suggestions loaded successfully!', { id: aiToast });
-        } catch (err) {
-          console.error('[AI Generation error]:', err);
-          toast.error('AI failed to parse image details.', { id: aiToast });
-        }
+      reader.onloadend = () => {
+        setSelectedImage(reader.result);
       };
       reader.readAsDataURL(file);
     }
@@ -872,6 +880,46 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           )}
                           <input type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={handleImageUpload} />
                         </label>
+                        
+                        {/* AI Suggestion Button */}
+                        {selectedImage && (
+                          <button
+                            type="button"
+                            onClick={handleGenerateAiSuggestion}
+                            disabled={generatingAi}
+                            style={{
+                              marginTop: 16,
+                              width: '100%',
+                              background: 'rgba(249,115,22,0.08)',
+                              border: '1px solid rgba(249,115,22,0.2)',
+                              borderRadius: 8,
+                              padding: '12px',
+                              color: '#f97316',
+                              fontSize: 13,
+                              fontWeight: 700,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 8,
+                              cursor: generatingAi ? 'not-allowed' : 'pointer',
+                              transition: 'all 0.2s'
+                            }}
+                            onMouseEnter={e => { if(!generatingAi) { e.currentTarget.style.background = 'rgba(249,115,22,0.15)'; e.currentTarget.style.color = '#fff'; } }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.08)'; e.currentTarget.style.color = '#f97316'; }}
+                          >
+                            {generatingAi ? (
+                              <>
+                                <Loader2 size={15} className="spin" />
+                                <span>AI analyzing poster...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles size={15} />
+                                <span>Suggest with AI</span>
+                              </>
+                            )}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

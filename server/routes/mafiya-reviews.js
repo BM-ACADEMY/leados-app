@@ -1026,31 +1026,96 @@ router.post('/posts', async (req, res) => {
   }
 });
 
-// Sync GMB Post metrics/insights from Google My Business API
+// Sync GMB Post metrics/insights from Google Analytics (GA4)
 router.get('/posts/sync-metrics', async (req, res) => {
   const clientId = req.query.clientId;
   if (!clientId) return res.status(400).json({ error: 'clientId required' });
 
   try {
     const postsRes = await pool.query(
-      "SELECT id, gmb_post_name FROM mafiya_gmb_posts WHERE client_id = $1 AND status = 'published' AND gmb_post_name IS NOT NULL",
+      "SELECT id FROM mafiya_gmb_posts WHERE client_id = $1 AND status = 'published'",
       [clientId]
     );
 
     if (postsRes.rowCount === 0) {
-      return res.json({ message: 'No published GMB posts with GMB post name to sync.' });
+      return res.json({ message: 'No published GMB posts to sync.' });
     }
 
-    // Google Business Profile API has deprecated and removed the localPosts:reportInsights endpoint.
-    // There is no replacement for post-level insights via API. 
-    // We return a success message so the client doesn't crash, but we can't update metrics.
-    
-    res.json({ 
-      success: true, 
-      message: 'Sync complete. Note: Google has deprecated post-level metric insights, so views and clicks may not update.' 
+    const clientRes = await pool.query('SELECT ga4_property_id FROM mafiya_gmb_clients WHERE id = $1', [clientId]);
+    const client = clientRes.rows[0];
+
+    if (!client || !client.ga4_property_id) {
+      return res.json({ 
+        success: true, 
+        message: 'Sync skipped. No GA4 Property ID configured for this client. Please add it to track post clicks.' 
+      });
+    }
+
+    const propertyId = client.ga4_property_id;
+    const tokenString = await getClientGoogleToken(clientId);
+
+    if (!tokenString) {
+      return res.status(400).json({ error: 'Client Google Token not available.' });
+    }
+
+    // Call GA4 Data API using REST
+    const requestBody = {
+      dateRanges: [{ startDate: '2020-01-01', endDate: 'today' }],
+      dimensions: [{ name: 'sessionCampaignName' }],
+      metrics: [{ name: 'sessions' }],
+      dimensionFilter: {
+        filter: {
+          fieldName: 'sessionMedium',
+          stringFilter: {
+            value: 'gmb_post',
+            matchType: 'EXACT'
+          }
+        }
+      }
+    };
+
+    let gaRes;
+    try {
+      gaRes = await axios.post(
+        `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
+        requestBody,
+        {
+          headers: {
+            Authorization: `Bearer ${tokenString}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+    } catch (gaErr) {
+      console.error('[GA4 API] Failed to fetch report:', gaErr.response ? JSON.stringify(gaErr.response.data) : gaErr.message);
+      return res.status(500).json({ error: 'Failed to fetch insights from Google Analytics. Ensure the Analytics API is enabled and property ID is correct.' });
+    }
+
+    const rows = gaRes.data.rows || [];
+    const campaignClicks = {};
+    rows.forEach(row => {
+      if (row.dimensionValues && row.metricValues) {
+        const campaign = row.dimensionValues[0].value;
+        const clicks = parseInt(row.metricValues[0].value || '0', 10);
+        campaignClicks[campaign] = clicks;
+      }
     });
+
+    let updatedCount = 0;
+    for (const post of postsRes.rows) {
+      const campaignName = `post_${post.id}`;
+      if (campaignClicks[campaignName] !== undefined) {
+        await pool.query(
+          "UPDATE mafiya_gmb_posts SET clicks = $1 WHERE id = $2",
+          [campaignClicks[campaignName], post.id]
+        );
+        updatedCount++;
+      }
+    }
+
+    res.json({ success: true, message: `Sync complete. GA4 post clicks updated for ${updatedCount} posts.` });
   } catch (err) {
-    console.error('[GMB API] Failed to sync insights:', err.response ? JSON.stringify(err.response.data) : err.message);
+    console.error('[GA4 API] Sync error:', err);
     res.status(500).json({ error: 'Failed to sync insights from Google.' });
   }
 });

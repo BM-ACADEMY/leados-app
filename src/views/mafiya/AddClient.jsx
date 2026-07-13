@@ -29,6 +29,7 @@ const INITIAL_FORM = {
   gmb_url: '',
   gmb_email: '',
   logo_url: '',
+  ga4_property_id: '',
 };
 
 export default function AddClient() {
@@ -60,6 +61,7 @@ export default function AddClient() {
       gmb_url: client.gmb_url || '',
       gmb_email: client.gmb_email || '',
       logo_url: client.logo_url || '',
+      ga4_property_id: client.ga4_property_id || '',
     });
     setShowOtherCategory(!categoryExists && client.business_category !== '');
     setErrors({});
@@ -654,6 +656,13 @@ export default function AddClient() {
                     <div style={{ ...inputWrapStyle, border: `1px solid ${C.border}` }}>
                       <Globe size={15} color={C.muted} />
                       <input name="logo_url" value={formData.logo_url} onChange={handleInputChange} placeholder="E.g. https://domain.com/logo.png" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>GA4 Property ID (For Post Analytics)</label>
+                    <div style={{ ...inputWrapStyle, border: `1px solid ${C.border}` }}>
+                      <Globe size={15} color={C.muted} />
+                      <input name="ga4_property_id" value={formData.ga4_property_id} onChange={handleInputChange} placeholder="E.g. 123456789" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
                     </div>
                   </div>
                 </div>

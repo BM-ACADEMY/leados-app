@@ -310,6 +310,8 @@ async function getContent(req, res) {
         query += ` AND status IN ('published', 'PUBLISHED', 'partial', 'PARTIAL')`;
       } else if (status.toLowerCase() === "failed") {
         query += ` AND status IN ('failed', 'FAILED', 'partial', 'PARTIAL')`;
+      } else if (status.toLowerCase() === "pending_approval") {
+        query += ` AND status IN ('pending_approval', 'PUBLISHING', 'publishing', 'PROCESSING', 'processing', 'draft')`;
       } else {
         params.push(status);
         query += ` AND status = $${params.length}`;
@@ -3089,12 +3091,18 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
 
   const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
   
+  let cleanTitle = (title || 'New Social Video').trim();
+  if (cleanTitle.length > 100) {
+    cleanTitle = cleanTitle.substring(0, 97) + '...';
+    console.log(`[YouTube Publish] Truncated title to 100 characters to meet YouTube limits: "${cleanTitle}"`);
+  }
+
   try {
     const response = await youtube.videos.insert({
       part: 'snippet,status',
       requestBody: {
         snippet: {
-          title: title || 'New Social Video',
+          title: cleanTitle,
           description: finalDescription,
           categoryId: '22', // People & Blogs
         },
@@ -3154,5 +3162,7 @@ module.exports = {
   handleYoutubeAuth,
   handleYoutubeCallback,
   getFreshYoutubeClient,
-  publishVideoToYouTube
+  publishVideoToYouTube,
+  runBackgroundPublish,
+  updateOverallPostStatus
 };

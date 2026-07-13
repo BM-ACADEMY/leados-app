@@ -488,7 +488,7 @@ class LeadOSAPI {
 
   async getContentQueue(filters = {}) {
     const query = new URLSearchParams();
-    if (filters.status && filters.status !== 'all') query.append('status', filters.status);
+    if (filters.status) query.append('status', filters.status);
     if (filters.search) query.append('search', filters.search);
     if (filters.startDate) query.append('startDate', filters.startDate);
     if (filters.endDate) query.append('endDate', filters.endDate);

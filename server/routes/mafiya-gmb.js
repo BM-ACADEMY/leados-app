@@ -33,10 +33,15 @@ router.get('/auth/:clientId', async (req, res) => {
 
     const url = oauth2Client.generateAuthUrl({
       access_type: 'offline',
-      scope: ['https://www.googleapis.com/auth/business.manage'],
+      scope: [
+        'https://www.googleapis.com/auth/business.manage',
+        'https://www.googleapis.com/auth/analytics.readonly'
+      ],
       prompt: 'consent select_account',
       state: clientId.toString(), // Pass clientId through OAuth state
     });
+
+    
 
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');

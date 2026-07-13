@@ -1092,6 +1092,9 @@ router.get('/posts/sync-metrics', async (req, res) => {
     }
 
     const rows = gaRes.data.rows || [];
+    console.log('[GA4 API Sync Debug] GA4 Report Rows count:', rows.length);
+    console.log('[GA4 API Sync Debug] GA4 Report Rows:', JSON.stringify(rows, null, 2));
+
     const campaignClicks = {};
     rows.forEach(row => {
       if (row.dimensionValues && row.metricValues) {
@@ -1100,6 +1103,7 @@ router.get('/posts/sync-metrics', async (req, res) => {
         campaignClicks[campaign] = clicks;
       }
     });
+    console.log('[GA4 API Sync Debug] Campaign clicks mapping:', JSON.stringify(campaignClicks));
 
     let updatedCount = 0;
     for (const post of postsRes.rows) {
@@ -1115,7 +1119,7 @@ router.get('/posts/sync-metrics', async (req, res) => {
 
     res.json({ success: true, message: `Sync complete. GA4 post clicks updated for ${updatedCount} posts.` });
   } catch (err) {
-    console.error('[GA4 API] Sync error:', err);
+    console.error('[GA4 API] Sync error:', err.message || err);
     res.status(500).json({ error: 'Failed to sync insights from Google.' });
   }
 });

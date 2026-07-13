@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db/connection');
 const axios = require('axios');
 const { google } = require('googleapis');
+const { GoogleGenAI } = require('@google/genai');
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -1026,6 +1027,102 @@ router.post('/posts', async (req, res) => {
   }
 });
 
+// Import GMB Posts from Google Business Profile API
+router.post('/posts/import', async (req, res) => {
+  const { clientId } = req.body;
+  if (!clientId) return res.status(400).json({ error: 'clientId is required' });
+
+  try {
+    // 1. Get GMB credentials for client
+    const clientRes = await pool.query(
+      'SELECT google_account_id, google_location_id, gmb_verified FROM mafiya_gmb_clients WHERE id = $1',
+      [clientId]
+    );
+    const client = clientRes.rows[0];
+    if (!client || !client.google_account_id || !client.google_location_id) {
+      return res.status(400).json({ error: 'GMB not connected for this client' });
+    }
+
+    // 2. Refresh / Get active OAuth token
+    const tokenString = await getClientGoogleToken(clientId);
+    if (!tokenString) {
+      return res.status(400).json({ error: 'Client Google Token not available.' });
+    }
+
+    // 3. Call GMB API to get local posts
+    let gmbPostsRes;
+    try {
+      gmbPostsRes = await axios.get(
+        `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
+        {
+          headers: {
+            Authorization: `Bearer ${tokenString}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+    } catch (gmbErr) {
+      if (gmbErr.response && gmbErr.response.status === 401) {
+        // Retry once with refreshed token
+        const refreshedToken = await refreshClientToken(clientId);
+        if (refreshedToken) {
+          gmbPostsRes = await axios.get(
+            `https://mybusiness.googleapis.com/v4/accounts/${client.google_account_id}/locations/${client.google_location_id}/localPosts`,
+            {
+              headers: {
+                Authorization: `Bearer ${refreshedToken}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+        } else {
+          throw gmbErr;
+        }
+      } else {
+        throw gmbErr;
+      }
+    }
+
+    const localPosts = gmbPostsRes.data.localPosts || [];
+    let importedCount = 0;
+
+    for (const item of localPosts) {
+      // Check if post already exists in database
+      const existingRes = await pool.query(
+        'SELECT id FROM mafiya_gmb_posts WHERE client_id = $1 AND gmb_post_name = $2',
+        [clientId, item.name]
+      );
+
+      if (existingRes.rowCount === 0) {
+        // Extract media URL
+        console.log(`[GMB Import Debug] Post name: ${item.name}, media:`, JSON.stringify(item.media, null, 2));
+        let imageUrl = null;
+        if (item.media && item.media.length > 0) {
+          imageUrl = item.media[0].googleUrl || item.media[0].sourceUrl || null;
+        }
+
+        // Insert new post record
+        const postType = item.topicType ? item.topicType.toLowerCase() : 'standard';
+        const caption = item.summary || '';
+        const createdAt = item.createTime ? new Date(item.createTime) : new Date();
+
+        await pool.query(
+          `INSERT INTO mafiya_gmb_posts 
+            (client_id, post_type, caption, status, image_url, gmb_post_name, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [clientId, postType, caption, 'published', imageUrl, item.name, createdAt]
+        );
+        importedCount++;
+      }
+    }
+
+    res.json({ success: true, message: `Successfully imported ${importedCount} posts from Google Business Profile.` });
+  } catch (err) {
+    console.error('[GMB Import API] Error:', err.response ? JSON.stringify(err.response.data) : err.message);
+    res.status(500).json({ error: 'Failed to import posts from Google.' });
+  }
+});
+
 // Sync GMB Post metrics/insights from Google Analytics (GA4)
 router.get('/posts/sync-metrics', async (req, res) => {
   const clientId = req.query.clientId;
@@ -1328,6 +1425,162 @@ router.delete('/posts/:id', async (req, res) => {
   } catch (err) {
     console.error('[Mafiya Reviews] DELETE /posts error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+const parseAIJson = (text) => {
+  let cleaned = text.trim();
+  if (cleaned.startsWith('```json')) {
+    cleaned = cleaned.substring(7);
+  } else if (cleaned.startsWith('```')) {
+    cleaned = cleaned.substring(3);
+  }
+  if (cleaned.endsWith('```')) {
+    cleaned = cleaned.substring(0, cleaned.length - 3);
+  }
+  return JSON.parse(cleaned.trim());
+};
+
+// POST /api/mafiya/reviews/posts/generate-from-image
+router.post('/posts/generate-from-image', async (req, res) => {
+  const { clientId, imageBase64 } = req.body;
+  if (!clientId || !imageBase64) {
+    return res.status(400).json({ error: 'clientId and imageBase64 are required' });
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+  }
+
+  try {
+    const matches = imageBase64.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.*)$/);
+    if (!matches || matches.length !== 3) {
+      return res.status(400).json({ error: 'Invalid image format' });
+    }
+    const mimeType = matches[1];
+    const base64Data = matches[2];
+
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const prompt = `Analyze this uploaded image (which is a digital poster/creative/flyer) and write an engaging post title and description.
+    
+    Requirements:
+    1. Title: Under 60 characters, catchy, matches GMB post format.
+    2. Description: Detailed, under 1000 characters. Extract key information from the image (like program name, dates, discounts, fees, contact phone, website) and present them in clear bullet points, followed by a professional call-to-action and relevant hashtags.
+    3. Formatting: Do NOT use any markdown bold formatting (like double asterisks **). GMB does not support markdown, so print plain text only. Use capital letters for emphasis if needed.
+    4. Emojis: Use plenty of relevant, engaging emojis in both the title and the description to make the copy visually appealing and friendly.
+    
+    Return ONLY a valid JSON object. Do NOT wrap the JSON in markdown blocks like \`\`\`json. The JSON object must have exactly these keys:
+    {
+      "title": "the generated title",
+      "description": "the generated caption/description"
+    }`;
+
+    let response;
+    try {
+      response = await genAI.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [
+          {
+            inlineData: {
+              mimeType: mimeType,
+              data: base64Data
+            }
+          },
+          prompt
+        ]
+      });
+    } catch (firstErr) {
+      console.warn('[Gemini 2.5 Unavailable, trying gemini-2.0-flash]:', firstErr.message);
+      try {
+        response = await genAI.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Data
+              }
+            },
+            prompt
+          ]
+        });
+      } catch (secondErr) {
+        console.warn('[Gemini 2.0 Unavailable, trying gemini-1.5-flash]:', secondErr.message);
+        response = await genAI.models.generateContent({
+          model: 'gemini-1.5-flash',
+          contents: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Data
+              }
+            },
+            prompt
+          ]
+        });
+      }
+    }
+
+    const parsedResult = parseAIJson(response.text);
+    res.json(parsedResult);
+  } catch (err) {
+    console.error('[Gemini failed, trying Groq fallback]:', err.message);
+    const groqKey = process.env.OPENAI_API_KEY;
+    if (groqKey) {
+      try {
+        const groqPrompt = `Analyze this uploaded image (which is a digital poster/creative/flyer) and write an engaging post title and description.
+        
+        Requirements:
+        1. Title: Under 60 characters, catchy, matches GMB post format.
+        2. Description: Detailed, under 1000 characters. Extract key information from the image (like program name, dates, discounts, fees, contact phone, website) and present them in clear bullet points, followed by a professional call-to-action and relevant hashtags.
+        3. Formatting: Do NOT use any markdown bold formatting (like double asterisks **). GMB does not support markdown, so print plain text only. Use capital letters for emphasis if needed.
+        4. Emojis: Use plenty of relevant, engaging emojis in both the title and the description to make the copy visually appealing and friendly.
+        
+        Return ONLY a JSON object. Do NOT wrap the JSON in markdown blocks. The JSON must match this schema:
+        {
+          "title": "the generated title",
+          "description": "the generated caption/description"
+        }`;
+
+        const groqRes = await axios.post(
+          'https://api.groq.com/openai/v1/chat/completions',
+          {
+            model: 'llama-3.2-11b-vision-preview',
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: groqPrompt
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: imageBase64
+                    }
+                  }
+                ]
+              }
+            ],
+            response_format: { type: 'json_object' }
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${groqKey}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        const contentText = groqRes.data.choices[0].message.content;
+        const parsedResult = parseAIJson(contentText);
+        return res.json(parsedResult);
+      } catch (groqErr) {
+        console.error('[Groq fallback failed]:', groqErr.message);
+      }
+    }
+    res.status(500).json({ error: 'AI failed to analyze image: ' + err.message });
   }
 });
 

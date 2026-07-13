@@ -71,7 +71,7 @@ const uploadRoutes = require('./routes/upload');
 const pipelineRoutes = require('./routes/pipeline');
 const analyzeRoutes = require('./routes/analyze');
 const contentOsRoutes = require('./routes/contentos');
-
+const chatbotRoutes = require('./routes/chatbot');
 const thedalRoutes = require('./routes/thedal');
 const thedalClientsRoutes = require('./routes/thedal-clients');
 const thedalPlansRoutes = require('./routes/thedal-plans');
@@ -95,7 +95,7 @@ app.use('/api/knowledge', knowledgeRoutes); // We should use auth but let's chec
 app.use('/api/upload', uploadRoutes);
 app.use('/api/pipeline', pipelineRoutes);
 app.use('/api/analyze', analyzeRoutes);
-
+app.use('/api/chatbot', chatbotRoutes);
 // ── AUTH MIDDLEWARE ───────────────────────────────────────
 const auth = (req, res, next) => {
   // Bypass JWT auth for OAuth redirect routes where the browser doesn't send a token

@@ -12,7 +12,10 @@
       "name": "WhatsApp Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [240, 300],
+      "position": [
+        240,
+        300
+      ],
       "webhookId": "whatsapp-incoming"
     },
     {
@@ -25,7 +28,10 @@
       "name": "Respond OK",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [460, 160]
+      "position": [
+        460,
+        160
+      ]
     },
     {
       "parameters": {
@@ -35,7 +41,10 @@
       "name": "Extract Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300]
+      "position": [
+        460,
+        300
+      ]
     },
     {
       "parameters": {
@@ -47,7 +56,10 @@
       "name": "Get Lead + Brain",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [680, 300],
+      "position": [
+        680,
+        300
+      ],
       "credentials": {
         "postgres": {
           "name": "LeadOS DB"
@@ -64,7 +76,10 @@
       "name": "Get Conversation History",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [900, 300],
+      "position": [
+        900,
+        300
+      ],
       "credentials": {
         "postgres": {
           "name": "LeadOS DB"
@@ -73,18 +88,21 @@
     },
     {
       "parameters": {
-        "jsCode": "const lead = $('Get Lead + Brain').first().json;\nconst historyRows = $('Get Conversation History').all().map(i => i.json).reverse();\nconst userMessage = ($('Extract Data').first().json.message || '').trim();\nconst gemini_api_key = $('Extract Data').first().json.gemini_api_key;\nconst currentFlowStep = lead.current_flow_step || 'welcome';\n\n// Build system prompt\nconst brandName = lead.brand_name || 'our company';\nconst basePrompt = lead.system_prompt || `You are a friendly WhatsApp sales assistant for ${brandName}. Qualify leads by asking about their goals, background, and budget. Guide them towards enrollment or a demo call.`;\n\nconst fullSystemPrompt = basePrompt + `\n\nCURRENT LEAD:\n- Name: ${lead.name || 'Friend'}\n- Score: ${lead.score || 0}/100\n- Status: ${lead.status || 'new'}\n- Interest: ${lead.interest || 'Not captured yet'}\n- Conversation stage: ${currentFlowStep}\n\nRULES:\n- Keep replies SHORT (max 4-5 lines)\n- Be warm and conversational, not robotic\n- Always end with exactly ONE question\n- Reply in the SAME language the lead uses\n- NEVER say you are an AI`;\n\n// Build Gemini conversation history\nconst contents = [];\nfor (const h of historyRows) {\n  contents.push({\n    role: h.direction === 'inbound' ? 'user' : 'model',\n    parts: [{ text: h.message || '' }]\n  });\n}\ncontents.push({ role: 'user', parts: [{ text: userMessage }] });\n\n// Build Gemini request body as a JSON string (avoids n8n expression issues)\nconst geminiBody = JSON.stringify({\n  system_instruction: { parts: [{ text: fullSystemPrompt }] },\n  contents: contents,\n  generationConfig: { maxOutputTokens: 300, temperature: 0.75, topP: 0.9 }\n});\n\n// Score lead based on message\nlet newScore = parseInt(lead.score) || 0;\nconst msgLower = userMessage.toLowerCase();\nif (msgLower.match(/yes|interested|want|sure|ok|okay|tell me|know more/)) newScore = Math.min(newScore + 15, 100);\nif (msgLower.match(/price|cost|fee|how much|charges/)) newScore = Math.min(newScore + 10, 100);\nif (msgLower.match(/call|talk|speak|contact/)) newScore = Math.min(newScore + 20, 100);\nif (msgLower.match(/pay|enroll|join|register|book|admit/)) newScore = Math.min(newScore + 30, 100);\nif (msgLower.match(/not interested|no thanks|stop|wrong number/)) newScore = Math.max(newScore - 15, 0);\n\nlet newStatus = 'new';\nif (newScore >= 75) newStatus = 'hot';\nelse if (newScore >= 40) newStatus = 'warm';\nelse if (newScore < 5) newStatus = 'cold';\n\nreturn [{ json: {\n  geminiBody,\n  gemini_api_key,\n  lead,\n  userMessage,\n  newScore,\n  newStatus,\n  nextFlowStep: 'free_ai',\n  phone: $('Extract Data').first().json.phone,\n  phone_number_id: lead.brand_phone_number_id || $('Extract Data').first().json.phone_number_id,\n  wa_access_token: lead.wa_access_token\n} }];"
+        "jsCode": "const lead = $('Get Lead + Brain').first().json;\nconst historyRows = $('Get Conversation History').all().map(i => i.json).reverse();\nconst userMessage = ($('Extract Data').first().json.message || '').trim();\nconst gemini_api_key = $('Extract Data').first().json.gemini_api_key;\nconst currentFlowStep = lead.current_flow_step || 'welcome';\n\n// Build system prompt\nconst brandName = lead.brand_name || 'our company';\nconst basePrompt = lead.system_prompt || `You are a friendly WhatsApp sales assistant for ${brandName}. Qualify leads by asking about their goals, background, and budget. Guide them towards enrollment or a demo call.`;\n\nconst fullSystemPrompt = basePrompt + `\n\nCURRENT LEAD:\n- Name: ${lead.name || 'Friend'}\n- Score: ${lead.score || 0}/100\n- Status: ${lead.status || 'new'}\n- Interest: ${lead.interest || 'Not captured yet'}\n- Conversation stage: ${currentFlowStep}\n\nRULES:\n- Keep replies SHORT (max 4-5 lines)\n- Formulate clear, easy-to-understand, and complete sentences so the user grasps the concepts fully\n- Be extremely warm and conversational, like a highly intelligent assistant\n- Always end with exactly ONE question\n- Reply in the SAME language the lead uses\n- NEVER say you are an AI`;\n\n// Build Gemini conversation history\nconst contents = [];\nfor (const h of historyRows) {\n  contents.push({\n    role: h.direction === 'inbound' ? 'user' : 'model',\n    parts: [{ text: h.message || '' }]\n  });\n}\ncontents.push({ role: 'user', parts: [{ text: userMessage }] });\n\n// Build Gemini request body as a JSON string (avoids n8n expression issues)\nconst geminiBody = JSON.stringify({\n  system_instruction: { parts: [{ text: fullSystemPrompt }] },\n  contents: contents\n  // generationConfig removed to prevent cut-off responses\n});\n\n// Score lead based on message\nlet newScore = parseInt(lead.score) || 0;\nconst msgLower = userMessage.toLowerCase();\nif (msgLower.match(/yes|interested|want|sure|ok|okay|tell me|know more/)) newScore = Math.min(newScore + 15, 100);\nif (msgLower.match(/price|cost|fee|how much|charges/)) newScore = Math.min(newScore + 10, 100);\nif (msgLower.match(/call|talk|speak|contact/)) newScore = Math.min(newScore + 20, 100);\nif (msgLower.match(/pay|enroll|join|register|book|admit/)) newScore = Math.min(newScore + 30, 100);\nif (msgLower.match(/not interested|no thanks|stop|wrong number/)) newScore = Math.max(newScore - 15, 0);\n\nlet newStatus = 'new';\nif (newScore >= 75) newStatus = 'hot';\nelse if (newScore >= 40) newStatus = 'warm';\nelse if (newScore < 5) newStatus = 'cold';\n\nreturn [{ json: {\n  geminiBody,\n  gemini_api_key,\n  lead,\n  userMessage,\n  newScore,\n  newStatus,\n  nextFlowStep: 'free_ai',\n  phone: $('Extract Data').first().json.phone,\n  phone_number_id: lead.brand_phone_number_id || $('Extract Data').first().json.phone_number_id,\n  wa_access_token: lead.wa_access_token\n} }];"
       },
       "id": "build-prompt",
       "name": "Build AI Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 300]
+      "position": [
+        1120,
+        300
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={{ $json.gemini_api_key }}",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={{ $json.gemini_api_key }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -103,7 +121,10 @@
       "name": "Gemini AI",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1340, 300]
+      "position": [
+        1340,
+        300
+      ]
     },
     {
       "parameters": {
@@ -113,7 +134,10 @@
       "name": "Process & Score",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1560, 300]
+      "position": [
+        1560,
+        300
+      ]
     },
     {
       "parameters": {
@@ -141,7 +165,10 @@
       "name": "Send WhatsApp Reply",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1780, 300]
+      "position": [
+        1780,
+        300
+      ]
     },
     {
       "parameters": {
@@ -156,7 +183,32 @@
       "name": "Update Lead Score + Flow",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [2000, 420],
+      "position": [
+        2000,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO messages (conversation_id, tenant_id, direction, content, is_ai, sent_at, msg_type, status)\nSELECT cv.id, cv.tenant_id, 'outbound', $1, true, NOW(), 'text', 'sent'\nFROM conversations cv\nWHERE cv.lead_id = $2\nLIMIT 1;",
+        "additionalFields": {
+          "queryParams": "={{ JSON.stringify([$('Process & Score').first().json.aiText, $('Process & Score').first().json.lead_id]) }}"
+        }
+      },
+      "id": "save-ai-message",
+      "name": "Save AI Message to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2000,
+        200
+      ],
       "credentials": {
         "postgres": {
           "name": "LeadOS DB"
@@ -168,34 +220,109 @@
     "WhatsApp Webhook": {
       "main": [
         [
-          { "node": "Respond OK", "type": "main", "index": 0 },
-          { "node": "Extract Data", "type": "main", "index": 0 }
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Extract Data": {
-      "main": [[{ "node": "Get Lead + Brain", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Get Lead + Brain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Get Lead + Brain": {
-      "main": [[{ "node": "Get Conversation History", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Get Conversation History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Get Conversation History": {
-      "main": [[{ "node": "Build AI Prompt", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build AI Prompt": {
-      "main": [[{ "node": "Gemini AI", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Gemini AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Gemini AI": {
-      "main": [[{ "node": "Process & Score", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Process & Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Process & Score": {
-      "main": [[{ "node": "Send WhatsApp Reply", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Send WhatsApp Reply": {
-      "main": [[{ "node": "Update Lead Score + Flow", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Update Lead Score + Flow",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save AI Message to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
-  "settings": { "executionOrder": "v1" },
-  "tags": [{ "name": "LeadOS" }]
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "LeadOS"
+    }
+  ]
 }

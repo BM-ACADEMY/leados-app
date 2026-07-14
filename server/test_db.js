@@ -1,13 +1,8 @@
-require('dotenv').config();
 const { Pool } = require('pg');
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS
+  user: 'leados_user', host: 'leados-api.abmgroups.org', database: 'leados_db', password: 'LeadOS_DB@2026', port: 5432
 });
-pool.query("UPDATE clients SET wa_access_token = $1 WHERE name ILIKE '%bm academy%' OR name ILIKE '%bm-academy%'", [process.env.META_PAGE_ACCESS_TOKEN]).then(r => {
-  console.log("Updated BM Academy token successfully!");
+pool.query("SELECT id, direction, content, msg_type, status FROM messages ORDER BY id DESC LIMIT 5").then(res => {
+  console.log(res.rows);
   process.exit(0);
 });

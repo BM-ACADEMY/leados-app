@@ -527,6 +527,31 @@ export const InboxView = () => {
   const chatImages = localMessages.filter(m => m.type === 'image' && m.media_url && !deletedForMeIds.includes(m.id));
 
   const getMessageText = (m) => m.content || m.message || m.text || '';
+  
+  const renderMessageWithLinks = (text) => {
+    if (!text) return null;
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+    return parts.map((part, i) => {
+      if (part.match(urlRegex)) {
+        let cleanUrl = part;
+        let trailing = '';
+        if (/[.,!?;:]$/.test(cleanUrl)) {
+          trailing = cleanUrl.slice(-1);
+          cleanUrl = cleanUrl.slice(0, -1);
+        }
+        return (
+          <span key={i}>
+            <a href={cleanUrl} target="_blank" rel="noreferrer" style={{ color: C.blue, textDecoration: 'underline' }} onClick={(e) => e.stopPropagation()}>
+              {cleanUrl}
+            </a>
+            {trailing}
+          </span>
+        );
+      }
+      return part;
+    });
+  };
   const renderLastMessage = (lead) => {
     const lastMsg = lead.last_msg;
     if (!lastMsg || Object.keys(lastMsg).every(k => lastMsg[k] === null)) {
@@ -949,7 +974,14 @@ export const InboxView = () => {
                       )}
 
                       {m.media_url && (() => {
-                        const fullMediaUrl = m.media_url.startsWith('http') ? m.media_url : `${SOCKET_URL}${m.media_url}`;
+                        let fullMediaUrl = m.media_url.startsWith('http') ? m.media_url : `${SOCKET_URL}${m.media_url}`;
+                        
+                        // Proxy WhatsApp Graph API media URLs
+                        if (fullMediaUrl.includes('graph.facebook.com')) {
+                          const mediaId = fullMediaUrl.split('/').pop();
+                          fullMediaUrl = `${SOCKET_URL}/api/whatsapp-media/${mediaId}`;
+                        }
+
                         return (
                           <div style={{ marginBottom: 6 }}>
                             {m.type === 'image' ? (
@@ -972,7 +1004,7 @@ export const InboxView = () => {
                         );
                       })()}
 
-                      <p style={{ fontSize: 12, color: C.text, whiteSpace: 'pre-wrap', lineHeight: 1.7, paddingRight: 10 }}>{getMessageText(m)}</p>
+                      <p style={{ fontSize: 12, color: C.text, whiteSpace: 'pre-wrap', lineHeight: 1.7, paddingRight: 10 }}>{renderMessageWithLinks(getMessageText(m))}</p>
                     </>
                   )}
 

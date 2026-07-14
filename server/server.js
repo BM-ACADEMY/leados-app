@@ -980,7 +980,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
             `SELECT l.*, c.wa_access_token as client_wa_token, c.phone_number_id as client_phone_number_id
              FROM leads l
              LEFT JOIN clients c ON l.client_id = c.id
-             WHERE REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g') = $1
+             WHERE RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = RIGHT($1, 10)
              ORDER BY l.created_at ASC LIMIT 1`,
             [phoneDigits]
           )).rows[0];
@@ -1140,7 +1140,7 @@ app.post('/webhook/meta-leads', async (req, res) => {
         if (!phone) continue;
 
         const existing = await pool.query(
-          `SELECT id FROM leads WHERE REGEXP_REPLACE(phone, '[^0-9]', '', 'g') = $1`,
+          `SELECT id FROM leads WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT($1, 10)`,
           [phone]
         );
         if (existing.rows.length) continue;

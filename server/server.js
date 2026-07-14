@@ -19,7 +19,7 @@ const multer = require('multer');
 const xlsx = require('xlsx');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -167,6 +167,39 @@ app.get('/api/mafiya/reviews/image/:filename', (req, res) => {
 app.use('/api/mafiya/reviews', auth, mafiyaReviewsRoutes);
 app.use('/api/mafiya/insights', auth, mafiyaInsightsRoutes);
 app.get('/api/auth/google/callback', handleGoogleCallback); // Map the standard OAuth callback to Mafiya GMB handler
+// Public route for WhatsApp Media Proxy
+app.get('/api/whatsapp-media/:mediaId', async (req, res) => {
+  try {
+    const { mediaId } = req.params;
+    // Graph API endpoints accept the page access token for media download
+    const waToken = process.env.META_PAGE_ACCESS_TOKEN; 
+    
+    // 1. Get the actual download URL from Meta
+    const metaRes = await axios.get(`https://graph.facebook.com/v18.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${waToken}` }
+    });
+    
+    if (metaRes.data && metaRes.data.url) {
+      // 2. Fetch the binary data as a buffer
+      const streamRes = await axios.get(metaRes.data.url, {
+        headers: { Authorization: `Bearer ${waToken}` },
+        responseType: 'arraybuffer'
+      });
+      
+      // 3. Forward the content type and send the data
+      res.setHeader('Content-Type', metaRes.data.mime_type || streamRes.headers['content-type'] || 'application/octet-stream');
+      // Set caching headers so it doesn't repeatedly download from Meta
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      
+      res.send(Buffer.from(streamRes.data));
+    } else {
+      res.status(404).send('Media URL not found');
+    }
+  } catch (err) {
+    console.error('[Media Proxy Error]', err.message);
+    res.status(500).send('Failed to proxy media');
+  }
+});
 
 
 // ══════════════════════════════════════════════════════════
@@ -839,6 +872,8 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
   try {
     const body = req.body;
+    fs.appendFileSync(path.join(__dirname, 'uploads', 'incoming_payloads.log'), `[${new Date().toISOString()}] ${JSON.stringify(body, null, 2)}\n\n`);
+    
     if (!body.object || body.object !== 'whatsapp_business_account') return;
 
     for (const entry of body.entry || []) {
@@ -967,6 +1002,62 @@ app.post('/webhook/whatsapp', async (req, res) => {
             }
           }
 
+          // ── AUDIO TRANSCRIPTION ──────────────────────────────
+          console.log(`[DEBUG] Audio check: msg.type=${msg.type}, msg.audio?.id=${msg.audio?.id}, GEMINI_KEY=${!!process.env.GEMINI_API_KEY}`);
+          if (msg.type === 'audio' && msg.audio?.id && process.env.GEMINI_API_KEY) {
+            try {
+              const waToken = lead.client_wa_token || client?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+              if (waToken) {
+                console.log(`[Audio] Fetching media URL for ${msg.audio.id}`);
+                const mediaRes = await axios.get(`https://graph.facebook.com/v18.0/${msg.audio.id}`, {
+                  headers: { Authorization: `Bearer ${waToken}` }
+                });
+                
+                if (mediaRes.data && mediaRes.data.url) {
+                  console.log(`[Audio] Downloading audio from WhatsApp...`);
+                  const audioRes = await axios.get(mediaRes.data.url, {
+                    headers: { Authorization: `Bearer ${waToken}` },
+                    responseType: 'arraybuffer'
+                  });
+                  
+                  // Use a perfectly safe filename without waMessageId special characters
+                  const safeName = `audio_${Date.now()}_${Math.floor(Math.random()*1000)}.ogg`;
+                  const tempAudioPath = path.join(__dirname, 'uploads', safeName);
+                  fs.writeFileSync(tempAudioPath, Buffer.from(audioRes.data));
+                  
+                  console.log(`[Audio] Transcribing with Gemini API...`);
+                  
+                  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+                  const base64Audio = Buffer.from(audioRes.data).toString('base64');
+                  
+                  const payload = {
+                    contents: [{
+                      parts: [
+                        { text: "Transcribe this audio precisely in its original language. Output ONLY the transcription, nothing else." },
+                        { inline_data: { mime_type: "audio/ogg", data: base64Audio } }
+                      ]
+                    }]
+                  };
+                  
+                  const aiRes = await axios.post(geminiUrl, payload);
+                  const transcriptionText = aiRes.data.candidates?.[0]?.content?.parts?.[0]?.text;
+                  
+                  if (transcriptionText) {
+                    console.log(`[Audio] Transcription success: ${transcriptionText}`);
+                    text = `[Voice Message] ${transcriptionText.trim()}`;
+                  }
+                  
+                  // Cleanup
+                  if (fs.existsSync(tempAudioPath)) fs.unlinkSync(tempAudioPath);
+                }
+              }
+            } catch (err) {
+              console.error('[Audio Transcription Error]', err.response?.data || err.message);
+              const fs = require('fs');
+              fs.appendFileSync(path.join(__dirname, 'uploads', 'audio_error.txt'), `[${new Date().toISOString()}] ${err.message}\n${err.stack}\n`);
+            }
+          }
+
           // Upsert conversation thread
           const tenantId = lead.tenant_id || 1;
           const convRes = await pool.query(`
@@ -992,8 +1083,8 @@ app.post('/webhook/whatsapp', async (req, res) => {
           io.emit('incoming_message', { lead_id: lead.id, message: savedRows[0] });
           console.log(`[Webhook] Inbound ${msgType} from ${phone} → lead ${lead.id}`);
 
-          // ── Forward to n8n for AI auto-reply (only for text/button/interactive) ──
-          const shouldTriggerAI = ['text', 'button', 'interactive'].includes(msg.type);
+          // ── Forward to n8n for AI auto-reply (only for text/button/interactive/audio) ──
+          const shouldTriggerAI = ['text', 'button', 'interactive', 'audio'].includes(msg.type);
           if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL) {
             axios.post(process.env.N8N_WEBHOOK_URL, {
               lead_id: lead.id,

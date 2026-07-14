@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Trash2, Check, AlertCircle, Loader2, Smartphone, ChevronDown, Image, Video, FileText, Link, MessageSquare, Type } from 'lucide-react';
+import { Plus, X, Trash2, Check, AlertCircle, Loader2, Smartphone, ChevronDown, Image, Video, FileText, Link, MessageSquare, Type, RefreshCw, Search } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { TBadge } from '../components/ui.jsx';
 import { useTemplates } from '../hooks/useTemplates.js';
@@ -220,6 +220,14 @@ export const TemplatesView = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitLoading, setSubmitLoading] = useState(null); // id of template being submitted
   const [syncLoading, setSyncLoading] = useState(null); // id of template being synced
+  const [bulkSyncLoading, setBulkSyncLoading] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterLanguage, setFilterLanguage] = useState('all');
+  const [filterStatuses, setFilterStatuses] = useState([]);
+  const [filterDate, setFilterDate] = useState('all');
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [toast, setToast] = useState(null);
   const [clients, setClients] = useState([]);
   const [previewTemplate, setPreviewTemplate] = useState(null); // template object to preview
@@ -314,6 +322,36 @@ export const TemplatesView = () => {
     }
   };
 
+  const handleBulkSyncTemplates = async () => {
+    setBulkSyncLoading(true);
+    let totalImported = 0;
+    let totalUpdated = 0;
+    try {
+      const mainRes = await api.syncAllTemplates(null);
+      totalImported += mainRes.imported || 0;
+      totalUpdated += mainRes.updated || 0;
+
+      for (const client of clients) {
+        if (client.phone_number_id && client.wa_access_token) {
+          try {
+            const clientRes = await api.syncAllTemplates(client.id);
+            totalImported += clientRes.imported || 0;
+            totalUpdated += clientRes.updated || 0;
+          } catch (e) {
+            console.error(`Failed to sync for client ${client.name}:`, e.message);
+          }
+        }
+      }
+
+      showToast(`Templates synchronized successfully! Imported ${totalImported} new templates, updated ${totalUpdated} statuses.`);
+      if (refetch) refetch();
+    } catch (err) {
+      showToast('Templates Sync failed: ' + err.message, 'error');
+    } finally {
+      setBulkSyncLoading(false);
+    }
+  };
+
   const handleCreateTemplate = async () => {
     if (!form.name.trim()) return showToast('Template name is required', 'error');
     if (!form.body.trim()) return showToast('Message body is required', 'error');
@@ -388,10 +426,73 @@ export const TemplatesView = () => {
   const allowMedia = CATEGORY_DEFAULTS[form.category]?.allowMedia ?? true;
   const availableHeaderFormats = allowMedia ? HEADER_FORMATS : ['NONE', 'TEXT'];
 
+  // Pagination & Filters calculation
+  const statusOptions = [
+    'Active – High quality',
+    'Active – Low quality',
+    'Active – Quality pending',
+    'Active – Medium quality',
+    'Appealed – In review',
+    'Paused',
+    'In review',
+    'Rejected',
+    'Archived',
+    'Disabled'
+  ];
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterCategory, filterLanguage, filterStatuses, filterDate]);
+
+  const filteredTemplates = templates.filter(t => {
+    const searchTerms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => t.name.toLowerCase().includes(term));
+    const matchesCategory = filterCategory === 'all' || t.category?.toLowerCase() === filterCategory.toLowerCase();
+    const matchesLanguage = filterLanguage === 'all' || t.language === filterLanguage;
+    
+    let matchesStatus = true;
+    if (filterStatuses.length > 0) {
+      const metaStatus = (t.status || '').toLowerCase();
+      matchesStatus = filterStatuses.some(statusOpt => {
+        if (statusOpt === 'Active – High quality' || statusOpt === 'Active – Low quality' || statusOpt === 'Active – Medium quality' || statusOpt === 'Active – Quality pending') {
+          return metaStatus === 'approved';
+        }
+        if (statusOpt === 'In review') return metaStatus === 'pending';
+        if (statusOpt === 'Paused') return metaStatus === 'paused';
+        if (statusOpt === 'Rejected') return metaStatus === 'rejected';
+        if (statusOpt === 'Disabled') return metaStatus === 'disabled';
+        if (statusOpt === 'Appealed – In review') return metaStatus === 'appealed' || metaStatus === 'pending';
+        return false;
+      });
+    }
+    
+    let matchesDate = true;
+    if (filterDate !== 'all') {
+      const createdDate = new Date(t.created_at || t.submitted_at || Date.now());
+      const diffDays = Math.ceil((new Date() - createdDate) / (1000 * 60 * 60 * 24));
+      if (filterDate === '7d') matchesDate = diffDays <= 7;
+      else if (filterDate === '30d') matchesDate = diffDays <= 30;
+      else if (filterDate === '60d') matchesDate = diffDays <= 60;
+      else if (filterDate === '90d') matchesDate = diffDays <= 90;
+    }
+    return matchesSearch && matchesCategory && matchesLanguage && matchesStatus && matchesDate;
+  });
+
+  const itemsPerPage = 10;
+  const totalItems = filteredTemplates.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
+  const activePage = Math.min(currentPage, totalPages);
+  const startIndex = (activePage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
+  const currentTemplates = filteredTemplates.slice(startIndex, endIndex);
+
   // ── Render ─────────────────────────────────────────────
   return (
     <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
       <Toast toast={toast} onClose={() => setToast(null)} />
+      <style>{`
+        .hover-highlight-light:hover { background: #1a2e4a !important; }
+      `}</style>
 
       {/* Header */}
       <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
@@ -399,12 +500,22 @@ export const TemplatesView = () => {
           <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text }}>Template Management</h1>
           <p style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>Create, submit and track Meta WhatsApp template approvals</p>
         </div>
-        <button
-          onClick={() => setShowBuilder(true)}
-          style={{ background: C.accent, border: 'none', color: '#fff', padding: '9px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, boxShadow: `0 4px 20px ${C.accent}40` }}
-        >
-          <Plus size={13} /> Create Template
-        </button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            onClick={handleBulkSyncTemplates}
+            disabled={bulkSyncLoading}
+            style={{ background: C.card, border: `1px solid ${C.border}`, color: C.text, padding: '9px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, cursor: bulkSyncLoading ? 'not-allowed' : 'pointer' }}
+          >
+            <RefreshCw size={13} className={bulkSyncLoading ? 'animate-spin' : ''} style={{ animation: bulkSyncLoading ? 'spin 1s linear infinite' : 'none' }} />
+            {bulkSyncLoading ? 'Syncing...' : 'Sync from Meta'}
+          </button>
+          <button
+            onClick={() => setShowBuilder(true)}
+            style={{ background: C.accent, border: 'none', color: '#fff', padding: '9px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, boxShadow: `0 4px 20px ${C.accent}40` }}
+          >
+            <Plus size={13} /> Create Template
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -428,6 +539,166 @@ export const TemplatesView = () => {
         ))}
       </div>
 
+      {/* Filters Row */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 18, alignItems: 'center' }} className="flex-col-mobile">
+        
+        {/* Fuzzy Search */}
+        <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
+          <input
+            type="text"
+            placeholder="Search templates..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              width: '100%', background: C.card, border: `1px solid ${C.border}`,
+              borderRadius: 8, padding: '8px 12px 8px 36px', fontSize: 12, color: C.text,
+              outline: 'none', fontFamily: "'DM Sans', sans-serif"
+            }}
+          />
+          <Search size={14} color={C.muted} style={{ position: 'absolute', left: 12, top: 10 }} />
+        </div>
+
+        {/* Category */}
+        <select
+          value={filterCategory}
+          onChange={(e) => setFilterCategory(e.target.value)}
+          style={{
+            background: C.card, border: `1px solid ${C.border}`,
+            borderRadius: 8, padding: '8px 12px', fontSize: 12, color: C.text,
+            outline: 'none', minWidth: 120, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif"
+          }}
+        >
+          <option value="all">Category</option>
+          <option value="marketing">Marketing</option>
+          <option value="utility">Utility</option>
+          <option value="authentication">Authentication</option>
+        </select>
+
+        {/* Language */}
+        <select
+          value={filterLanguage}
+          onChange={(e) => setFilterLanguage(e.target.value)}
+          style={{
+            background: C.card, border: `1px solid ${C.border}`,
+            borderRadius: 8, padding: '8px 12px', fontSize: 12, color: C.text,
+            outline: 'none', minWidth: 120, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif"
+          }}
+        >
+          <option value="all">Language</option>
+          <option value="en">English</option>
+          <option value="en_US">English (US)</option>
+        </select>
+
+        {/* Status Custom Multi-Select Dropdown */}
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setShowStatusDropdown(!showStatusDropdown)}
+            style={{
+              background: C.card, border: `1px solid ${C.border}`,
+              borderRadius: 8, padding: '8px 12px', fontSize: 12, color: C.text,
+              outline: 'none', minWidth: 150, cursor: 'pointer', display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center', gap: 8,
+              fontFamily: "'DM Sans', sans-serif"
+            }}
+          >
+            <span>
+              {filterStatuses.length === 0 
+                ? 'Status' 
+                : `${filterStatuses.length} selected`}
+            </span>
+            <ChevronDown size={14} color={C.muted} />
+          </button>
+          
+          {showStatusDropdown && (
+            <>
+              <div 
+                style={{ position: 'fixed', inset: 0, zIndex: 99, background: 'transparent' }} 
+                onClick={() => setShowStatusDropdown(false)} 
+              />
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 100,
+                background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
+                padding: 6, width: 220, maxHeight: 260, overflowY: 'auto',
+                boxShadow: '0 10px 35px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column', gap: 2
+              }}>
+                <div 
+                  onClick={() => {
+                    if (filterStatuses.length === statusOptions.length) {
+                      setFilterStatuses([]);
+                    } else {
+                      setFilterStatuses([...statusOptions]);
+                    }
+                  }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+                    borderRadius: 6, cursor: 'pointer', fontSize: 11, color: C.text,
+                    background: 'transparent', userSelect: 'none'
+                  }}
+                  className="hover-highlight-light"
+                >
+                  <input 
+                    type="checkbox" 
+                    checked={filterStatuses.length === statusOptions.length}
+                    style={{ accentColor: C.accent, cursor: 'pointer' }}
+                    readOnly 
+                  />
+                  <span style={{ fontWeight: 700 }}>Select all</span>
+                </div>
+                
+                <div style={{ borderTop: `1px solid ${C.border}`, margin: '4px 0' }} />
+
+                {statusOptions.map(opt => {
+                  const checked = filterStatuses.includes(opt);
+                  return (
+                    <div
+                      key={opt}
+                      onClick={() => {
+                        if (checked) {
+                          setFilterStatuses(filterStatuses.filter(s => s !== opt));
+                        } else {
+                          setFilterStatuses([...filterStatuses, opt]);
+                        }
+                      }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+                        borderRadius: 6, cursor: 'pointer', fontSize: 11, color: C.text,
+                        background: 'transparent', userSelect: 'none'
+                      }}
+                      className="hover-highlight-light"
+                    >
+                      <input 
+                        type="checkbox" 
+                        checked={checked} 
+                        style={{ accentColor: C.accent, cursor: 'pointer' }}
+                        readOnly 
+                      />
+                      <span>{opt}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Date Filter */}
+        <select
+          value={filterDate}
+          onChange={(e) => setFilterDate(e.target.value)}
+          style={{
+            background: C.card, border: `1px solid ${C.border}`,
+            borderRadius: 8, padding: '8px 12px', fontSize: 12, color: C.text,
+            outline: 'none', minWidth: 130, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif"
+          }}
+        >
+          <option value="all">Date Filter</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="60d">Last 60 days</option>
+          <option value="90d">Last 90 days</option>
+        </select>
+      </div>
+
       {/* Table */}
       <div className="table-responsive" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -439,7 +710,7 @@ export const TemplatesView = () => {
             </tr>
           </thead>
           <tbody>
-            {templates.map(t => (
+            {currentTemplates.map(t => (
               <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}` }}>
                 <td style={{ padding: '13px 14px' }}>
                   <span style={{ fontFamily: 'monospace', fontSize: 11, color: C.accent, background: C.accent + '10', padding: '2px 7px', borderRadius: 5 }}>{t.name}</span>
@@ -495,6 +766,88 @@ export const TemplatesView = () => {
             ))}
           </tbody>
         </table>
+        
+        {/* Pagination Bar */}
+        {totalItems > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 20px', borderTop: `1px solid ${C.border}`, background: C.surface }}>
+            <div style={{ fontSize: 11, color: C.muted }}>
+              Showing <span style={{ color: C.text, fontWeight: 600 }}>{totalItems === 0 ? 0 : startIndex + 1}</span> to <span style={{ color: C.text, fontWeight: 600 }}>{endIndex}</span> of <span style={{ color: C.text, fontWeight: 600 }}>{totalItems}</span> templates
+            </div>
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={activePage === 1}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 6,
+                  color: activePage === 1 ? C.dim : C.text,
+                  padding: '5px 12px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: activePage === 1 ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                Previous
+              </button>
+
+              {Array.from({ length: totalPages }).map((_, idx) => {
+                const pageNum = idx + 1;
+                if (totalPages > 5 && Math.abs(pageNum - activePage) > 2 && pageNum !== 1 && pageNum !== totalPages) {
+                  if (pageNum === 2 || pageNum === totalPages - 1) {
+                    return <span key={pageNum} style={{ color: C.muted, padding: '0 4px', fontSize: 11 }}>...</span>;
+                  }
+                  return null;
+                }
+
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    style={{
+                      background: activePage === pageNum ? C.accent : 'transparent',
+                      border: activePage === pageNum ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
+                      borderRadius: 6,
+                      color: activePage === pageNum ? '#fff' : C.text,
+                      minWidth: 26,
+                      height: 26,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={activePage === totalPages}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 6,
+                  color: activePage === totalPages ? C.dim : C.text,
+                  padding: '5px 12px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: activePage === totalPages ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+
         {templates.length === 0 && !tableLoading && <div style={{ textAlign: 'center', padding: 32, color: C.muted }}>No templates found. Create your first one!</div>}
         {tableLoading && (
           <div style={{ textAlign: 'center', padding: 32, color: C.muted, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>

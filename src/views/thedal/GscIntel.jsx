@@ -39,6 +39,7 @@ export default function GscIntel() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('clicks');
   const [sortDirection, setSortDirection] = useState('desc');
+  const [tablePage, setTablePage] = useState(1);
   const [activeDropdown, setActiveDropdown] = useState(null); // 'date' | 'device' | 'country' | 'addFilter' | null
 
   useEffect(() => {
@@ -106,10 +107,14 @@ export default function GscIntel() {
       const params = new URLSearchParams(queryParams);
       const res = await api.get(`/thedal/gscintel?${params.toString()}`);
       if (res) {
-        if (res.error) {
+        if (res.isVerified === false) {
+          setData(res);
+          setErrorMsg('');
+        } else if (res.error) {
           setErrorMsg(res.error);
         } else {
           setData(res);
+          setErrorMsg('');
         }
       }
     } catch (err) {
@@ -131,6 +136,11 @@ export default function GscIntel() {
       }
     }
   }, [selectedClient, dateRange, device, country, propertyType, startDate, endDate]);
+
+  // Reset page index on sorting, filtering, or tab changes
+  useEffect(() => {
+    setTablePage(1);
+  }, [activeTab, searchTerm, sortField, sortDirection, selectedClient, dateRange, device, country, propertyType, startDate, endDate]);
 
   const handlePushToPage1 = async (query) => {
     const toastId = toast.loading(`Mapping keyword "${query}"...`);
@@ -206,6 +216,16 @@ export default function GscIntel() {
     if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
     return 0;
   });
+
+
+
+  const itemsPerPage = 10;
+  const totalItems = processedTableData.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
+  const activePage = Math.min(tablePage, totalPages);
+  const startIndex = (activePage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
+  const currentTableItems = processedTableData.slice(startIndex, endIndex);
 
   const MetricCard = ({ title, value, trend, color, reverseGood = false, metricKey }) => {
     const isActive = activeMetrics[metricKey];
@@ -809,7 +829,7 @@ export default function GscIntel() {
           </p>
           <button 
             onClick={() => {
-              const apiUrl = import.meta.env.VITE_API_URL || '';
+              const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3600';
               window.location.href = `${apiUrl}/api/thedal/gscintel/auth/google?clientId=default`;
             }}
             style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer' }}
@@ -1074,14 +1094,14 @@ export default function GscIntel() {
                       </tr>
                     </thead>
                     <tbody>
-                      {processedTableData.length === 0 ? (
+                      {currentTableItems.length === 0 ? (
                         <tr>
                           <td colSpan={activeTab === 'quickWins' ? 6 : 5} style={{ padding: '40px', textAlign: 'center', color: C.muted }}>
                             No data available for this view.
                           </td>
                         </tr>
                       ) : (
-                        processedTableData.map((item, idx) => (
+                        currentTableItems.map((item, idx) => (
                           <tr key={idx} style={{ borderBottom: `1px solid ${C.border}55`, transition: 'background 0.2s', ':hover': { background: 'rgba(255,255,255,0.02)' } }}>
                             <td style={{ padding: '16px 20px', fontSize: 14, color: '#e2e8f0', fontWeight: 500, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.page || item.query}>
                               {item.page || item.query}
@@ -1110,6 +1130,87 @@ export default function GscIntel() {
                       )}
                     </tbody>
                   </table>
+                  
+                  {/* Pagination Bar */}
+                  {totalItems > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 20px', borderTop: `1px solid ${C.border}`, background: C.surface }}>
+                      <div style={{ fontSize: 11, color: C.muted }}>
+                        Showing <span style={{ color: C.text, fontWeight: 600 }}>{totalItems === 0 ? 0 : startIndex + 1}</span> to <span style={{ color: C.text, fontWeight: 600 }}>{endIndex}</span> of <span style={{ color: C.text, fontWeight: 600 }}>{totalItems}</span> items
+                      </div>
+                      
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <button
+                          onClick={() => setTablePage(prev => Math.max(prev - 1, 1))}
+                          disabled={activePage === 1}
+                          style={{
+                            background: 'transparent',
+                            border: `1px solid ${C.border}`,
+                            borderRadius: 6,
+                            color: activePage === 1 ? C.dim : C.text,
+                            padding: '5px 12px',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: activePage === 1 ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          Previous
+                        </button>
+
+                        {Array.from({ length: totalPages }).map((_, idx) => {
+                          const pageNum = idx + 1;
+                          if (totalPages > 5 && Math.abs(pageNum - activePage) > 2 && pageNum !== 1 && pageNum !== totalPages) {
+                            if (pageNum === 2 || pageNum === totalPages - 1) {
+                              return <span key={pageNum} style={{ color: C.muted, padding: '0 4px', fontSize: 11 }}>...</span>;
+                            }
+                            return null;
+                          }
+
+                          return (
+                            <button
+                              key={pageNum}
+                              onClick={() => setTablePage(pageNum)}
+                              style={{
+                                background: activePage === pageNum ? C.accent : 'transparent',
+                                border: activePage === pageNum ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
+                                borderRadius: 6,
+                                color: activePage === pageNum ? '#fff' : C.text,
+                                minWidth: 26,
+                                height: 26,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s'
+                              }}
+                            >
+                              {pageNum}
+                            </button>
+                          );
+                        })}
+
+                        <button
+                          onClick={() => setTablePage(prev => Math.min(prev + 1, totalPages))}
+                          disabled={activePage === totalPages}
+                          style={{
+                            background: 'transparent',
+                            border: `1px solid ${C.border}`,
+                            borderRadius: 6,
+                            color: activePage === totalPages ? C.dim : C.text,
+                            padding: '5px 12px',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: activePage === totalPages ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </>

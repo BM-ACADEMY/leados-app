@@ -340,6 +340,11 @@ router.get('/', async (req, res) => {
     });
 
   } catch (error) {
+    const errorMsg = error.message || '';
+    if (error.code === 400 || errorMsg.includes('invalid_grant')) {
+      console.log(`[GSC API] invalid_grant (token revoked/invalid) for ${siteUrl}`);
+      return res.status(200).json({ error: 'Google Account connection has expired. Please reconnect.', isVerified: false });
+    }
     if (error.code === 403) {
       console.log(`[GSC API] 403 Access Denied for ${siteUrl}`);
       return res.status(403).json({ error: 'Access Denied. Make sure your Google Account has permission to view this property in GSC.' });

@@ -1264,6 +1264,81 @@ app.get('/api/templates', auth, async (req, res) => {
   }
 });
 
+app.post('/api/templates/sync-all', auth, async (req, res) => {
+  try {
+    const { client_id } = req.body;
+    const client = client_id ? (await pool.query('SELECT * FROM clients WHERE id = $1', [client_id])).rows[0] : null;
+    const waToken = client?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+    const waBusinessId = client?.wa_business_id || process.env.WA_BUSINESS_ACCOUNT_ID;
+
+    if (!waBusinessId || !waToken) {
+      return res.status(400).json({ error: 'Meta Business ID or Access Token is missing' });
+    }
+
+    console.log(`[Templates Sync] Fetching from Meta for business account: ${waBusinessId}`);
+    
+    // Fetch templates from Meta API (limit 100)
+    const metaRes = await axios.get(
+      `https://graph.facebook.com/v18.0/${waBusinessId}/message_templates?limit=100`,
+      { headers: { Authorization: `Bearer ${waToken}` } }
+    );
+
+    const metaTemplates = metaRes.data.data || [];
+    let imported = 0;
+    let updated = 0;
+
+    for (const t of metaTemplates) {
+      const bodyComp = t.components?.find(c => c.type === 'BODY') || {};
+      const headerComp = t.components?.find(c => c.type === 'HEADER');
+      const footerComp = t.components?.find(c => c.type === 'FOOTER');
+      const buttonsComp = t.components?.find(c => c.type === 'BUTTONS');
+
+      const bodyText = bodyComp.text || '';
+      const headerFormat = headerComp ? (headerComp.format || 'TEXT') : 'NONE';
+      const headerText = headerComp ? (headerComp.text || headerComp.example?.header_handle?.[0] || null) : null;
+      const footerText = footerComp ? footerComp.text : null;
+      const buttonsVal = buttonsComp ? JSON.stringify(buttonsComp.buttons || []) : '[]';
+
+      const status = (t.status || 'DRAFT').toLowerCase();
+      const metaId = String(t.id);
+
+      // Check if template exists locally by name and language
+      const existing = await pool.query(
+        'SELECT id, status, meta_template_id FROM templates WHERE name = $1 AND language = $2',
+        [t.name, t.language]
+      );
+
+      if (existing.rows.length > 0) {
+        const localTpl = existing.rows[0];
+        const approvedAt = (status === 'approved' && !localTpl.approved_at) ? new Date() : localTpl.approved_at;
+        await pool.query(
+          `UPDATE templates 
+           SET status = $1, 
+               meta_template_id = $2, 
+               approved_at = $3,
+               updated_at = NOW() 
+           WHERE id = $4`,
+          [status, metaId, approvedAt, localTpl.id]
+        );
+        updated++;
+      } else {
+        const approvedAt = status === 'approved' ? new Date() : null;
+        await pool.query(
+          `INSERT INTO templates (name, category, language, header_format, header, body, footer, buttons, client_id, status, meta_template_id, approved_at, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
+          [t.name, t.category, t.language, headerFormat, headerText, bodyText, footerText, buttonsVal, client_id || null, status, metaId, approvedAt]
+        );
+        imported++;
+      }
+    }
+
+    res.json({ success: true, imported, updated, total: metaTemplates.length });
+  } catch (err) {
+    console.error('[Templates Sync Error]', err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message || 'Failed to sync templates from Meta' });
+  }
+});
+
 app.post('/api/templates', auth, async (req, res) => {
   try {
     const { name, category, language, header_format, header, body, footer, buttons, client_id } = req.body;
@@ -2077,6 +2152,18 @@ app.get('/api/campaigns/:id/logs', auth, async (req, res) => {
 // GET /api/reports/summary — dashboard stats
 app.get('/api/reports/summary', auth, async (req, res) => {
   try {
+    const range = req.query.range || '30d';
+    let days = 30;
+    let dateFormat = 'DD Mon';
+    if (range === '7d') {
+      days = 7;
+      dateFormat = 'Dy';
+    } else if (range === '90d') {
+      days = 90;
+      dateFormat = 'DD Mon';
+    }
+    const intervalStr = `${days - 1} days`;
+
     const today = await pool.query(`
       SELECT COUNT(*) as leads_today FROM leads
       WHERE DATE(created_at) = CURRENT_DATE
@@ -2104,15 +2191,15 @@ app.get('/api/reports/summary', auth, async (req, res) => {
     `);
     const weekly = await pool.query(`
       SELECT
-        TO_CHAR(d.day, 'Dy') as day,
+        TO_CHAR(d.day, $1) as day,
         COUNT(l.id) as leads,
         COUNT(CASE WHEN l.status = 'converted' THEN 1 END) as converted
       FROM generate_series(
-        CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, '1 day'
+        CURRENT_DATE - CAST($2 as INTERVAL), CURRENT_DATE, '1 day'
       ) d(day)
       LEFT JOIN leads l ON DATE(l.created_at) = d.day
       GROUP BY d.day ORDER BY d.day
-    `);
+    `, [dateFormat, intervalStr]);
     const sources = await pool.query(`
       SELECT source, COUNT(*) as count
       FROM leads

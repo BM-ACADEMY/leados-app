@@ -3,7 +3,7 @@
  * Base URL from environment: VITE_API_URL
  */
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3600';
 
 class LeadOSAPI {
   constructor() {
@@ -178,6 +178,13 @@ class LeadOSAPI {
   async syncTemplate(id) {
     return this.request(`/api/templates/${id}/sync`, {
       method: 'GET',
+    });
+  }
+
+  async syncAllTemplates(clientId = null) {
+    return this.request('/api/templates/sync-all', {
+      method: 'POST',
+      body: JSON.stringify({ client_id: clientId })
     });
   }
 
@@ -412,8 +419,9 @@ class LeadOSAPI {
   }
 
   // ─── DASHBOARD ──────────────────────────
-  async getDashboardStats() {
-    return this.request('/api/reports/summary');
+  async getDashboardStats(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return this.request(`/api/reports/summary${query ? '?' + query : ''}`);
   }
 
   // ─── ALLIANCE OS ────────────────────────

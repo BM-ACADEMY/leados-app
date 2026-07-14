@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
 import { ClientModal } from '../components/ClientModal.jsx';
+import { ClientDashboardModal } from '../components/ClientDashboardModal.jsx';
 import toast from 'react-hot-toast';
 
 export const ClientsView = () => {
@@ -11,6 +12,8 @@ export const ClientsView = () => {
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
+  const [isDashboardOpen, setIsDashboardOpen] = useState(false);
+  const [dashboardClient, setDashboardClient] = useState(null);
 
   const fetchClients = async () => {
     setLoading(true);
@@ -86,7 +89,7 @@ export const ClientsView = () => {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 7 }}>
-                <button onClick={() => toast('Client specific dashboard is coming soon!', { icon: '📊' })} style={{ flex: 1, background: 'transparent', border: '1px solid ' + C.border, borderRadius: 7, color: C.muted, padding: '6px', fontSize: 11 }}>Dashboard</button>
+                <button onClick={() => { setDashboardClient(cl); setIsDashboardOpen(true); }} style={{ flex: 1, background: 'transparent', border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '6px', fontSize: 11, fontWeight: 600 }}>Dashboard</button>
                 <button onClick={() => { setSelectedClient(cl); setIsModalOpen(true); }} style={{ flex: 1, background: C.accent + '20', border: '1px solid ' + C.accentDim, borderRadius: 7, color: C.accent, padding: '6px', fontSize: 11, fontWeight: 600 }}>Manage</button>
               </div>
             </div>
@@ -98,6 +101,12 @@ export const ClientsView = () => {
           client={selectedClient}
           onClose={() => setIsModalOpen(false)}
           onUpdate={fetchClients}
+        />
+      )}
+      {isDashboardOpen && (
+        <ClientDashboardModal
+          client={dashboardClient}
+          onClose={() => setIsDashboardOpen(false)}
         />
       )}
     </div>

@@ -205,6 +205,10 @@ export default function ApprovalDashboard() {
     setIsPublishing(true);
     showToast("Publishing to Facebook & Instagram... 🚀");
     try {
+      if (editMode) {
+        await api.updateContent(id, editValues);
+      }
+      
       const res = await api.publishContent(id);
       if (res.success) {
         showToast("Successfully published! 🎉");

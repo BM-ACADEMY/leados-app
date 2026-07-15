@@ -376,7 +376,12 @@ export function ApprovalRoom({
                       </>
                     )}
                     {canApprove && (statusUpper === 'APPROVED' || statusUpper === 'APPROVED_SCHEDULED') && (
-                      <button className="act act-approve" disabled={isPublishing} onClick={() => onPublishClick(selectedItem.id)}>
+                      <button 
+                        className="act act-approve" 
+                        disabled={isPublishing || (!editMode ? !(selectedItem.platforms && selectedItem.platforms.length > 0) : !(editValues.platforms && editValues.platforms.length > 0))} 
+                        title={(!editMode ? !(selectedItem.platforms && selectedItem.platforms.length > 0) : !(editValues.platforms && editValues.platforms.length > 0)) ? "Please select at least one publishing channel." : ""}
+                        onClick={() => onPublishClick(selectedItem.id)}
+                      >
                         {isPublishing ? 'Publishing...' : '🚀 Publish Now'}
                       </button>
                     )}

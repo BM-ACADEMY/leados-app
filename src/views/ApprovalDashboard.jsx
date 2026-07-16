@@ -205,6 +205,10 @@ export default function ApprovalDashboard() {
     setIsPublishing(true);
     showToast("Publishing to Facebook & Instagram... 🚀");
     try {
+      if (editMode) {
+        await api.updateContent(id, editValues);
+      }
+      
       const res = await api.publishContent(id);
       if (res.success) {
         showToast("Successfully published! 🎉");
@@ -928,14 +932,15 @@ export default function ApprovalDashboard() {
                   )}
                   {canApprove && ["approved", "APPROVED"].includes(selected.status) && (
                     <button 
-                      disabled={isPublishing}
+                      disabled={isPublishing || validationError}
                       onClick={() => handlePublishNow(selected.id)} 
+                      title={validationError || ""}
                       style={{
                         padding: "8px 20px", borderRadius: 8, border: "none",
-                        background: isPublishing ? "#9CA3AF" : "#7C3AED", 
+                        background: (isPublishing || validationError) ? "#9CA3AF" : "#7C3AED", 
                         color: "#fff", fontWeight: 700, fontSize: 13, 
-                        cursor: isPublishing ? "not-allowed" : "pointer",
-                        boxShadow: isPublishing ? "none" : "0 2px 8px #7C3AED33",
+                        cursor: (isPublishing || validationError) ? "not-allowed" : "pointer",
+                        boxShadow: (isPublishing || validationError) ? "none" : "0 2px 8px #7C3AED33",
                         transition: "all 0.15s"
                       }}
                     >
@@ -1567,14 +1572,15 @@ export default function ApprovalDashboard() {
                 {canApprove && ["approved", "APPROVED"].includes(selected.status) && (
                   <div style={{ display: "flex", gap: 10 }}>
                     <button 
-                      disabled={isPublishing}
+                      disabled={isPublishing || validationError}
                       onClick={() => handlePublishNow(selected.id)} 
+                      title={validationError || ""}
                       style={{
                         flex: 1, padding: "12px", borderRadius: 10, border: "none",
-                        background: isPublishing ? "#9CA3AF" : "#7C3AED", 
+                        background: (isPublishing || validationError) ? "#9CA3AF" : "#7C3AED", 
                         color: "#fff", fontWeight: 700, fontSize: 13, 
-                        cursor: isPublishing ? "not-allowed" : "pointer",
-                        boxShadow: isPublishing ? "none" : "0 2px 8px #7C3AED33",
+                        cursor: (isPublishing || validationError) ? "not-allowed" : "pointer",
+                        boxShadow: (isPublishing || validationError) ? "none" : "0 2px 8px #7C3AED33",
                         transition: "all 0.15s"
                       }}
                     >

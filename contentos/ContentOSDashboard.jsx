@@ -365,6 +365,10 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
     setIsPublishing(true);
     showToast("Publishing to selected channels... 🚀");
     try {
+      if (editMode) {
+        await api.updateContent(id, editValues);
+      }
+      
       const res = await api.publishContent(id);
       if (res.success) {
         showToast("Successfully published! 🎉");

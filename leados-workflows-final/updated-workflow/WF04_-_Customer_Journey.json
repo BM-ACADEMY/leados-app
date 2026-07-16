@@ -25,7 +25,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"invoice_id\": \"={{$json.invoice_id}}\"}"
+        "jsonBody": "={{ JSON.stringify({ invoice_id: $json.invoice_id }) }}"
       },
       "id": "0a911387-c8ea-4564-bfef-ccdd106961ae",
       "name": "Find Lead",
@@ -43,7 +43,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"brand\": \"={{$json.brand}}\"}"
+        "jsonBody": "={{ JSON.stringify({ brand: $json.brand }) }}"
       },
       "id": "61a772fa-73a7-4920-8d3e-f4781ba5ee1e",
       "name": "Get Journey Steps",
@@ -269,7 +269,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id }) }}"
       },
       "id": "a361d920-883f-4636-b854-62c743d94624",
       "name": "Send Invoice",
@@ -287,7 +287,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"channel\": \"whatsapp\", \"type\": \"text\", \"template\": \"welcome\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, channel: \"whatsapp\", type: \"text\", template: \"welcome\" }) }}"
       },
       "id": "a993fab7-8af2-4527-813e-6a393620de0e",
       "name": "Send Welcome",
@@ -305,7 +305,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"brand\": \"={{$json.brand}}\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand }) }}"
       },
       "id": "a694ada3-d155-4419-a626-621accf095e0",
       "name": "Add To WhatsApp Group",
@@ -323,7 +323,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"program\": \"={{$json.program}}\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, program: $json.program }) }}"
       },
       "id": "d43fcc09-266c-426a-9c29-06d786e5d633",
       "name": "Grant Access",
@@ -341,7 +341,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"type\": \"orientation\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, type: \"orientation\" }) }}"
       },
       "id": "f8f02ebe-936b-4471-aa2d-f4f68a8bc5a6",
       "name": "Trigger Orientation",
@@ -359,7 +359,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"channel\": \"whatsapp\", \"type\": \"text\", \"template\": \"feedback_request\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, channel: \"whatsapp\", type: \"text\", template: \"feedback_request\" }) }}"
       },
       "id": "e8a496f6-7e8b-461f-bf4a-a601d385e4d0",
       "name": "Request Feedback",
@@ -377,7 +377,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"channel\": \"whatsapp\", \"type\": \"text\", \"template\": \"review_request\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, channel: \"whatsapp\", type: \"text\", template: \"review_request\" }) }}"
       },
       "id": "372c1f3d-de3d-4d6e-81ae-b17b6ad477ae",
       "name": "Request Review",
@@ -395,7 +395,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"channel\": \"whatsapp\", \"type\": \"text\", \"template\": \"referral_request\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, channel: \"whatsapp\", type: \"text\", template: \"referral_request\" }) }}"
       },
       "id": "987d1498-1eee-4f25-8005-88ffdbfae052",
       "name": "Request Referral",
@@ -413,7 +413,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"status\": \"={{$json.next_status}}\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, status: $json.next_status }) }}"
       },
       "id": "16ee1f8c-2dda-4570-9fba-8e2ce94bcdb0",
       "name": "Update Lead Stage",
@@ -431,7 +431,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"event\": \"={{$json.action}}\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, event: $json.action }) }}"
       },
       "id": "130de1a7-0379-463e-95c0-aa0933a66f19",
       "name": "Log Events",

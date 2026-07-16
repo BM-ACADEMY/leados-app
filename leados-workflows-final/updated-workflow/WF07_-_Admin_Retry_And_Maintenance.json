@@ -90,7 +90,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"workflow\": \"WF07\", \"status\": \"success\"}"
+        "jsonBody": "={{ JSON.stringify({ workflow: \"WF07\", status: \"success\" }) }}"
       },
       "id": "e1ef4f9a-6fe9-43fc-918b-35929be55938",
       "name": "Log Maintenance",

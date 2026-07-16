@@ -107,7 +107,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"phone\": \"={{$json.phone}}\", \"email\": \"={{$json.email}}\"}"
+        "jsonBody": "={{ JSON.stringify({ phone: $json.phone, email: $json.email }) }}"
       },
       "id": "cbe440ce-5091-4815-a236-508f389a3bf2",
       "name": "Deduplicate Lead",
@@ -125,7 +125,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"message\": \"={{$json.message}}\", \"campaign_id\": \"={{$json.campaign_id}}\", \"form_id\": \"={{$json.lead_ad_form_id}}\", \"existing_brand\": \"={{$json.existing_brand}}\"}"
+        "jsonBody": "={{ JSON.stringify({ message: $json.message, campaign_id: $json.campaign_id, form_id: $json.lead_ad_form_id, existing_brand: $json.existing_brand }) }}"
       },
       "id": "708fd162-f4f7-4f11-9f79-1ed13e8a6fb3",
       "name": "Hybrid Brand Detection",
@@ -143,7 +143,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"brand\": \"={{$json.brand}}\", \"name\": \"={{$json.name}}\", \"phone\": \"={{$json.phone}}\", \"email\": \"={{$json.email}}\", \"source\": \"={{$json.source}}\", \"campaign_id\": \"={{$json.campaign_id}}\", \"brand_confidence\": \"={{$json.brand_confidence}}\", \"clarification_required\": \"={{$json.clarification_required}}\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, name: $json.name, phone: $json.phone, email: $json.email, source: $json.source, campaign_id: $json.campaign_id, brand_confidence: $json.brand_confidence, clarification_required: $json.clarification_required }) }}"
       },
       "id": "11b01ea2-081a-4dd6-89ff-0af47edbb58a",
       "name": "Create Or Update Lead",
@@ -161,7 +161,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"workflow\": \"WF00\", \"lead_id\": \"={{$json.lead_id}}\", \"status\": \"success\"}"
+        "jsonBody": "={{ JSON.stringify({ workflow: \"WF00\", lead_id: $json.lead_id, status: \"success\" }) }}"
       },
       "id": "60baf019-746b-4e7f-b8f2-8e99d697b5fe",
       "name": "Log Workflow Run",
@@ -179,7 +179,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"brand\": \"={{$json.brand}}\", \"message\": \"={{$json.message}}\", \"source\": \"={{$json.source}}\", \"campaign_id\": \"={{$json.campaign_id}}\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, message: $json.message, source: $json.source, campaign_id: $json.campaign_id }) }}"
       },
       "id": "5f43ba25-911f-4d0e-80f9-86cd7c142473",
       "name": "Push To Sales Engine",

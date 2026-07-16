@@ -10,6 +10,23 @@ const axios = require('axios');
 const { GoogleGenAI } = require('@google/genai');
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
+async function generateGeminiContent(prompt) {
+  if (!ai) throw new Error("Gemini API not initialized");
+  const models = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+  for (const model of models) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const aiRes = await ai.models.generateContent({ model, contents: prompt });
+        return aiRes.text.trim();
+      } catch (err) {
+        console.warn(`Gemini (${model}) attempt ${attempt} error: ${err.message}`);
+        if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
+      }
+    }
+  }
+  throw new Error("AI models temporarily in high demand after automatic retries. Please try again.");
+}
+
 // 1. Deduplicate Lead
 router.post('/leads/deduplicate', async (req, res) => {
   const { phone, email } = req.body;
@@ -116,8 +133,7 @@ router.post('/ai/intent', async (req, res) => {
 
     if (!ai) return res.json({ intent: "GENERAL", confidence: 50 });
     const prompt = `Analyze this message sent to the brand '${brand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
-    const aiRes = await ai.models.generateContent({ model: 'gemini-3.5-flash', contents: prompt });
-    const output = aiRes.text.trim();
+    const output = await generateGeminiContent(prompt);
     const parts = output.split(',');
     const intent = parts[0] ? parts[0].trim() : 'GENERAL';
     const confidence = parts[1] ? parseInt(parts[1].trim()) : 50;
@@ -137,8 +153,7 @@ router.post('/ai/objections', async (req, res) => {
   try {
     if (!ai) return res.json({ objections: "none" });
     const prompt = `Analyze this message. Does the user have any objections? Choose one: [TOO_EXPENSIVE, NO_TIME, NOT_SURE, USING_COMPETITOR, NONE]. Message: "${message}". Reply ONLY with the objection type.`;
-    const aiRes = await ai.models.generateContent({ model: 'gemini-3.5-flash', contents: prompt });
-    const objections = aiRes.text.trim();
+    const objections = await generateGeminiContent(prompt);
     res.json({ objections });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -170,8 +185,7 @@ router.post('/ai/response', async (req, res) => {
 
     const prompt = `System Prompt (ABM Groups Knowledge Base):\n${kb_snippets}\n\n${historyText}User Intent detected: ${intent}\n\nUser Message: "${message}"\n\nWrite a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.`;
     
-    const aiRes = await ai.models.generateContent({ model: 'gemini-3.5-flash', contents: prompt });
-    const ai_reply = aiRes.text.trim();
+    const ai_reply = await generateGeminiContent(prompt);
     res.json({ ai_reply });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -425,8 +439,8 @@ router.post('/ai/followup', async (req, res) => {
   try {
     if (!ai) return res.json({ ai_reply: "Are you still interested in our program?" });
     const prompt = `Write a very short, polite WhatsApp follow-up message for a lead who hasn't replied to '${brand}'. This is follow-up attempt #${touch_count}.`;
-    const aiRes = await ai.models.generateContent({ model: 'gemini-3.5-flash', contents: prompt });
-    res.json({ ai_reply: aiRes.text.trim() });
+    const ai_reply = await generateGeminiContent(prompt);
+    res.json({ ai_reply });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -460,8 +474,8 @@ router.post('/ai/report-generator', async (req, res) => {
   try {
     if (!ai) return res.json({ summary: "Daily Summary generated." });
     const prompt = `Summarize these daily metrics for a Founder Dashboard:\n${JSON.stringify(data)}\nWrite 3 bullet points.`;
-    const aiRes = await ai.models.generateContent({ model: 'gemini-3.5-flash', contents: prompt });
-    res.json({ summary: aiRes.text.trim() });
+    const summary = await generateGeminiContent(prompt);
+    res.json({ summary });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

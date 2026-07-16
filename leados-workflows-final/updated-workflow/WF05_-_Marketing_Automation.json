@@ -57,7 +57,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"campaign_id\": \"={{$json.campaign_id}}\", \"target_brands\": \"={{$json.target_brands}}\", \"target_stages\": \"={{$json.target_stages}}\", \"target_interests\": \"={{$json.target_interests}}\"}"
+        "jsonBody": "={{ JSON.stringify({ campaign_id: $json.campaign_id, target_brands: $json.target_brands, target_stages: $json.target_stages, target_interests: $json.target_interests }) }}"
       },
       "id": "6a09a107-03db-4691-ad19-241b5613267a",
       "name": "Select Leads",
@@ -89,7 +89,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"campaign_id\": \"={{$json.campaign_id}}\", \"lead_id\": \"={{$json.lead_id}}\"}"
+        "jsonBody": "={{ JSON.stringify({ campaign_id: $json.campaign_id, lead_id: $json.lead_id }) }}"
       },
       "id": "d9cd3e8a-f0dc-4904-8ea7-3e461f0d4180",
       "name": "Apply Frequency Capping",
@@ -169,7 +169,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"template_name\": \"={{$json.template_name}}\", \"template_params\": \"={{$json.template_params}}\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, template_name: $json.template_name, template_params: $json.template_params }) }}"
       },
       "id": "c97826eb-40d2-4afc-b9aa-4c778a5e4fdb",
       "name": "Send WhatsApp Message",
@@ -187,7 +187,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"subject\": \"={{$json.subject}}\", \"body\": \"={{$json.body}}\"}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, subject: $json.subject, body: $json.body }) }}"
       },
       "id": "c93c0cba-8927-4a48-b62e-9540033a6642",
       "name": "Send Email Message",
@@ -205,7 +205,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"campaign_id\": \"={{$json.campaign_id}}\", \"lead_id\": \"={{$json.lead_id}}\", \"status\": \"sent\"}"
+        "jsonBody": "={{ JSON.stringify({ campaign_id: $json.campaign_id, lead_id: $json.lead_id, status: \"sent\" }) }}"
       },
       "id": "4d195c35-a885-4031-9c3d-a98acdbda300",
       "name": "Log Campaign Activity",

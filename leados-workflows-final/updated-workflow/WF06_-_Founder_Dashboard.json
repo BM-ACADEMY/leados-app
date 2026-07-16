@@ -177,7 +177,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"metrics\": \"={{$json}}\"}"
+        "jsonBody": "={{ JSON.stringify({ metrics: $json }) }}"
       },
       "id": "efc4878c-e308-4c08-800f-4170146039fe",
       "name": "Generate Summary",
@@ -195,7 +195,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"channel\": \"whatsapp\", \"type\": \"text\", \"content\": \"={{$json.summary}}\"}"
+        "jsonBody": "={{ JSON.stringify({ channel: \"whatsapp\", type: \"text\", content: $json.summary }) }}"
       },
       "id": "c31cb880-b072-4fe9-8984-0da951008b1f",
       "name": "Send To Founder",

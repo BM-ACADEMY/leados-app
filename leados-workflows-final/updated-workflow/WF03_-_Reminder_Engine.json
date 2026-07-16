@@ -112,7 +112,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.item.json;\nconst owners = item.owners || [];\nconst summaries = owners.map(o => ({\n  owner: o.owner,\n  text: `Today's Tasks \u2013 ${o.brand}: ${o.followup_count||0} Follow-ups, ${o.call_count||0} Calls, ${o.payment_count||0} Payments, ${o.hot_count||0} HOT Leads, ${o.overdue_count||0} Overdue.`\n}));\nreturn summaries.map(s => ({ json: s }));",
+        "jsCode": "const item = $input.item.json;\nconst owners = item.owners || [];\nconst summaries = owners.map(o => ({\n  owner: o.owner,\n  text: `Today's Tasks – ${o.brand}: ${o.followup_count||0} Follow-ups, ${o.call_count||0} Calls, ${o.payment_count||0} Payments, ${o.hot_count||0} HOT Leads, ${o.overdue_count||0} Overdue.`\n}));\nreturn summaries.map(s => ({ json: s }));",
         "mode": "runOnceForAllItems"
       },
       "id": "7c726376-5da0-45d2-93f6-a29357feb9d3",
@@ -131,7 +131,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"metrics\": \"={{$json}}\"}"
+        "jsonBody": "={{ JSON.stringify({ metrics: $json }) }}"
       },
       "id": "426597d7-2957-449a-a173-4ed7af4be14c",
       "name": "Generate Founder Summary",
@@ -149,7 +149,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"owner\": \"={{$json.owner}}\", \"channel\": \"whatsapp\", \"type\": \"text\", \"content\": \"={{$json.text}}\"}"
+        "jsonBody": "={{ JSON.stringify({ owner: $json.owner, channel: \"whatsapp\", type: \"text\", content: $json.text }) }}"
       },
       "id": "1d034e78-05eb-4eac-9839-7ed1fb282209",
       "name": "Send To Salespeople",
@@ -167,7 +167,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"channel\": \"whatsapp\", \"type\": \"text\", \"content\": \"={{$json.summary}}\"}"
+        "jsonBody": "={{ JSON.stringify({ channel: \"whatsapp\", type: \"text\", content: $json.summary }) }}"
       },
       "id": "5e216a57-0bec-461e-a518-54860d4c6d64",
       "name": "Send To Founder",

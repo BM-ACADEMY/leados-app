@@ -1,0 +1,650 @@
+{
+  "name": "WF04 - Customer Journey",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "payment-success",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "9b36f5b6-206a-46b4-ac17-eb122f312342",
+      "name": "Payment Success Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "a35ea8af-b7ac-4760-9437-b5879482495d"
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/find-by-invoice",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"invoice_id\": \"={{$json.invoice_id}}\"}"
+      },
+      "id": "0a911387-c8ea-4564-bfef-ccdd106961ae",
+      "name": "Find Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/journey/steps",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"brand\": \"={{$json.brand}}\"}"
+      },
+      "id": "61a772fa-73a7-4920-8d3e-f4781ba5ee1e",
+      "name": "Get Journey Steps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "c87dee9a-0fff-4ce0-8603-4813322da5d6",
+      "name": "Loop Journey Steps",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "send_invoice",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "send_invoice",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "send_welcome",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "send_welcome",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "add_to_whatsapp_group",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "add_to_whatsapp_group",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "grant_access",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "grant_access",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "trigger_orientation",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "trigger_orientation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "request_feedback",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "request_feedback",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "request_review",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "request_review",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "request_referral",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "request_referral",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1efaead4-6748-43b0-81c8-6ad941a6137f",
+      "name": "Execute Journey Step",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/invoices/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\"}"
+      },
+      "id": "a361d920-883f-4636-b854-62c743d94624",
+      "name": "Send Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"channel\": \"whatsapp\", \"type\": \"text\", \"template\": \"welcome\"}"
+      },
+      "id": "a993fab7-8af2-4527-813e-6a393620de0e",
+      "name": "Send Welcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/whatsapp/add-to-group",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"brand\": \"={{$json.brand}}\"}"
+      },
+      "id": "a694ada3-d155-4419-a626-621accf095e0",
+      "name": "Add To WhatsApp Group",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/access/grant",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"program\": \"={{$json.program}}\"}"
+      },
+      "id": "d43fcc09-266c-426a-9c29-06d786e5d633",
+      "name": "Grant Access",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/tasks/create",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"type\": \"orientation\"}"
+      },
+      "id": "f8f02ebe-936b-4471-aa2d-f4f68a8bc5a6",
+      "name": "Trigger Orientation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"channel\": \"whatsapp\", \"type\": \"text\", \"template\": \"feedback_request\"}"
+      },
+      "id": "e8a496f6-7e8b-461f-bf4a-a601d385e4d0",
+      "name": "Request Feedback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"channel\": \"whatsapp\", \"type\": \"text\", \"template\": \"review_request\"}"
+      },
+      "id": "372c1f3d-de3d-4d6e-81ae-b17b6ad477ae",
+      "name": "Request Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"channel\": \"whatsapp\", \"type\": \"text\", \"template\": \"referral_request\"}"
+      },
+      "id": "987d1498-1eee-4f25-8005-88ffdbfae052",
+      "name": "Request Referral",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/update",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"status\": \"={{$json.next_status}}\"}"
+      },
+      "id": "16ee1f8c-2dda-4570-9fba-8e2ce94bcdb0",
+      "name": "Update Lead Stage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/log-event",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"event\": \"={{$json.action}}\"}"
+      },
+      "id": "130de1a7-0379-463e-95c0-aa0933a66f19",
+      "name": "Log Events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "564ef08b-d912-45f4-a5f8-f8e24c872128",
+      "name": "Loop Back Marker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Payment Success Webhook": {
+      "main": [
+        [
+          {
+            "node": "Find Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Lead": {
+      "main": [
+        [
+          {
+            "node": "Get Journey Steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Journey Steps": {
+      "main": [
+        [
+          {
+            "node": "Loop Journey Steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Journey Steps": {
+      "main": [
+        [
+          {
+            "node": "Execute Journey Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Journey Step": {
+      "main": [
+        [
+          {
+            "node": "Send Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Invoice": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Welcome": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add To WhatsApp Group": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Grant Access": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orientation": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Feedback": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Review": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Referral": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Lead Stage": {
+      "main": [
+        [
+          {
+            "node": "Log Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Events": {
+      "main": [
+        [
+          {
+            "node": "Loop Back Marker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Back Marker": {
+      "main": [
+        [
+          {
+            "node": "Loop Journey Steps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "5be4074e-c411-4b89-b05d-08c5b98b6e29",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "6889a5fa-fd29-4570-b7f8-042aee47d383"
+  },
+  "id": "afdc5b48-6569-46f6-b3bf-a576ba11ce65",
+  "tags": []
+}

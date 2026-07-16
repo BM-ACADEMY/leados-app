@@ -1504,6 +1504,32 @@ export const InboxView = () => {
                 </div>
               </div>
 
+              {/* SalesOS Lead Details Section */}
+              <div style={{ padding: '16px 18px', borderBottom: '1px solid ' + C.border }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 600, color: C.text }}>SalesOS Details</h3>
+                
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ color: C.muted, fontSize: 13 }}>Lead Score</span>
+                  <span style={{ color: C.text, fontSize: 13, fontWeight: 600, color: (activeObj?.score > 50) ? '#10b981' : C.text }}>{activeObj?.score || 0}</span>
+                </div>
+                
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ color: C.muted, fontSize: 13 }}>Stage</span>
+                  <span style={{ color: C.text, fontSize: 12, fontWeight: 500, padding: '2px 8px', background: C.bg, borderRadius: 12, border: '1px solid ' + C.border }}>{activeObj?.stage || 'NEW'}</span>
+                </div>
+                
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ color: C.muted, fontSize: 13 }}>Owner</span>
+                  <span style={{ color: C.text, fontSize: 13, fontWeight: 500 }}>{activeObj?.owner || 'AI Bot'}</span>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ color: C.muted, fontSize: 13 }}>Objections</span>
+                  <span style={{ color: C.text, fontSize: 13, fontWeight: 500, maxWidth: '60%', textAlign: 'right' }}>{activeObj?.objections || 'None'}</span>
+                </div>
+              </div>
+
+
               <div style={{ padding: '18px' }}>
                 <h3 style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 600, color: C.text }}>About</h3>
                 <p style={{ margin: 0, fontSize: 13, color: C.muted, lineHeight: 1.5 }}>

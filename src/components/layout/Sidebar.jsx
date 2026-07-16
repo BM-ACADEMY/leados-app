@@ -515,6 +515,31 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
 
         <div style={{ padding: isExpanded ? '0 12px' : '0 7px', display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
           <NavLink
+            to="/workflows"
+            onClick={handleNavClick}
+            title={!isExpanded ? "Workflow Logs" : undefined}
+            style={({ isActive }) => ({
+              width: '100%',
+              height: 42,
+              borderRadius: 9,
+              border: 'none',
+              background: isActive ? C.accent + '22' : 'transparent',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: isExpanded ? 'flex-start' : 'center',
+              padding: isExpanded ? '0 12px' : '0',
+              cursor: 'pointer',
+              textDecoration: 'none',
+            })}
+          >
+            {({ isActive }) => (
+              <>
+                <Activity size={17} color={isActive ? C.accent : C.muted} />
+                {isExpanded && <span style={{ marginLeft: 12, fontSize: 13, fontWeight: isActive ? 600 : 500, color: isActive ? C.accent : C.text }}>Workflow Logs ⚡</span>}
+              </>
+            )}
+          </NavLink>
+          <NavLink
             to="/settings"
             onClick={handleNavClick}
             title={!isExpanded ? "Settings" : undefined}

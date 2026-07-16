@@ -201,7 +201,32 @@ class LeadOSAPI {
     });
   }
 
-  // ─── INBOX & MESSAGES ───────────────────
+  // ─── SALESOS REPORTS ──────────────────────
+  async getSalesOSReports() {
+    // Fetch all SalesOS metrics concurrently
+    const [revToday, revMonth, brandRev, sources, conv, pendingF, sla, ai] = await Promise.all([
+      this.request('/api/reports/revenue-today'),
+      this.request('/api/reports/revenue-month'),
+      this.request('/api/reports/brand-revenue'),
+      this.request('/api/reports/lead-sources'),
+      this.request('/api/reports/conversion-rate'),
+      this.request('/api/reports/followups-pending'),
+      this.request('/api/reports/sla-breaches'),
+      this.request('/api/reports/ai-performance')
+    ]);
+    return {
+      revenueToday: revToday?.revenue || 0,
+      revenueMonth: revMonth?.revenue || 0,
+      brandRevenue: brandRev?.data || [],
+      leadSources: sources?.sources || [],
+      conversionRate: conv?.data || [],
+      pendingFollowups: pendingF?.pending || 0,
+      slaBreaches: sla?.breaches || 0,
+      aiPerformance: ai?.avg_confidence || 0
+    };
+  }
+
+  // ─── CAMPAIGNS ──────────────────────────
   async getInbox() {
     return this.request('/api/inbox');
   }
@@ -418,9 +443,14 @@ class LeadOSAPI {
     });
   }
 
-  // ─── DASHBOARD ──────────────────────────
   async getDashboardStats(params = {}) {
-    const query = new URLSearchParams(params).toString();
+    const cleanParams = {};
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== null) {
+        cleanParams[key] = params[key];
+      }
+    });
+    const query = new URLSearchParams(cleanParams).toString();
     return this.request(`/api/reports/summary${query ? '?' + query : ''}`);
   }
 
@@ -572,6 +602,19 @@ class LeadOSAPI {
     return this.request(`/api/content/${id}/suggest-stories`, {
       method: 'POST',
       body: JSON.stringify({ tone })
+    });
+  }
+
+  // Workflow Logs
+  async getWorkflowLogs() {
+    return this.request('/api/workflows/logs', {
+      method: 'GET'
+    });
+  }
+
+  async getWorkflowTelemetry() {
+    return this.request('/api/workflows/telemetry', {
+      method: 'GET'
     });
   }
 }

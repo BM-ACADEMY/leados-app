@@ -1,0 +1,174 @@
+{
+  "name": "WF07 - Admin Retry And Maintenance",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "admin-maintenance",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "b0498345-1152-48a0-b8b3-512e884d08dd",
+      "name": "Admin Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -100
+      ],
+      "webhookId": "849821c8-c58d-4bbb-9f10-b9848b02c68d"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * *"
+            }
+          ]
+        }
+      },
+      "id": "0a6f91d7-1ac4-45f9-901e-a7c4169107e3",
+      "name": "Cron Daily Maintenance",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/admin/retry",
+        "method": "POST",
+        "options": {}
+      },
+      "id": "b89048cf-3580-4f43-819f-82cd9c8280d2",
+      "name": "Retry Failed Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/admin/cleanup",
+        "method": "POST",
+        "options": {}
+      },
+      "id": "327a5af3-7198-4268-83e2-226004566dd1",
+      "name": "Cleanup Old Logs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/admin/refresh-embeddings",
+        "method": "POST",
+        "options": {}
+      },
+      "id": "1f99e22d-1272-434c-9bf5-13827f7c9098",
+      "name": "Embedding Refresh",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/workflows/log",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"workflow\": \"WF07\", \"status\": \"success\"}"
+      },
+      "id": "e1ef4f9a-6fe9-43fc-918b-35929be55938",
+      "name": "Log Maintenance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Admin Webhook": {
+      "main": [
+        [
+          {
+            "node": "Retry Failed Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Daily Maintenance": {
+      "main": [
+        [
+          {
+            "node": "Retry Failed Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Failed Jobs": {
+      "main": [
+        [
+          {
+            "node": "Cleanup Old Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cleanup Old Logs": {
+      "main": [
+        [
+          {
+            "node": "Embedding Refresh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding Refresh": {
+      "main": [
+        [
+          {
+            "node": "Log Maintenance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "c33e486a-5b2b-494b-8776-5e6b681ae3c7",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "6e351eb2-e0a3-46e6-99d3-48f91408d21f"
+  },
+  "id": "5b64565c-7490-4e03-8d9c-098cd2b008cd",
+  "tags": []
+}

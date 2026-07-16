@@ -1,0 +1,355 @@
+{
+  "name": "WF00 - Lead Integrator",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "whatsapp-inbound",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "a6c583bd-b725-474c-bd56-3b6cd7c3ff25",
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "8f4d0248-0095-4257-aa0f-cb812c92d89f"
+    },
+    {
+      "parameters": {
+        "path": "meta-ads-lead",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "478472c4-5725-4a35-add4-d2beb768cea0",
+      "name": "Meta Ads Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        160
+      ],
+      "webhookId": "b91dda25-b71b-40a7-8064-2756d4160181"
+    },
+    {
+      "parameters": {
+        "path": "website-form",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "896111c7-8f73-4c95-bec4-a98b13e27f32",
+      "name": "Website Form Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        320
+      ],
+      "webhookId": "31aaf642-b93c-484b-8bd1-6fd9e6a1f9f4"
+    },
+    {
+      "parameters": {
+        "path": "gmail-inbound",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "58dc9ad9-be61-4f18-85c3-fa8a75f49bf1",
+      "name": "Gmail Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        480
+      ],
+      "webhookId": "5eda41f5-8c45-4911-abc9-895d9233c86a"
+    },
+    {
+      "parameters": {
+        "path": "bulk-whatsapp-reply",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "7ad9b8c2-d40c-4431-8817-4bf61005520c",
+      "name": "Bulk WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        640
+      ],
+      "webhookId": "30436fff-11cd-4b4c-92fd-5a0237457814"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\nconst source = item.source || $node[\"WhatsApp Webhook\"] ? item.source : item.source;\nlet lead = {};\n\nswitch (item.source) {\n  case 'whatsapp':\n    lead = { name: item.payload?.name || '', phone: item.payload?.phone || '', email: item.payload?.email || '', message: item.payload?.message || '', source: 'whatsapp' };\n    break;\n  case 'meta_ads':\n    lead = { name: item.payload?.full_name || '', phone: item.payload?.phone || '', email: item.payload?.email || '', source: 'meta_ads', campaign_id: item.payload?.campaign_id || '', ad_id: item.payload?.ad_id || '', lead_ad_form_id: item.payload?.form_id || '' };\n    break;\n  case 'website':\n    lead = { name: item.payload?.name || '', phone: item.payload?.phone || '', email: item.payload?.email || '', source: 'website', message: item.payload?.message || '' };\n    break;\n  case 'email':\n    lead = { name: item.payload?.name || '', email: item.payload?.email || '', source: 'email', message: item.payload?.body || '' };\n    break;\n  case 'bulk_whatsapp':\n    lead = { name: item.payload?.name || '', phone: item.payload?.phone || '', source: 'bulk_whatsapp', message: item.payload?.message || '', campaign_id: item.payload?.campaign_id || '' };\n    break;\n  default:\n    lead = { source: 'unknown', raw: item };\n}\nreturn [{ json: lead }];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "f5762817-b1f6-4cda-be1e-78c0c6b1f92c",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/deduplicate",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"phone\": \"={{$json.phone}}\", \"email\": \"={{$json.email}}\"}"
+      },
+      "id": "cbe440ce-5091-4815-a236-508f389a3bf2",
+      "name": "Deduplicate Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/brand/detect",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"message\": \"={{$json.message}}\", \"campaign_id\": \"={{$json.campaign_id}}\", \"form_id\": \"={{$json.lead_ad_form_id}}\", \"existing_brand\": \"={{$json.existing_brand}}\"}"
+      },
+      "id": "708fd162-f4f7-4f11-9f79-1ed13e8a6fb3",
+      "name": "Hybrid Brand Detection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/createOrUpdate",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"brand\": \"={{$json.brand}}\", \"name\": \"={{$json.name}}\", \"phone\": \"={{$json.phone}}\", \"email\": \"={{$json.email}}\", \"source\": \"={{$json.source}}\", \"campaign_id\": \"={{$json.campaign_id}}\", \"brand_confidence\": \"={{$json.brand_confidence}}\", \"clarification_required\": \"={{$json.clarification_required}}\"}"
+      },
+      "id": "11b01ea2-081a-4dd6-89ff-0af47edbb58a",
+      "name": "Create Or Update Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/workflows/log",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"workflow\": \"WF00\", \"lead_id\": \"={{$json.lead_id}}\", \"status\": \"success\"}"
+      },
+      "id": "60baf019-746b-4e7f-b8f2-8e99d697b5fe",
+      "name": "Log Workflow Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://leados-n8n.abmgroups.org/webhook/sales-engine",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"brand\": \"={{$json.brand}}\", \"message\": \"={{$json.message}}\", \"source\": \"={{$json.source}}\", \"campaign_id\": \"={{$json.campaign_id}}\"}"
+      },
+      "id": "5f43ba25-911f-4d0e-80f9-86cd7c142473",
+      "name": "Push To Sales Engine",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "path": "whatsapp-inbound",
+        "httpMethod": "GET",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "meta-verify-webhook-id",
+      "name": "WhatsApp Verify Webhook (GET)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -200
+      ],
+      "webhookId": "meta-verify-webhook-id-123"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query['hub.challenge'] }}",
+        "options": {}
+      },
+      "id": "meta-respond-id",
+      "name": "Respond to Meta Verification",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        -200
+      ]
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Ads Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Website Form Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bulk WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Payload": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate Lead": {
+      "main": [
+        [
+          {
+            "node": "Hybrid Brand Detection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hybrid Brand Detection": {
+      "main": [
+        [
+          {
+            "node": "Create Or Update Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Or Update Lead": {
+      "main": [
+        [
+          {
+            "node": "Log Workflow Run",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Push To Sales Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Verify Webhook (GET)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Meta Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "e171b013-80a2-4582-8905-7051235cf1ce",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "77fddd30-feae-4c83-83af-53d2344a072a"
+  },
+  "id": "dc57a599-456a-45a3-a5fd-3960f4a09a70",
+  "tags": []
+}

@@ -1,0 +1,399 @@
+{
+  "name": "WF05 - Marketing Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "4e531c44-8a49-4f46-aefa-6f94207a0746",
+      "name": "Cron Daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/campaigns/active",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "9ef20172-a968-4453-af88-8cf7d2425d03",
+      "name": "List Active Campaigns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "8a8ea042-96e4-48ac-a4cd-6bff25a1fca8",
+      "name": "Loop Campaigns",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/campaigns/select-leads",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"campaign_id\": \"={{$json.campaign_id}}\", \"target_brands\": \"={{$json.target_brands}}\", \"target_stages\": \"={{$json.target_stages}}\", \"target_interests\": \"={{$json.target_interests}}\"}"
+      },
+      "id": "6a09a107-03db-4691-ad19-241b5613267a",
+      "name": "Select Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "fe044ef1-d2a0-4f06-882e-38183818a9ee",
+      "name": "Loop Leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/campaigns/check-frequency",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"campaign_id\": \"={{$json.campaign_id}}\", \"lead_id\": \"={{$json.lead_id}}\"}"
+      },
+      "id": "d9cd3e8a-f0dc-4904-8ea7-3e461f0d4180",
+      "name": "Apply Frequency Capping",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "whatsapp",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.channel}}",
+                    "rightValue": "whatsapp",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "email",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.channel}}",
+                    "rightValue": "email",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "be986047-6460-498c-904d-c9b09b6fd8ff",
+      "name": "Channel Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send-template",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"template_name\": \"={{$json.template_name}}\", \"template_params\": \"={{$json.template_params}}\"}"
+      },
+      "id": "c97826eb-40d2-4afc-b9aa-4c778a5e4fdb",
+      "name": "Send WhatsApp Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send-email",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"subject\": \"={{$json.subject}}\", \"body\": \"={{$json.body}}\"}"
+      },
+      "id": "c93c0cba-8927-4a48-b62e-9540033a6642",
+      "name": "Send Email Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/campaigns/log",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"campaign_id\": \"={{$json.campaign_id}}\", \"lead_id\": \"={{$json.lead_id}}\", \"status\": \"sent\"}"
+      },
+      "id": "4d195c35-a885-4031-9c3d-a98acdbda300",
+      "name": "Log Campaign Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "45df6dc0-62c0-4ecc-af50-e36c9db50d7b",
+      "name": "Loop Leads Back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "cffb2bf4-b13b-44b2-9121-45e2b08f6cbd",
+      "name": "Loop Campaigns Back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Daily": {
+      "main": [
+        [
+          {
+            "node": "List Active Campaigns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Active Campaigns": {
+      "main": [
+        [
+          {
+            "node": "Loop Campaigns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Campaigns": {
+      "main": [
+        [
+          {
+            "node": "Select Leads",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Loop Campaigns Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Leads": {
+      "main": [
+        [
+          {
+            "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Leads": {
+      "main": [
+        [
+          {
+            "node": "Apply Frequency Capping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Frequency Capping": {
+      "main": [
+        [
+          {
+            "node": "Channel Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Channel Router": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Log Campaign Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Message": {
+      "main": [
+        [
+          {
+            "node": "Log Campaign Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Campaign Activity": {
+      "main": [
+        [
+          {
+            "node": "Loop Leads Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Leads Back": {
+      "main": [
+        [
+          {
+            "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Campaigns Back": {
+      "main": [
+        [
+          {
+            "node": "Loop Campaigns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "cbb5d2da-46e8-49d2-ae4c-0ebcb1d816c0",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "33ed02cc-de42-4a33-b039-84317a030129"
+  },
+  "id": "e6099341-23a2-413e-afec-8a29c58014c7",
+  "tags": []
+}

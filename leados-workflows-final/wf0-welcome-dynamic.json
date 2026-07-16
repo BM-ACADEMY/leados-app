@@ -12,7 +12,10 @@
       "name": "Webhook - New Lead Added",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [240, 300],
+      "position": [
+        240,
+        300
+      ],
       "webhookId": "leados-new-lead-webhook"
     },
     {
@@ -23,19 +26,25 @@
       "name": "Extract Lead Info",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300]
+      "position": [
+        460,
+        300
+      ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT c.name as brand_name, c.phone_number_id, c.wa_access_token, bd_welcome.content as welcome_template FROM clients c LEFT JOIN brain_docs bd_welcome ON bd_welcome.client_id = c.id AND bd_welcome.doc_type = 'welcome_template' WHERE c.id = {{ $json.client_id }}",
+        "query": "WITH fallback_token AS (\n  SELECT wa_access_token, phone_number_id \n  FROM clients \n  WHERE wa_access_token IS NOT NULL \n    AND wa_access_token <> '' \n    AND phone_number_id IS NOT NULL \n    AND phone_number_id <> ''\n  LIMIT 1\n),\nupdated_client AS (\n  UPDATE clients\n  SET wa_access_token = COALESCE(clients.wa_access_token, (SELECT wa_access_token FROM fallback_token)),\n      phone_number_id = COALESCE(clients.phone_number_id, (SELECT phone_number_id FROM fallback_token))\n  WHERE id = {{ $json.client_id }}\n    AND (wa_access_token IS NULL OR wa_access_token = '' OR phone_number_id IS NULL OR phone_number_id = '')\n  RETURNING *\n),\ncurrent_client AS (\n  SELECT * FROM updated_client\n  UNION ALL\n  SELECT * FROM clients \n  WHERE id = {{ $json.client_id }}\n    AND NOT EXISTS (SELECT 1 FROM updated_client)\n)\nSELECT c.name as brand_name,\n       COALESCE(c.phone_number_id, (SELECT phone_number_id FROM fallback_token)) as phone_number_id,\n       COALESCE(c.wa_access_token, (SELECT wa_access_token FROM fallback_token)) as wa_access_token,\n       bd_welcome.content as welcome_template\nFROM current_client c\nLEFT JOIN brain_docs bd_welcome ON bd_welcome.client_id = c.id AND bd_welcome.doc_type = 'welcome_template'",
         "options": {}
       },
       "id": "get-brand-config",
       "name": "Get Brand Config",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [680, 300],
+      "position": [
+        680,
+        300
+      ],
       "credentials": {
         "postgres": {
           "name": "LeadOS DB"
@@ -44,13 +53,16 @@
     },
     {
       "parameters": {
-        "jsCode": "const leadInfo = $('Extract Lead Info').first().json;\nconst brand = $input.first().json;\n\n// Template name from brain_docs, fallback to hello_world\nconst templateName = (brand.welcome_template || 'hello_world').trim();\n\n// Use brand WA credentials, fallback to what server sent\nconst phoneNumberId = brand.phone_number_id || leadInfo.phone_number_id;\nconst waToken = brand.wa_access_token || leadInfo.wa_access_token;\n\nif (!phoneNumberId || !waToken) {\n  throw new Error('Missing WhatsApp credentials for brand: ' + (brand.brand_name || 'unknown') + '. Set phone_number_id and wa_access_token in Clients.');\n}\n\nreturn [{\n  json: {\n    lead_id: leadInfo.lead_id,\n    phone: leadInfo.phone,\n    name: leadInfo.name,\n    templateName,\n    phoneNumberId,\n    waToken,\n    brandName: brand.brand_name || 'Unknown Brand'\n  }\n}];"
+        "jsCode": "const leadInfo = $('Extract Lead Info').first().json;\nconst brand = $input.first().json;\n\n// Template name from brain_docs, fallback to common_welcome_message\nconst templateName = (brand.welcome_template || 'common_welcome_message').trim();\n\n// Use brand WA credentials, fallback to what server sent\nconst phoneNumberId = brand.phone_number_id || leadInfo.phone_number_id;\nconst waToken = brand.wa_access_token || leadInfo.wa_access_token;\n\nif (!phoneNumberId || !waToken) {\n  throw new Error('Missing WhatsApp credentials for brand: ' + (brand.brand_name || 'unknown') + '. Set phone_number_id and wa_access_token in Clients.');\n}\n\nreturn [{\n  json: {\n    lead_id: leadInfo.lead_id,\n    phone: leadInfo.phone,\n    name: leadInfo.name,\n    templateName,\n    phoneNumberId,\n    waToken,\n    brandName: brand.brand_name || 'Unknown Brand'\n  }\n}];"
       },
       "id": "prepare-template",
       "name": "Prepare Template",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [900, 300]
+      "position": [
+        900,
+        300
+      ]
     },
     {
       "parameters": {
@@ -78,7 +90,10 @@
       "name": "Send Welcome Template",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1120, 300]
+      "position": [
+        1120,
+        300
+      ]
     },
     {
       "parameters": {
@@ -90,7 +105,33 @@
       "name": "Set Initial Flow Step",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [1340, 300],
+      "position": [
+        1340,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO messages (conversation_id, tenant_id, direction, content, is_ai, sent_at, msg_type, status) SELECT cv.id, cv.tenant_id, 'outbound', $1, true, NOW(), 'template', 'sent' FROM conversations cv WHERE cv.lead_id = $2 LIMIT 1;",
+        "additionalFields": {
+          "queryParams": "={{ JSON.stringify([$('Prepare Template').first().json.templateName, $('Extract Lead Info').first().json.lead_id]) }}"
+        },
+        "options": {}
+      },
+      "id": "save-welcome-msg",
+      "name": "Save Welcome Message to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1340,
+        100
+      ],
       "credentials": {
         "postgres": {
           "name": "LeadOS DB"
@@ -100,22 +141,79 @@
   ],
   "connections": {
     "Webhook - New Lead Added": {
-      "main": [[{ "node": "Extract Lead Info", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Extract Lead Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Extract Lead Info": {
-      "main": [[{ "node": "Get Brand Config", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Get Brand Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Get Brand Config": {
-      "main": [[{ "node": "Prepare Template", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Prepare Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Prepare Template": {
-      "main": [[{ "node": "Send Welcome Template", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Send Welcome Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Send Welcome Template": {
-      "main": [[{ "node": "Set Initial Flow Step", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Save Welcome Message to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Welcome Message to DB": {
+      "main": [
+        [
+          {
+            "node": "Set Initial Flow Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
-  "settings": { "executionOrder": "v1" },
-  "tags": [{ "name": "LeadOS" }]
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "LeadOS"
+    }
+  ]
 }

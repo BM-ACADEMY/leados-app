@@ -49,7 +49,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT l.id, l.name, l.phone, l.score, l.status, l.interest, l.flow_step,\n       c.name as brand_name, c.wa_access_token, c.phone_number_id as brand_phone_number_id,\n       COALESCE(l.flow_step, 'welcome') as current_flow_step,\n       bd_prompt.content as system_prompt\nFROM leads l\nLEFT JOIN clients c ON l.client_id = c.id\nLEFT JOIN brain_docs bd_prompt ON bd_prompt.client_id = c.id AND bd_prompt.doc_type = 'prompt'\nWHERE l.id = {{ $json.lead_id }}",
+        "query": "WITH client_to_update AS (\n  SELECT client_id \n  FROM leads \n  WHERE id = {{ $json.lead_id }}\n),\nfallback_token AS (\n  SELECT wa_access_token, phone_number_id \n  FROM clients \n  WHERE wa_access_token IS NOT NULL \n    AND wa_access_token <> '' \n    AND phone_number_id IS NOT NULL \n    AND phone_number_id <> ''\n  LIMIT 1\n),\nupdated_client AS (\n  UPDATE clients\n  SET wa_access_token = COALESCE(clients.wa_access_token, (SELECT wa_access_token FROM fallback_token)),\n      phone_number_id = COALESCE(clients.phone_number_id, (SELECT phone_number_id FROM fallback_token))\n  WHERE id = (SELECT client_id FROM client_to_update)\n    AND (wa_access_token IS NULL OR wa_access_token = '' OR phone_number_id IS NULL OR phone_number_id = '')\n  RETURNING *\n),\ncurrent_client AS (\n  SELECT * FROM updated_client\n  UNION ALL\n  SELECT * FROM clients \n  WHERE id = (SELECT client_id FROM client_to_update)\n    AND NOT EXISTS (SELECT 1 FROM updated_client)\n)\nSELECT l.id, l.name, l.phone, l.score, l.status, l.interest, l.flow_step,\n       c.name as brand_name,\n       COALESCE(c.wa_access_token, (SELECT wa_access_token FROM fallback_token)) as wa_access_token,\n       COALESCE(c.phone_number_id, (SELECT phone_number_id FROM fallback_token)) as brand_phone_number_id,\n       COALESCE(l.flow_step, 'welcome') as current_flow_step,\n       bd_prompt.content as system_prompt\nFROM leads l\nLEFT JOIN current_client c ON l.client_id = c.id\nLEFT JOIN brain_docs bd_prompt ON bd_prompt.client_id = (SELECT id FROM clients WHERE name = 'ABM Groups' LIMIT 1) AND bd_prompt.doc_type = 'prompt'\nWHERE l.id = {{ $json.lead_id }}",
         "options": {}
       },
       "id": "get-lead",
@@ -214,6 +214,29 @@
           "name": "LeadOS DB"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO messages (conversation_id, tenant_id, direction, content, is_ai, sent_at, msg_type, status) SELECT cv.id, cv.tenant_id, 'inbound', $1, false, NOW(), 'text', 'received' FROM conversations cv WHERE cv.lead_id = $2 LIMIT 1;",
+        "additionalFields": {
+          "queryParams": "={{ JSON.stringify([$('Extract Data').first().json.message, $('Extract Data').first().json.lead_id]) }}"
+        },
+        "options": {}
+      },
+      "id": "save-inbound-msg",
+      "name": "Save Inbound Message to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "name": "LeadOS DB"
+        }
+      }
     }
   ],
   "connections": {
@@ -238,6 +261,11 @@
         [
           {
             "node": "Get Lead + Brain",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save Inbound Message to DB",
             "type": "main",
             "index": 0
           }

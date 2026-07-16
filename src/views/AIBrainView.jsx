@@ -34,16 +34,32 @@ export const AIBrainView = () => {
 
   const selectedBrand = clients.find(c => c.id === selectedClientId);
   const selectedBrandName = selectedBrand?.name || 'Your Brand';
+  const abmGroupClient = clients.find(c => c.name === 'ABM Groups') || clients[0];
+  const abmGroupId = abmGroupClient?.id;
 
   useEffect(() => {
-    if (!selectedClientId) return;
+    if (!selectedClientId || !abmGroupId) return;
     const loadBrainDocs = async () => {
       setLoading(true);
       try {
-        const res = await api.getBrainDocs(selectedClientId);
+        const [brandDocsRes, abmDocsRes] = await Promise.all([
+          api.getBrainDocs(selectedClientId),
+          api.getBrainDocs(abmGroupId)
+        ]);
+        
         const docMap = {};
-        res.docs?.forEach(d => {
-          docMap[d.doc_type] = d.content;
+        // Brand specific docs (welcome template)
+        brandDocsRes.docs?.forEach(d => {
+          if (d.doc_type === 'welcome_template') {
+            docMap[d.doc_type] = d.content;
+          }
+        });
+        
+        // Global ABM docs (prompt)
+        abmDocsRes.docs?.forEach(d => {
+          if (d.doc_type === 'prompt') {
+            docMap[d.doc_type] = d.content;
+          }
         });
         setDocs(docMap);
       } catch (err) {
@@ -53,12 +69,12 @@ export const AIBrainView = () => {
       }
     };
     loadBrainDocs();
-  }, [selectedClientId]);
+  }, [selectedClientId, abmGroupId]);
 
   useEffect(() => {
-    if (!selectedClientId) return;
+    if (!selectedClientId || !abmGroupId) return;
 
-    const defaultTemplate = `You are a friendly WhatsApp sales assistant for ${selectedBrandName}.
+    const defaultTemplate = `You are a friendly WhatsApp sales assistant for multiple brands within ABM Groups.
 
 CORE RULES:
 - Keep replies SHORT (max 4-5 lines)
@@ -99,14 +115,14 @@ FLAGS (add these to your response context when applicable):
   }, [docs, selectedClientId, selectedBrandName]);
 
   const handleSave = async () => {
-    if (!selectedClientId) return;
+    if (!selectedClientId || !abmGroupId) return;
     setSaving(true);
     try {
       await Promise.all([
-        api.saveBrainDoc(selectedClientId, 'prompt', promptText),
+        api.saveBrainDoc(abmGroupId, 'prompt', promptText),
         api.saveBrainDoc(selectedClientId, 'welcome_template', welcomeTemplate),
       ]);
-      alert('AI Brain saved and activated successfully for ' + selectedBrandName + '!');
+      alert('AI Brain saved! Global ABM Groups Prompt updated, and Welcome Template activated for ' + selectedBrandName);
     } catch (err) {
       alert('Failed to save AI Brain config: ' + err.message);
     } finally {
@@ -195,7 +211,20 @@ FLAGS (add these to your response context when applicable):
           <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text }}>AI Brain Configuration</h1>
           <p style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>Configure what each brand AI agent knows and how it closes</p>
         </div>
-        <select value={selectedClientId || ''} onChange={(e) => setSelectedClientId(parseInt(e.target.value))} style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '8px 12px', fontSize: 12, outline: 'none' }}>
+        <select 
+          value={selectedClientId || ''} 
+          onChange={(e) => setSelectedClientId(parseInt(e.target.value))} 
+          style={{ 
+            display: tab === 'settings' ? 'block' : 'none',
+            background: C.card, 
+            border: '1px solid ' + C.border, 
+            borderRadius: 7, 
+            color: C.text, 
+            padding: '8px 12px', 
+            fontSize: 12, 
+            outline: 'none' 
+          }}
+        >
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
       </div>
@@ -221,9 +250,9 @@ FLAGS (add these to your response context when applicable):
 
             {tab === 'prompt' && (
               <div>
-                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>System Prompt — <span style={{ color: C.accent }}>{selectedBrandName}</span></h3>
+                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Global System Prompt — <span style={{ color: C.accent }}>ABM Groups Parent Feed</span></h3>
                 <div style={{ background: C.accent + '08', border: '1px solid ' + C.accentDim, borderRadius: 7, padding: 11, marginBottom: 13 }}>
-                  <p style={{ fontSize: 11, color: C.accent }}>This is the exact instruction manual sent to the Gemini AI for <strong>{selectedBrandName}</strong>. Edit it directly — each brand has its own saved version.</p>
+                  <p style={{ fontSize: 11, color: C.accent }}>This is the exact instruction manual sent to the Gemini AI. <strong>It acts as a unified parent feed for all brands.</strong> Edit it to organize content by brand (e.g. [BM Academy]...). Changing the brand dropdown above will not change this prompt.</p>
                 </div>
                 <textarea
                   value={promptText}
@@ -245,7 +274,7 @@ FLAGS (add these to your response context when applicable):
                     type="text"
                     value={welcomeTemplate}
                     onChange={(e) => setWelcomeTemplate(e.target.value)}
-                    placeholder="e.g. bm_academy_welcome  or  hello_world"
+                    placeholder="e.g. bm_academy_welcome  or  common_welcome_message"
                     style={{ width: '100%', background: C.bg, border: '1px solid ' + C.border, borderRadius: 7, padding: '10px 13px', color: C.text, fontSize: 13, outline: 'none', fontFamily: 'monospace' }}
                   />
                   <p style={{ fontSize: 10, color: C.muted, marginTop: 7 }}>💡 Each brand can have its own unique template. Add a new brand anytime — just set its template name here and save.</p>

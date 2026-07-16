@@ -1,0 +1,396 @@
+{
+  "name": "WF06 - Founder Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "08eafdf1-d386-4a4d-b938-0180923ad00c",
+      "name": "Cron Daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/revenue-today",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "69c4f4d0-f185-4919-bee4-d9cc83151c51",
+      "name": "Get Revenue Today",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        -400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/revenue-month",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "922c6c32-7376-4dc9-a048-c3e2195be051",
+      "name": "Get Revenue Month",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/brand-revenue",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "e8c06bc5-c69e-4df3-ab49-31c31a62dc56",
+      "name": "Get Brand Revenue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/lead-sources",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "f2e19a6b-24ee-4c32-960b-279239b9422c",
+      "name": "Get Lead Sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/conversion-rate",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "480ec783-1804-48a9-9563-537e6c0859b8",
+      "name": "Get Conversion Rate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/pending-payments",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "8b972953-b0be-4a5d-a354-a9aba7f660aa",
+      "name": "Get Pending Payments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/followups-pending",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "923503fc-10a6-49ea-baf8-39357403a605",
+      "name": "Get Followups Pending",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/sla-breaches",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "7f657c97-fb2a-4903-8f31-511ae1faf6d9",
+      "name": "Get SLA Breaches",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/ai-performance",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "c55b5519-6652-4626-97ca-11bb2d8b4e3c",
+      "name": "Get AI Performance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// In production, use a Merge node per branch; this assumes an aggregation\n// endpoint or merged item with all report fields present on $json.\nreturn [{ json: $input.item.json }];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "5144ccca-2b97-4986-9464-b878281f3f43",
+      "name": "Aggregate Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/ai/report-generator",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"metrics\": \"={{$json}}\"}"
+      },
+      "id": "efc4878c-e308-4c08-800f-4170146039fe",
+      "name": "Generate Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"channel\": \"whatsapp\", \"type\": \"text\", \"content\": \"={{$json.summary}}\"}"
+      },
+      "id": "c31cb880-b072-4fe9-8984-0da951008b1f",
+      "name": "Send To Founder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Daily": {
+      "main": [
+        [
+          {
+            "node": "Get Revenue Today",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Revenue Month",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Brand Revenue",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Lead Sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Conversion Rate",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Pending Payments",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Followups Pending",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get SLA Breaches",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get AI Performance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Revenue Today": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Revenue Month": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Brand Revenue": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Lead Sources": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Conversion Rate": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Payments": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Followups Pending": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get SLA Breaches": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get AI Performance": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Metrics": {
+      "main": [
+        [
+          {
+            "node": "Generate Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Summary": {
+      "main": [
+        [
+          {
+            "node": "Send To Founder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "214cc61e-4e31-4569-a614-07a65cb9646f",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "f5edd513-c7d9-4cd6-93fe-ea178e445a2a"
+  },
+  "id": "852c6085-b5e4-4086-9393-bbcb6064263e",
+  "tags": []
+}

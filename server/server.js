@@ -89,8 +89,9 @@ const thedalLocalSeoBridgeRoutes = require('./routes/thedal-localseobridge');
 const thedalRankDropAlertRoutes = require('./routes/thedal-rank-drop-alert');
 const thedalContentRoutes = require('./routes/thedal-content');
 const contentRoutes = require('./routes/contentRoutes');
+const salesosRoutes = require('./routes/salesos');
 
-
+app.use('/api', salesosRoutes);
 app.use('/api/knowledge', knowledgeRoutes); // We should use auth but let's check auth middleware later
 app.use('/api/upload', uploadRoutes);
 app.use('/api/pipeline', pipelineRoutes);
@@ -873,6 +874,17 @@ app.post('/webhook/whatsapp', async (req, res) => {
   try {
     const body = req.body;
     fs.appendFileSync(path.join(__dirname, 'uploads', 'incoming_payloads.log'), `[${new Date().toISOString()}] ${JSON.stringify(body, null, 2)}\n\n`);
+    
+    // FORWARD TO N8N WEBHOOK
+    // This allows the Node server to act as a proxy, verifying the webhook with Meta,
+    // handling delivery receipts, and silently passing the raw message payload to WF00 in n8n.
+    try {
+      const n8nUrl = 'https://leados-n8n.abmgroups.org/webhook/whatsapp-inbound';
+      await require('axios').post(n8nUrl, body);
+      console.log('✅ Successfully forwarded payload to n8n Lead Integrator (WF00)');
+    } catch (n8nErr) {
+      console.error('⚠️ Failed to forward payload to n8n:', n8nErr.message);
+    }
     
     if (!body.object || body.object !== 'whatsapp_business_account') return;
 
@@ -2153,6 +2165,9 @@ app.get('/api/campaigns/:id/logs', auth, async (req, res) => {
 app.get('/api/reports/summary', auth, async (req, res) => {
   try {
     const range = req.query.range || '30d';
+    const client_id = req.query.client_id;
+    const filterBrand = client_id && client_id !== 'all' && client_id !== 'All Brands' && client_id !== 'undefined';
+
     let days = 30;
     let dateFormat = 'DD Mon';
     if (range === '7d') {
@@ -2164,32 +2179,71 @@ app.get('/api/reports/summary', auth, async (req, res) => {
     }
     const intervalStr = `${days - 1} days`;
 
-    const today = await pool.query(`
-      SELECT COUNT(*) as leads_today FROM leads
-      WHERE DATE(created_at) = CURRENT_DATE
-    `);
-    const yesterday = await pool.query(`
-      SELECT COUNT(*) as leads_yesterday FROM leads
-      WHERE DATE(created_at) = CURRENT_DATE - INTERVAL '1 day'
-    `);
-    const hot = await pool.query("SELECT COUNT(*) as hot FROM leads WHERE status = 'hot'");
-    const converted = await pool.query(`
-      SELECT COUNT(*) as converted FROM leads
-      WHERE status = 'converted' AND DATE(updated_at) = CURRENT_DATE
-    `);
-    const convertedYesterday = await pool.query(`
-      SELECT COUNT(*) as converted_yesterday FROM leads
-      WHERE status = 'converted' AND DATE(updated_at) = CURRENT_DATE - INTERVAL '1 day'
-    `);
-    const revenue = await pool.query(`
-      SELECT COALESCE(SUM(amount), 0) as revenue FROM payments
-      WHERE status = 'captured' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
-    `);
-    const revenueLastMonth = await pool.query(`
-      SELECT COALESCE(SUM(amount), 0) as revenue FROM payments
-      WHERE status = 'captured' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW() - INTERVAL '1 month')
-    `);
-    const weekly = await pool.query(`
+    let todayQ = `SELECT COUNT(*) as leads_today FROM leads WHERE DATE(created_at) = CURRENT_DATE`;
+    let todayParams = [];
+    if (filterBrand) {
+      todayParams.push(client_id);
+      todayQ += ` AND client_id = $1`;
+    }
+    const today = await pool.query(todayQ, todayParams);
+
+    let yesterdayQ = `SELECT COUNT(*) as leads_yesterday FROM leads WHERE DATE(created_at) = CURRENT_DATE - INTERVAL '1 day'`;
+    let yesterdayParams = [];
+    if (filterBrand) {
+      yesterdayParams.push(client_id);
+      yesterdayQ += ` AND client_id = $1`;
+    }
+    const yesterday = await pool.query(yesterdayQ, yesterdayParams);
+
+    let hotQ = "SELECT COUNT(*) as hot FROM leads WHERE status = 'hot'";
+    let hotParams = [];
+    if (filterBrand) {
+      hotParams.push(client_id);
+      hotQ += ` AND client_id = $1`;
+    }
+    const hot = await pool.query(hotQ, hotParams);
+
+    let convertedQ = `SELECT COUNT(*) as converted FROM leads WHERE status = 'converted' AND DATE(updated_at) = CURRENT_DATE`;
+    let convertedParams = [];
+    if (filterBrand) {
+      convertedParams.push(client_id);
+      convertedQ += ` AND client_id = $1`;
+    }
+    const converted = await pool.query(convertedQ, convertedParams);
+
+    let convYestQ = `SELECT COUNT(*) as converted_yesterday FROM leads WHERE status = 'converted' AND DATE(updated_at) = CURRENT_DATE - INTERVAL '1 day'`;
+    let convYestParams = [];
+    if (filterBrand) {
+      convYestParams.push(client_id);
+      convYestQ += ` AND client_id = $1`;
+    }
+    const convertedYesterday = await pool.query(convYestQ, convYestParams);
+
+    let revenueQ = `
+      SELECT COALESCE(SUM(p.amount), 0) as revenue FROM payments p
+      LEFT JOIN leads l ON p.lead_id = l.id
+      WHERE p.status = 'captured' AND DATE_TRUNC('month', p.created_at) = DATE_TRUNC('month', NOW())
+    `;
+    let revenueParams = [];
+    if (filterBrand) {
+      revenueParams.push(client_id);
+      revenueQ += ` AND l.client_id = $1`;
+    }
+    const revenue = await pool.query(revenueQ, revenueParams);
+
+    let revenueLastQ = `
+      SELECT COALESCE(SUM(p.amount), 0) as revenue FROM payments p
+      LEFT JOIN leads l ON p.lead_id = l.id
+      WHERE p.status = 'captured' AND DATE_TRUNC('month', p.created_at) = DATE_TRUNC('month', NOW() - INTERVAL '1 month')
+    `;
+    let revenueLastParams = [];
+    if (filterBrand) {
+      revenueLastParams.push(client_id);
+      revenueLastQ += ` AND l.client_id = $1`;
+    }
+    const revenueLastMonth = await pool.query(revenueLastQ, revenueLastParams);
+
+    let weeklyQ = `
       SELECT
         TO_CHAR(d.day, $1) as day,
         COUNT(l.id) as leads,
@@ -2198,14 +2252,28 @@ app.get('/api/reports/summary', auth, async (req, res) => {
         CURRENT_DATE - CAST($2 as INTERVAL), CURRENT_DATE, '1 day'
       ) d(day)
       LEFT JOIN leads l ON DATE(l.created_at) = d.day
-      GROUP BY d.day ORDER BY d.day
-    `, [dateFormat, intervalStr]);
-    const sources = await pool.query(`
+    `;
+    let weeklyParams = [dateFormat, intervalStr];
+    if (filterBrand) {
+      weeklyParams.push(client_id);
+      weeklyQ += ` AND l.client_id = $3`;
+    }
+    weeklyQ += ` GROUP BY d.day ORDER BY d.day`;
+    const weekly = await pool.query(weeklyQ, weeklyParams);
+
+    let sourcesQ = `
       SELECT source, COUNT(*) as count
       FROM leads
-      GROUP BY source ORDER BY count DESC LIMIT 6
-    `);
-    const funnel = await pool.query(`
+    `;
+    let sourcesParams = [];
+    if (filterBrand) {
+      sourcesParams.push(client_id);
+      sourcesQ += ` WHERE client_id = $1`;
+    }
+    sourcesQ += ` GROUP BY source ORDER BY count DESC LIMIT 6`;
+    const sources = await pool.query(sourcesQ, sourcesParams);
+
+    let funnelQ = `
       SELECT
         COUNT(*) as total,
         COUNT(CASE WHEN status != 'new' THEN 1 END) as contacted,
@@ -2213,8 +2281,15 @@ app.get('/api/reports/summary', auth, async (req, res) => {
         COUNT(CASE WHEN status = 'hot' THEN 1 END) as hot,
         COUNT(CASE WHEN status = 'converted' THEN 1 END) as converted
       FROM leads
-    `);
-    const revenueTrend = await pool.query(`
+    `;
+    let funnelParams = [];
+    if (filterBrand) {
+      funnelParams.push(client_id);
+      funnelQ += ` WHERE client_id = $1`;
+    }
+    const funnel = await pool.query(funnelQ, funnelParams);
+
+    let trendQ = `
       SELECT
         TO_CHAR(d.month, 'Mon') as m,
         COALESCE(SUM(p.amount), 0) as r
@@ -2224,8 +2299,14 @@ app.get('/api/reports/summary', auth, async (req, res) => {
         '1 month'
       ) d(month)
       LEFT JOIN payments p ON DATE_TRUNC('month', p.created_at) = d.month AND p.status = 'captured'
-      GROUP BY d.month ORDER BY d.month
-    `);
+    `;
+    let trendParams = [];
+    if (filterBrand) {
+      trendParams.push(client_id);
+      trendQ += ` AND EXISTS (SELECT 1 FROM leads l WHERE l.id = p.lead_id AND l.client_id = $1)`;
+    }
+    trendQ += ` GROUP BY d.month ORDER BY d.month`;
+    const revenueTrend = await pool.query(trendQ, trendParams);
 
     res.json({
       leads_today: parseInt(today.rows[0].leads_today),

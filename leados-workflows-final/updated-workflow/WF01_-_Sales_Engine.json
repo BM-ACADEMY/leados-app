@@ -1,0 +1,322 @@
+{
+  "name": "WF01 - Sales Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "sales-engine",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "0e0cc675-d1a7-4dc2-9ebe-f6219b7df8e4",
+      "name": "Sales Engine Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "7f254aa2-8fc3-4e92-86a2-8ba76fc87fa5"
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/ai/intent",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"message\": \"={{$json.message}}\", \"brand\": \"={{$json.brand}}\", \"lead_id\": \"={{$json.lead_id}}\"}"
+      },
+      "id": "11463102-1b24-40c2-84ae-8605a8263798",
+      "name": "Intent Detection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/ai/objections",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"message\": \"={{$json.message}}\", \"brand\": \"={{$json.brand}}\", \"lead_id\": \"={{$json.lead_id}}\"}"
+      },
+      "id": "894e8b99-a212-4523-82de-f1bbefbf022e",
+      "name": "Objection Detection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/kb/search",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"brand\": \"={{$json.brand}}\", \"query\": \"={{$json.message}}\", \"program\": \"={{$json.program}}\"}"
+      },
+      "id": "ed856d41-1144-4d5e-a252-5eaed34906f2",
+      "name": "Knowledge Retrieval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/ai/response",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"brand\": \"={{$json.brand}}\", \"intent\": \"={{$json.intent}}\", \"message\": \"={{$json.message}}\", \"kb_snippets\": \"={{$json.kb_snippets}}\", \"lead_id\": \"={{$json.lead_id}}\"}"
+      },
+      "id": "55923ed8-d688-4403-a5ca-d99434383d4a",
+      "name": "Generate AI Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/score",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"message\": \"={{$json.message}}\", \"intent\": \"={{$json.intent}}\", \"objections\": \"={{$json.objections}}\"}"
+      },
+      "id": "37957624-77ac-4467-80f0-4429f548a752",
+      "name": "Qualify And Score",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/assign-owner",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"brand\": \"={{$json.brand}}\", \"lead_score\": \"={{$json.lead_score}}\", \"intent\": \"={{$json.intent}}\"}"
+      },
+      "id": "c57e06c1-fe81-4e7a-942f-e69749494268",
+      "name": "Assign Owner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/update",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"stage\": \"={{$json.stage}}\", \"owner\": \"={{$json.owner}}\", \"lead_score\": \"={{$json.lead_score}}\", \"conversation_summary\": \"={{$json.conversation_summary}}\"}"
+      },
+      "id": "4a991937-7e44-44f8-aff1-cd4ae7ed2a54",
+      "name": "Update CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\nconst lastInboundHours = item.hours_since_last_inbound ?? 999;\nitem.within_24h = lastInboundHours <= 24;\nreturn [{ json: item }];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "68a9337f-1854-4709-ae38-a4f8b318bdac",
+      "name": "Check 24h WhatsApp Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"channel\": \"whatsapp\", \"type\": \"={{$json.within_24h ? \\\"text\\\" : \\\"template\\\"}}\", \"content\": \"={{$json.ai_reply}}\"}"
+      },
+      "id": "9c2b73e1-47f8-480a-ba55-ea2a165b6b18",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2340,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/workflows/log",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"workflow\": \"WF01\", \"lead_id\": \"={{$json.lead_id}}\", \"status\": \"success\"}"
+      },
+      "id": "9f083f69-949f-4915-8812-e14fff5f2525",
+      "name": "Log Workflow Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2600,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Sales Engine Webhook": {
+      "main": [
+        [
+          {
+            "node": "Intent Detection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Detection": {
+      "main": [
+        [
+          {
+            "node": "Objection Detection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Objection Detection": {
+      "main": [
+        [
+          {
+            "node": "Knowledge Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Generate AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Response": {
+      "main": [
+        [
+          {
+            "node": "Qualify And Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify And Score": {
+      "main": [
+        [
+          {
+            "node": "Assign Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Owner": {
+      "main": [
+        [
+          {
+            "node": "Update CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update CRM": {
+      "main": [
+        [
+          {
+            "node": "Check 24h WhatsApp Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check 24h WhatsApp Window": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Response": {
+      "main": [
+        [
+          {
+            "node": "Log Workflow Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "6b93c008-dfd1-477e-8db7-f9fdab5591f4",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "82c8941e-8a01-496c-b064-556b1a123536"
+  },
+  "id": "dd30e88d-8139-491a-affc-4b438dbb7893",
+  "tags": []
+}

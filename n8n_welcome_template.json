@@ -37,7 +37,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.body.phone }}\",\n  \"type\": \"template\",\n  \"template\": {\n    \"name\": \"new_lead_welcome\",\n    \"language\": {\n      \"code\": \"en_US\"\n    }\n  }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.body.phone }}\",\n  \"type\": \"template\",\n  \"template\": {\n    \"name\": \"common_welcome_message\",\n    \"language\": {\n      \"code\": \"en_US\"\n    }\n  }\n}",
         "options": {}
       },
       "id": "2",

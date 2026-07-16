@@ -13,6 +13,7 @@ import { AIBrainView } from './views/AIBrainView.jsx';
 import { ReportsView } from './views/ReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
 import { SettingsView } from './views/SettingsView.jsx';
+import { WorkflowsView } from './views/WorkflowsView.jsx';
 
 
 import { AllianceDashboard } from './views/AllianceDashboard.jsx';
@@ -142,6 +143,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/reports" element={<ReportsView />} />
               <Route path="/clients" element={<ClientsView />} />
               <Route path="/settings" element={<SettingsView />} />
+              <Route path="/workflows" element={<WorkflowsView />} />
               
               <Route path="/alliance-dashboard" element={<AllianceDashboard />} />
               <Route path="/upload-leads" element={<UploadLeads />} />

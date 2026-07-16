@@ -1,0 +1,475 @@
+{
+  "name": "WF02 - Followup Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "1ca6c5f2-3ef3-498f-855c-9bd31421fafe",
+      "name": "Cron Hourly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/followups/due",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "e3106ea4-4b66-47b8-9140-7329a40b2c1d",
+      "name": "Find Due Followups",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "0863abdc-dc69-4212-9c6a-3c20ee1e104d",
+      "name": "Loop Leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/followups/rule",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"brand\": \"={{$json.brand}}\", \"stage\": \"={{$json.stage}}\", \"touch_number\": \"={{$json.touch_count + 1}}\"}"
+      },
+      "id": "66a45e03-260a-485e-bd20-e975de9aef88",
+      "name": "Fetch Followup Rule",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/whatsapp/check-24h",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\"}"
+      },
+      "id": "b2aacbf1-e6d2-4d8f-b43f-24b06f6c18d2",
+      "name": "Check 24h Window",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "whatsapp_template",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action.action_type}}",
+                    "rightValue": "whatsapp_template",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "whatsapp_text",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action.action_type}}",
+                    "rightValue": "whatsapp_text",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "email",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action.action_type}}",
+                    "rightValue": "email",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "internal_note",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action.action_type}}",
+                    "rightValue": "internal_note",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b01fd6b6-c904-42c5-b247-292718037462",
+      "name": "Execute Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send-template",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"template_name\": \"={{$json.action.template_id}}\", \"template_params\": \"={{$json.action.payload_template}}\"}"
+      },
+      "id": "de2edf6b-9056-466d-a611-f42f9e9d6591",
+      "name": "Send WhatsApp Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/ai/followup",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"prompt\": \"={{$json.action.ai_prompt_template}}\"}"
+      },
+      "id": "896d9474-f92e-4610-bc88-cb14321a1d79",
+      "name": "Generate And Send Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/communication/send-email",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"template_id\": \"={{$json.action.template_id}}\"}"
+      },
+      "id": "35cb27fd-c932-44d7-9e1f-541de5360d3c",
+      "name": "Send Followup Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/internal-note",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"note\": \"={{$json.action.payload_template}}\"}"
+      },
+      "id": "c2d35d70-8ad9-4c9e-a27b-5da3d6c55d01",
+      "name": "Create Internal Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/update-followup",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"lead_id\": \"={{$json.lead_id}}\", \"touch_count\": \"={{$json.touch_count + 1}}\", \"next_followup_due\": \"={{$json.next_followup_due}}\"}"
+      },
+      "id": "5aa9486f-900e-48d5-bf62-251ec3d96a6c",
+      "name": "Update Lead Followup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1900,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/workflows/log",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"workflow\": \"WF02\", \"lead_id\": \"={{$json.lead_id}}\", \"status\": \"success\"}"
+      },
+      "id": "f7de0297-9c14-44c7-8fa3-687852ecf8a3",
+      "name": "Log And Error Handling",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2160,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "88bd6788-712a-4a89-9f53-aee82417450e",
+      "name": "Loop Back Marker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Hourly": {
+      "main": [
+        [
+          {
+            "node": "Find Due Followups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Due Followups": {
+      "main": [
+        [
+          {
+            "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Leads": {
+      "main": [
+        [
+          {
+            "node": "Fetch Followup Rule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Followup Rule": {
+      "main": [
+        [
+          {
+            "node": "Check 24h Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check 24h Window": {
+      "main": [
+        [
+          {
+            "node": "Execute Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Action": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Template": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Followup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate And Send Text": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Followup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Followup Email": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Followup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Internal Note": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Followup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Lead Followup": {
+      "main": [
+        [
+          {
+            "node": "Log And Error Handling",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log And Error Handling": {
+      "main": [
+        [
+          {
+            "node": "Loop Back Marker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Back Marker": {
+      "main": [
+        [
+          {
+            "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "cd99c06e-5d43-4ecd-80ab-9e6569100231",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "895e50b0-4ab8-41e6-8780-f37af3d2b4e1"
+  },
+  "id": "f17b50c4-2509-4282-9407-56a9298665d5",
+  "tags": []
+}

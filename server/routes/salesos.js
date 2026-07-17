@@ -95,7 +95,7 @@ router.post('/brand/detect', async (req, res) => {
     let brandName = 'ABM Groups';
 
     if (phone_number_id) {
-      const clientRes = await pool.query(`SELECT id, name FROM clients WHERE wa_phone_number_id = $1 LIMIT 1`, [phone_number_id]);
+      const clientRes = await pool.query(`SELECT id, name FROM clients WHERE phone_number_id = $1 LIMIT 1`, [phone_number_id]);
       if (clientRes.rows.length > 0) {
         brandId = clientRes.rows[0].id;
         brandName = clientRes.rows[0].name;

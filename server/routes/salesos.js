@@ -161,7 +161,7 @@ router.post('/ai/intent', async (req, res) => {
     if (lead_id) {
       await pool.query(`INSERT INTO ai_decisions (lead_id, module, input, output, confidence) VALUES ($1, $2, $3, $4, $5)`, [lead_id, 'intent_detection', message, intent, confidence]);
     }
-    res.json({ intent, confidence });
+    res.json({ ...req.body, intent, confidence });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -174,7 +174,7 @@ router.post('/ai/objections', async (req, res) => {
     if (!ai) return res.json({ objections: "none" });
     const prompt = `Analyze this message. Does the user have any objections? Choose one: [TOO_EXPENSIVE, NO_TIME, NOT_SURE, USING_COMPETITOR, NONE]. Message: "${message}". Reply ONLY with the objection type.`;
     const objections = await generateGeminiContent(prompt);
-    res.json({ objections });
+    res.json({ ...req.body, objections });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -186,7 +186,7 @@ router.post('/kb/search', async (req, res) => {
   try {
     const kbRes = await pool.query(`SELECT content FROM brain_docs WHERE client_id = (SELECT id FROM clients WHERE name = 'ABM Groups' LIMIT 1) AND doc_type = 'prompt' LIMIT 1`);
     const kb_snippets = kbRes.rows.length > 0 ? kbRes.rows[0].content : "No knowledge base found.";
-    res.json({ kb_snippets });
+    res.json({ ...req.body, kb_snippets });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -196,7 +196,7 @@ router.post('/kb/search', async (req, res) => {
 router.post('/ai/response', async (req, res) => {
   const { brand, intent, message, kb_snippets, lead_id, chat_history } = req.body;
   try {
-    if (!ai) return res.json({ ai_reply: "AI is currently offline. We will get back to you shortly!" });
+    if (!ai) return res.json({ ...req.body, ai_reply: "AI is currently offline. We will get back to you shortly!" });
     
     let historyText = "";
     if (chat_history && Array.isArray(chat_history)) {
@@ -206,7 +206,7 @@ router.post('/ai/response', async (req, res) => {
     const prompt = `System Prompt (ABM Groups Knowledge Base):\n${kb_snippets}\n\n${historyText}User Intent detected: ${intent}\n\nUser Message: "${message}"\n\nWrite a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.`;
     
     const ai_reply = await generateGeminiContent(prompt);
-    res.json({ ai_reply });
+    res.json({ ...req.body, ai_reply });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -225,7 +225,7 @@ router.post('/leads/score', async (req, res) => {
       `UPDATE leads SET score = LEAST(GREATEST(score + $1, 0), 100), updated_at = NOW() WHERE id = $2 RETURNING score`,
       [scoreBoost, lead_id]
     );
-    res.json({ lead_score: result.rows[0]?.score || 10 });
+    res.json({ ...req.body, lead_score: result.rows[0]?.score || 10 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -239,7 +239,7 @@ router.post('/leads/assign-owner', async (req, res) => {
     if (lead_score >= 75) owner = 'human_sales';
     
     await pool.query(`UPDATE leads SET owner = $1 WHERE id = $2`, [owner, lead_id]);
-    res.json({ owner });
+    res.json({ ...req.body, owner });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -258,7 +258,7 @@ router.post('/leads/update', async (req, res) => {
       `UPDATE leads SET status = COALESCE($1, status), owner = COALESCE($2, owner), updated_at = NOW() WHERE id = $3`,
       [status, owner, lead_id]
     );
-    res.json({ success: true, status });
+    res.json({ ...req.body, success: true, status });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -271,14 +271,15 @@ router.post('/communication/send', async (req, res) => {
   try {
     // In a full implementation, fetch brand token and call FB API.
     
-    // FIX: Log outbound message into the correct UI 'messages' table schema without constraint errors
+    // FIX: Log outbound message into the correct UI 'messages' table schema safely without null/constraint errors
     const conversation_id = await getOrUpsertConversation(lead_id);
+    const safeContent = content || "Thank you for reaching out to ABM Groups! We have received your message and will get back to you shortly.";
 
     await pool.query(
       `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai) VALUES ($1, 'outbound', $2, $3, 'sent', true)`,
-      [conversation_id, type, content]
+      [conversation_id, type || 'text', safeContent]
     );
-    res.json({ success: true, delivered: true });
+    res.json({ success: true, delivered: true, content: safeContent });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

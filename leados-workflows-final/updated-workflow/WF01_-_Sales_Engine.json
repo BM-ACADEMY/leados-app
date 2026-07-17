@@ -165,7 +165,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, channel: \"whatsapp\", type: $json.within_24h ? 'text' : 'template', content: $json.ai_reply }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id || $('Generate AI Response').first().json.lead_id, channel: 'whatsapp', type: $json.within_24h ? 'text' : 'template', content: $json.ai_reply || $('Generate AI Response').first().json.ai_reply }) }}"
       },
       "id": "9c2b73e1-47f8-480a-ba55-ea2a165b6b18",
       "name": "Send Response",

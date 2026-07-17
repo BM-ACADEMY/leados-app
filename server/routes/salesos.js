@@ -62,6 +62,46 @@ async function getOrUpsertConversation(lead_id) {
   return newConv.rows[0].id;
 }
 
+// Shared helper: sends a real WhatsApp text to a lead and logs it into
+// messages/conversations, same pattern as /communication/send. Used by the
+// WF04 journey-action endpoints so each one does real, verifiable work
+// instead of returning a bare {success:true} mock.
+async function sendWhatsAppText(lead_id, content) {
+  const leadRes = await pool.query(`
+    SELECT l.*, c.phone_number_id, c.wa_access_token as client_wa_token
+    FROM leads l LEFT JOIN clients c ON l.client_id = c.id WHERE l.id = $1
+  `, [lead_id]);
+  const lead = leadRes.rows[0];
+  if (!lead) return { delivered: false, reason: 'lead_not_found' };
+
+  const phoneNumberId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+  const waAccessToken = lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN;
+  let delivered = false, waMessageId = null;
+  if (lead.phone && phoneNumberId && waAccessToken) {
+    try {
+      const phoneDigits = lead.phone.replace(/\D/g, '');
+      const waRes = await axios.post(
+        `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+        { messaging_product: 'whatsapp', to: phoneDigits, type: 'text', text: { body: content } },
+        { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+      );
+      waMessageId = waRes.data?.messages?.[0]?.id || null;
+      delivered = true;
+    } catch (waErr) {
+      console.error('[sendWhatsAppText error]', waErr.response?.data || waErr.message);
+    }
+  }
+
+  const conversation_id = await getOrUpsertConversation(lead_id);
+  await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`, [content, conversation_id]);
+  await pool.query(
+    `INSERT INTO messages (conversation_id, direction, msg_type, content, wa_msg_id, status, is_ai, sent_at) VALUES ($1, 'outbound', 'text', $2, $3, $4, false, NOW())`,
+    [conversation_id, content, waMessageId, delivered ? 'sent' : 'failed']
+  );
+
+  return { delivered, wa_msg_id: waMessageId };
+}
+
 // 1. Deduplicate Lead
 router.post('/leads/deduplicate', async (req, res) => {
   const { phone, email } = req.body;
@@ -647,30 +687,103 @@ router.post('/ai/report-generator', async (req, res) => {
 router.post('/leads/find-by-invoice', async (req, res) => {
   const { invoice_id } = req.body;
   try {
-    // Dynamically lookup by invoice ID if it was stored, fallback to newest won lead
-    const result = await pool.query(`SELECT id as lead_id, name, 'Standard Product' as product FROM leads WHERE status = 'won' ORDER BY updated_at DESC LIMIT 1`);
-    res.json(result.rows[0] || { lead_id: null });
+    let lead = null;
+    if (invoice_id) {
+      const byInvoice = await pool.query(`
+        SELECT l.id as lead_id, l.name, c.name as brand, l.client_id as brand_id
+        FROM payments p
+        JOIN leads l ON p.lead_id = l.id
+        LEFT JOIN clients c ON l.client_id = c.id
+        WHERE p.razorpay_payment_id = $1 OR p.razorpay_link_id = $1
+        ORDER BY p.created_at DESC LIMIT 1
+      `, [invoice_id]);
+      lead = byInvoice.rows[0] || null;
+    }
+    if (!lead) {
+      // Fallback: most recently won lead, for manual/CRM-triggered tests without a real invoice_id
+      const fallback = await pool.query(`
+        SELECT l.id as lead_id, l.name, c.name as brand, l.client_id as brand_id
+        FROM leads l LEFT JOIN clients c ON l.client_id = c.id
+        WHERE l.status = 'won' ORDER BY l.updated_at DESC LIMIT 1
+      `);
+      lead = fallback.rows[0] || null;
+    }
+    res.json({ ...req.body, lead_id: lead?.lead_id || null, name: lead?.name || null, brand: lead?.brand || 'ABM Groups', brand_id: lead?.brand_id || null });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.get('/journey/steps', async (req, res) => {
+// Immediate post-payment onboarding sequence. Action values must match the
+// Execute Journey Step switch in WF04 exactly. There's no journey_steps table
+// yet, so this is a fixed sequence rather than per-brand configurable - the
+// delayed nurture steps (feedback/review/referral, sent days/weeks later)
+// need a scheduled trigger like WF02's follow-up engine and aren't included here.
+router.post('/journey/steps', async (req, res) => {
   try {
-    // Dynamically fetch from db or return standard array
     const steps = [
+      { action: 'send_invoice' },
       { action: 'send_welcome' },
+      { action: 'add_to_whatsapp_group' },
       { action: 'grant_access' },
-      { action: 'add_whatsapp_group' }
+      { action: 'trigger_orientation' }
     ];
-    res.json({ steps });
+    res.json({ ...req.body, steps });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Journey Action Stubs
-router.post('/invoices/send', (req, res) => res.json({ success: true }));
-router.post('/whatsapp/add-to-group', (req, res) => res.json({ success: true }));
-router.post('/access/grant', (req, res) => res.json({ success: true }));
-router.post('/tasks/create', (req, res) => res.json({ success: true }));
-router.post('/leads/log-event', (req, res) => res.json({ success: true }));
+// Journey Actions
+router.post('/invoices/send', async (req, res) => {
+  const { lead_id } = req.body;
+  try {
+    const payRes = await pool.query(`SELECT amount, currency FROM payments WHERE lead_id = $1 AND status = 'captured' ORDER BY created_at DESC LIMIT 1`, [lead_id]);
+    const payment = payRes.rows[0];
+    const amountText = payment ? `${payment.currency || 'INR'} ${payment.amount}` : 'your payment';
+    const content = `Thank you for your payment of ${amountText}! Your invoice has been recorded. If you need a formal receipt, reply here and our team will send one over.`;
+    const sendResult = await sendWhatsAppText(lead_id, content);
+    res.json({ ...req.body, success: true, ...sendResult });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// NOTE: Meta's WhatsApp Cloud API has no endpoint to programmatically add a
+// user to a WhatsApp group - that's not something the Business API supports.
+// This sends a real message; an actual group invite link would need to be
+// configured per-client (no such field exists in `clients` yet) and pasted in.
+router.post('/whatsapp/add-to-group', async (req, res) => {
+  const { lead_id } = req.body;
+  try {
+    const content = `Welcome aboard! We'll be sharing your community group invite link shortly - keep an eye on this chat.`;
+    const sendResult = await sendWhatsAppText(lead_id, content);
+    await pool.query(`INSERT INTO workflow_logs (workflow, lead_id, status, message) VALUES ('WF04', $1, 'success', $2)`, [lead_id, 'WhatsApp group invite requested (manual link send required - no group-invite API in Meta Cloud API)']);
+    res.json({ ...req.body, success: true, ...sendResult });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/access/grant', async (req, res) => {
+  const { lead_id } = req.body;
+  try {
+    await pool.query(`UPDATE leads SET payment_status = 'access_granted', updated_at = NOW() WHERE id = $1`, [lead_id]);
+    const content = `You're all set! Your access has been granted - check your email for login details, or reply here if you need help getting started.`;
+    const sendResult = await sendWhatsAppText(lead_id, content);
+    res.json({ ...req.body, success: true, ...sendResult });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// NOTE: no dedicated tasks table exists - logged into workflow_logs so it's
+// visible on the Workflow Logs page, same pattern as WF02's internal-note.
+router.post('/tasks/create', async (req, res) => {
+  const { lead_id, type } = req.body;
+  try {
+    await pool.query(`INSERT INTO workflow_logs (workflow, lead_id, status, message) VALUES ('WF04', $1, 'pending', $2)`, [lead_id, `Task created: ${type || 'general'}`]);
+    res.json({ ...req.body, success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/leads/log-event', async (req, res) => {
+  const { lead_id, event } = req.body;
+  try {
+    await pool.query(`INSERT INTO workflow_logs (workflow, lead_id, status, message) VALUES ('WF04', $1, 'success', $2)`, [lead_id, `Event: ${event || 'unknown'}`]);
+    res.json({ ...req.body, success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // ==========================================
 // WF05 - Marketing Automation
@@ -678,8 +791,13 @@ router.post('/leads/log-event', (req, res) => res.json({ success: true }));
 
 router.get('/campaigns/active', async (req, res) => {
   try {
-    // Assume campaigns table if we have one, otherwise return empty
-    res.json({ campaigns: [] });
+    // Due = scheduled to run and either unscheduled (run ASAP) or its time has passed.
+    // 'running'/'completed'/'failed' are excluded so a campaign is only ever executed once.
+    const result = await pool.query(`
+      SELECT id as campaign_id, name, client_id FROM campaigns
+      WHERE status = 'scheduled' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+    `);
+    res.json({ campaigns: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

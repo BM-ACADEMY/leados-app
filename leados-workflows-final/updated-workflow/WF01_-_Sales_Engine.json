@@ -25,7 +25,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: $json.message, brand: $json.brand, lead_id: $json.lead_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ message: $json.body.message, brand: $json.body.brand, lead_id: $json.body.lead_id, source: $json.body.source, campaign_id: $json.body.campaign_id }) }}"
       },
       "id": "11463102-1b24-40c2-84ae-8605a8263798",
       "name": "Intent Detection",
@@ -43,7 +43,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: $json.message, brand: $json.brand, lead_id: $json.lead_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ message: $json.message, brand: $json.brand, lead_id: $json.lead_id, intent: $json.intent, confidence: $json.confidence }) }}"
       },
       "id": "894e8b99-a212-4523-82de-f1bbefbf022e",
       "name": "Objection Detection",
@@ -61,7 +61,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, query: $json.message, program: $json.program }) }}"
+        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, query: $json.message, message: $json.message, lead_id: $json.lead_id, intent: $json.intent, objections: $json.objections, program: $json.program }) }}"
       },
       "id": "ed856d41-1144-4d5e-a252-5eaed34906f2",
       "name": "Knowledge Retrieval",
@@ -79,7 +79,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, intent: $json.intent, message: $json.message, kb_snippets: $json.kb_snippets, lead_id: $json.lead_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, intent: $json.intent, message: $json.message, kb_snippets: $json.kb_snippets, lead_id: $json.lead_id, objections: $json.objections }) }}"
       },
       "id": "55923ed8-d688-4403-a5ca-d99434383d4a",
       "name": "Generate AI Response",
@@ -97,7 +97,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, message: $json.message, intent: $json.intent, objections: $json.objections }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, message: $json.message, intent: $json.intent, objections: $json.objections }) }}"
       },
       "id": "37957624-77ac-4467-80f0-4429f548a752",
       "name": "Qualify And Score",

@@ -23,158 +23,66 @@
     },
     {
       "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/today-calls",
+        "url": "https://leados-api.abmgroups.org/api/reports/reminder-bundle",
         "method": "GET",
         "options": {}
       },
       "id": "ec1997f4-338b-4154-af15-6f5bb79bfd3d",
-      "name": "Get Today Calls",
+      "name": "Get Reminder Bundle",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         260,
-        -200
+        0
       ]
     },
     {
       "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/today-followups",
-        "method": "GET",
+        "fieldToSplitOut": "salesperson_summaries",
         "options": {}
       },
-      "id": "d399814a-b9e8-4d76-90a0-4cae72fb49c2",
-      "name": "Get Today Followups",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "id": "7c726376-5da0-45d2-93f6-a29357feb9d3",
+      "name": "Split Salesperson Summaries",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
       "position": [
-        260,
+        520,
         -80
       ]
     },
     {
       "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/pending-payments",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "10fdecfc-e14e-4110-94cf-409ad2cbd9cc",
-      "name": "Get Pending Payments",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        40
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/overdue-followups",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "2c4f41f2-7123-4c65-9275-6811a240910d",
-      "name": "Get Overdue Followups",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        160
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/hot-leads",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "36c91eea-0a82-4a87-bd10-38a3197c63df",
-      "name": "Get HOT Leads",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        280
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Expects each input branch merged upstream via a Merge node in real n8n;\n// here we assume a combined payload is available from /api/reports/reminder-bundle\nconst item = $input.item.json;\nreturn [{ json: item }];",
-        "mode": "runOnceForAllItems"
-      },
-      "id": "9482f09d-33c4-4181-a462-7192151a4b01",
-      "name": "Group By Salesperson",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        520,
-        40
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const item = $input.item.json;\nconst owners = item.owners || [];\nconst summaries = owners.map(o => ({\n  owner: o.owner,\n  text: `Today's Tasks – ${o.brand}: ${o.followup_count||0} Follow-ups, ${o.call_count||0} Calls, ${o.payment_count||0} Payments, ${o.hot_count||0} HOT Leads, ${o.overdue_count||0} Overdue.`\n}));\nreturn summaries.map(s => ({ json: s }));",
-        "mode": "runOnceForAllItems"
-      },
-      "id": "7c726376-5da0-45d2-93f6-a29357feb9d3",
-      "name": "Generate Salesperson Summaries",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        780,
-        -60
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/ai/report-generator",
+        "url": "https://leados-api.abmgroups.org/api/communication/notify-staff",
         "method": "POST",
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ metrics: $json }) }}"
-      },
-      "id": "426597d7-2957-449a-a173-4ed7af4be14c",
-      "name": "Generate Founder Summary",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        780,
-        140
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/communication/send",
-        "method": "POST",
-        "options": {},
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ owner: $json.owner, channel: \"whatsapp\", type: \"text\", content: $json.text }) }}"
+        "jsonBody": "={{ JSON.stringify({ content: $json.text, label: $json.owner }) }}"
       },
       "id": "1d034e78-05eb-4eac-9839-7ed1fb282209",
       "name": "Send To Salespeople",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1040,
-        -60
+        780,
+        -80
       ]
     },
     {
       "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/communication/send",
+        "url": "https://leados-api.abmgroups.org/api/communication/notify-staff",
         "method": "POST",
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: \"whatsapp\", type: \"text\", content: $json.summary }) }}"
+        "jsonBody": "={{ JSON.stringify({ content: $json.founder_summary, label: 'founder' }) }}"
       },
       "id": "5e216a57-0bec-461e-a518-54860d4c6d64",
       "name": "Send To Founder",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1040,
+        520,
         140
       ]
     }
@@ -184,120 +92,34 @@
       "main": [
         [
           {
-            "node": "Get Today Calls",
+            "node": "Get Reminder Bundle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Reminder Bundle": {
+      "main": [
+        [
+          {
+            "node": "Split Salesperson Summaries",
             "type": "main",
             "index": 0
           },
           {
-            "node": "Get Today Followups",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Get Pending Payments",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Get Overdue Followups",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Get HOT Leads",
+            "node": "Send To Founder",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Today Calls": {
-      "main": [
-        [
-          {
-            "node": "Group By Salesperson",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Today Followups": {
-      "main": [
-        [
-          {
-            "node": "Group By Salesperson",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Pending Payments": {
-      "main": [
-        [
-          {
-            "node": "Group By Salesperson",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Overdue Followups": {
-      "main": [
-        [
-          {
-            "node": "Group By Salesperson",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get HOT Leads": {
-      "main": [
-        [
-          {
-            "node": "Group By Salesperson",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Group By Salesperson": {
-      "main": [
-        [
-          {
-            "node": "Generate Salesperson Summaries",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Generate Founder Summary",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Generate Salesperson Summaries": {
+    "Split Salesperson Summaries": {
       "main": [
         [
           {
             "node": "Send To Salespeople",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Generate Founder Summary": {
-      "main": [
-        [
-          {
-            "node": "Send To Founder",
             "type": "main",
             "index": 0
           }

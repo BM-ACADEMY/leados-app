@@ -1231,8 +1231,24 @@ app.post('/webhook/razorpay', async (req, res) => {
 
         // Hand off to n8n's WF04 (Customer Journey) - same forwarding pattern as the WhatsApp webhook.
         try {
-          await axios.post('https://leados-n8n.abmgroups.org/webhook/payment-success', { invoice_id: paymentId });
-          console.log(`✅ Forwarded payment ${paymentId} to n8n WF04 (Customer Journey)`);
+          // Fetch lead data to pass full context to WF04
+          const leadRow = await pool.query('SELECT id, name, phone, client_id FROM leads WHERE id = $1', [leadId]);
+          const leadData = leadRow.rows[0] || {};
+          const clientRow = leadData.client_id
+            ? await pool.query('SELECT id, name FROM clients WHERE id = $1', [leadData.client_id])
+            : { rows: [] };
+          const clientData = clientRow.rows[0] || {};
+
+          await axios.post('https://leados-n8n.abmgroups.org/webhook/payment-success', {
+            invoice_id:  paymentId,
+            lead_id:     leadId,
+            name:        leadData.name   || null,
+            phone:       leadData.phone  || null,
+            brand_id:    clientData.id   || null,
+            brand:       clientData.name || null,
+            amount:      amount / 100,
+          });
+          console.log(`✅ Forwarded payment ${paymentId} to n8n WF04 (lead_id=${leadId})`);
         } catch (n8nErr) {
           console.error('⚠️ Failed to forward payment to n8n WF04:', n8nErr.message);
         }

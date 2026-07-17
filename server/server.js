@@ -1260,6 +1260,44 @@ app.post('/webhook/razorpay', async (req, res) => {
 });
 
 
+// ── FIND LEAD BY INVOICE (called by n8n WF04 Find Lead node) ─
+// Accepts: { invoice_id, lead_id } — at least one required
+// Returns: { lead_id, name, phone, brand, brand_id }
+app.post('/api/leads/find-by-invoice', async (req, res) => {
+  try {
+    const { invoice_id, lead_id } = req.body;
+
+    // 1. Try lead_id directly (fastest path — comes from Razorpay notes)
+    if (lead_id) {
+      const lr = await pool.query(
+        `SELECT l.id AS lead_id, l.name, l.phone, c.name AS brand, c.id AS brand_id
+         FROM leads l LEFT JOIN clients c ON c.id = l.client_id
+         WHERE l.id = $1`, [lead_id]
+      );
+      if (lr.rows.length) return res.json(lr.rows[0]);
+    }
+
+    // 2. Fallback: look up via payments table using the Razorpay payment/link ID
+    if (invoice_id) {
+      const pr = await pool.query(
+        `SELECT l.id AS lead_id, l.name, l.phone, c.name AS brand, c.id AS brand_id
+         FROM payments p
+         JOIN leads l ON l.id = p.lead_id
+         LEFT JOIN clients c ON c.id = l.client_id
+         WHERE p.razorpay_payment_id = $1 OR p.razorpay_link_id = $1
+         LIMIT 1`, [invoice_id]
+      );
+      if (pr.rows.length) return res.json(pr.rows[0]);
+    }
+
+    // Not found — return nulls so WF04 can still continue gracefully
+    return res.json({ lead_id: null, name: null, phone: null, brand: null, brand_id: null });
+  } catch (err) {
+    console.error('[find-by-invoice] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════
 // PAYMENTS
 // ══════════════════════════════════════════════════════════

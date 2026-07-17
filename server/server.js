@@ -62,7 +62,12 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-internal-key', 'x-data-mode']
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -1198,19 +1203,19 @@ app.post('/webhook/meta-leads', async (req, res) => {
 });
 
 // ── RAZORPAY WEBHOOK ──────────────────────────────────────
-app.post('/webhook/razorpay', express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/webhook/razorpay', async (req, res) => {
   res.sendStatus(200);
   try {
     if (process.env.RAZORPAY_WEBHOOK_SECRET) {
       const signature = req.headers['x-razorpay-signature'];
-      const expected = crypto.createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET).update(req.body).digest('hex');
+      const expected = crypto.createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET).update(req.rawBody).digest('hex');
       if (!signature || signature !== expected) {
         console.warn('[Razorpay webhook] Signature mismatch - rejecting');
         return;
       }
     }
 
-    const event = JSON.parse(req.body);
+    const event = req.body;
     if (event.event === 'payment.captured') {
       const { amount, notes } = event.payload.payment.entity;
       const leadId = notes?.lead_id;

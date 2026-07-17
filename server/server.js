@@ -274,12 +274,12 @@ app.get('/api/inbox', auth, async (req, res) => {
         l.name, 
         c.name as brand, 
         l.status,
-        (SELECT message FROM conversations WHERE lead_id = l.id ORDER BY sent_at DESC LIMIT 1) as last,
-        (SELECT sent_at FROM conversations WHERE lead_id = l.id ORDER BY sent_at DESC LIMIT 1) as time,
-        COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id), 0) as unread
+        (SELECT last_message FROM conversations WHERE lead_id = l.id OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) ORDER BY last_message_at DESC NULLS LAST LIMIT 1) as last,
+        (SELECT last_message_at FROM conversations WHERE lead_id = l.id OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) ORDER BY last_message_at DESC NULLS LAST LIMIT 1) as time,
+        COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10)), 0) as unread
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
-      WHERE EXISTS (SELECT 1 FROM conversations WHERE lead_id = l.id)
+      WHERE EXISTS (SELECT 1 FROM conversations WHERE lead_id = l.id OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10))
       ORDER BY time DESC NULLS LAST
     `;
     const { rows } = await pool.query(q);
@@ -293,7 +293,12 @@ app.get('/api/inbox', auth, async (req, res) => {
 // PUT /api/conversations/:lead_id/read
 app.put('/api/conversations/:lead_id/read', auth, async (req, res) => {
   try {
-    await pool.query('UPDATE conversations SET unread_count = 0 WHERE lead_id = $1', [req.params.lead_id]);
+    await pool.query(`
+      UPDATE conversations SET unread_count = 0 
+      WHERE lead_id = $1 OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = (
+        SELECT RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) FROM leads WHERE id = $1 LIMIT 1
+      )
+    `, [req.params.lead_id]);
     res.json({ success: true });
   } catch (err) {
     console.error('Mark read error:', err);
@@ -619,7 +624,7 @@ app.get('/api/leads/:id', auth, async (req, res) => {
 // GET /api/leads/:id/messages
 app.get('/api/leads/:id/messages', auth, async (req, res) => {
   try {
-    const { limit = 20, offset = 0 } = req.query;
+    const { limit = 100, offset = 0 } = req.query;
     const conversations = await pool.query(`
       SELECT m.id, m.direction, m.content, m.msg_type as type, m.media_url, m.wa_msg_id,
              m.status, m.is_ai, m.sent_at as timestamp, m.read_at, m.is_deleted, m.is_forwarded, m.pinned_until, m.is_starred, m.reactions,
@@ -630,6 +635,9 @@ app.get('/api/leads/:id/messages', auth, async (req, res) => {
       FROM messages m
       JOIN conversations cv ON m.conversation_id = cv.id
       WHERE cv.lead_id = $1
+         OR RIGHT(REGEXP_REPLACE(cv.phone, '[^0-9]', '', 'g'), 10) = (
+              SELECT RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) FROM leads WHERE id = $1 LIMIT 1
+            )
       ORDER BY m.sent_at DESC
       LIMIT $2 OFFSET $3
     `, [req.params.id, parseInt(limit), parseInt(offset)]);

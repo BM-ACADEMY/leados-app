@@ -235,9 +235,9 @@ export const InboxView = () => {
       // Refresh sidebar lead list to show new last_contact time
       refetchLeadsListRef.current();
       // If the active conversation is for this lead, append the message
-      if (lead_id === activeLeadIdRef.current) {
+      if (activeLeadIdRef.current !== null && activeLeadIdRef.current !== undefined && String(lead_id) === String(activeLeadIdRef.current)) {
         setLocalMessages((prev) => {
-          const exists = prev.some((m) => m.id === message.id);
+          const exists = prev.some((m) => String(m.id) === String(message.id));
           return exists ? prev : [...prev, message];
         });
       }
@@ -246,9 +246,9 @@ export const InboxView = () => {
     // Our own outbound message confirmed by server
     socket.on('outgoing_message', ({ lead_id, message }) => {
       refetchLeadsListRef.current();
-      if (lead_id === activeLeadIdRef.current) {
+      if (activeLeadIdRef.current !== null && activeLeadIdRef.current !== undefined && String(lead_id) === String(activeLeadIdRef.current)) {
         setLocalMessages((prev) => {
-          const exists = prev.some((m) => m.id === message.id);
+          const exists = prev.some((m) => String(m.id) === String(message.id));
           return exists ? prev : [...prev, message];
         });
       }

@@ -85,6 +85,24 @@
         520,
         140
       ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/workflows/log",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: \"WF03\", status: $json.delivered ? \"success\" : ($json.reason || \"success\"), message: ($json.label || \"digest\") + \": \" + $json.content }) }}"
+      },
+      "id": "8b3f2c1a-0002-4a1a-9c1a-000000000002",
+      "name": "Log Workflow Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        0
+      ]
     }
   ],
   "connections": {
@@ -120,6 +138,28 @@
         [
           {
             "node": "Send To Salespeople",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send To Salespeople": {
+      "main": [
+        [
+          {
+            "node": "Log Workflow Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send To Founder": {
+      "main": [
+        [
+          {
+            "node": "Log Workflow Run",
             "type": "main",
             "index": 0
           }

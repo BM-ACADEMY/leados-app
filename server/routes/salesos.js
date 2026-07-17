@@ -366,11 +366,11 @@ router.post('/communication/send', async (req, res) => {
 
 // 9. Workflow Logger
 router.post('/workflows/log', async (req, res) => {
-  const { workflow, lead_id, status } = req.body;
+  const { workflow, lead_id, status, message } = req.body;
   try {
     await pool.query(
-      `INSERT INTO workflow_logs (workflow, lead_id, status) VALUES ($1, $2, $3)`,
-      [workflow, lead_id, status]
+      `INSERT INTO workflow_logs (workflow, lead_id, status, message) VALUES ($1, $2, $3, $4)`,
+      [workflow, lead_id, status, message || null]
     );
     res.json({ success: true });
   } catch (err) {

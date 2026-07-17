@@ -88,7 +88,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.item.json;\nlet source = item.source;\nconst waChange = item.entry?.[0]?.changes?.[0]?.value || item;\n\n// Stop processing if this is just a status update (delivery receipt, read receipt)\nif (waChange?.statuses?.[0]) {\n  throw new Error('STATUS_UPDATE_IGNORED');\n}\n\nif (!source && (item.object === 'whatsapp_business_account' || waChange?.messages?.[0])) {\n  source = 'whatsapp';\n}\nlet lead = {};\n\nswitch (source) {\n  case 'whatsapp': {\n    const msgObj = item.payload?.message || waChange?.messages?.[0]?.text?.body || waChange?.messages?.[0]?.button?.text || '';\n    const phoneObj = item.payload?.phone || waChange?.messages?.[0]?.from || waChange?.contacts?.[0]?.wa_id || item.phone || '';\n    const nameObj = item.payload?.name || waChange?.contacts?.[0]?.profile?.name || phoneObj;\n    if (!phoneObj) throw new Error('MISSING_PHONE');\n    lead = { name: nameObj, phone: phoneObj, email: item.payload?.email || item.email || '', message: typeof msgObj === 'object' ? JSON.stringify(msgObj) : (msgObj || ''), source: 'whatsapp', lead_id: item.lead_id || item.payload?.lead_id };\n    break;\n  }\n  case 'meta_ads':\n    lead = { name: item.payload?.full_name || '', phone: item.payload?.phone || '', email: item.payload?.email || '', source: 'meta_ads', campaign_id: item.payload?.campaign_id || '', ad_id: item.payload?.ad_id || '', lead_ad_form_id: item.payload?.form_id || '' };\n    break;\n  case 'website':\n    lead = { name: item.payload?.name || '', phone: item.payload?.phone || '', email: item.payload?.email || '', source: 'website', message: item.payload?.message || '' };\n    break;\n  case 'email':\n    lead = { name: item.payload?.name || '', email: item.payload?.email || '', source: 'email', message: item.payload?.body || '' };\n    break;\n  case 'bulk_whatsapp':\n    lead = { name: item.payload?.name || '', phone: item.payload?.phone || '', source: 'bulk_whatsapp', message: item.payload?.message || '', campaign_id: item.payload?.campaign_id || '' };\n    break;\n  default:\n    lead = { source: 'unknown', raw: item };\n}\nreturn [{ json: lead }];",
+        "jsCode": "const item = $input.item.json;\nlet source = item.source;\nconst waChange = item.entry?.[0]?.changes?.[0]?.value || item;\n\n// Stop processing if this is just a status update (delivery receipt, read receipt)\nif (waChange?.statuses?.[0]) {\n  throw new Error('STATUS_UPDATE_IGNORED');\n}\n\nif (!source && (item.object === 'whatsapp_business_account' || waChange?.messages?.[0])) {\n  source = 'whatsapp';\n}\nlet lead = {};\n\nswitch (source) {\n  case 'whatsapp': {\n    const msgObj = item.payload?.message || waChange?.messages?.[0]?.text?.body || waChange?.messages?.[0]?.button?.text || '';\n    const phoneObj = item.payload?.phone || waChange?.messages?.[0]?.from || waChange?.contacts?.[0]?.wa_id || item.phone || '';\n    const nameObj = item.payload?.name || waChange?.contacts?.[0]?.profile?.name || phoneObj;\n    const phoneNumberIdObj = item.payload?.phone_number_id || waChange?.metadata?.phone_number_id || '';\n    if (!phoneObj) throw new Error('MISSING_PHONE');\n    lead = { name: nameObj, phone: phoneObj, email: item.payload?.email || item.email || '', message: typeof msgObj === 'object' ? JSON.stringify(msgObj) : (msgObj || ''), source: 'whatsapp', phone_number_id: phoneNumberIdObj, lead_id: item.lead_id || item.payload?.lead_id };\n    break;\n  }\n  case 'meta_ads':\n    lead = { name: item.payload?.full_name || '', phone: item.payload?.phone || '', email: item.payload?.email || '', source: 'meta_ads', campaign_id: item.payload?.campaign_id || '', ad_id: item.payload?.ad_id || '', lead_ad_form_id: item.payload?.form_id || '' };\n    break;\n  case 'website':\n    lead = { name: item.payload?.name || '', phone: item.payload?.phone || '', email: item.payload?.email || '', source: 'website', message: item.payload?.message || '' };\n    break;\n  case 'email':\n    lead = { name: item.payload?.name || '', email: item.payload?.email || '', source: 'email', message: item.payload?.body || '' };\n    break;\n  case 'bulk_whatsapp':\n    lead = { name: item.payload?.name || '', phone: item.payload?.phone || '', source: 'bulk_whatsapp', message: item.payload?.message || '', campaign_id: item.payload?.campaign_id || '' };\n    break;\n  default:\n    lead = { source: 'unknown', raw: item };\n}\nreturn [{ json: lead }];",
         "mode": "runOnceForAllItems"
       },
       "id": "f5762817-b1f6-4cda-be1e-78c0c6b1f92c",
@@ -125,7 +125,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: $json.message, campaign_id: $json.campaign_id, form_id: $json.lead_ad_form_id, existing_brand: $json.existing_brand }) }}"
+        "jsonBody": "={{ JSON.stringify({ source: $('Normalize Payload').item.json.source, phone_number_id: $('Normalize Payload').item.json.phone_number_id, campaign_id: $('Normalize Payload').item.json.campaign_id }) }}"
       },
       "id": "708fd162-f4f7-4f11-9f79-1ed13e8a6fb3",
       "name": "Hybrid Brand Detection",
@@ -143,7 +143,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, name: $json.name, phone: $json.phone, email: $json.email, source: $json.source, campaign_id: $json.campaign_id, brand_confidence: $json.brand_confidence, clarification_required: $json.clarification_required }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $('Normalize Payload').item.json.lead_id, brand_id: $json.brand_id, brand: $json.brand_name, name: $('Normalize Payload').item.json.name, phone: $('Normalize Payload').item.json.phone, email: $('Normalize Payload').item.json.email, source: $('Normalize Payload').item.json.source, campaign_id: $('Normalize Payload').item.json.campaign_id }) }}"
       },
       "id": "11b01ea2-081a-4dd6-89ff-0af47edbb58a",
       "name": "Create Or Update Lead",
@@ -179,7 +179,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, message: $json.message, source: $json.source, campaign_id: $json.campaign_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, message: $('Normalize Payload').item.json.message, source: $json.source, campaign_id: $json.campaign_id }) }}"
       },
       "id": "5f43ba25-911f-4d0e-80f9-86cd7c142473",
       "name": "Push To Sales Engine",

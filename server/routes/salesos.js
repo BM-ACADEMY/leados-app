@@ -76,11 +76,11 @@ router.post('/leads/deduplicate', async (req, res) => {
     
     query += conditions.join(' OR ') + ' LIMIT 1';
     const result = await pool.query(query, values);
-    
+
     if (result.rows.length > 0) {
-      res.json({ is_duplicate: true, lead: result.rows[0] });
+      res.json({ ...req.body, is_duplicate: true, lead: result.rows[0] });
     } else {
-      res.json({ is_duplicate: false });
+      res.json({ ...req.body, is_duplicate: false });
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -89,11 +89,11 @@ router.post('/leads/deduplicate', async (req, res) => {
 
 // 2. Hybrid Brand Detection
 router.post('/brand/detect', async (req, res) => {
-  const { source, phone_number_id, page_id } = req.body;
+  const { phone_number_id } = req.body;
   try {
     let brandId = null;
     let brandName = 'ABM Groups';
-    
+
     if (phone_number_id) {
       const clientRes = await pool.query(`SELECT id, name FROM clients WHERE wa_phone_number_id = $1 LIMIT 1`, [phone_number_id]);
       if (clientRes.rows.length > 0) {
@@ -101,15 +101,15 @@ router.post('/brand/detect', async (req, res) => {
         brandName = clientRes.rows[0].name;
       }
     }
-    
+
     if (!brandId) {
       const fallbackRes = await pool.query(`SELECT id, name FROM clients WHERE name = 'ABM Groups' LIMIT 1`);
       if (fallbackRes.rows.length > 0) {
         brandId = fallbackRes.rows[0].id;
       }
     }
-    
-    res.json({ brand_id: brandId, brand_name: brandName });
+
+    res.json({ ...req.body, brand_id: brandId, brand_name: brandName, brand: brandName });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -117,10 +117,16 @@ router.post('/brand/detect', async (req, res) => {
 
 // 3. Create or Update Lead
 router.post('/leads/createOrUpdate', async (req, res) => {
-  const { name, phone, email, source, brand_id } = req.body;
+  const { name, phone, email, source } = req.body;
   try {
     if (!phone) {
-      return res.json({ success: true, lead_id: null, ignored: true, message: "Missing phone number" });
+      return res.json({ ...req.body, success: true, lead_id: null, ignored: true });
+    }
+
+    let brand_id = req.body.brand_id || null;
+    if (!brand_id && req.body.brand) {
+      const brandRes = await pool.query(`SELECT id FROM clients WHERE name = $1 LIMIT 1`, [req.body.brand]);
+      brand_id = brandRes.rows[0]?.id || null;
     }
     const check = await pool.query(`SELECT id FROM leads WHERE phone = $1 LIMIT 1`, [phone]);
     let lead_id;
@@ -137,7 +143,7 @@ router.post('/leads/createOrUpdate', async (req, res) => {
       );
       lead_id = insert.rows[0].id;
     }
-    res.json({ success: true, lead_id });
+    res.json({ ...req.body, success: true, lead_id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -27,6 +27,34 @@ async function generateGeminiContent(prompt) {
   throw new Error("AI models temporarily in high demand after automatic retries. Please try again.");
 }
 
+async function getOrUpsertConversation(lead_id) {
+  const convRes = await pool.query(`SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`, [lead_id]);
+  if (convRes.rows.length > 0) return convRes.rows[0].id;
+
+  const leadRes = await pool.query(`SELECT phone, client_id as tenant_id FROM leads WHERE id = $1`, [lead_id]);
+  const phone = leadRes.rows[0]?.phone || '';
+  const tenant_id = leadRes.rows[0]?.tenant_id || 1;
+  const leadExists = leadRes.rows.length > 0;
+  const safeLeadId = leadExists ? lead_id : null;
+
+  const byPhoneRes = await pool.query(`SELECT id FROM conversations WHERE phone = $1 AND tenant_id = $2 LIMIT 1`, [phone, tenant_id]);
+  if (byPhoneRes.rows.length > 0) {
+    const existingId = byPhoneRes.rows[0].id;
+    if (safeLeadId) {
+      await pool.query(`UPDATE conversations SET lead_id = $1 WHERE id = $2`, [safeLeadId, existingId]);
+    }
+    return existingId;
+  }
+
+  const newConv = await pool.query(`
+    INSERT INTO conversations (lead_id, tenant_id, phone, status)
+    VALUES ($1, $2, $3, 'open')
+    ON CONFLICT (phone, tenant_id) DO UPDATE SET lead_id = COALESCE(EXCLUDED.lead_id, conversations.lead_id)
+    RETURNING id
+  `, [safeLeadId, tenant_id, phone]);
+  return newConv.rows[0].id;
+}
+
 // 1. Deduplicate Lead
 router.post('/leads/deduplicate', async (req, res) => {
   const { phone, email } = req.body;
@@ -113,17 +141,9 @@ router.post('/leads/createOrUpdate', async (req, res) => {
 router.post('/ai/intent', async (req, res) => {
   const { message, brand, lead_id } = req.body;
   try {
-    // FIX: Ensure conversation exists and log inbound message for bidirectional UI
+    // FIX: Ensure conversation exists safely without constraint errors and log inbound message for bidirectional UI
     if (lead_id && message) {
-      const convRes = await pool.query(`SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`, [lead_id]);
-      let conversation_id = convRes.rows.length > 0 ? convRes.rows[0].id : null;
-      if (!conversation_id) {
-        const leadRes = await pool.query(`SELECT phone, client_id as tenant_id FROM leads WHERE id = $1`, [lead_id]);
-        const phone = leadRes.rows[0]?.phone || '';
-        const tenant_id = leadRes.rows[0]?.tenant_id || 1;
-        const newConv = await pool.query(`INSERT INTO conversations (lead_id, tenant_id, phone, status) VALUES ($1, $2, $3, 'open') RETURNING id`, [lead_id, tenant_id, phone]);
-        conversation_id = newConv.rows[0].id;
-      }
+      const conversation_id = await getOrUpsertConversation(lead_id);
       // Only insert if this message hasn't been logged recently to prevent dupes
       await pool.query(
         `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai) VALUES ($1, 'inbound', 'text', $2, 'received', false)`,
@@ -251,16 +271,8 @@ router.post('/communication/send', async (req, res) => {
   try {
     // In a full implementation, fetch brand token and call FB API.
     
-    // FIX: Log outbound message into the correct UI 'messages' table schema
-    const convRes = await pool.query(`SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`, [lead_id]);
-    let conversation_id = convRes.rows.length > 0 ? convRes.rows[0].id : null;
-    if (!conversation_id) {
-      const leadRes = await pool.query(`SELECT phone, client_id as tenant_id FROM leads WHERE id = $1`, [lead_id]);
-      const phone = leadRes.rows[0]?.phone || '';
-      const tenant_id = leadRes.rows[0]?.tenant_id || 1;
-      const newConv = await pool.query(`INSERT INTO conversations (lead_id, tenant_id, phone, status) VALUES ($1, $2, $3, 'open') RETURNING id`, [lead_id, tenant_id, phone]);
-      conversation_id = newConv.rows[0].id;
-    }
+    // FIX: Log outbound message into the correct UI 'messages' table schema without constraint errors
+    const conversation_id = await getOrUpsertConversation(lead_id);
 
     await pool.query(
       `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai) VALUES ($1, 'outbound', $2, $3, 'sent', true)`,

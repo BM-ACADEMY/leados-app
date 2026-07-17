@@ -65,7 +65,7 @@ export const useLead = (id) => {
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState(null);
 
-  const limit = 20;
+  const limit = 100;
 
   const fetchLead = async () => {
     if (!id) return;

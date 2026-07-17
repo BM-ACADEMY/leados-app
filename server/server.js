@@ -1092,28 +1092,33 @@ app.post('/webhook/whatsapp', async (req, res) => {
           `, [lead.id, tenantId, phone, text]);
           const conversationId = convRes.rows[0].id;
 
-          // Save incoming message to messages table
+          // Save incoming message to messages table (ON CONFLICT handles duplicate wa_msg_id from retried webhooks)
           const { rows: savedRows } = await pool.query(`
             INSERT INTO messages (conversation_id, direction, content, msg_type, media_url, wa_msg_id, status, is_ai, sent_at, is_forwarded)
             VALUES ($1, 'inbound', $2, $3, $4, $5, 'delivered', false, NOW(), $6)
+            ON CONFLICT (wa_msg_id) DO NOTHING
             RETURNING id, direction, content, msg_type as type, media_url, wa_msg_id, status, sent_at as timestamp, is_forwarded
           `, [conversationId, text, msgType, mediaUrl, waMessageId, isForwarded]);
 
-          // ── REAL-TIME: push to CRM Inbox immediately ─────────
-          io.emit('incoming_message', { lead_id: lead.id, message: savedRows[0] });
-          console.log(`[Webhook] Inbound ${msgType} from ${phone} → lead ${lead.id}`);
+          if (savedRows.length === 0) {
+            console.log(`[Webhook] Duplicate message skipped (wa_msg_id: ${waMessageId})`);
+          } else {
+            // ── REAL-TIME: push to CRM Inbox immediately ─────────
+            io.emit('incoming_message', { lead_id: String(lead.id), message: savedRows[0] });
+            console.log(`[Webhook] ✅ Saved inbound ${msgType} from ${phone} → lead ${lead.id}, msg_id ${savedRows[0].id}`);
 
-          // ── Forward to n8n for AI auto-reply (only for text/button/interactive/audio) ──
-          const shouldTriggerAI = ['text', 'button', 'interactive', 'audio'].includes(msg.type);
-          if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL) {
-            axios.post(process.env.N8N_WEBHOOK_URL, {
-              lead_id: lead.id,
-              phone,
-              message: text,
-              phone_number_id: lead.client_phone_number_id || phoneNumberId,
-              wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN,
-              gemini_api_key: process.env.GEMINI_API_KEY
-            }).catch(e => console.error('[n8n forward error]', e.message));
+            // ── Forward to n8n for AI auto-reply (only for text/button/interactive/audio) ──
+            const shouldTriggerAI = ['text', 'button', 'interactive', 'audio'].includes(msg.type);
+            if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL) {
+              axios.post(process.env.N8N_WEBHOOK_URL, {
+                lead_id: lead.id,
+                phone,
+                message: text,
+                phone_number_id: lead.client_phone_number_id || phoneNumberId,
+                wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN,
+                gemini_api_key: process.env.GEMINI_API_KEY
+              }).catch(e => console.error('[n8n forward error]', e.message));
+            }
           }
         }
       }

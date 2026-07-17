@@ -1268,20 +1268,32 @@ app.post('/api/leads/find-by-invoice', async (req, res) => {
     const { invoice_id, lead_id, link_id } = req.body;
 
     // 1. Try lead_id directly (fastest — comes from Razorpay notes.lead_id)
-    if (lead_id && lead_id !== 'null' && lead_id !== 'undefined') {
+    const cleanLeadId = lead_id && lead_id !== 'null' && lead_id !== 'undefined' && lead_id !== '' ? parseInt(lead_id, 10) : null;
+    console.log('[find-by-invoice] received:', { invoice_id, lead_id, link_id, cleanLeadId });
+
+    if (cleanLeadId && !isNaN(cleanLeadId)) {
       const lr = await pool.query(
         `SELECT l.id AS lead_id, l.name, l.phone, c.name AS brand, c.id AS brand_id
          FROM leads l LEFT JOIN clients c ON c.id = l.client_id
-         WHERE l.id = $1`, [lead_id]
+         WHERE l.id = $1::integer`, [cleanLeadId]
       );
+      console.log('[find-by-invoice] lead query rows:', lr.rows.length, 'for id:', cleanLeadId);
       if (lr.rows.length) {
-        // Also save payment_id to payments table now that we know both
+        // ✅ Payment confirmed — update payment record and lead status
         if (invoice_id) {
           await pool.query(
             `UPDATE payments SET razorpay_payment_id = $1, status = 'captured'
              WHERE lead_id = $2 AND razorpay_payment_id IS NULL`,
             [invoice_id, lr.rows[0].lead_id]
           ).catch(() => {});
+
+          // Mark lead as converted
+          await pool.query(
+            `UPDATE leads SET status = 'converted', score = 100 WHERE id = $1`,
+            [lr.rows[0].lead_id]
+          ).catch(() => {});
+
+          console.log(`[find-by-invoice] ✅ Lead ${lr.rows[0].lead_id} marked converted, payment ${invoice_id} saved`);
         }
         return res.json(lr.rows[0]);
       }

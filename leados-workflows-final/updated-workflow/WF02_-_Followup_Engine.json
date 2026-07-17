@@ -38,6 +38,20 @@
     },
     {
       "parameters": {
+        "fieldToSplitOut": "followups",
+        "options": {}
+      },
+      "id": "a1e2c3d4-0001-4a1a-9c1a-000000000001",
+      "name": "Split Out Followups",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        390,
+        0
+      ]
+    },
+    {
+      "parameters": {
         "batchSize": 10,
         "options": {}
       },
@@ -57,7 +71,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, stage: $json.stage, touch_number: $json.touch_count + 1 }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, stage: $json.stage, touch_count: $json.touch_count }) }}"
       },
       "id": "66a45e03-260a-485e-bd20-e975de9aef88",
       "name": "Fetch Followup Rule",
@@ -75,7 +89,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, stage: $json.stage, touch_count: $json.touch_count, base_channel: $json.base_channel, template_id: $json.template_id, payload_template: $json.payload_template, ai_prompt_template: $json.ai_prompt_template, delay_hours: $json.delay_hours }) }}"
       },
       "id": "b2aacbf1-e6d2-4d8f-b43f-24b06f6c18d2",
       "name": "Check 24h Window",
@@ -199,7 +213,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, template_name: $json.action.template_id, template_params: $json.action.payload_template }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, delay_hours: $json.delay_hours, template_name: $json.action.template_id, template_params: $json.action.payload_template }) }}"
       },
       "id": "de2edf6b-9056-466d-a611-f42f9e9d6591",
       "name": "Send WhatsApp Template",
@@ -217,7 +231,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, prompt: $json.action.ai_prompt_template }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, delay_hours: $json.delay_hours, prompt: $json.action.ai_prompt_template }) }}"
       },
       "id": "896d9474-f92e-4610-bc88-cb14321a1d79",
       "name": "Generate And Send Text",
@@ -235,7 +249,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, template_id: $json.action.template_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, delay_hours: $json.delay_hours, template_id: $json.action.template_id }) }}"
       },
       "id": "35cb27fd-c932-44d7-9e1f-541de5360d3c",
       "name": "Send Followup Email",
@@ -253,7 +267,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, note: $json.action.payload_template }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, delay_hours: $json.delay_hours, note: $json.action.payload_template }) }}"
       },
       "id": "c2d35d70-8ad9-4c9e-a27b-5da3d6c55d01",
       "name": "Create Internal Note",
@@ -271,7 +285,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, touch_count: $json.touch_count + 1, next_followup_due: $json.next_followup_due }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, touch_count_increment: 1, delay_hours: $json.delay_hours }) }}"
       },
       "id": "5aa9486f-900e-48d5-bf62-251ec3d96a6c",
       "name": "Update Lead Followup",
@@ -331,6 +345,17 @@
       "main": [
         [
           {
+            "node": "Split Out Followups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Followups": {
+      "main": [
+        [
+          {
             "node": "Loop Leads",
             "type": "main",
             "index": 0
@@ -340,6 +365,7 @@
     },
     "Loop Leads": {
       "main": [
+        [],
         [
           {
             "node": "Fetch Followup Rule",
@@ -376,6 +402,27 @@
         [
           {
             "node": "Send WhatsApp Template",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate And Send Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Followup Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Internal Note",
             "type": "main",
             "index": 0
           }

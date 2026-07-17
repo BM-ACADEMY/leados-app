@@ -492,47 +492,115 @@ router.get('/reports/ai-performance', async (req, res) => {
 // ==========================================
 router.get('/followups/due', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT id as lead_id, client_id as brand, stage, touch_count FROM leads WHERE next_followup_due <= NOW() AND status != 'WON'`);
+    const result = await pool.query(`
+      SELECT l.id as lead_id, COALESCE(c.name, 'ABM Groups') as brand, l.stage, COALESCE(l.touch_count, 0) as touch_count
+      FROM leads l
+      LEFT JOIN clients c ON l.client_id = c.id
+      WHERE l.next_followup_due <= NOW() AND l.status != 'WON'
+    `);
     res.json({ followups: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 2. Fetch Followup Rule
 router.post('/followups/rule', async (req, res) => {
-  const { brand, stage, touch_count } = req.body;
+  const { touch_count } = req.body;
   try {
-    // Basic rules mock implementation for Follow-up engine
-    const rule = { 
-      delay_hours: 24, 
-      action: touch_count > 3 ? 'email' : 'whatsapp',
-      template_name: touch_count > 1 ? 're_engagement' : 'welcome_followup'
-    };
-    res.json({ rule });
+    // Escalate to a human after 5 ignored touches; fall back to email after 3; otherwise WhatsApp.
+    let base_channel = 'whatsapp';
+    let template_id = touch_count > 1 ? 're_engagement' : 'welcome_followup';
+    let payload_template = touch_count > 1
+      ? "Hey! Just checking back in - still interested in learning more?"
+      : "Hi there! Following up on your interest with us - any questions I can help with?";
+    let ai_prompt_template = `followup_attempt_${touch_count || 1}`;
+
+    if (touch_count >= 5) {
+      base_channel = 'internal_note';
+      payload_template = `Lead has ignored ${touch_count} automated follow-ups. Needs a manual call.`;
+    } else if (touch_count > 3) {
+      base_channel = 'email';
+    }
+
+    res.json({ ...req.body, delay_hours: 24, base_channel, template_id, payload_template, ai_prompt_template });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 3. Check 24h Window
 router.post('/whatsapp/check-24h', async (req, res) => {
-  const { lead_id } = req.body;
+  const { lead_id, base_channel, template_id, payload_template, ai_prompt_template } = req.body;
   try {
-    const result = await pool.query(`SELECT created_at FROM messages WHERE lead_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`, [lead_id]);
+    const result = await pool.query(`
+      SELECT m.sent_at FROM messages m
+      JOIN conversations c ON m.conversation_id = c.id
+      WHERE c.lead_id = $1 AND m.direction = 'inbound'
+      ORDER BY m.sent_at DESC LIMIT 1
+    `, [lead_id]);
     let within_24h = false;
     if (result.rows.length > 0) {
-      const hours = (new Date() - new Date(result.rows[0].created_at)) / 36e5;
+      const hours = (new Date() - new Date(result.rows[0].sent_at)) / 36e5;
       if (hours < 24) within_24h = true;
     }
-    res.json({ within_24h });
+
+    let action_type = base_channel;
+    if (base_channel === 'whatsapp') {
+      action_type = within_24h ? 'whatsapp_text' : 'whatsapp_template';
+    }
+
+    res.json({
+      ...req.body,
+      within_24h,
+      action: { action_type, template_id, payload_template, ai_prompt_template }
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 4. Generate & Send Followup AI Text
 router.post('/ai/followup', async (req, res) => {
-  const { lead_id, brand, touch_count } = req.body;
+  const { lead_id } = req.body;
   try {
-    if (!ai) return res.json({ ai_reply: "Are you still interested in our program?" });
-    const prompt = `Write a very short, polite WhatsApp follow-up message for a lead who hasn't replied to '${brand}'. This is follow-up attempt #${touch_count}.`;
-    const ai_reply = await generateGeminiContent(prompt);
-    res.json({ ai_reply });
+    const leadRes = await pool.query(`
+      SELECT l.*, c.name as brand_name, c.phone_number_id, c.wa_access_token as client_wa_token
+      FROM leads l LEFT JOIN clients c ON l.client_id = c.id WHERE l.id = $1
+    `, [lead_id]);
+    const lead = leadRes.rows[0];
+    const brandName = lead?.brand_name || 'ABM Groups';
+    const touchCount = lead?.touch_count || 1;
+
+    let ai_reply = "Are you still interested in our program?";
+    if (ai) {
+      const prompt = `Write a very short, polite WhatsApp follow-up message for a lead who hasn't replied to '${brandName}'. This is follow-up attempt #${touchCount}.`;
+      ai_reply = await generateGeminiContent(prompt);
+    }
+
+    let delivered = false;
+    let waMessageId = null;
+    const phoneNumberId = lead?.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+    const waAccessToken = lead?.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN;
+    if (lead && lead.phone && phoneNumberId && waAccessToken) {
+      try {
+        const phoneDigits = lead.phone.replace(/\D/g, '');
+        const waRes = await axios.post(
+          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+          { messaging_product: 'whatsapp', to: phoneDigits, type: 'text', text: { body: ai_reply } },
+          { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+        );
+        waMessageId = waRes.data?.messages?.[0]?.id || null;
+        delivered = true;
+      } catch (waErr) {
+        console.error('[ai/followup send error]', waErr.response?.data || waErr.message);
+      }
+    }
+
+    if (lead) {
+      const conversation_id = await getOrUpsertConversation(lead_id);
+      await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`, [ai_reply, conversation_id]);
+      await pool.query(
+        `INSERT INTO messages (conversation_id, direction, msg_type, content, wa_msg_id, status, is_ai, sent_at) VALUES ($1, 'outbound', 'text', $2, $3, $4, true, NOW())`,
+        [conversation_id, ai_reply, waMessageId, delivered ? 'sent' : 'failed']
+      );
+    }
+
+    res.json({ ...req.body, success: true, ai_reply, delivered });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -678,28 +746,28 @@ router.post('/admin/refresh-embeddings', async (req, res) => {
 
 router.post('/communication/send-email', (req, res) => {
   // Mock endpoint for sending emails (could integrate SendGrid here)
-  res.json({ success: true, delivered: true, channel: 'email' });
+  res.json({ ...req.body, success: true, delivered: true, channel: 'email' });
 });
 
 router.post('/communication/send-template', (req, res) => {
   // Mock endpoint for sending WhatsApp templates (could integrate Meta API here)
-  res.json({ success: true, delivered: true, channel: 'whatsapp_template' });
+  res.json({ ...req.body, success: true, delivered: true, channel: 'whatsapp_template' });
 });
 
 router.post('/leads/internal-note', async (req, res) => {
   const { lead_id, note } = req.body;
   try {
     await pool.query(`INSERT INTO workflow_logs (workflow, lead_id, status, message) VALUES ('WF02', $1, 'success', $2)`, [lead_id, `Internal Note: ${note}`]);
-    res.json({ success: true });
+    res.json({ ...req.body, success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.post('/leads/update-followup', async (req, res) => {
-  const { lead_id, next_followup_due, touch_count_increment } = req.body;
+  const { lead_id, touch_count_increment, delay_hours } = req.body;
   try {
-    const query = `UPDATE leads SET next_followup_due = $1, touch_count = COALESCE(touch_count, 0) + $2 WHERE id = $3`;
-    await pool.query(query, [next_followup_due, touch_count_increment || 1, lead_id]);
-    res.json({ success: true });
+    const query = `UPDATE leads SET next_followup_due = NOW() + ($1 || ' hours')::INTERVAL, touch_count = COALESCE(touch_count, 0) + $2 WHERE id = $3`;
+    await pool.query(query, [delay_hours || 24, touch_count_increment || 1, lead_id]);
+    res.json({ ...req.body, success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -717,8 +785,80 @@ router.get('/reports/pending-payments', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/reports/reminder-bundle', (req, res) => {
-  res.json({ success: true, bundled: true });
+// Combines all 5 WF03 metrics server-side in one call, so the n8n workflow
+// doesn't need a Merge node to reassemble 5 parallel branches.
+// NOTE: leads.owner only ever holds the generic bucket 'human_sales' or 'ai_bot' -
+// there is no per-individual sales-rep assignment in the schema today, so this
+// produces one combined "human sales team" summary rather than per-person lists.
+router.get('/reports/reminder-bundle', async (req, res) => {
+  try {
+    const [calls, followups, payments, overdue, hot] = await Promise.all([
+      pool.query(`SELECT id as lead_id, name, call_booked_at as time, owner FROM leads WHERE call_booked_at >= CURRENT_DATE AND call_booked_at < CURRENT_DATE + INTERVAL '1 day'`),
+      pool.query(`SELECT id as lead_id, name, stage, owner FROM leads WHERE next_followup_due >= CURRENT_DATE AND next_followup_due < CURRENT_DATE + INTERVAL '1 day'`),
+      Promise.resolve({ rows: [] }), // no invoice table yet - mirrors /reports/pending-payments
+      pool.query(`SELECT id, name, next_followup_due, owner FROM leads WHERE next_followup_due < NOW() AND status != 'won' LIMIT 50`),
+      pool.query(`SELECT id, name, score, owner FROM leads WHERE status = 'hot' ORDER BY score DESC LIMIT 10`)
+    ]);
+
+    const metrics = {
+      calls: calls.rows, followups: followups.rows, pending_payments: payments.rows,
+      overdue: overdue.rows, hot_leads: hot.rows
+    };
+
+    const humanTaskCount = calls.rows.filter(r => r.owner === 'human_sales').length
+      + followups.rows.filter(r => r.owner === 'human_sales').length
+      + overdue.rows.filter(r => r.owner === 'human_sales').length
+      + hot.rows.filter(r => r.owner === 'human_sales').length;
+
+    const salesperson_summaries = [{
+      owner: 'human_sales',
+      text: `Today's Tasks: ${followups.rows.length} Follow-ups, ${calls.rows.length} Calls, ${payments.rows.length} Payments, ${hot.rows.length} HOT Leads, ${overdue.rows.length} Overdue. (${humanTaskCount} assigned to the human sales team.)`
+    }];
+
+    let founder_summary = `Daily Summary - Calls: ${calls.rows.length}, Followups: ${followups.rows.length}, Pending Payments: ${payments.rows.length}, Overdue: ${overdue.rows.length}, Hot Leads: ${hot.rows.length}.`;
+    if (ai) {
+      try {
+        const prompt = `Summarize these daily sales metrics for a Founder Dashboard:\n${JSON.stringify(metrics)}\nWrite 3 short bullet points highlighting wins and risks (like SLA breaches or pending payments).`;
+        founder_summary = await generateGeminiContent(prompt);
+      } catch (e) { console.error('[reminder-bundle] Gemini summary failed:', e.message); }
+    }
+
+    res.json({ success: true, metrics, salesperson_summaries, founder_summary });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Direct staff/founder notification - does NOT touch leads/conversations tables,
+// since this isn't lead messaging. Requires FOUNDER_WHATSAPP_PHONE (or an explicit
+// `phone`) to actually deliver; otherwise it no-ops with delivered:false so callers
+// can see nothing was sent instead of silently failing.
+router.post('/communication/notify-staff', async (req, res) => {
+  const { phone, content, label } = req.body;
+  try {
+    const targetPhone = phone || process.env.FOUNDER_WHATSAPP_PHONE;
+    if (!targetPhone) {
+      console.warn(`[notify-staff] No phone configured for "${label || 'recipient'}" - skipping. Set FOUNDER_WHATSAPP_PHONE in .env or pass phone explicitly.`);
+      return res.json({ ...req.body, success: true, delivered: false, reason: 'no_phone_configured' });
+    }
+
+    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID;
+    const waAccessToken = process.env.META_PAGE_ACCESS_TOKEN;
+    let delivered = false, waMessageId = null;
+    if (phoneNumberId && waAccessToken) {
+      try {
+        const phoneDigits = targetPhone.replace(/\D/g, '');
+        const waRes = await axios.post(
+          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+          { messaging_product: 'whatsapp', to: phoneDigits, type: 'text', text: { body: content } },
+          { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+        );
+        waMessageId = waRes.data?.messages?.[0]?.id || null;
+        delivered = true;
+      } catch (waErr) {
+        console.error('[notify-staff send error]', waErr.response?.data || waErr.message);
+      }
+    }
+    res.json({ ...req.body, success: true, delivered, wa_msg_id: waMessageId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;

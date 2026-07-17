@@ -71,9 +71,9 @@ router.post('/leads/deduplicate', async (req, res) => {
     const values = [];
     if (phone) { conditions.push(`phone = $${values.length + 1}`); values.push(phone); }
     if (email) { conditions.push(`email = $${values.length + 1}`); values.push(email); }
-    
+
     if (conditions.length === 0) return res.json({ is_duplicate: false });
-    
+
     query += conditions.join(' OR ') + ' LIMIT 1';
     const result = await pool.query(query, values);
 
@@ -178,7 +178,7 @@ router.post('/ai/intent', async (req, res) => {
     const parts = output.split(',');
     const intent = parts[0] ? parts[0].trim() : 'GENERAL';
     const confidence = parts[1] ? parseInt(parts[1].trim()) : 50;
-    
+
     if (lead_id) {
       await pool.query(`INSERT INTO ai_decisions (lead_id, module, input, output, confidence) VALUES ($1, $2, $3, $4, $5)`, [lead_id, 'intent_detection', message, intent, confidence]);
     }
@@ -218,14 +218,14 @@ router.post('/ai/response', async (req, res) => {
   const { brand, intent, message, kb_snippets, lead_id, chat_history } = req.body;
   try {
     if (!ai) return res.json({ ...req.body, ai_reply: "AI is currently offline. We will get back to you shortly!" });
-    
+
     let historyText = "";
     if (chat_history && Array.isArray(chat_history)) {
       historyText = "Chat History:\n" + chat_history.map(h => `${h.role}: ${h.text}`).join("\n") + "\n\n";
     }
 
     const prompt = `System Prompt (ABM Groups Knowledge Base):\n${kb_snippets}\n\n${historyText}User Intent detected: ${intent}\n\nUser Message: "${message}"\n\nWrite a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.`;
-    
+
     const ai_reply = await generateGeminiContent(prompt);
     res.json({ ...req.body, ai_reply });
   } catch (err) {
@@ -258,7 +258,7 @@ router.post('/leads/assign-owner', async (req, res) => {
   try {
     let owner = 'ai_bot';
     if (lead_score >= 75) owner = 'human_sales';
-    
+
     await pool.query(`UPDATE leads SET owner = $1 WHERE id = $2`, [owner, lead_id]);
     res.json({ ...req.body, owner });
   } catch (err) {
@@ -398,17 +398,17 @@ router.get('/workflows/telemetry', async (req, res) => {
     // 1. Total executions
     const totalRes = await pool.query(`SELECT COUNT(*) as count FROM workflow_logs`);
     const totalExecutions = parseInt(totalRes.rows[0].count) || 0;
-    
+
     // 2. Success Rate
     const successRes = await pool.query(`SELECT COUNT(*) as count FROM workflow_logs WHERE status = 'success'`);
     const successCount = parseInt(successRes.rows[0].count) || 0;
     const successRate = totalExecutions > 0 ? Math.round((successCount / totalExecutions) * 100) : 100;
-    
+
     // 3. AI Interventions
     const aiRes = await pool.query(`SELECT COUNT(*) as count FROM ai_decisions`);
     const aiInterventions = parseInt(aiRes.rows[0].count) || 0;
-    
-    res.json({ 
+
+    res.json({
       telemetry: {
         totalExecutions,
         successRate,
@@ -565,10 +565,11 @@ router.post('/ai/followup', async (req, res) => {
     const lead = leadRes.rows[0];
     const brandName = lead?.brand_name || 'ABM Groups';
     const touchCount = lead?.touch_count || 1;
+    const leadName = (lead?.name || '').split(' ')[0] || 'there';
 
-    let ai_reply = "Are you still interested in our program?";
+    let ai_reply = `Hi ${leadName}, are you still interested in our program?`;
     if (ai) {
-      const prompt = `Write a very short, polite WhatsApp follow-up message for a lead who hasn't replied to '${brandName}'. This is follow-up attempt #${touchCount}.`;
+      const prompt = `Write a very short, polite WhatsApp follow-up message addressed to "${leadName}" for a lead who hasn't replied to '${brandName}'. This is follow-up attempt #${touchCount}. Use "${leadName}" directly in the greeting - do not use placeholder text like [Name] or [Lead Name].`;
       ai_reply = await generateGeminiContent(prompt);
     }
 
@@ -702,7 +703,7 @@ router.post('/campaigns/check-frequency', async (req, res) => {
     const convRes = await pool.query(`SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`, [lead_id]);
     if (convRes.rows.length === 0) return res.json({ allowed: true });
     const conversation_id = convRes.rows[0].id;
-    
+
     const result = await pool.query(`SELECT sent_at FROM messages WHERE conversation_id = $1 AND direction = 'outbound' AND msg_type = 'campaign' ORDER BY sent_at DESC LIMIT 1`, [conversation_id]);
     let allowed = true;
     if (result.rows.length > 0) {

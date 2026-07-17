@@ -269,18 +269,76 @@ router.post('/leads/update', async (req, res) => {
 router.post('/communication/send', async (req, res) => {
   const { lead_id, channel, type, content } = req.body;
   try {
-    // In a full implementation, fetch brand token and call FB API.
-    
-    // FIX: Log outbound message into the correct UI 'messages' table schema safely without null/constraint errors
-    const conversation_id = await getOrUpsertConversation(lead_id);
     const safeContent = content || "Thank you for reaching out to ABM Groups! We have received your message and will get back to you shortly.";
+    const msgType = type || 'text';
 
-    await pool.query(
-      `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai) VALUES ($1, 'outbound', $2, $3, 'sent', true)`,
-      [conversation_id, type || 'text', safeContent]
+    // 1. Fetch lead & client details to get phone number, phone_number_id, and access token for Meta Cloud API
+    const leadRes = await pool.query(`
+      SELECT l.*, c.phone_number_id, c.wa_access_token as client_wa_token
+      FROM leads l
+      LEFT JOIN clients c ON l.client_id = c.id
+      WHERE l.id = $1
+    `, [lead_id]);
+
+    const lead = leadRes.rows[0];
+    const phoneNumberId = lead?.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+    const waAccessToken = lead?.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN;
+
+    // 2. Send real outbound message via Meta WhatsApp Cloud API (`https://graph.facebook.com/v18.0/${phoneNumberId}/messages`)
+    let waMessageId = null;
+    if (channel === 'whatsapp' && lead && lead.phone && phoneNumberId && waAccessToken) {
+      try {
+        const phoneDigits = lead.phone.replace(/\D/g, '');
+        const payload = {
+          messaging_product: 'whatsapp',
+          to: phoneDigits,
+          type: 'text',
+          text: { body: safeContent }
+        };
+
+        console.log(`[Send Communication] Sending AI WhatsApp response to ${phoneDigits} via Meta API...`);
+        const waRes = await axios.post(
+          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+          payload,
+          { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+        );
+        waMessageId = waRes.data?.messages?.[0]?.id || null;
+        console.log(`✅ [Send Communication] Meta WhatsApp delivered successfully! Message ID: ${waMessageId}`);
+      } catch (waErr) {
+        console.error(`⚠️ [Send Communication] Meta Graph API Error:`, waErr.response?.data || waErr.message);
+      }
+    }
+
+    // 3. Upsert conversation in DB and update last_message timestamp so it jumps to top of LeadOS Inbox!
+    const conversation_id = await getOrUpsertConversation(lead_id);
+    await pool.query(`
+      UPDATE conversations
+      SET last_message = $1,
+          last_message_at = NOW()
+      WHERE id = $2
+    `, [safeContent, conversation_id]);
+
+    // 4. Insert message into messages table
+    const { rows: savedRows } = await pool.query(
+      `INSERT INTO messages (conversation_id, direction, msg_type, content, wa_msg_id, status, is_ai, sent_at) VALUES ($1, 'outbound', $2, $3, $4, 'sent', true, NOW()) RETURNING id, direction, content, msg_type as type, wa_msg_id, status, is_ai, sent_at as timestamp`,
+      [conversation_id, msgType, safeContent, waMessageId]
     );
-    res.json({ success: true, delivered: true, content: safeContent });
+
+    // 5. Emit real-time Socket.IO event so LeadOS WhatsApp Inbox UI updates instantly without page refresh
+    try {
+      const io = req.app?.get('io') || global.io;
+      if (io) {
+        io.emit('outgoing_message', { lead_id: Number(lead_id), message: savedRows[0] });
+        io.emit('message_sent', { lead_id: Number(lead_id), message: savedRows[0] });
+        io.emit('incoming_message', { lead_id: Number(lead_id), message: savedRows[0] });
+      }
+    } catch (ioErr) {
+      console.warn('Socket emit warning:', ioErr.message);
+    }
+
+    res.json({ ...req.body, success: true, delivered: true, content: safeContent, wa_msg_id: waMessageId });
   } catch (err) {
+    console.error('[Send Communication Error]', err);
     res.status(500).json({ error: err.message });
   }
 });

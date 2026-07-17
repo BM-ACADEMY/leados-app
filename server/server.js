@@ -1261,36 +1261,68 @@ app.post('/webhook/razorpay', async (req, res) => {
 
 
 // ── FIND LEAD BY INVOICE (called by n8n WF04 Find Lead node) ─
-// Accepts: { invoice_id, lead_id } — at least one required
+// Accepts: { invoice_id, lead_id, link_id } — at least one required
 // Returns: { lead_id, name, phone, brand, brand_id }
 app.post('/api/leads/find-by-invoice', async (req, res) => {
   try {
-    const { invoice_id, lead_id } = req.body;
+    const { invoice_id, lead_id, link_id } = req.body;
 
-    // 1. Try lead_id directly (fastest path — comes from Razorpay notes)
-    if (lead_id) {
+    // 1. Try lead_id directly (fastest — comes from Razorpay notes.lead_id)
+    if (lead_id && lead_id !== 'null' && lead_id !== 'undefined') {
       const lr = await pool.query(
         `SELECT l.id AS lead_id, l.name, l.phone, c.name AS brand, c.id AS brand_id
          FROM leads l LEFT JOIN clients c ON c.id = l.client_id
          WHERE l.id = $1`, [lead_id]
       );
-      if (lr.rows.length) return res.json(lr.rows[0]);
+      if (lr.rows.length) {
+        // Also save payment_id to payments table now that we know both
+        if (invoice_id) {
+          await pool.query(
+            `UPDATE payments SET razorpay_payment_id = $1, status = 'captured'
+             WHERE lead_id = $2 AND razorpay_payment_id IS NULL`,
+            [invoice_id, lr.rows[0].lead_id]
+          ).catch(() => {});
+        }
+        return res.json(lr.rows[0]);
+      }
     }
 
-    // 2. Fallback: look up via payments table using the Razorpay payment/link ID
-    if (invoice_id) {
+    // 2. Try by plink_xxx (payment link ID — from payload.payment_link.entity.id)
+    if (link_id && link_id !== 'null' && link_id !== 'undefined') {
       const pr = await pool.query(
         `SELECT l.id AS lead_id, l.name, l.phone, c.name AS brand, c.id AS brand_id
          FROM payments p
          JOIN leads l ON l.id = p.lead_id
          LEFT JOIN clients c ON c.id = l.client_id
-         WHERE p.razorpay_payment_id = $1 OR p.razorpay_link_id = $1
+         WHERE p.razorpay_link_id = $1
+         LIMIT 1`, [link_id]
+      );
+      if (pr.rows.length) {
+        if (invoice_id) {
+          await pool.query(
+            `UPDATE payments SET razorpay_payment_id = $1, status = 'captured' WHERE razorpay_link_id = $2`,
+            [invoice_id, link_id]
+          ).catch(() => {});
+        }
+        return res.json(pr.rows[0]);
+      }
+    }
+
+    // 3. Fallback: search by payment_id in payments table
+    if (invoice_id && invoice_id !== 'null') {
+      const pr = await pool.query(
+        `SELECT l.id AS lead_id, l.name, l.phone, c.name AS brand, c.id AS brand_id
+         FROM payments p
+         JOIN leads l ON l.id = p.lead_id
+         LEFT JOIN clients c ON c.id = l.client_id
+         WHERE p.razorpay_payment_id = $1
          LIMIT 1`, [invoice_id]
       );
       if (pr.rows.length) return res.json(pr.rows[0]);
     }
 
-    // Not found — return nulls so WF04 can still continue gracefully
+    // Not found
+    console.warn('[find-by-invoice] No lead found for:', { invoice_id, lead_id, link_id });
     return res.json({ lead_id: null, name: null, phone: null, brand: null, brand_id: null });
   } catch (err) {
     console.error('[find-by-invoice] error:', err.message);

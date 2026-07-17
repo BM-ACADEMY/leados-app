@@ -119,6 +119,9 @@ router.post('/brand/detect', async (req, res) => {
 router.post('/leads/createOrUpdate', async (req, res) => {
   const { name, phone, email, source, brand_id } = req.body;
   try {
+    if (!phone) {
+      return res.json({ success: true, lead_id: null, ignored: true, message: "Missing phone number" });
+    }
     const check = await pool.query(`SELECT id FROM leads WHERE phone = $1 LIMIT 1`, [phone]);
     let lead_id;
     if (check.rows.length > 0) {

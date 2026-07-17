@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Upload, Download, Plus, Eye, Phone, Trash, FileSpreadsheet, X } from 'lucide-react';
+import { Search, Upload, Download, Plus, Eye, Phone, Trash, FileSpreadsheet, X, CreditCard, Copy, CheckCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { Badge, ScoreBar } from '../components/ui.jsx';
@@ -212,6 +212,149 @@ function AddLeadModal({ open, onClose, onSaved, clients, users, sources }) {
   );
 }
 
+// ─── Payment Link Modal ───────────────────────────────────────
+function PaymentLinkModal({ lead, onClose }) {
+  const [amount, setAmount] = useState('');
+  const [desc, setDesc] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [generatedLink, setGeneratedLink] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  if (!lead) return null;
+
+  const handleGenerate = async (e) => {
+    e.preventDefault();
+    if (!amount || isNaN(amount) || parseFloat(amount) <= 0) return toast.error('Enter a valid amount');
+    setGenerating(true);
+    try {
+      const res = await api.createPaymentLink(lead.id, parseFloat(amount), desc || 'Service Fee');
+      const link = res.payment_link || res.link;
+      if (link) {
+        setGeneratedLink(link);
+        toast.success('Payment link generated!');
+      } else {
+        throw new Error('No link returned');
+      }
+    } catch (err) {
+      toast.error('Failed to generate link: ' + err.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(generatedLink);
+    setCopied(true);
+    toast.success('Copied to clipboard!');
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', zIndex: 2000, padding: 16,
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'linear-gradient(145deg,#13151f,#0d0f18)',
+          border: '1px solid #2a2a3a', borderRadius: 18, padding: 28,
+          width: '100%', maxWidth: 440,
+          boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
+          animation: 'slideUp .22s ease',
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <CreditCard size={16} color="#f97316" />
+            </div>
+            <div>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>Generate Payment Link</h3>
+              <p style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>For: <strong style={{ color: '#94a3b8' }}>{lead.name}</strong></p>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: '#1e2030', border: '1px solid #2a2a3a', borderRadius: 8, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <X size={13} color="#94a3b8" />
+          </button>
+        </div>
+
+        {generatedLink ? (
+          <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 12, padding: 16 }}>
+            <p style={{ fontSize: 11, color: '#4ade80', fontWeight: 600, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 5 }}>
+              <CheckCheck size={13} /> Link ready — share with {lead.name}
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                readOnly
+                value={generatedLink}
+                style={{ flex: 1, background: '#0d1117', border: '1px solid #2a2a3a', color: '#e2e8f0', padding: '8px 10px', borderRadius: 8, fontSize: 11, outline: 'none' }}
+              />
+              <button
+                onClick={handleCopy}
+                style={{ background: copied ? 'rgba(34,197,94,0.15)' : 'rgba(249,115,22,0.12)', border: `1px solid ${copied ? 'rgba(34,197,94,0.4)' : 'rgba(249,115,22,0.3)'}`, color: copied ? '#4ade80' : '#f97316', padding: '8px 12px', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}
+              >
+                {copied ? <CheckCheck size={12} /> : <Copy size={12} />}
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 14 }}>
+              <button onClick={() => window.open(generatedLink, '_blank')} style={{ background: 'transparent', border: 'none', color: '#64748b', fontSize: 10, cursor: 'pointer', textDecoration: 'underline' }}>Open link ↗</button>
+              <button onClick={() => { setGeneratedLink(''); setAmount(''); setDesc(''); }} style={{ background: 'transparent', border: 'none', color: '#f97316', fontSize: 10, fontWeight: 600, cursor: 'pointer' }}>+ Generate New</button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleGenerate} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 0.5 }}>Amount (₹) *</label>
+                <input
+                  type="number" min="1" step="0.01" required
+                  placeholder="e.g. 4999"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  style={{ width: '100%', background: '#0d1117', border: '1px solid #2a2a3a', borderRadius: 8, color: '#e2e8f0', fontSize: 13, padding: '9px 12px', outline: 'none', boxSizing: 'border-box' }}
+                  onFocus={e => e.target.style.borderColor = '#f97316'}
+                  onBlur={e => e.target.style.borderColor = '#2a2a3a'}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 0.5 }}>Description</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Admission Fee, Course Payment"
+                  value={desc}
+                  onChange={e => setDesc(e.target.value)}
+                  style={{ width: '100%', background: '#0d1117', border: '1px solid #2a2a3a', borderRadius: 8, color: '#e2e8f0', fontSize: 13, padding: '9px 12px', outline: 'none', boxSizing: 'border-box' }}
+                  onFocus={e => e.target.style.borderColor = '#f97316'}
+                  onBlur={e => e.target.style.borderColor = '#2a2a3a'}
+                />
+              </div>
+            </div>
+            <div style={{ background: 'rgba(249,115,22,0.06)', border: '1px solid rgba(249,115,22,0.15)', borderRadius: 9, padding: '9px 12px', fontSize: 10, color: '#94a3b8' }}>
+              📱 Link will be pre-filled with <strong style={{ color: '#e2e8f0' }}>{lead.name}</strong>'s phone (<strong style={{ color: '#e2e8f0' }}>{lead.phone}</strong>) and linked to lead ID <strong style={{ color: '#f97316' }}>#{lead.id}</strong>. WF04 triggers automatically on payment.
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button type="button" onClick={onClose} style={{ flex: 1, background: '#1e2030', border: '1px solid #2a2a3a', color: '#94a3b8', padding: '10px', borderRadius: 9, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+              <button
+                type="submit" disabled={generating}
+                style={{ flex: 2, background: generating ? '#3a3a50' : 'linear-gradient(135deg,#f97316,#c2410c)', border: 'none', color: '#fff', padding: '10px', borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: generating ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+              >
+                <CreditCard size={13} />{generating ? 'Generating...' : 'Create Payment Link'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main View ─────────────────────────────────────────────
 export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [filter, setFilter] = useState('all');
@@ -245,6 +388,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const fileInputRef = useRef(null);
   const [importing, setImporting] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [paymentLead, setPaymentLead] = useState(null);
   const [modalClients, setModalClients] = useState([]);
   const [modalUsers, setModalUsers]     = useState([]);
   const [modalSources, setModalSources] = useState([]);
@@ -349,6 +493,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
         users={modalUsers}
         sources={modalSources}
       />
+      <PaymentLinkModal lead={paymentLead} onClose={() => setPaymentLead(null)} />
 
       <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
         <div>
@@ -427,9 +572,10 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
                 <td style={{ padding: '13px 14px', fontSize: 10, color: C.dim }}>{l.last_contact || 'N/A'}</td>
                 <td style={{ padding: '13px 14px' }}>
                   <div style={{ display: 'flex', gap: 5 }}>
-                    <button style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); onLeadClick(l); }}><Eye size={11} color={C.muted} /></button>
-                    <button style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); window.open(`tel:${l.phone}`, '_self'); }}><Phone size={11} color={C.muted} /></button>
-                    <button style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); handleDelete(l.id); }}><Trash size={11} color="#ef4444" /></button>
+                    <button title="View lead" style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); onLeadClick(l); }}><Eye size={11} color={C.muted} /></button>
+                    <button title="Call" style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); window.open(`tel:${l.phone}`, '_self'); }}><Phone size={11} color={C.muted} /></button>
+                    <button title="Generate Payment Link" style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); setPaymentLead(l); }}><CreditCard size={11} color="#f97316" /></button>
+                    <button title="Delete" style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); handleDelete(l.id); }}><Trash size={11} color="#ef4444" /></button>
                   </div>
                 </td>
               </tr>

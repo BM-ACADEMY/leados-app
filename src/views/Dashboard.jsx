@@ -12,7 +12,7 @@ import {
 import { toast } from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { Badge, ScoreBar } from '../components/ui.jsx';
-import { useLeads } from '../hooks/useLeads.js';
+import { useLeads, useLead } from '../hooks/useLeads.js';
 import { useAuth } from '../hooks/useAuth.js';
 import { api } from '../services/api.js';
 

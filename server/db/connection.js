@@ -17,4 +17,13 @@ const pool = new pg.Pool({
 
 pool.on('error', (err) => console.error('Alliance DB error:', err));
 
+// Auto-migrate ID columns to BIGINT to support large Meta phone/lead IDs without integer out-of-range errors
+pool.query(`
+  ALTER TABLE leads ALTER COLUMN id TYPE BIGINT;
+  ALTER TABLE conversations ALTER COLUMN id TYPE BIGINT;
+  ALTER TABLE conversations ALTER COLUMN lead_id TYPE BIGINT;
+  ALTER TABLE messages ALTER COLUMN id TYPE BIGINT;
+  ALTER TABLE messages ALTER COLUMN conversation_id TYPE BIGINT;
+`).catch(() => {});
+
 module.exports = pool;

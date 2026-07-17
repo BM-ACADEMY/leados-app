@@ -96,19 +96,18 @@ router.post('/verify-payment', auth, async (req, res) => {
 });
 
 // POST /thedal/payments/webhook
-router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+router.post('/webhook', async (req, res) => {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
 
   try {
-    // If express.raw is not used globally, req.body might already be parsed. 
-    // It's safer to just stringify it back if needed, but assuming standard Express setup:
     const body = req.body;
     const signature = req.headers['x-razorpay-signature'];
 
     // Verify webhook signature
+    const rawBody = req.rawBody || JSON.stringify(body);
     const expectedSignature = crypto
       .createHmac('sha256', secret)
-      .update(JSON.stringify(body))
+      .update(rawBody)
       .digest('hex');
 
     if (expectedSignature === signature) {

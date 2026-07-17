@@ -37,13 +37,20 @@ async function getOrUpsertConversation(lead_id) {
   const leadExists = leadRes.rows.length > 0;
   const safeLeadId = leadExists ? lead_id : null;
 
-  const byPhoneRes = await pool.query(`SELECT id FROM conversations WHERE phone = $1 AND tenant_id = $2 LIMIT 1`, [phone, tenant_id]);
-  if (byPhoneRes.rows.length > 0) {
-    const existingId = byPhoneRes.rows[0].id;
-    if (safeLeadId) {
-      await pool.query(`UPDATE conversations SET lead_id = $1 WHERE id = $2`, [safeLeadId, existingId]);
+  if (phone) {
+    const phoneDigits = phone.replace(/\D/g, '');
+    const byPhoneRes = await pool.query(`
+      SELECT id FROM conversations 
+      WHERE tenant_id = $1 AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT($2, 10) 
+      LIMIT 1
+    `, [tenant_id, phoneDigits]);
+    if (byPhoneRes.rows.length > 0) {
+      const existingId = byPhoneRes.rows[0].id;
+      if (safeLeadId) {
+        await pool.query(`UPDATE conversations SET lead_id = $1 WHERE id = $2`, [safeLeadId, existingId]);
+      }
+      return existingId;
     }
-    return existingId;
   }
 
   const newConv = await pool.query(`
@@ -145,10 +152,15 @@ router.post('/ai/intent', async (req, res) => {
     if (lead_id && message) {
       const conversation_id = await getOrUpsertConversation(lead_id);
       // Only insert if this message hasn't been logged recently to prevent dupes
-      await pool.query(
-        `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai) VALUES ($1, 'inbound', 'text', $2, 'received', false)`,
+      const savedMsg = await pool.query(
+        `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai, sent_at) VALUES ($1, 'inbound', 'text', $2, 'delivered', false, NOW()) RETURNING id, direction, content, msg_type as type, status, sent_at as timestamp`,
         [conversation_id, message]
       );
+      await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW(), unread_count = COALESCE(unread_count, 0) + 1 WHERE id = $2`, [message, conversation_id]);
+      const io = req.app.get('io');
+      if (io && savedMsg.rows[0]) {
+        io.emit('incoming_message', { lead_id: Number(lead_id), message: savedMsg.rows[0] });
+      }
     }
 
     if (!ai) return res.json({ intent: "GENERAL", confidence: 50 });

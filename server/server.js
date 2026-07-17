@@ -2031,7 +2031,11 @@ async function executeCampaign(campaign_id) {
 
     await pool.query("UPDATE campaigns SET status = 'running' WHERE id = $1", [campaign_id]);
 
-    let leadsQuery = 'SELECT id, phone, name FROM leads WHERE client_id = $1';
+    // Frequency cap: skip leads who received any campaign message in the last 7 days,
+    // so a lead never gets hit by two campaigns (or two runs of the same one) in a week.
+    let leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1 AND id NOT IN (
+      SELECT DISTINCT lead_id FROM campaign_logs WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '7 days' AND lead_id IS NOT NULL
+    )`;
     const queryParams = [campaign.client_id];
 
     if (campaign.target_status && campaign.target_status !== 'all') {
@@ -2141,7 +2145,7 @@ async function executeCampaign(campaign_id) {
 }
 
 // POST /api/campaigns/execute
-app.post('/api/campaigns/execute', auth, async (req, res) => {
+app.post('/api/campaigns/execute', internalAuth, async (req, res) => {
   try {
     const { campaign_id } = req.body;
     // Execute asynchronously without blocking

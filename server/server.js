@@ -19,6 +19,7 @@ const multer = require('multer');
 const xlsx = require('xlsx');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 
 const app = express();
@@ -1200,18 +1201,36 @@ app.post('/webhook/meta-leads', async (req, res) => {
 app.post('/webhook/razorpay', express.raw({ type: 'application/json' }), async (req, res) => {
   res.sendStatus(200);
   try {
+    if (process.env.RAZORPAY_WEBHOOK_SECRET) {
+      const signature = req.headers['x-razorpay-signature'];
+      const expected = crypto.createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET).update(req.body).digest('hex');
+      if (!signature || signature !== expected) {
+        console.warn('[Razorpay webhook] Signature mismatch - rejecting');
+        return;
+      }
+    }
+
     const event = JSON.parse(req.body);
     if (event.event === 'payment.captured') {
       const { amount, notes } = event.payload.payment.entity;
       const leadId = notes?.lead_id;
+      const paymentId = event.payload.payment.entity.id;
       if (leadId) {
         await pool.query(`
           INSERT INTO payments (lead_id, amount, status, razorpay_payment_id, created_at)
           VALUES ($1, $2, 'captured', $3, NOW())
-        `, [leadId, amount / 100, event.payload.payment.entity.id]);
+        `, [leadId, amount / 100, paymentId]);
         await pool.query(
           "UPDATE leads SET status = 'converted', score = 100 WHERE id = $1", [leadId]
         );
+
+        // Hand off to n8n's WF04 (Customer Journey) - same forwarding pattern as the WhatsApp webhook.
+        try {
+          await axios.post('https://leados-n8n.abmgroups.org/webhook/payment-success', { invoice_id: paymentId });
+          console.log(`✅ Forwarded payment ${paymentId} to n8n WF04 (Customer Journey)`);
+        } catch (n8nErr) {
+          console.error('⚠️ Failed to forward payment to n8n WF04:', n8nErr.message);
+        }
       }
     }
   } catch (err) {

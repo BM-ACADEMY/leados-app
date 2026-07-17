@@ -529,10 +529,15 @@ router.post('/followups/rule', async (req, res) => {
 router.post('/whatsapp/check-24h', async (req, res) => {
   const { lead_id, base_channel, template_id, payload_template, ai_prompt_template } = req.body;
   try {
-    const result = await pool.query(`SELECT created_at FROM messages WHERE lead_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`, [lead_id]);
+    const result = await pool.query(`
+      SELECT m.sent_at FROM messages m
+      JOIN conversations c ON m.conversation_id = c.id
+      WHERE c.lead_id = $1 AND m.direction = 'inbound'
+      ORDER BY m.sent_at DESC LIMIT 1
+    `, [lead_id]);
     let within_24h = false;
     if (result.rows.length > 0) {
-      const hours = (new Date() - new Date(result.rows[0].created_at)) / 36e5;
+      const hours = (new Date() - new Date(result.rows[0].sent_at)) / 36e5;
       if (hours < 24) within_24h = true;
     }
 

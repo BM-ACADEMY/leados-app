@@ -826,11 +826,13 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
           );
           if (convCheck.rows.length > 0) {
             const convId = convCheck.rows[0].id;
-            await pool.query(`
-              INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
-              VALUES ($1, 'outbound', 'common_welcome_message', 'template', $2, 'sent', false, NOW())
-              ON CONFLICT (wa_msg_id) DO NOTHING
-            `, [convId, waMsgId]);
+            const existingTemplateMsg = waMsgId ? await pool.query('SELECT id FROM messages WHERE wa_msg_id = $1', [waMsgId]) : { rows: [] };
+            if (existingTemplateMsg.rows.length === 0) {
+              await pool.query(`
+                INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
+                VALUES ($1, 'outbound', 'common_welcome_message', 'template', $2, 'sent', false, NOW())
+              `, [convId, waMsgId]);
+            }
             // Push to inbox in real-time
             io.emit('outgoing_message', { lead_id: String(lead.id), message: { direction: 'outbound', content: '[Template] common_welcome_message', msg_type: 'template', sent_at: new Date() } });
           }
@@ -1145,17 +1147,18 @@ app.post('/webhook/whatsapp', async (req, res) => {
           `, [lead.id, tenantId, normalizedPhone, text]);
           const conversationId = convRes.rows[0].id;
 
-          // Save incoming message to messages table (ON CONFLICT handles duplicate wa_msg_id from retried webhooks)
-          const { rows: savedRows } = await pool.query(`
-            INSERT INTO messages (conversation_id, direction, content, msg_type, media_url, wa_msg_id, status, is_ai, sent_at, is_forwarded)
-            VALUES ($1, 'inbound', $2, $3, $4, $5, 'delivered', false, NOW(), $6)
-            ON CONFLICT (wa_msg_id) DO NOTHING
-            RETURNING id, direction, content, msg_type as type, media_url, wa_msg_id, status, sent_at as timestamp, is_forwarded
-          `, [conversationId, text, msgType, mediaUrl, waMessageId, isForwarded]);
-
-          if (savedRows.length === 0) {
+          // Save incoming message to messages table (avoid duplicate wa_msg_id from retried webhooks)
+          const existingMsg = waMessageId ? await pool.query('SELECT id FROM messages WHERE wa_msg_id = $1', [waMessageId]) : { rows: [] };
+          
+          if (existingMsg.rows.length > 0) {
             console.log(`[Webhook] Duplicate message skipped (wa_msg_id: ${waMessageId})`);
           } else {
+            const { rows: savedRows } = await pool.query(`
+              INSERT INTO messages (conversation_id, direction, content, msg_type, media_url, wa_msg_id, status, is_ai, sent_at, is_forwarded)
+              VALUES ($1, 'inbound', $2, $3, $4, $5, 'delivered', false, NOW(), $6)
+              RETURNING id, direction, content, msg_type as type, media_url, wa_msg_id, status, sent_at as timestamp, is_forwarded
+            `, [conversationId, text, msgType, mediaUrl, waMessageId, isForwarded]);
+
             // ── REAL-TIME: push to CRM Inbox immediately ─────────
             io.emit('incoming_message', { lead_id: String(lead.id), message: savedRows[0] });
             console.log(`[Webhook] ✅ Saved inbound ${msgType} from ${phone} → lead ${lead.id}, msg_id ${savedRows[0].id}`);

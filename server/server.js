@@ -787,18 +787,33 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
     const isWindowOpen = windowRes.rows.length > 0;
 
     if (!isWindowOpen) {
-      // Trigger n8n new lead webhook instead of sending message to wake up chat
-      if (process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
-        axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
-          lead_id: lead.id,
-          name: lead.name,
-          phone: lead.phone,
-          client_id: lead.client_id,
-          phone_number_id: phoneNumberId,
-          wa_access_token: waAccessToken
-        }).catch(e => console.error('[n8n reengagement error]', e.message));
+      // Send template message to wake up chat directly via Meta API
+      try {
+        await axios.post(
+          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: (lead.phone || '').replace(/\D/g, ''),
+            type: 'template',
+            template: {
+              name: 'common_welcome_message',
+              language: { code: 'en' },
+              components: [
+                {
+                  type: 'body',
+                  parameters: [
+                    { type: 'text', text: lead.name || 'User' }
+                  ]
+                }
+              ]
+            }
+          },
+          { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+        );
+      } catch (err) {
+        console.error('[Template Wakeup Error]', err.response?.data || err.message);
       }
-      
+
       return res.status(403).json({ 
         error: '24-hour window closed. Triggered template automation to wake up chat.',
         reason: 'window_closed'

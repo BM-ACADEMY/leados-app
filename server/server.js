@@ -787,30 +787,59 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
     const isWindowOpen = windowRes.rows.length > 0;
 
     if (!isWindowOpen) {
-      // Silently send the common_welcome_message template to reopen the 24-hour window
-      try {
-        const templateRes = await axios.post(
-          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
-          {
-            messaging_product: 'whatsapp',
-            to: (lead.phone || '').replace(/\D/g, ''),
-            type: 'template',
-            template: {
-              name: 'common_welcome_message',
-              language: { code: 'en' }
-            }
-          },
-          { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
-        );
-        console.log('[Template Wakeup] Sent common_welcome_message to', lead.phone, templateRes.data?.messages?.[0]?.id);
-      } catch (err) {
-        console.error('[Template Wakeup Error]', JSON.stringify(err.response?.data) || err.message);
+      // Check if we already sent a wakeup template in the last 30 minutes to avoid spamming
+      const recentTemplate = await pool.query(`
+        SELECT 1 FROM messages m
+        JOIN conversations c ON m.conversation_id = c.id
+        WHERE c.lead_id = $1 AND m.direction = 'outbound' AND m.msg_type = 'template'
+          AND m.sent_at > NOW() - INTERVAL '30 MINUTES'
+        LIMIT 1
+      `, [lead_id]);
+
+      if (recentTemplate.rows.length === 0) {
+        // Send the common_welcome_message template to reopen the 24-hour window
+        try {
+          const templateRes = await axios.post(
+            `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+            {
+              messaging_product: 'whatsapp',
+              to: (lead.phone || '').replace(/\D/g, ''),
+              type: 'template',
+              template: {
+                name: 'common_welcome_message',
+                language: { code: 'en' }
+              }
+            },
+            { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+          );
+          const waMsgId = templateRes.data?.messages?.[0]?.id;
+          console.log('[Template Wakeup] Sent common_welcome_message to', lead.phone, waMsgId);
+
+          // Save template message to DB so it appears in inbox
+          const convCheck = await pool.query(
+            `SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`, [lead_id]
+          );
+          if (convCheck.rows.length > 0) {
+            const convId = convCheck.rows[0].id;
+            await pool.query(`
+              INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
+              VALUES ($1, 'outbound', 'common_welcome_message', 'template', $2, 'sent', false, NOW())
+              ON CONFLICT (wa_msg_id) DO NOTHING
+            `, [convId, waMsgId]);
+            // Push to inbox in real-time
+            io.emit('outgoing_message', { lead_id: String(lead.id), message: { direction: 'outbound', content: '[Template] common_welcome_message', msg_type: 'template', sent_at: new Date() } });
+          }
+        } catch (err) {
+          console.error('[Template Wakeup Error]', JSON.stringify(err.response?.data) || err.message);
+        }
+      } else {
+        console.log('[Template Wakeup] Skipped — already sent in last 30 min for lead', lead_id);
       }
 
       // Return 200 OK so the frontend stays silent — the template was already sent
       return res.status(200).json({ 
         window_closed: true,
-        message: 'Template sent to reopen chat window.'
+        message: 'Template sent to reopen chat window. Please wait for the customer to reply.'
       });
     }
     // ----------------------------

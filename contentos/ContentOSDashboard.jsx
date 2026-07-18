@@ -361,25 +361,6 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
     }
   }
 
-  // Republish an already-published post as an Instagram + Facebook story
-  async function handlePublishAsStory(id) {
-    setIsPublishing(true);
-    showToast("Publishing as story... 📖");
-    try {
-      const res = await api.publishAsStory(id);
-      if (res.success) {
-        showToast(res.message || "Story publish triggered! 🎬");
-        fetchData();
-      } else {
-        showToast(res.error || "Failed to publish as story", "error");
-      }
-    } catch (e) {
-      showToast("Error: " + e.message, "error");
-    } finally {
-      setIsPublishing(false);
-    }
-  }
-
   // Publish approved content immediately
   async function handlePublishNow(id) {
     setIsPublishing(true);
@@ -636,7 +617,6 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
               handleApprove={handleApprove}
               handleReject={handleReject}
               handlePublishNow={handlePublishNow}
-              handlePublishAsStory={handlePublishAsStory}
               editMode={editMode}
               setEditMode={setEditMode}
               editValues={editValues}

@@ -261,8 +261,13 @@ export const CampaignsView = () => {
                   <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setImportFile(e.target.files[0])} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0, cursor: 'pointer' }} />
                   <Upload size={24} color={importFile ? C.green : C.muted} style={{ margin: '0 auto 10px' }} />
                   <p style={{ fontSize: 13, color: importFile ? C.text : C.muted, fontWeight: 600, marginBottom: 4 }}>
-                    {importFile ? importFile.name : 'Click or drag file to upload'}
+                    {importFile ? importFile.name : 'Click to select .xlsx or .csv'}
                   </p>
+                  <p style={{ fontSize: 10, color: C.dim }}>
+                    ⚠️ We strongly recommend uploading <b>.xlsx</b> files. Excel often corrupts phone numbers when saving as .csv.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
                   <p style={{ fontSize: 11, color: C.dim }}>Supports .csv, .xlsx, .xls</p>
                 </div>
               </div>

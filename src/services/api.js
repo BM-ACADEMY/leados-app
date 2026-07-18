@@ -561,17 +561,17 @@ class LeadOSAPI {
     });
   }
 
-  async getAiCaptionSuggestions(id, tone = 'engaging', platform = null) {
+  async getAiCaptionSuggestions(id, tone = 'engaging', platform = null, contextInfo = '') {
     return this.request(`/api/content/${id}/suggest-captions`, {
       method: 'POST',
-      body: JSON.stringify({ tone, platform })
+      body: JSON.stringify({ tone, platform, contextInfo })
     });
   }
 
-  async getAiStorySuggestions(id, tone = 'engaging') {
+  async getAiStorySuggestions(id, tone = 'engaging', contextInfo = '') {
     return this.request(`/api/content/${id}/suggest-stories`, {
       method: 'POST',
-      body: JSON.stringify({ tone })
+      body: JSON.stringify({ tone, contextInfo })
     });
   }
 }

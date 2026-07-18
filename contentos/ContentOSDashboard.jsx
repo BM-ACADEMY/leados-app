@@ -154,6 +154,7 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
   const [suggestionsError, setSuggestionsError] = useState(null);
   const [selectedTone, setSelectedTone] = useState("engaging");
   const [suggestionType, setSuggestionType] = useState("caption");
+  const [contextInfo, setContextInfo] = useState("");
 
   // General Toast notifications
   const [toast, setToast] = useState(null);
@@ -461,13 +462,13 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
     setSuggestionType(type);
     setIsSuggestModalOpen(true);
     
-    const cacheKey = `${selectedItem.id}_${selectedTone}_${type}`;
+    const cacheKey = `${selectedItem.id}_${selectedTone}_${type}_${contextInfo}`;
     if (suggestCache[cacheKey]) return;
     
-    fetchAiSuggestions(selectedItem.id, selectedTone, type);
+    fetchAiSuggestions(selectedItem.id, selectedTone, type, contextInfo);
   };
 
-  const fetchAiSuggestions = async (itemId, tone, type = "caption") => {
+  const fetchAiSuggestions = async (itemId, tone, type = "caption", context = "") => {
     setLoadingSuggestions(true);
     setSuggestionsError(null);
     try {
@@ -482,8 +483,8 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
       const platform = platformMap[type] || null;
 
       const res = type === "story"
-        ? await api.getAiStorySuggestions(itemId, tone)
-        : await api.getAiCaptionSuggestions(itemId, tone, platform);
+        ? await api.getAiStorySuggestions(itemId, tone, context)
+        : await api.getAiCaptionSuggestions(itemId, tone, platform, context);
 
       if (res && (res.success || res.suggestions)) {
         const rawSuggestions = res.suggestions || [];
@@ -503,13 +504,32 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
           else parsedList = [JSON.stringify(rawSuggestions)];
         }
         
-        const cacheKey = `${itemId}_${tone}_${type}`;
+        const cacheKey = `${itemId}_${tone}_${type}_${context}`;
         setSuggestCache(prev => ({ ...prev, [cacheKey]: parsedList }));
       } else {
         setSuggestionsError(res?.error || "Failed to fetch suggestions");
       }
     } catch (err) {
       setSuggestionsError(err.message || "Failed to generate suggestions. Please try again.");
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  const handleGenerateFirstTime = async (itemId, tone, context) => {
+    setLoadingSuggestions(true);
+    setSuggestionsError(null);
+    try {
+      const res = await api.getAiCaptionSuggestions(itemId, tone, 'all', context);
+      if (res && res.success && res.meta) {
+        return res.meta;
+      } else {
+        setSuggestionsError(res?.error || "Failed to generate metadata");
+        return null;
+      }
+    } catch (err) {
+      setSuggestionsError(err.message || "Failed to generate metadata. Please try again.");
+      return null;
     } finally {
       setLoadingSuggestions(false);
     }
@@ -620,6 +640,9 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
               formatTime={formatTime}
               extractDriveFileId={extractDriveFileId}
               handleOpenAiSuggestions={handleOpenAiSuggestions}
+              handleGenerateFirstTime={handleGenerateFirstTime}
+              loadingSuggestions={loadingSuggestions}
+              suggestionsError={suggestionsError}
               confirmAction={confirmAction}
               setConfirmAction={setConfirmAction}
               rejectionReason={rejectionReason}
@@ -716,14 +739,11 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
               AI Caption Generator
             </div>
             
-            <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
               <select 
                 value={selectedTone} 
-                onChange={e => {
-                  setSelectedTone(e.target.value);
-                  fetchAiSuggestions(selectedItem.id, e.target.value, suggestionType);
-                }}
-                style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--b1)', color: 'var(--t1)', padding: 8, borderRadius: 6, outline: 'none' }}
+                onChange={e => setSelectedTone(e.target.value)}
+                style={{ width: '100%', background: 'var(--bg3)', border: '1px solid var(--b1)', color: 'var(--t1)', padding: 8, borderRadius: 6, outline: 'none' }}
               >
                 <option value="engaging">🔥 Engaging / Viral</option>
                 <option value="professional">💼 Professional / B2B</option>
@@ -731,6 +751,20 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
                 <option value="casual">👋 Friendly / Tanglish</option>
                 <option value="clickbait">⚡ Clickbait / Urgency</option>
               </select>
+              <textarea
+                value={contextInfo}
+                onChange={e => setContextInfo(e.target.value)}
+                placeholder="Enter a short description or specific instructions for the AI..."
+                style={{ width: '100%', minHeight: '60px', background: 'var(--bg3)', border: '1px solid var(--b1)', color: 'var(--t1)', padding: 8, borderRadius: 6, outline: 'none', resize: 'vertical' }}
+              />
+              <button 
+                onClick={() => fetchAiSuggestions(selectedItem.id, selectedTone, suggestionType, contextInfo)}
+                disabled={loadingSuggestions}
+                className="act"
+                style={{ background: 'var(--teal)', border: 'none', color: 'var(--bg)', padding: '8px 14px', borderRadius: 6, cursor: loadingSuggestions ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+              >
+                {loadingSuggestions ? 'Generating...' : 'Generate Captions'}
+              </button>
             </div>
 
             {loadingSuggestions ? (
@@ -744,7 +778,7 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
             ) : (
               <div style={{ maxHeight: 250, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, paddingRight: 4 }}>
                 {(() => {
-                  const cacheKey = `${selectedItem.id}_${selectedTone}_${suggestionType}`;
+                  const cacheKey = `${selectedItem.id}_${selectedTone}_${suggestionType}_${contextInfo}`;
                   const rawList = suggestCache[cacheKey];
                   const itemsList = Array.isArray(rawList) ? rawList : [];
                   if (itemsList.length === 0) return <div style={{ textAlign: 'center', color: 'var(--t3)' }}>No suggestions returned</div>;

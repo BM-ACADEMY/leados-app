@@ -28,12 +28,17 @@ export function ApprovalRoom({
   formatTime,
   extractDriveFileId,
   handleOpenAiSuggestions,
+  handleGenerateFirstTime,
+  loadingSuggestions,
+  suggestionsError,
   confirmAction,
   setConfirmAction,
   rejectionReason,
   setRejectionReason
 }) {
   const [seg, setSeg] = useState('pending'); // pending | published (live)
+  const [firstGenContext, setFirstGenContext] = useState("");
+  const [firstGenTone, setFirstGenTone] = useState("engaging");
 
   // Sync edits if item changes
   useEffect(() => {
@@ -241,18 +246,75 @@ export function ApprovalRoom({
                 <div className="vwm">@LEARN WITH KAMAR · 1080×1920 · faststart ✓</div>
               </div>
 
-              {/* Stacked captions list for all platforms */}
+              {/* Stacked captions list or First-Time Generation */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '10px 16px', borderTop: '1px solid var(--b1)' }}>
-                {[
-                  { key: 'caption', label: 'Primary Caption', icon: '📝', color: '#475569' },
-                  { key: 'instagram_caption', label: 'Instagram Caption', icon: '📸', color: 'linear-gradient(135deg,#F58529,#DD2A7B,#8134AF)' },
-                  { key: 'facebook_caption', label: 'Facebook Caption', icon: '👍', color: '#1877F2' },
-                  { key: 'youtube_title', label: 'YouTube Title', icon: '▶', color: '#FF0000' },
-                  { key: 'youtube_description', label: 'YouTube Description', icon: '📝', color: '#FF0000' },
-                  { key: 'x_caption', label: 'X (Twitter) Caption', icon: '𝕏', color: '#000000' },
-                  { key: 'linkedin_caption', label: 'LinkedIn Caption', icon: 'in', color: '#0A66C2' }
-                ].map(field => {
-                  const isPlatformActive = () => {
+                {(!selectedItem.caption && !editMode) ? (
+                  <div style={{ background: 'var(--bg3)', border: '1px solid var(--gold)', borderRadius: 8, padding: 20 }}>
+                    <h3 style={{ margin: '0 0 10px 0', fontSize: 16, color: 'var(--gold)' }}>✨ Generate Captions</h3>
+                    <p style={{ margin: '0 0 15px 0', fontSize: 13, color: 'var(--t2)' }}>
+                      This video doesn't have any captions yet. Provide a short description to generate captions, hashtags, and metadata for all platforms at once.
+                    </p>
+                    <textarea 
+                      placeholder="e.g. A short promotional video about our new digital marketing batch starting next week..."
+                      value={firstGenContext}
+                      onChange={(e) => setFirstGenContext(e.target.value)}
+                      style={{
+                        width: '100%', background: 'var(--bg)', color: 'var(--t1)', border: '1px solid var(--b2)',
+                        borderRadius: 6, padding: 12, fontSize: 13, minHeight: 80, outline: 'none', marginBottom: 15, boxSizing: 'border-box'
+                      }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <select 
+                        value={firstGenTone} 
+                        onChange={(e) => setFirstGenTone(e.target.value)}
+                        style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--b2)', color: 'var(--t1)', outline: 'none' }}
+                      >
+                        <option value="engaging">Engaging / Mixed</option>
+                        <option value="professional">Professional</option>
+                        <option value="viral">Viral / Trendy</option>
+                        <option value="educational">Educational</option>
+                        <option value="sales">Sales-Oriented</option>
+                      </select>
+                      <button 
+                        className="tb-btn"
+                        onClick={async () => {
+                          const meta = await handleGenerateFirstTime(selectedItem.id, firstGenTone, firstGenContext);
+                          if (meta) {
+                            setEditValues({
+                                caption: meta.caption || '',
+                                instagram_caption: meta.instagram_caption || meta.caption || '',
+                                facebook_caption: meta.facebook_caption || meta.caption || '',
+                                x_caption: meta.x_caption || '',
+                                linkedin_caption: meta.linkedin_caption || '',
+                                youtube_title: meta.youtube_title || selectedItem.thumbnail_title || '',
+                                youtube_description: meta.youtube_description || meta.description || meta.caption || '',
+                                thumbnail_title: meta.thumbnail_options?.[0]?.title || selectedItem.thumbnail_title || '',
+                                scheduled_at: selectedItem.scheduled_at || '',
+                                platforms: ['instagram', 'facebook', 'youtube', 'linkedin', 'x_twitter'],
+                                selected_accounts: selectedItem.selected_accounts || {}
+                            });
+                            setEditMode(true);
+                          }
+                        }}
+                        disabled={loadingSuggestions}
+                        style={{ background: 'var(--gold)', color: '#000', padding: '10px 20px', borderRadius: 8, fontWeight: 700, border: 'none', cursor: 'pointer', opacity: loadingSuggestions ? 0.7 : 1 }}
+                      >
+                        {loadingSuggestions ? 'Generating...' : '🚀 Generate Captions'}
+                      </button>
+                    </div>
+                    {suggestionsError && <div style={{ color: 'var(--red)', marginTop: 10, fontSize: 12 }}>{suggestionsError}</div>}
+                  </div>
+                ) : (
+                  [
+                    { key: 'caption', label: 'Primary Caption', icon: '📝', color: '#475569' },
+                    { key: 'instagram_caption', label: 'Instagram Caption', icon: '📸', color: 'linear-gradient(135deg,#F58529,#DD2A7B,#8134AF)' },
+                    { key: 'facebook_caption', label: 'Facebook Caption', icon: '👍', color: '#1877F2' },
+                    { key: 'youtube_title', label: 'YouTube Title', icon: '▶', color: '#FF0000' },
+                    { key: 'youtube_description', label: 'YouTube Description', icon: '📝', color: '#FF0000' },
+                    { key: 'x_caption', label: 'X (Twitter) Caption', icon: '𝕏', color: '#000000' },
+                    { key: 'linkedin_caption', label: 'LinkedIn Caption', icon: 'in', color: '#0A66C2' }
+                  ].map(field => {
+                    const isPlatformActive = () => {
                     const activePlatforms = editMode ? (editValues.platforms || []) : (selectedItem.platforms || []);
                     if (field.key === 'caption') return true;
                     if (field.key === 'instagram_caption') return activePlatforms.includes('instagram') || activePlatforms.includes('instagram_story') || activePlatforms.includes('instagram_post');
@@ -347,7 +409,7 @@ export function ApprovalRoom({
                       )}
                     </div>
                   );
-                })}
+                }))}
               </div>
 
               {/* Status and reject notices */}

@@ -968,57 +968,12 @@ async function checkNewDriveVideos() {
           }
         }
 
-        // 3. Generate content via Groq Llama model
-        console.log("DrivePoller: Generating brand-voice metadata via LLM...");
-        const brandInfo = findBrandVoice(brand_name) || { tag: brand_name, voice: `Professional voice for ${brand_name}` };
+        // 3. Set content empty (no AI generation during ingestion)
+        console.log("DrivePoller: Skipping AI generation during ingestion as requested...");
 
-        const prompt = `You are the expert social media content writer for "${brand_name}" (${brandInfo.tag}).
-BRAND VOICE GUIDE:
-${brandInfo.voice}
-
-Spoken Video Transcript to analyze:
-"${transcript || "No speech detected in this video. Generate brand promotion metadata based on the brand voice guide."}"
-
-Generate Title/Caption, Detailed Social Description, Hashtags, 3 Key Moments/Highlights, 3 creative Thumbnail layout/overlay design text descriptions, and 3 Instagram Story slides text (story_1, story_2, story_3) for promoting this video.
-Match the brand voice guides exactly (e.g., Tanglish mix for BM Academy).
-
-Respond ONLY with a valid JSON object matching this exact format:
-{
-  "caption": "Primary brand voice caption with emojis",
-  "x_caption": "Twitter/X style caption",
-  "linkedin_caption": "LinkedIn professional style caption",
-  "description": "A detailed descriptive paragraph summarizing the post content and value",
-  "hashtags": "#tag1 #tag2 #tag3",
-  "thumbnail_options": [
-    { "title": "Thumbnail Title 1", "layout": "Visual layout description 1" },
-    { "title": "Thumbnail Title 2", "layout": "Visual layout description 2" },
-    { "title": "Thumbnail Title 3", "layout": "Visual layout description 3" }
-  ],
-  "key_moments": [
-    { "time": "00:05", "title": "Moment Hook", "desc": "Hook description" },
-    { "time": "00:20", "title": "Key Feature", "desc": "Feature description" },
-    { "time": "00:45", "title": "Call to Action", "desc": "CTA description" }
-  ],
-  "story_1": "Slide 1 text: Engaging hook for Instagram Story",
-  "story_2": "Slide 2 text: Key value point or highlight for Instagram Story",
-  "story_3": "Slide 3 text: Strong Call to Action (CTA) or next steps for Instagram Story"
-}`;
+        const defaultPlatforms = [];
 
         try {
-          const response = await groq.chat.completions.create({
-            model: 'llama-3.3-70b-versatile',
-            max_tokens: 1500,
-            temperature: 0.7,
-            response_format: { type: 'json_object' },
-            messages: [{ role: 'user', content: prompt }]
-          });
-
-          const content = response.choices[0].message.content.trim();
-          const meta = JSON.parse(content);
-
-          const videoUrl = `https://drive.google.com/file/d/${file.id}/view`;
-          const defaultPlatforms = [];
-
           // Insert into database
           await pool.query(`
             INSERT INTO content_queue (
@@ -1033,27 +988,27 @@ Respond ONLY with a valid JSON object matching this exact format:
             videoUrl,
             publicVideoUrl,
             file.id,
-            meta.caption || "",
-            meta.x_caption || "",
-            meta.linkedin_caption || "",
-            meta.description || "",
-            meta.hashtags || "",
-            JSON.stringify(safeJsonValue(meta.thumbnail_options || [])),
-            JSON.stringify(safeJsonValue(meta.key_moments || [])),
-            meta.thumbnail_options?.[0]?.title || file.name.replace(/\.[^/.]+$/, ""),
+            "", // caption
+            "", // x_caption
+            "", // linkedin_caption
+            "", // description
+            "", // hashtags
+            JSON.stringify([]), // thumbnail_options
+            JSON.stringify([]), // key_moments
+            file.name.replace(/\.[^/.]+$/, ""), // thumbnail_title
             JSON.stringify(safeJsonValue(defaultPlatforms)),
             brand_slug,
             file.name,
             publicThumbnailUrl,
-            meta.story_1 || "",
-            meta.story_2 || "",
-            meta.story_3 || "",
+            "", // story_1
+            "", // story_2
+            "", // story_3
             transcript || ""
           ]);
 
           console.log(`DrivePoller: Successfully ingested and staged video: ${file.name}`);
-        } catch (llmErr) {
-          console.error("DrivePoller: Failed to parse LLM response or save to DB:", llmErr.message);
+        } catch (dbErr) {
+          console.error("DrivePoller: Failed to save to DB:", dbErr.message);
         }
       }
 
@@ -2667,6 +2622,7 @@ async function suggestCaptions(req, res) {
   const { id } = req.params;
   const tone = req.body.tone || "engaging";
   const platform = req.body.platform || null;
+  const contextInfo = req.body.contextInfo || null;
 
   if (!checkRateLimit(id)) {
     return res.status(429).json({ success: false, error: "Too many requests. Limit is 5 requests per content item per minute." });
@@ -2683,10 +2639,57 @@ async function suggestCaptions(req, res) {
       industry: "Social Media / Business",
       targetAudience: "General social media audience"
     };
-    const brandVoice = findBrandVoice(post.brand_name)?.voice || "Professional and engaging";
+    const brandVoice = findBrandVoice(post.brand_name) || { tag: post.brand_name, voice: "Professional and engaging" };
 
     // Dynamic video transcript extraction
     const transcript = await getOrGenerateTranscript(post);
+
+    if (platform === 'all') {
+      const allPrompt = `You are the expert social media content writer for "${post.brand_name}" (${brandVoice.tag || brandDetail.industry}).
+BRAND VOICE GUIDE:
+${brandVoice.voice || "Professional and engaging"}
+
+Spoken Video Transcript to analyze:
+"${transcript || "No speech detected in this video. Generate brand promotion metadata based on the brand voice guide."}"
+${contextInfo ? `\nAdditional Context/Instructions from User:\n"${contextInfo}"` : ""}
+
+Generate Title/Caption, Detailed Social Description, Hashtags, 3 Key Moments/Highlights, 3 creative Thumbnail layout/overlay design text descriptions, and 3 Instagram Story slides text (story_1, story_2, story_3) for promoting this video.
+Match the brand voice guides exactly (e.g., Tanglish mix for BM Academy).
+
+Respond ONLY with a valid JSON object matching this exact format:
+{
+  "caption": "Primary brand voice caption with emojis",
+  "x_caption": "Twitter/X style caption",
+  "linkedin_caption": "LinkedIn professional style caption",
+  "description": "A detailed descriptive paragraph summarizing the post content and value",
+  "hashtags": "#tag1 #tag2 #tag3",
+  "thumbnail_options": [
+    { "title": "Thumbnail Title 1", "layout": "Visual layout description 1" },
+    { "title": "Thumbnail Title 2", "layout": "Visual layout description 2" },
+    { "title": "Thumbnail Title 3", "layout": "Visual layout description 3" }
+  ],
+  "key_moments": [
+    { "time": "00:05", "title": "Moment Hook", "desc": "Hook description" },
+    { "time": "00:20", "title": "Key Feature", "desc": "Feature description" },
+    { "time": "00:45", "title": "Call to Action", "desc": "CTA description" }
+  ],
+  "story_1": "Slide 1 text: Engaging hook for Instagram Story",
+  "story_2": "Slide 2 text: Key value point or highlight for Instagram Story",
+  "story_3": "Slide 3 text: Strong Call to Action (CTA) or next steps for Instagram Story"
+}`;
+
+      const allResponse = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 1500,
+        temperature: 0.7,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: allPrompt }]
+      });
+
+      const allContent = allResponse.choices[0].message.content.trim();
+      const allResult = JSON.parse(allContent);
+      return res.json({ success: true, meta: allResult });
+    }
 
     let prompt = `You are an expert social media copywriter. Generate 5 unique caption suggestions for a video post based on the following details:
 - Brand Name: ${post.brand_name}
@@ -2696,6 +2699,7 @@ async function suggestCaptions(req, res) {
 - Video Title/File Name: ${post.file_name}
 - Video Description: ${post.description || "Not provided"}
 - Video Transcript/Speech: ${transcript || "No spoken speech detected in this video. Promote the video topic and brand."}
+${contextInfo ? `- Additional Context/Instructions from User: ${contextInfo}` : ""}
 - Existing Caption: ${post.caption || "Not provided"}
 - Existing Hashtags: ${post.hashtags || ""}
 `;
@@ -2828,6 +2832,7 @@ Do not write any introductory or explanatory text. Return ONLY the valid JSON ob
 async function suggestStories(req, res) {
   const { id } = req.params;
   const tone = req.body.tone || "engaging";
+  const contextInfo = req.body.contextInfo || null;
 
   if (!checkRateLimit(id)) {
     return res.status(429).json({ success: false, error: "Too many requests. Limit is 5 requests per content item per minute." });
@@ -2855,6 +2860,7 @@ async function suggestStories(req, res) {
 - Video Title/File Name: ${post.file_name}
 - Video Description: ${post.description || "Not provided"}
 - Video Transcript/Speech: ${transcript || "No spoken speech detected in this video. Promote the video topic and brand."}
+${contextInfo ? `- Additional Context/Instructions from User: ${contextInfo}` : ""}
 - Existing Caption: ${post.caption || "Not provided"}
 - Existing Hashtags: ${post.hashtags || ""}
  

@@ -355,7 +355,11 @@ export const CampaignsView = () => {
                             }}>
                               {log.status}
                             </span>
-                            {log.error_message && <div style={{ fontSize: 10, color: C.red, marginTop: 4 }}>{log.error_message}</div>}
+                            {log.error_message && (
+                              <div style={{ color: C.red, fontSize: 10, marginTop: 4, maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={log.error_message}>
+                                {log.error_message}
+                              </div>
+                            )}
                           </td>
                           <td style={{ padding: '10px 14px', fontSize: 11, color: C.dim }}>
                             {new Date(log.sent_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}

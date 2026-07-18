@@ -1699,12 +1699,12 @@ app.get('/api/clients', auth, async (req, res) => {
 
 app.post('/api/clients', auth, async (req, res) => {
   try {
-    const { name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website } = req.body;
+    const { name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, brand_tag, brand_voice, industry, target_audience } = req.body;
     const { rows } = await pool.query(`
-      INSERT INTO clients (name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active', NOW())
+      INSERT INTO clients (name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, brand_tag, brand_voice, industry, target_audience, status, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'active', NOW())
       RETURNING *
-    `, [name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website]);
+    `, [name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, brand_tag, brand_voice, industry, target_audience]);
     res.status(201).json({ client: rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -1713,7 +1713,7 @@ app.post('/api/clients', auth, async (req, res) => {
 
 app.patch('/api/clients/:id', auth, async (req, res) => {
   try {
-    const { phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status } = req.body;
+    const { phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status, brand_tag, brand_voice, industry, target_audience } = req.body;
     await pool.query(`
       UPDATE clients SET
         phone_number_id = COALESCE($1, phone_number_id),
@@ -1726,9 +1726,13 @@ app.patch('/api/clients/:id', auth, async (req, res) => {
         wa_email = COALESCE($8, wa_email),
         wa_website = COALESCE($9, wa_website),
         status = COALESCE($10, status),
+        brand_tag = COALESCE($11, brand_tag),
+        brand_voice = COALESCE($12, brand_voice),
+        industry = COALESCE($13, industry),
+        target_audience = COALESCE($14, target_audience),
         updated_at = NOW()
-      WHERE id = $11
-    `, [phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status, req.params.id]);
+      WHERE id = $15
+    `, [phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status, brand_tag || null, brand_voice || null, industry || null, target_audience || null, req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });

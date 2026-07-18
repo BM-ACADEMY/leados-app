@@ -160,22 +160,24 @@ function getBrandSlug(brandName) {
     .replace(/^_+|_+$/g, '');
 }
 
-function findBrandVoice(brandName) {
-  const slug = getBrandSlug(brandName);
-  for (const key of Object.keys(BRAND_VOICES)) {
-    if (getBrandSlug(key) === slug) {
-      return BRAND_VOICES[key];
-    }
+async function findBrandVoice(brandName) {
+  const { rows } = await pool.query(
+    `SELECT brand_tag, brand_voice FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+    [brandName]
+  );
+  if (rows.length && (rows[0].brand_tag || rows[0].brand_voice)) {
+    return { tag: rows[0].brand_tag || brandName, voice: rows[0].brand_voice || `Professional voice for ${brandName}` };
   }
   return null;
 }
 
-function findBrandDetails(brandName) {
-  const slug = getBrandSlug(brandName);
-  for (const key of Object.keys(BRAND_DETAILS)) {
-    if (getBrandSlug(key) === slug) {
-      return BRAND_DETAILS[key];
-    }
+async function findBrandDetails(brandName) {
+  const { rows } = await pool.query(
+    `SELECT industry, target_audience FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+    [brandName]
+  );
+  if (rows.length && (rows[0].industry || rows[0].target_audience)) {
+    return { industry: rows[0].industry || "Social Media / Business", targetAudience: rows[0].target_audience || "General social media audience" };
   }
   return null;
 }
@@ -528,28 +530,6 @@ async function getSocialAccounts(req, res) {
   }
 }
 
-const BRAND_VOICES = {
-  "BM Academy": {
-    tag: "Learn with Kamar",
-    voice: "Tamil-English mix (Tanglish), energetic, student-focused. Hooks: '3 மாதத்தில் job', '20% refund if not placed'. CTA: WhatsApp 94038 92971. Audience: college students, freshers, career switchers in TN/Pondicherry."
-  },
-  "BM TechX": {
-    tag: "Grow with Kamar",
-    voice: "Professional yet local, ROI-focused. For SMEs. Stats: 750+ businesses, ₹50Cr+ revenue. Services: LeadOS, Meta Ads, GMB, SEO. CTA: WhatsApp 99442 88271."
-  },
-  "Namma Pondy Properties": {
-    tag: "Invest with Confidence",
-    voice: "Trust-building, investment-focused. NEVER use 'farmland' — always 'Chennai-Pondicherry Growth Corridor investment'. ₹999/sq.ft. Urgency: limited plots, price hike. Push site visits."
-  },
-  "Dada's Kitchen": {
-    tag: "Taste the Tradition",
-    voice: "Warm, appetizing, family-oriented. Firewood cooking, authentic Tamil cuisine. For weddings, events, corporate. Push bulk orders and early booking."
-  },
-  "ABM Groups": {
-    tag: "Integrity & Excellence",
-    voice: "Corporate, group-level overview, trust-focused, diversified business portfolio in TN and Pondicherry."
-  }
-};
 
 // ---------------------------------------------------------------
 // POST /api/content/generate-captions
@@ -618,7 +598,7 @@ async function generateCaptions(req, res) {
       : `Video Title: ${extractedTitle}`;
   }
 
-  const brandInfo = BRAND_VOICES[brand_name] || { tag: brand_name, voice: `Professional voice for ${brand_name}` };
+  const brandInfo = (await findBrandVoice(brand_name)) || { tag: brand_name, voice: `Professional voice for ${brand_name}` };
 
   const platformList = platforms.map(p => {
     const mapping = {
@@ -704,17 +684,7 @@ async function createBatchContent(req, res) {
     const { rows: allClients } = await client.query("SELECT name FROM clients");
     const BRAND_NAME_TO_SLUG = {};
     for (const c of allClients) {
-      const known = {
-        "BM Academy": "bm_academy",
-        "BM TechX": "bm_techx",
-        "Namma Pondy Properties": "namma_pondy_properties",
-        "Dada's Kitchen": "dadas_kitchen",
-        "ABM Groups": "abm_groups"
-      };
-      BRAND_NAME_TO_SLUG[c.name] = known[c.name] || c.name.toLowerCase()
-        .replace(/'/g, '')
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '');
+      BRAND_NAME_TO_SLUG[c.name] = getBrandSlug(c.name);
     }
 
     for (const item of items) {
@@ -815,17 +785,7 @@ async function checkNewDriveVideos() {
     const { rows: allClients } = await pool.query("SELECT name FROM clients");
     const SLUG_TO_BRAND = {};
     for (const c of allClients) {
-      const known = {
-        "BM Academy": "bm_academy",
-        "BM TechX": "bm_techx",
-        "Namma Pondy Properties": "namma_pondy_properties",
-        "Dada's Kitchen": "dadas_kitchen",
-        "ABM Groups": "abm_groups"
-      };
-      const slug = known[c.name] || c.name.toLowerCase()
-        .replace(/'/g, '')
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '');
+      const slug = getBrandSlug(c.name);
       if (!SLUG_TO_BRAND[slug] || (/[A-Z]/.test(c.name) && !/[A-Z]/.test(SLUG_TO_BRAND[slug]))) {
         SLUG_TO_BRAND[slug] = c.name;
       }
@@ -2306,7 +2266,11 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
           }
 
           // Fetch per-brand CTA configuration
-          const ctaText = BRAND_CTA_CONFIG[brandId] || BRAND_CTA_CONFIG["default"];
+          let ctaText = BRAND_CTA_CONFIG[brandId];
+          if (!ctaText) {
+            console.warn(`[BackgroundPublish] WARNING: Missing WhatsApp CTA for brand ${brandId}. Please add to BRAND_CTA_CONFIG. Disabling CTA insertion for this post.`);
+            ctaText = "";
+          }
 
           // Draw sleek semi-transparent dark card/overlay at the bottom
           const cardWidth = 900;
@@ -2532,35 +2496,9 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
 
 const BRAND_CTA_CONFIG = {
   "bm_academy": "WhatsApp: 94038 92971",
-  "bm_techx": "WhatsApp: 99442 88271",
-  "namma_pondy_properties": "WhatsApp: 99442 88271",
-  "dadas_kitchen": "WhatsApp: 99442 88271",
-  "abm_groups": "WhatsApp: 99442 88271",
-  "default": "WhatsApp: 99442 88271"
+  "bm_techx": "WhatsApp: 99442 88271"
 };
 
-const BRAND_DETAILS = {
-  "BM Academy": {
-    industry: "EdTech & Education",
-    targetAudience: "College students, freshers, career switchers in TN and Pondicherry looking for software placement."
-  },
-  "BM TechX": {
-    industry: "Digital Marketing & Software Agency",
-    targetAudience: "SMEs, local business owners in TN and Pondicherry looking to scale revenue via Ads and SEO."
-  },
-  "Namma Pondy Properties": {
-    industry: "Real Estate Investment",
-    targetAudience: "Investors looking for premium plots and land in Chennai-Pondicherry growth corridors."
-  },
-  "Dada's Kitchen": {
-    industry: "Catering & Authentic Tamil Restaurant",
-    targetAudience: "Families, event coordinators, and corporate groups looking for firewood-cooked bulk catering."
-  },
-  "ABM Groups": {
-    industry: "Conglomerate Group Management",
-    targetAudience: "Partners, corporate clients, and general public interested in reliable diversified business services."
-  }
-};
 
 const suggestionRateLimits = new Map();
 
@@ -2635,11 +2573,11 @@ async function suggestCaptions(req, res) {
     }
     const post = postRes.rows[0];
 
-    const brandDetail = findBrandDetails(post.brand_name) || {
+    const brandDetail = (await findBrandDetails(post.brand_name)) || {
       industry: "Social Media / Business",
       targetAudience: "General social media audience"
     };
-    const brandVoice = findBrandVoice(post.brand_name) || { tag: post.brand_name, voice: "Professional and engaging" };
+    const brandVoice = (await findBrandVoice(post.brand_name)) || { tag: post.brand_name, voice: "Professional and engaging" };
 
     // Dynamic video transcript extraction
     const transcript = await getOrGenerateTranscript(post);
@@ -2766,7 +2704,7 @@ CRITICAL RULES FOR LINKEDIN:
     prompt += `
 CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
 - Do NOT generate captions in pure, formal Tamil script.
-- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters, e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga") mixed with English.
+- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters, e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga") mixed with English. DO NOT output any actual Tamil script/characters.
 `;
 
     if (platform !== "youtube_title" && platform !== "x_caption") {
@@ -2845,11 +2783,11 @@ async function suggestStories(req, res) {
     }
     const post = postRes.rows[0];
 
-    const brandDetail = findBrandDetails(post.brand_name) || {
+    const brandDetail = (await findBrandDetails(post.brand_name)) || {
       industry: "Social Media / Business",
       targetAudience: "General social media audience"
     };
-    const brandVoice = findBrandVoice(post.brand_name)?.voice || "Professional and engaging";
+    const brandVoice = (await findBrandVoice(post.brand_name))?.voice || "Professional and engaging";
     const transcript = await getOrGenerateTranscript(post);
 
     let prompt = `You are an expert social media copywriter. Generate 5 unique Instagram Story sets (each set consisting of 3 slides: story_1, story_2, and story_3) to promote a video post based on the following details:
@@ -2868,7 +2806,7 @@ ${contextInfo ? `- Additional Context/Instructions from User: ${contextInfo}` : 
 - Do NOT output generic brand-only promotion text. Use the brand guidelines for styling, but write completely original hooks and CTAs centered around the specific content and topics discussed in this video.
 - Do NOT just copy the example sentences from the guidelines.
 - Do NOT generate stories in formal Tamil script unless specified.
-- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters) mixed with English.
+- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters) mixed with English. DO NOT output any actual Tamil script/characters.
 - Across the 5 suggestions, provide a variety of language splits:
   - 1 or 2 options should be in pure conversational English.
   - 2 or 3 options should be in English letters expressing Tanglish / local slang.

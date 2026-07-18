@@ -994,8 +994,11 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
                       // Update status in messages table (using wa_msg_id)
             await pool.query(`UPDATE messages SET status = $1 WHERE wa_msg_id = $2`, [newStatus, wamid]);
-            // Also update campaign_logs for campaign tracking
-            await pool.query(`UPDATE campaign_logs SET status = $1 WHERE wa_message_id = $2`, [newStatus, wamid]);
+            if (newStatus === 'failed' && errorMsg) {
+              await pool.query(`UPDATE campaign_logs SET status = $1, error_message = $3 WHERE wa_message_id = $2`, [newStatus, wamid, errorMsg]);
+            } else {
+              await pool.query(`UPDATE campaign_logs SET status = $1 WHERE wa_message_id = $2`, [newStatus, wamid]);
+            }
 
             // Emit real-time status update to CRM
             io.emit('message_status', { wa_message_id: wamid, status: newStatus });

@@ -2591,9 +2591,7 @@ app.post('/api/internal/update-lead', internalAuth, async (req, res) => {
 });
 
 // ── CRON JOBS ─────────────────────────────────────────────
-// DISABLED: We are now using n8n for campaign execution.
-// This prevents the backend from executing campaigns before n8n gets a chance to.
-/*
+// Re-enabled internal campaign execution cron and added logging for WF05 Dashboard
 cron.schedule('* * * * *', async () => {
   try {
     const { rows } = await pool.query(`
@@ -2604,12 +2602,17 @@ cron.schedule('* * * * *', async () => {
     for (const row of rows) {
       console.log(`Cron: Starting scheduled campaign ${row.id}`);
       executeCampaign(row.id);
+      
+      // Log the execution to workflow_logs so it appears in the Admin Dashboard
+      await pool.query(`
+        INSERT INTO workflow_logs (workflow, lead_id, status, message) 
+        VALUES ('WF05', null, 'success', $1)
+      `, [\`Campaign ${row.id} execution automatically triggered by backend engine\`]);
     }
   } catch (err) {
     console.error('Cron check error:', err);
   }
 });
-*/
 
 // Run every 1 minute to poll Google Drive folders for new videos
 if (process.env.DISABLE_DRIVE_POLLER !== 'true') {

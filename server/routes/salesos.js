@@ -685,31 +685,97 @@ router.post('/ai/report-generator', async (req, res) => {
 // ==========================================
 
 router.post('/leads/find-by-invoice', async (req, res) => {
-  const { invoice_id } = req.body;
+  const { invoice_id, lead_id, link_id } = req.body;
   try {
     let lead = null;
-    if (invoice_id) {
-      const byInvoice = await pool.query(`
-        SELECT l.id as lead_id, l.name, c.name as brand, l.client_id as brand_id
-        FROM payments p
-        JOIN leads l ON p.lead_id = l.id
-        LEFT JOIN clients c ON l.client_id = c.id
-        WHERE p.razorpay_payment_id = $1 OR p.razorpay_link_id = $1
-        ORDER BY p.created_at DESC LIMIT 1
-      `, [invoice_id]);
-      lead = byInvoice.rows[0] || null;
+    const cleanLeadId = lead_id && lead_id !== 'null' && lead_id !== 'undefined' && lead_id !== '' ? parseInt(lead_id, 10) : null;
+    console.log('[salesos find-by-invoice] received:', { invoice_id, lead_id, link_id, cleanLeadId });
+
+    // 1. Try cleanLeadId first (fastest, from notes.lead_id)
+    if (cleanLeadId && !isNaN(cleanLeadId)) {
+      const lr = await pool.query(
+        `SELECT l.id AS lead_id, l.name, l.phone, c.name AS brand, c.id AS brand_id
+         FROM leads l LEFT JOIN clients c ON c.id = l.client_id
+         WHERE l.id = $1::integer`, [cleanLeadId]
+      );
+      if (lr.rows.length) {
+        lead = lr.rows[0];
+        // Capture payment & mark lead converted
+        if (invoice_id) {
+          await pool.query(
+            `UPDATE payments SET razorpay_payment_id = $1, status = 'captured'
+             WHERE lead_id = $2 AND razorpay_payment_id IS NULL`,
+            [invoice_id, cleanLeadId]
+          ).catch(() => {});
+          await pool.query(
+            `UPDATE leads SET status = 'converted', score = 100 WHERE id = $1`,
+            [cleanLeadId]
+          ).catch(() => {});
+          console.log(`[salesos find-by-invoice] ✅ Lead ${cleanLeadId} marked converted, payment ${invoice_id} saved`);
+        }
+      }
     }
+
+    // 2. Try by link_id (payment link ID plink_xxx)
+    if (!lead && link_id && link_id !== 'null' && link_id !== 'undefined' && link_id !== '') {
+      const pr = await pool.query(
+        `SELECT l.id AS lead_id, l.name, l.phone, c.name AS brand, c.id AS brand_id
+         FROM payments p
+         JOIN leads l ON l.id = p.lead_id
+         LEFT JOIN clients c ON c.id = l.client_id
+         WHERE p.razorpay_link_id = $1
+         LIMIT 1`, [link_id]
+      );
+      if (pr.rows.length) {
+        lead = pr.rows[0];
+        if (invoice_id) {
+          await pool.query(
+            `UPDATE payments SET razorpay_payment_id = $1, status = 'captured' WHERE razorpay_link_id = $2`,
+            [invoice_id, link_id]
+          ).catch(() => {});
+          await pool.query(
+            `UPDATE leads SET status = 'converted', score = 100 WHERE id = $1`,
+            [lead.lead_id]
+          ).catch(() => {});
+        }
+      }
+    }
+
+    // 3. Try fallback by invoice_id
+    if (!lead && invoice_id && invoice_id !== 'null') {
+      const pr = await pool.query(
+        `SELECT l.id AS lead_id, l.name, l.phone, c.name AS brand, c.id AS brand_id
+         FROM payments p
+         JOIN leads l ON l.id = p.lead_id
+         LEFT JOIN clients c ON c.id = l.client_id
+         WHERE p.razorpay_payment_id = $1
+         ORDER BY p.created_at DESC LIMIT 1`, [invoice_id]
+      );
+      lead = pr.rows[0] || null;
+    }
+
+    // 4. Ultimate fallback: most recently won lead (for manual tests)
     if (!lead) {
-      // Fallback: most recently won lead, for manual/CRM-triggered tests without a real invoice_id
-      const fallback = await pool.query(`
-        SELECT l.id as lead_id, l.name, c.name as brand, l.client_id as brand_id
-        FROM leads l LEFT JOIN clients c ON l.client_id = c.id
-        WHERE l.status = 'won' ORDER BY l.updated_at DESC LIMIT 1
-      `);
+      const fallback = await pool.query(
+        `SELECT l.id as lead_id, l.name, l.phone, c.name as brand, l.client_id as brand_id
+         FROM leads l LEFT JOIN clients c ON l.client_id = c.id
+         WHERE l.status = 'won' ORDER BY l.updated_at DESC LIMIT 1`
+      );
       lead = fallback.rows[0] || null;
     }
-    res.json({ ...req.body, lead_id: lead?.lead_id || null, name: lead?.name || null, brand: lead?.brand || 'ABM Groups', brand_id: lead?.brand_id || null });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+
+    res.json({
+      ...req.body,
+      lead_id: lead?.lead_id || null,
+      name: lead?.name || null,
+      phone: lead?.phone || null,
+      brand: lead?.brand || 'ABM Groups',
+      brand_id: lead?.brand_id || null
+    });
+  } catch (err) {
+    console.error('[salesos find-by-invoice] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Immediate post-payment onboarding sequence. Action values must match the

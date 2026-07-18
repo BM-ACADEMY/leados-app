@@ -787,9 +787,9 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
     const isWindowOpen = windowRes.rows.length > 0;
 
     if (!isWindowOpen) {
-      // Send template message to wake up chat directly via Meta API
+      // Silently send the common_welcome_message template to reopen the 24-hour window
       try {
-        await axios.post(
+        const templateRes = await axios.post(
           `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
           {
             messaging_product: 'whatsapp',
@@ -797,26 +797,20 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
             type: 'template',
             template: {
               name: 'common_welcome_message',
-              language: { code: 'en' },
-              components: [
-                {
-                  type: 'body',
-                  parameters: [
-                    { type: 'text', text: lead.name || 'User' }
-                  ]
-                }
-              ]
+              language: { code: 'en' }
             }
           },
           { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
         );
+        console.log('[Template Wakeup] Sent common_welcome_message to', lead.phone, templateRes.data?.messages?.[0]?.id);
       } catch (err) {
-        console.error('[Template Wakeup Error]', err.response?.data || err.message);
+        console.error('[Template Wakeup Error]', JSON.stringify(err.response?.data) || err.message);
       }
 
-      return res.status(403).json({ 
-        error: '24-hour window closed. Triggered template automation to wake up chat.',
-        reason: 'window_closed'
+      // Return 200 OK so the frontend stays silent — the template was already sent
+      return res.status(200).json({ 
+        window_closed: true,
+        message: 'Template sent to reopen chat window.'
       });
     }
     // ----------------------------

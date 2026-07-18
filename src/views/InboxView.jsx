@@ -350,6 +350,12 @@ export const InboxView = () => {
 
       const sentMsg = await api.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
 
+      // If window was closed, backend sent a template silently — just remove the optimistic message
+      if (sentMsg?.window_closed) {
+        setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
+        return;
+      }
+
       // Replace optimistic message directly with the confirmed database message
       setLocalMessages((prev) => prev.map(m => m.id === optimisticId ? { ...sentMsg.message, reply_to: replyingTo } : m));
     } catch (err) {

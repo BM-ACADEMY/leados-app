@@ -14,6 +14,7 @@ export function ApprovalRoom({
   handleApprove,
   handleReject,
   handlePublishNow,
+  handlePublishAsStory,
   editMode,
   setEditMode,
   editValues,
@@ -501,6 +502,17 @@ export function ApprovalRoom({
                       </button>
                     )}
                     
+                    {(statusUpper === 'PUBLISHED' || statusUpper === 'LIVE' || statusUpper === 'PARTIAL') && (
+                      <button
+                        className="tb-btn"
+                        disabled={isPublishing}
+                        onClick={() => handlePublishAsStory(selectedItem.id)}
+                        style={{ background: 'rgba(139,114,240,0.12)', border: '1px solid rgba(139,114,240,0.3)', color: '#8B72F0', padding: '10px 16px', borderRadius: 8, fontWeight: 600, cursor: isPublishing ? 'not-allowed' : 'pointer', opacity: isPublishing ? 0.6 : 1 }}
+                      >
+                        🎬 Post as Story
+                      </button>
+                    )}
+
                     {editMode && (
                       <button className="tb-btn" onClick={() => setEditMode(false)} style={{ background: 'transparent', border: '1px solid var(--b2)', padding: '10px 16px', borderRadius: 8, color: 'var(--t2)', cursor: 'pointer' }}>
                         Cancel

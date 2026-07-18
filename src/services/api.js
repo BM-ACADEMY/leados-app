@@ -559,6 +559,12 @@ class LeadOSAPI {
     });
   }
 
+  async publishAsStory(id) {
+    return this.request(`/api/content/${id}/publish-story`, {
+      method: 'POST',
+    });
+  }
+
   async rejectContent(id, reason) {
     return this.request(`/api/content/${id}/reject`, {
       method: 'POST',

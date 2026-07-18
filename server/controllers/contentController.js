@@ -161,25 +161,33 @@ function getBrandSlug(brandName) {
 }
 
 async function findBrandVoice(brandName) {
-  const { rows } = await pool.query(
-    `SELECT brand_tag, brand_voice FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1`,
-    [brandName]
-  );
-  if (rows.length && (rows[0].brand_tag || rows[0].brand_voice)) {
-    return { tag: rows[0].brand_tag || brandName, voice: rows[0].brand_voice || `Professional voice for ${brandName}` };
+  try {
+    const { rows } = await pool.query(
+      `SELECT brand_tag, brand_voice FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+      [brandName]
+    );
+    if (rows.length && (rows[0].brand_tag || rows[0].brand_voice)) {
+      return { tag: rows[0].brand_tag || brandName, voice: rows[0].brand_voice || `Professional voice for ${brandName}` };
+    }
+    return null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 async function findBrandDetails(brandName) {
-  const { rows } = await pool.query(
-    `SELECT industry, target_audience FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1`,
-    [brandName]
-  );
-  if (rows.length && (rows[0].industry || rows[0].target_audience)) {
-    return { industry: rows[0].industry || "Social Media / Business", targetAudience: rows[0].target_audience || "General social media audience" };
+  try {
+    const { rows } = await pool.query(
+      `SELECT industry, target_audience FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+      [brandName]
+    );
+    if (rows.length && (rows[0].industry || rows[0].target_audience)) {
+      return { industry: rows[0].industry || "Social Media / Business", targetAudience: rows[0].target_audience || "General social media audience" };
+    }
+    return null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 async function downloadFile(url, destPath) {

@@ -671,7 +671,7 @@ router.get('/reports/hot-leads', async (req, res) => {
 });
 
 router.post('/ai/report-generator', async (req, res) => {
-  const { data } = req.body;
+  const data = req.body.data || req.body.metrics || req.body;
   try {
     if (!ai) return res.json({ summary: "Daily Summary generated." });
     const prompt = `Summarize these daily metrics for a Founder Dashboard:\n${JSON.stringify(data)}\nWrite 3 bullet points.`;

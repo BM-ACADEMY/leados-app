@@ -685,6 +685,7 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
               connectedAccounts={socialAccounts}
               loadConnectedAccounts={fetchAccounts}
               getPlatformConfig={getPlatformConfig}
+              brands={brands}
             />
           )}
 

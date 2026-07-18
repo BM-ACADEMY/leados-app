@@ -4,13 +4,14 @@ import { api } from '../src/services/api.js';
 export function SocialAccounts({
   connectedAccounts,
   loadConnectedAccounts,
-  getPlatformConfig
+  getPlatformConfig,
+  brands = []
 }) {
   const [discoveredAccounts, setDiscoveredAccounts] = useState([]);
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [linkingBrand, setLinkingBrand] = useState(false);
   const [metaAppId, setMetaAppId] = useState('');
-  const [ytBrand, setYtBrand] = useState('BM Academy');
+  const [ytBrand, setYtBrand] = useState('');
 
   // Load Meta configuration App ID
   useEffect(() => {
@@ -230,11 +231,10 @@ export function SocialAccounts({
                   minWidth: 200
                 }}
               >
-                <option value="BM Academy">BM Academy</option>
-                <option value="BM TechX">BM TechX</option>
-                <option value="Namma Pondy Properties">Namma Pondy Properties</option>
-                <option value="Dada's Kitchen">Dada's Kitchen</option>
-                <option value="ABM Groups">ABM Groups</option>
+                <option value="" disabled>Select brand...</option>
+                {brands.map(b => (
+                  <option key={b.id || b.slug} value={b.name}>{b.name}</option>
+                ))}
               </select>
               <button
                 onClick={handleConnectYoutube}
@@ -302,11 +302,9 @@ export function SocialAccounts({
                         style={{ background: 'var(--bg4)', color: 'var(--t1)', border: '1px solid var(--b2)', padding: '8px 12px', borderRadius: 8, fontSize: 12, outline: 'none', cursor: 'pointer' }}
                       >
                         <option value="" disabled>Link to Brand Dashboard...</option>
-                        <option value="BM Academy">BM Academy</option>
-                        <option value="BM TechX">BM TechX</option>
-                        <option value="Namma Pondy Properties">Namma Pondy Properties</option>
-                        <option value="Dada's Kitchen">Dada's Kitchen</option>
-                        <option value="ABM Groups">ABM Groups</option>
+                        {brands.map(b => (
+                          <option key={b.id || b.slug} value={b.name}>{b.name}</option>
+                        ))}
                       </select>
                     </div>
                   </div>

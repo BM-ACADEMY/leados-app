@@ -1929,6 +1929,69 @@ async function publishPost(req, res) {
   }
 }
 
+// POST /api/content/:id/publish-story
+// Takes an already-published (or any) post and publishes it to instagram_story + facebook_story
+// without touching the item's existing status or platforms.
+async function publishAsStory(req, res) {
+  const { id } = req.params;
+  try {
+    const postRes = await pool.query('SELECT * FROM content_queue WHERE id = $1', [id]);
+    if (!postRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Content item not found' });
+    }
+    const post = postRes.rows[0];
+
+    // Find which story channels have connected accounts for this brand
+    const accountsRes = await pool.query(
+      `SELECT platform, facebook_page_id, instagram_business_id, access_token FROM social_accounts
+       WHERE LOWER(brand_name) = LOWER($1) AND access_token IS NOT NULL`,
+      [post.brand_name]
+    );
+    const accounts = accountsRes.rows;
+    const hasInstagram = accounts.some(a => a.platform === 'instagram' && a.instagram_business_id);
+    const hasFacebook = accounts.some(a => a.platform === 'facebook' && a.facebook_page_id);
+
+    const storyChannels = [];
+    if (hasInstagram) storyChannels.push('instagram_story');
+    if (hasFacebook) storyChannels.push('facebook_story');
+
+    if (storyChannels.length === 0) {
+      return res.status(400).json({ success: false, error: 'No connected Instagram or Facebook accounts found for this brand. Connect them in Social Accounts first.' });
+    }
+
+    // Upsert pending jobs for each story channel (skip ones already successfully published)
+    for (const channel of storyChannels) {
+      await pool.query(`
+        INSERT INTO publish_queue (content_id, brand_name, channel, status)
+        VALUES ($1, $2, $3, 'pending')
+        ON CONFLICT (content_id, channel)
+        DO UPDATE SET status = 'pending', error_message = NULL, updated_at = NOW()
+        WHERE publish_queue.status != 'success'
+      `, [post.id, post.brand_name, channel]);
+    }
+
+    // Kick off background publish for the new jobs
+    const jobs = await pool.query(
+      "SELECT * FROM publish_queue WHERE content_id = $1 AND channel = ANY($2) AND status = 'pending'",
+      [post.id, storyChannels]
+    );
+    if (jobs.rows.length === 0) {
+      return res.json({ success: true, message: 'Stories already published for these channels.' });
+    }
+
+    res.json({ success: true, message: `Publishing as story to: ${storyChannels.join(', ')}` });
+
+    // Run background publish (non-blocking — response already sent)
+    const reqInfo = { protocol: req.protocol, headers: req.headers };
+    runBackgroundPublish(post.id, jobs.rows, reqInfo).catch(err => {
+      console.error(`[publishAsStory] Background publish error for post ${post.id}:`, err.message);
+    });
+  } catch (err) {
+    console.error('publishAsStory error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
 // Recalculates and updates the overall status of the content_queue post incrementally
 async function updateOverallPostStatus(postId) {
   try {
@@ -2850,6 +2913,7 @@ module.exports = {
   handleMetaCallback,
   linkBrandAccount,
   publishPost,
+  publishAsStory,
   suggestCaptions,
   suggestStories,
   generateStoryCard,

@@ -2607,7 +2607,7 @@ cron.schedule('* * * * *', async () => {
       await pool.query(`
         INSERT INTO workflow_logs (workflow, lead_id, status, message) 
         VALUES ('WF05', null, 'success', $1)
-      `, [\`Campaign ${row.id} execution automatically triggered by backend engine\`]);
+      `, [`Campaign ${row.id} execution automatically triggered by backend engine`]);
     }
   } catch (err) {
     console.error('Cron check error:', err);

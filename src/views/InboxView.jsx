@@ -1465,8 +1465,9 @@ export const InboxView = () => {
                 </button>
               </div>
 
-              <div style={{ padding: '24px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', borderBottom: '1px solid ' + C.border }}>
-                <div style={{ width: 100, height: 100, borderRadius: '50%', background: C.bg, border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                <div style={{ padding: '24px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', borderBottom: '1px solid ' + C.border }}>
+                  <div style={{ width: 100, height: 100, borderRadius: '50%', background: C.bg, border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                   <User size={48} color={C.muted} />
                 </div>
                 <h2 style={{ margin: '0 0 8px 0', fontSize: 20, fontWeight: 600, color: C.text }}>{activeObj?.name}</h2>
@@ -1552,7 +1553,8 @@ export const InboxView = () => {
                 </p>
               </div>
             </div>
-          )}
+          </div>
+        )}
         </div>
       </div>
 

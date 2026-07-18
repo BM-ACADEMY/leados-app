@@ -1883,6 +1883,24 @@ app.post('/api/brain', auth, async (req, res) => {
 
 // ── LEADS IMPORT ──────────────────────────────────────────
 const upload = multer({ dest: 'uploads/' });
+
+// GET /api/leads/template
+app.get('/api/leads/template', (req, res) => {
+  const xlsx = require('xlsx');
+  const ws = xlsx.utils.json_to_sheet([
+    { Name: 'John Doe', Phone: '919876543210' },
+    { Name: 'Jane Smith', Phone: '919876543211' }
+  ]);
+  // Set column widths
+  ws['!cols'] = [{ wch: 20 }, { wch: 20 }];
+  const wb = xlsx.utils.book_new();
+  xlsx.utils.book_append_sheet(wb, ws, "Template");
+  const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Disposition', 'attachment; filename="leados_campaign_template.xlsx"');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buffer);
+});
+
 app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
   try {
     const { client_id } = req.body;

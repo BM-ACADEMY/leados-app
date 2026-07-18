@@ -63,15 +63,7 @@ export const CampaignsView = () => {
   }, []);
 
   const handleDownloadTemplate = () => {
-    const csvContent = "Name,Phone\nJohn Doe,919876543210\nJane Smith,919876543211";
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", "leados_campaign_template.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    window.open(`${api.baseUrl}/api/leads/template`, '_blank');
   };
 
   const handleCreateCampaign = async (e) => {
@@ -86,7 +78,7 @@ export const CampaignsView = () => {
       if (targetStatus === 'custom_csv') {
         if (!importFile) {
           setSubmitting(false);
-          return toast.error('Please upload a CSV file');
+          return toast.error('Please upload an excel file');
         }
         const batchId = `csv_${Date.now()}`;
         const formData = new FormData();
@@ -246,29 +238,26 @@ export const CampaignsView = () => {
                 <option value="cold">Cold leads</option>
                 <option value="hot">Hot leads</option>
                 <option value="all">All leads</option>
-                <option value="custom_csv">Upload Custom CSV</option>
+                <option value="custom_csv">Upload Custom List</option>
               </select>
             </div>
             {targetStatus === 'custom_csv' && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                  <label style={{ fontSize: 10, color: C.muted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Upload CSV File</label>
+                  <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Upload Target List</label>
                   <button type="button" onClick={handleDownloadTemplate} style={{ background: 'transparent', border: 'none', color: C.accent, fontSize: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
                     <Download size={12} /> Download Template
                   </button>
                 </div>
-                <div style={{ background: C.surface, border: '1px dashed ' + C.border, borderRadius: 7, padding: 22, textAlign: 'center', cursor: 'pointer', position: 'relative' }}>
-                  <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setImportFile(e.target.files[0])} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0, cursor: 'pointer' }} />
+                <div style={{ position: 'relative', border: `1.5px dashed ${importFile ? C.green : C.border}`, background: C.card, borderRadius: 10, padding: '24px 20px', textAlign: 'center', transition: 'all 0.2s', marginTop: 8 }}>
+                  <input type="file" accept=".xlsx" onChange={(e) => setImportFile(e.target.files[0])} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0, cursor: 'pointer' }} />
                   <Upload size={24} color={importFile ? C.green : C.muted} style={{ margin: '0 auto 10px' }} />
                   <p style={{ fontSize: 13, color: importFile ? C.text : C.muted, fontWeight: 600, marginBottom: 4 }}>
-                    {importFile ? importFile.name : 'Click to select .xlsx or .csv'}
-                  </p>
-                  <p style={{ fontSize: 10, color: C.dim }}>
-                    ⚠️ We strongly recommend uploading <b>.xlsx</b> files. Excel often corrupts phone numbers when saving as .csv.
+                    {importFile ? importFile.name : 'Click to select .xlsx template'}
                   </p>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
-                  <p style={{ fontSize: 11, color: C.dim }}>Supports .csv, .xlsx, .xls</p>
+                  <p style={{ fontSize: 11, color: C.dim }}>Only .xlsx is supported to prevent number corruption</p>
                 </div>
               </div>
             )}

@@ -935,14 +935,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
     fs.appendFileSync(path.join(__dirname, 'uploads', 'incoming_payloads.log'), `[${new Date().toISOString()}] ${JSON.stringify(body, null, 2)}\n\n`);
     
     // FORWARD TO N8N WEBHOOK
-    // This allows the Node server to act as a proxy, verifying the webhook with Meta,
-    // handling delivery receipts, and silently passing the raw message payload to WF00 in n8n.
-    try {
-      const n8nUrl = 'https://leados-n8n.abmgroups.org/webhook/whatsapp-inbound';
-      await require('axios').post(n8nUrl, body);
-      console.log('✅ Successfully forwarded payload to n8n Lead Integrator (WF00)');
-    } catch (n8nErr) {
-      console.error('⚠️ Failed to forward payload to n8n:', n8nErr.message);
+    // This allows the Node server to act as a proxy if needed.
+    // If the request is already coming from n8n (source=n8n), we SKIP forwarding to prevent an infinite loop.
+    if (req.query.source !== 'n8n') {
+      try {
+        const n8nUrl = 'https://leados-n8n.abmgroups.org/webhook/whatsapp-inbound';
+        await require('axios').post(n8nUrl, body);
+        console.log('✅ Successfully forwarded payload to n8n Lead Integrator (WF00)');
+      } catch (n8nErr) {
+        console.error('⚠️ Failed to forward payload to n8n:', n8nErr.message);
+      }
     }
     
     if (!body.object || body.object !== 'whatsapp_business_account') return;

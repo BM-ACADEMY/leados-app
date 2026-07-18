@@ -221,6 +221,24 @@
         250,
         -200
       ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/webhook/whatsapp?source=n8n",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body || $json) }}"
+      },
+      "id": "forward-to-leados-id-1234",
+      "name": "Forward to LeadOS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ]
     }
   ],
   "connections": {
@@ -229,6 +247,11 @@
         [
           {
             "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Forward to LeadOS",
             "type": "main",
             "index": 0
           }

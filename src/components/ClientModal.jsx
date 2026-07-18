@@ -21,7 +21,11 @@ export const ClientModal = ({ client, onClose, onUpdate }) => {
     wa_address: client?.wa_address || '',
     wa_email: client?.wa_email || '',
     wa_website: client?.wa_website || '',
-    status: client?.status || 'active'
+    status: client?.status || 'active',
+    brand_tag: client?.brand_tag || '',
+    brand_voice: client?.brand_voice || '',
+    industry: client?.industry || '',
+    target_audience: client?.target_audience || ''
   });
   
   const [loading, setLoading] = useState(false);
@@ -205,6 +209,33 @@ export const ClientModal = ({ client, onClose, onUpdate }) => {
                   <label style={labelStyle}>Website (Optional)</label>
                   <input value={formData.wa_website} onChange={e => setFormData({...formData, wa_website: e.target.value})} style={inputStyle} maxLength={256} />
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Brand Voice */}
+          <div style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid ' + C.border }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, color: C.purple }}>
+              <h3 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>Brand Voice (AI Content)</h3>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }} className="grid-responsive">
+              <div>
+                <label style={labelStyle}>Brand Tag</label>
+                <input value={formData.brand_tag} onChange={e => setFormData({...formData, brand_tag: e.target.value})} style={inputStyle} placeholder="e.g. Learn with Kamar" />
+              </div>
+              <div>
+                <label style={labelStyle}>Industry</label>
+                <input value={formData.industry} onChange={e => setFormData({...formData, industry: e.target.value})} style={inputStyle} placeholder="e.g. EdTech & Education" />
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }} className="grid-responsive">
+              <div>
+                <label style={labelStyle}>Target Audience</label>
+                <textarea value={formData.target_audience} onChange={e => setFormData({...formData, target_audience: e.target.value})} style={{...inputStyle, minHeight: 72, resize: 'vertical'}} placeholder="Who this brand targets..." />
+              </div>
+              <div>
+                <label style={labelStyle}>Brand Voice Guide</label>
+                <textarea value={formData.brand_voice} onChange={e => setFormData({...formData, brand_voice: e.target.value})} style={{...inputStyle, minHeight: 72, resize: 'vertical'}} placeholder="Tone, CTA, audience, restrictions..." />
               </div>
             </div>
           </div>

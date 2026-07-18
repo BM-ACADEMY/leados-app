@@ -4,28 +4,16 @@ require('dotenv').config({ path: 'c:/Users/mohds/OneDrive/Desktop/leados-app/ser
 
 const groq = new Groq({ apiKey: process.env.OPENAI_API_KEY });
 
-const BRAND_VOICES = {
-  "BM Academy": {
-    tag: "Learn with Kamar",
-    voice: "Tamil-English mix (Tanglish), energetic, student-focused. Hooks: '3 மாதத்தில் job', '20% refund if not placed'. CTA: WhatsApp 94038 92971. Audience: college students, freshers, career switchers in TN/Pondicherry."
-  },
-  "BM TechX": {
-    tag: "Grow with Kamar",
-    voice: "Professional yet local, ROI-focused. For SMEs. Stats: 750+ businesses, ₹50Cr+ revenue. Services: LeadOS, Meta Ads, GMB, SEO. CTA: WhatsApp 99442 88271."
-  },
-  "Namma Pondy Properties": {
-    tag: "Invest with Confidence",
-    voice: "Trust-building, investment-focused. NEVER use 'farmland' — always 'Chennai-Pondicherry Growth Corridor investment'. ₹999/sq.ft. Urgency: limited plots, price hike. Push site visits."
-  },
-  "Dada's Kitchen": {
-    tag: "Taste the Tradition",
-    voice: "Warm, appetizing, family-oriented. Firewood cooking, authentic Tamil cuisine. For weddings, events, corporate. Push bulk orders and early booking."
-  },
-  "ABM Groups": {
-    tag: "Integrity & Excellence",
-    voice: "Corporate, group-level overview, trust-focused, diversified business portfolio in TN and Pondicherry."
+async function getBrandVoice(brandName) {
+  const { rows } = await pool.query(
+    `SELECT brand_tag, brand_voice FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+    [brandName]
+  );
+  if (rows.length && (rows[0].brand_tag || rows[0].brand_voice)) {
+    return { tag: rows[0].brand_tag || brandName, voice: rows[0].brand_voice || `Professional voice for ${brandName}` };
   }
-};
+  return { tag: brandName, voice: `Professional voice for ${brandName}` };
+}
 
 async function run() {
   try {
@@ -34,7 +22,7 @@ async function run() {
 
     for (const item of rows) {
       console.log(`Generating stories for item ID ${item.id} (${item.brand_name})...`);
-      const brandInfo = BRAND_VOICES[item.brand_name] || { tag: item.brand_name, voice: `Professional voice for ${item.brand_name}` };
+      const brandInfo = await getBrandVoice(item.brand_name);
       
       const prompt = `You are the expert social media content writer for "${item.brand_name}" (${brandInfo.tag}).
 BRAND VOICE GUIDE:
@@ -44,7 +32,7 @@ Post Caption/Description to analyze:
 "${item.caption || item.description || "Brand promotion post"}"
 
 Generate 3 Instagram Story slides text (story_1, story_2, story_3) for promoting this content.
-Match the brand voice guides exactly (e.g., Tanglish mix for BM Academy).
+Match the brand voice guides exactly (e.g., Tanglish mix for BM Academy). DO NOT output any actual Tamil script/characters.
 
 Respond ONLY with a valid JSON object matching this exact format:
 {

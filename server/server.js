@@ -1122,6 +1122,10 @@ app.post('/webhook/whatsapp', async (req, res) => {
             }
           }
 
+          // ── Normalize phone to 10 digits to avoid duplicate conversations ──
+          // Meta sends full international format e.g. "917339017112" but leads DB stores "7339017112"
+          const normalizedPhone = phoneDigits.slice(-10);
+
           // Upsert conversation thread
           const tenantId = lead.tenant_id || 1;
           const convRes = await pool.query(`
@@ -1133,7 +1137,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
                   last_message_at = NOW(),
                   unread_count = COALESCE(conversations.unread_count, 0) + 1
             RETURNING id
-          `, [lead.id, tenantId, phone, text]);
+          `, [lead.id, tenantId, normalizedPhone, text]);
           const conversationId = convRes.rows[0].id;
 
           // Save incoming message to messages table (ON CONFLICT handles duplicate wa_msg_id from retried webhooks)

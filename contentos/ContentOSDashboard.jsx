@@ -559,17 +559,8 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
     return pages[view] || { title: "Content OS Console", subtitle: "ABM Groups Publishing command center" };
   };
 
-  const sidebarBrandsList = [
-    { slug: 'academy', name: 'BM Academy', color: '#8B72F0' },
-    { slug: 'techx', name: 'BM TechX', color: '#00C4A0' },
-    { slug: 'npp', name: 'Namma Pondy', color: '#34C77B' },
-    { slug: 'dadas', name: "Dada's Kitchen", color: '#D4A843' },
-    { slug: 'travel', name: 'TravellersNeed', color: '#F04A5E' },
-    { slug: 'edu', name: 'EduConsultants', color: '#4C8EF5' }
-  ];
-
   const headerMeta = getPageHeader();
-  const activeBrandsList = brands.length > 0 ? brands : sidebarBrandsList;
+  const activeBrandsList = brands;
   
   const selectedBrandObj = activeBrandsList.find(b => b.slug === selectedBrand);
   const selectedBrandColor = selectedBrandObj 

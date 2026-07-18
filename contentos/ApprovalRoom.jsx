@@ -278,8 +278,30 @@ export function ApprovalRoom({
                       <button 
                         className="tb-btn"
                         onClick={async () => {
+                          if (!firstGenContext || firstGenContext.trim() === '') {
+                            alert("Please provide a short description first.");
+                            return;
+                          }
                           const meta = await handleGenerateFirstTime(selectedItem.id, firstGenTone, firstGenContext);
                           if (meta) {
+                            const linkedPlats = new Set();
+                            (socialAccounts || []).forEach(s => {
+                              if (isSameBrand(s.brand_name, selectedItem.brand_name)) {
+                                linkedPlats.add(s.platform);
+                              }
+                            });
+                            
+                            const platformsToActivate = [];
+                            if (linkedPlats.has('instagram')) {
+                              platformsToActivate.push('instagram_post', 'instagram_story');
+                            }
+                            if (linkedPlats.has('facebook')) {
+                              platformsToActivate.push('facebook_post', 'facebook_story');
+                            }
+                            if (linkedPlats.has('youtube')) platformsToActivate.push('youtube');
+                            if (linkedPlats.has('x_twitter')) platformsToActivate.push('x_twitter');
+                            if (linkedPlats.has('linkedin')) platformsToActivate.push('linkedin');
+
                             setEditValues({
                                 caption: meta.caption || '',
                                 instagram_caption: meta.instagram_caption || meta.caption || '',
@@ -290,14 +312,19 @@ export function ApprovalRoom({
                                 youtube_description: meta.youtube_description || meta.description || meta.caption || '',
                                 thumbnail_title: meta.thumbnail_options?.[0]?.title || selectedItem.thumbnail_title || '',
                                 scheduled_at: selectedItem.scheduled_at || '',
-                                platforms: ['instagram', 'facebook', 'youtube', 'linkedin', 'x_twitter'],
+                                platforms: platformsToActivate,
                                 selected_accounts: selectedItem.selected_accounts || {}
                             });
                             setEditMode(true);
                           }
                         }}
-                        disabled={loadingSuggestions}
-                        style={{ background: 'var(--gold)', color: '#000', padding: '10px 20px', borderRadius: 8, fontWeight: 700, border: 'none', cursor: 'pointer', opacity: loadingSuggestions ? 0.7 : 1 }}
+                        disabled={loadingSuggestions || !firstGenContext || firstGenContext.trim() === ''}
+                        style={{ 
+                          background: 'var(--gold)', color: '#000', padding: '10px 20px', 
+                          borderRadius: 8, fontWeight: 700, border: 'none', 
+                          cursor: (!firstGenContext || firstGenContext.trim() === '') ? 'not-allowed' : 'pointer', 
+                          opacity: (loadingSuggestions || !firstGenContext || firstGenContext.trim() === '') ? 0.5 : 1 
+                        }}
                       >
                         {loadingSuggestions ? 'Generating...' : '🚀 Generate Captions'}
                       </button>
@@ -306,7 +333,6 @@ export function ApprovalRoom({
                   </div>
                 ) : (
                   [
-                    { key: 'caption', label: 'Primary Caption', icon: '📝', color: '#475569' },
                     { key: 'instagram_caption', label: 'Instagram Caption', icon: '📸', color: 'linear-gradient(135deg,#F58529,#DD2A7B,#8134AF)' },
                     { key: 'facebook_caption', label: 'Facebook Caption', icon: '👍', color: '#1877F2' },
                     { key: 'youtube_title', label: 'YouTube Title', icon: '▶', color: '#FF0000' },
@@ -315,15 +341,26 @@ export function ApprovalRoom({
                     { key: 'linkedin_caption', label: 'LinkedIn Caption', icon: 'in', color: '#0A66C2' }
                   ].map(field => {
                     const isPlatformActive = () => {
-                    const activePlatforms = editMode ? (editValues.platforms || []) : (selectedItem.platforms || []);
-                    if (field.key === 'caption') return true;
-                    if (field.key === 'instagram_caption') return activePlatforms.includes('instagram') || activePlatforms.includes('instagram_story') || activePlatforms.includes('instagram_post');
-                    if (field.key === 'facebook_caption') return activePlatforms.includes('facebook') || activePlatforms.includes('facebook_story') || activePlatforms.includes('facebook_post');
-                    if (field.key === 'youtube_title' || field.key === 'youtube_description') return activePlatforms.includes('youtube');
-                    if (field.key === 'x_caption') return activePlatforms.includes('x_twitter');
-                    if (field.key === 'linkedin_caption') return activePlatforms.includes('linkedin');
-                    return false;
-                  };
+                      const activePlatforms = editMode ? (editValues.platforms || []) : (selectedItem.platforms || []);
+                      
+                      const hasLinkedAccount = (plat) => (socialAccounts || []).some(s => isSameBrand(s.brand_name, selectedItem.brand_name) && s.platform === plat);
+
+                      let isActive = false;
+                      if (field.key === 'instagram_caption') isActive = activePlatforms.includes('instagram') || activePlatforms.includes('instagram_story') || activePlatforms.includes('instagram_post');
+                      else if (field.key === 'facebook_caption') isActive = activePlatforms.includes('facebook') || activePlatforms.includes('facebook_story') || activePlatforms.includes('facebook_post');
+                      else if (field.key === 'youtube_title' || field.key === 'youtube_description') isActive = activePlatforms.includes('youtube');
+                      else if (field.key === 'x_caption') isActive = activePlatforms.includes('x_twitter');
+                      else if (field.key === 'linkedin_caption') isActive = activePlatforms.includes('linkedin');
+                      
+                      // Enforce it must be linked
+                      if (field.key === 'instagram_caption' && !hasLinkedAccount('instagram')) return false;
+                      if (field.key === 'facebook_caption' && !hasLinkedAccount('facebook')) return false;
+                      if ((field.key === 'youtube_title' || field.key === 'youtube_description') && !hasLinkedAccount('youtube')) return false;
+                      if (field.key === 'x_caption' && !hasLinkedAccount('x_twitter')) return false;
+                      if (field.key === 'linkedin_caption' && !hasLinkedAccount('linkedin')) return false;
+
+                      return isActive;
+                    };
 
                   const active = isPlatformActive();
                   if (!active) return null;
@@ -619,8 +656,8 @@ export function ApprovalRoom({
                 <div className="panel-b">
                   <div className="trace">
                     <div className="ok">✓ drive → transcode (faststart)</div>
-                    <div className={selectedItem.caption ? 'ok' : 'wait'}>
-                      {selectedItem.caption ? '✓ whisper transcript · 586ch' : '◷ whisper transcript generating'}
+                    <div className={selectedItem.transcript ? 'ok' : 'wait'}>
+                      {selectedItem.transcript ? `✓ whisper transcript · ${selectedItem.transcript.length}ch` : '◷ whisper transcript generating'}
                     </div>
                     <div className={selectedItem.instagram_caption || selectedItem.facebook_caption ? 'ok' : 'wait'}>
                       {selectedItem.instagram_caption || selectedItem.facebook_caption ? '✓ llama · 5-platform captions' : '◷ llama caption generation queued'}

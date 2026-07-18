@@ -994,8 +994,11 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
                       // Update status in messages table (using wa_msg_id)
             await pool.query(`UPDATE messages SET status = $1 WHERE wa_msg_id = $2`, [newStatus, wamid]);
-            // Also update campaign_logs for campaign tracking
-            await pool.query(`UPDATE campaign_logs SET status = $1 WHERE wa_message_id = $2`, [newStatus, wamid]);
+            if (newStatus === 'failed' && errorMsg) {
+              await pool.query(`UPDATE campaign_logs SET status = $1, error_message = $3 WHERE wa_message_id = $2`, [newStatus, wamid, errorMsg]);
+            } else {
+              await pool.query(`UPDATE campaign_logs SET status = $1 WHERE wa_message_id = $2`, [newStatus, wamid]);
+            }
 
             // Emit real-time status update to CRM
             io.emit('message_status', { wa_message_id: wamid, status: newStatus });
@@ -1884,6 +1887,24 @@ app.post('/api/brain', auth, async (req, res) => {
 
 // ── LEADS IMPORT ──────────────────────────────────────────
 const upload = multer({ dest: 'uploads/' });
+
+// GET /api/leads/template
+app.get('/api/leads/template', (req, res) => {
+  const xlsx = require('xlsx');
+  const ws = xlsx.utils.json_to_sheet([
+    { Name: 'John Doe', Phone: '919876543210' },
+    { Name: 'Jane Smith', Phone: '919876543211' }
+  ]);
+  // Set column widths
+  ws['!cols'] = [{ wch: 20 }, { wch: 20 }];
+  const wb = xlsx.utils.book_new();
+  xlsx.utils.book_append_sheet(wb, ws, "Template");
+  const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Disposition', 'attachment; filename="leados_campaign_template.xlsx"');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buffer);
+});
+
 app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
   try {
     const { client_id } = req.body;
@@ -2216,6 +2237,7 @@ async function executeCampaign(campaign_id) {
 
           return {
             lead_id: lead.id,
+            phone: lead.phone,
             wa_message_id: waRes.data.messages?.[0]?.id,
             status: 'sent',
             error: null
@@ -2240,10 +2262,23 @@ async function executeCampaign(campaign_id) {
             VALUES ($1, $2, $3, 'sent', NOW())
           `, [campaign_id, res.lead_id, res.wa_message_id]);
 
+          // Upsert conversation for this lead
+          const convRes = await pool.query(`
+            INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+            VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
+            ON CONFLICT (phone, tenant_id) DO UPDATE
+              SET lead_id = EXCLUDED.lead_id,
+                  last_message = EXCLUDED.last_message,
+                  last_message_at = NOW()
+            RETURNING id
+          `, [res.lead_id, campaign.client_id, res.phone, campaign.template_body]);
+
+          const convId = convRes.rows[0].id;
+
           await pool.query(`
-            INSERT INTO messages (client_id, lead_id, direction, type, content, wa_message_id, status, timestamp)
-            VALUES ($1, $2, 'outbound', 'template', $3, $4, 'sent', NOW())
-          `, [campaign.client_id, res.lead_id, campaign.template_body, res.wa_message_id]);
+            INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
+            VALUES ($1, 'outbound', $2, 'template', $3, 'sent', false, NOW())
+          `, [convId, campaign.template_body, res.wa_message_id]);
 
           sentCount++;
         } else {

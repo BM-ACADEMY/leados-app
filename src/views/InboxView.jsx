@@ -7,6 +7,7 @@ import { io as socketIO } from 'socket.io-client';
 import { C } from '../constants/theme.js';
 import { useLeads, useLead } from '../hooks/useLeads.js';
 import { api } from '../services/api.js';
+import { toast } from 'react-hot-toast';
 
 // In local dev (localhost), connect via same origin so Vite's WebSocket proxy works.
 // In production, connect directly to the API server.
@@ -349,6 +350,12 @@ export const InboxView = () => {
 
       const sentMsg = await api.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
 
+      // If window was closed, backend sent a template silently — just remove the optimistic message
+      if (sentMsg?.window_closed) {
+        setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
+        return;
+      }
+
       // Replace optimistic message directly with the confirmed database message
       setLocalMessages((prev) => prev.map(m => m.id === optimisticId ? { ...sentMsg.message, reply_to: replyingTo } : m));
     } catch (err) {
@@ -356,9 +363,9 @@ export const InboxView = () => {
       setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
       
       const errorData = err.response?.data;
-      // Do not show an alert if the window is closed, as the template handles it silently in the background
+      // Do not show an error alert if the window is closed, as the template handles it silently in the background
       if (errorData?.reason !== 'window_closed') {
-        alert('Failed to send message: ' + (errorData?.error || err.message));
+        toast.error('Failed to send message: ' + (errorData?.error || err.message));
       }
     } finally {
       setSending(false);
@@ -1458,8 +1465,9 @@ export const InboxView = () => {
                 </button>
               </div>
 
-              <div style={{ padding: '24px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', borderBottom: '1px solid ' + C.border }}>
-                <div style={{ width: 100, height: 100, borderRadius: '50%', background: C.bg, border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                <div style={{ padding: '24px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', borderBottom: '1px solid ' + C.border }}>
+                  <div style={{ width: 100, height: 100, borderRadius: '50%', background: C.bg, border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                   <User size={48} color={C.muted} />
                 </div>
                 <h2 style={{ margin: '0 0 8px 0', fontSize: 20, fontWeight: 600, color: C.text }}>{activeObj?.name}</h2>
@@ -1545,7 +1553,8 @@ export const InboxView = () => {
                 </p>
               </div>
             </div>
-          )}
+          </div>
+        )}
         </div>
       </div>
 

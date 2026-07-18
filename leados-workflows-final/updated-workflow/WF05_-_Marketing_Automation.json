@@ -65,18 +65,17 @@
       ]
     },
     {
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Header Auth"
+        }
+      },
       "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
         "url": "https://leados-api.abmgroups.org/api/campaigns/execute",
         "method": "POST",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "x-internal-key",
-              "value": "={{ $env.INTERNAL_API_KEY }}"
-            }
-          ]
-        },
         "options": {},
         "sendBody": true,
         "specifyBody": "json",

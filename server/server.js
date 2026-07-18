@@ -780,28 +780,73 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
     const windowRes = await pool.query(`
       SELECT 1 FROM messages m
       JOIN conversations c ON m.conversation_id = c.id
-      WHERE c.lead_id = $1 AND m.direction = 'inbound' AND m.sent_at > NOW() - INTERVAL '24 HOURS'
+      WHERE (c.lead_id = $1 
+         OR RIGHT(REGEXP_REPLACE(c.phone, '[^0-9]', '', 'g'), 10) = (
+              SELECT RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) FROM leads WHERE id = $1 LIMIT 1
+            )
+      )
+      AND m.direction = 'inbound' AND m.sent_at > NOW() - INTERVAL '24 HOURS'
       LIMIT 1
     `, [lead_id]);
 
     const isWindowOpen = windowRes.rows.length > 0;
 
     if (!isWindowOpen) {
-      // Trigger n8n new lead webhook instead of sending message to wake up chat
-      if (process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
-        axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
-          lead_id: lead.id,
-          name: lead.name,
-          phone: lead.phone,
-          client_id: lead.client_id,
-          phone_number_id: phoneNumberId,
-          wa_access_token: waAccessToken
-        }).catch(e => console.error('[n8n reengagement error]', e.message));
+      // Check if we already sent a wakeup template in the last 30 minutes to avoid spamming
+      const recentTemplate = await pool.query(`
+        SELECT 1 FROM messages m
+        JOIN conversations c ON m.conversation_id = c.id
+        WHERE c.lead_id = $1 AND m.direction = 'outbound' AND m.msg_type = 'template'
+          AND m.sent_at > NOW() - INTERVAL '30 MINUTES'
+        LIMIT 1
+      `, [lead_id]);
+
+      if (recentTemplate.rows.length === 0) {
+        // Send the common_welcome_message template to reopen the 24-hour window
+        try {
+          const templateRes = await axios.post(
+            `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+            {
+              messaging_product: 'whatsapp',
+              to: (lead.phone || '').replace(/\D/g, ''),
+              type: 'template',
+              template: {
+                name: 'common_welcome_message',
+                language: { code: 'en' }
+              }
+            },
+            { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+          );
+          const waMsgId = templateRes.data?.messages?.[0]?.id;
+          console.log('[Template Wakeup] Sent common_welcome_message to', lead.phone, waMsgId);
+
+          // Save template message to DB so it appears in inbox
+          const convCheck = await pool.query(
+            `SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`, [lead_id]
+          );
+          if (convCheck.rows.length > 0) {
+            const convId = convCheck.rows[0].id;
+            const existingTemplateMsg = waMsgId ? await pool.query('SELECT id FROM messages WHERE wa_msg_id = $1', [waMsgId]) : { rows: [] };
+            if (existingTemplateMsg.rows.length === 0) {
+              await pool.query(`
+                INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
+                VALUES ($1, 'outbound', 'common_welcome_message', 'template', $2, 'sent', false, NOW())
+              `, [convId, waMsgId]);
+            }
+            // Push to inbox in real-time
+            io.emit('outgoing_message', { lead_id: String(lead.id), message: { direction: 'outbound', content: '[Template] common_welcome_message', msg_type: 'template', sent_at: new Date() } });
+          }
+        } catch (err) {
+          console.error('[Template Wakeup Error]', JSON.stringify(err.response?.data) || err.message);
+        }
+      } else {
+        console.log('[Template Wakeup] Skipped — already sent in last 30 min for lead', lead_id);
       }
-      
-      return res.status(403).json({ 
-        error: '24-hour window closed. Triggered template automation to wake up chat.',
-        reason: 'window_closed'
+
+      // Return 200 OK so the frontend stays silent — the template was already sent
+      return res.status(200).json({ 
+        window_closed: true,
+        message: 'Template sent to reopen chat window. Please wait for the customer to reply.'
       });
     }
     // ----------------------------
@@ -890,14 +935,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
     fs.appendFileSync(path.join(__dirname, 'uploads', 'incoming_payloads.log'), `[${new Date().toISOString()}] ${JSON.stringify(body, null, 2)}\n\n`);
     
     // FORWARD TO N8N WEBHOOK
-    // This allows the Node server to act as a proxy, verifying the webhook with Meta,
-    // handling delivery receipts, and silently passing the raw message payload to WF00 in n8n.
-    try {
-      const n8nUrl = 'https://leados-n8n.abmgroups.org/webhook/whatsapp-inbound';
-      await require('axios').post(n8nUrl, body);
-      console.log('✅ Successfully forwarded payload to n8n Lead Integrator (WF00)');
-    } catch (n8nErr) {
-      console.error('⚠️ Failed to forward payload to n8n:', n8nErr.message);
+    // This allows the Node server to act as a proxy if needed.
+    // If the request is already coming from n8n (source=n8n), we SKIP forwarding to prevent an infinite loop.
+    if (req.query.source !== 'n8n') {
+      try {
+        const n8nUrl = 'https://leados-n8n.abmgroups.org/webhook/whatsapp-inbound';
+        await require('axios').post(n8nUrl, body);
+        console.log('✅ Successfully forwarded payload to n8n Lead Integrator (WF00)');
+      } catch (n8nErr) {
+        console.error('⚠️ Failed to forward payload to n8n:', n8nErr.message);
+      }
     }
     
     if (!body.object || body.object !== 'whatsapp_business_account') return;
@@ -1007,7 +1054,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
              FROM leads l
              LEFT JOIN clients c ON l.client_id = c.id
              WHERE RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = RIGHT($1, 10)
-             ORDER BY l.created_at ASC LIMIT 1`,
+             ORDER BY l.created_at DESC LIMIT 1`,
             [phoneDigits]
           )).rows[0];
 
@@ -1084,6 +1131,10 @@ app.post('/webhook/whatsapp', async (req, res) => {
             }
           }
 
+          // ── Normalize phone to 10 digits to avoid duplicate conversations ──
+          // Meta sends full international format e.g. "917339017112" but leads DB stores "7339017112"
+          const normalizedPhone = phoneDigits.slice(-10);
+
           // Upsert conversation thread
           const tenantId = lead.tenant_id || 1;
           const convRes = await pool.query(`
@@ -1095,20 +1146,21 @@ app.post('/webhook/whatsapp', async (req, res) => {
                   last_message_at = NOW(),
                   unread_count = COALESCE(conversations.unread_count, 0) + 1
             RETURNING id
-          `, [lead.id, tenantId, phone, text]);
+          `, [lead.id, tenantId, normalizedPhone, text]);
           const conversationId = convRes.rows[0].id;
 
-          // Save incoming message to messages table (ON CONFLICT handles duplicate wa_msg_id from retried webhooks)
-          const { rows: savedRows } = await pool.query(`
-            INSERT INTO messages (conversation_id, direction, content, msg_type, media_url, wa_msg_id, status, is_ai, sent_at, is_forwarded)
-            VALUES ($1, 'inbound', $2, $3, $4, $5, 'delivered', false, NOW(), $6)
-            ON CONFLICT (wa_msg_id) DO NOTHING
-            RETURNING id, direction, content, msg_type as type, media_url, wa_msg_id, status, sent_at as timestamp, is_forwarded
-          `, [conversationId, text, msgType, mediaUrl, waMessageId, isForwarded]);
-
-          if (savedRows.length === 0) {
+          // Save incoming message to messages table (avoid duplicate wa_msg_id from retried webhooks)
+          const existingMsg = waMessageId ? await pool.query('SELECT id FROM messages WHERE wa_msg_id = $1', [waMessageId]) : { rows: [] };
+          
+          if (existingMsg.rows.length > 0) {
             console.log(`[Webhook] Duplicate message skipped (wa_msg_id: ${waMessageId})`);
           } else {
+            const { rows: savedRows } = await pool.query(`
+              INSERT INTO messages (conversation_id, direction, content, msg_type, media_url, wa_msg_id, status, is_ai, sent_at, is_forwarded)
+              VALUES ($1, 'inbound', $2, $3, $4, $5, 'delivered', false, NOW(), $6)
+              RETURNING id, direction, content, msg_type as type, media_url, wa_msg_id, status, sent_at as timestamp, is_forwarded
+            `, [conversationId, text, msgType, mediaUrl, waMessageId, isForwarded]);
+
             // ── REAL-TIME: push to CRM Inbox immediately ─────────
             io.emit('incoming_message', { lead_id: String(lead.id), message: savedRows[0] });
             console.log(`[Webhook] ✅ Saved inbound ${msgType} from ${phone} → lead ${lead.id}, msg_id ${savedRows[0].id}`);
@@ -1902,21 +1954,50 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
           if (!isNaN(parsed.getTime())) lastContact = parsed.toISOString();
         }
 
-        if (!phone) {
+        const email = row.email || row.Email || null;
+
+        if (!phone && !email) {
           failed++;
           continue;
         }
 
-        await pool.query(`
-          INSERT INTO leads (client_id, name, phone, status, source, score, interest, assigned_to, created_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-          ON CONFLICT (phone) DO UPDATE 
-          SET name = EXCLUDED.name, status = EXCLUDED.status, 
-              client_id = COALESCE(EXCLUDED.client_id, leads.client_id),
-              source = EXCLUDED.source, score = EXCLUDED.score,
-              interest = EXCLUDED.interest, assigned_to = COALESCE(EXCLUDED.assigned_to, leads.assigned_to),
-              updated_at = NOW()
-        `, [rowClientId, name, phone, status, source, score, interest, assignedTo]);
+        const phoneDigits = phone ? phone.replace(/\D/g, '').slice(-10) : '';
+
+        // Check for existing lead by email or 10-digit phone
+        let existingLead = null;
+        if (phoneDigits || email) {
+           const existingRes = await pool.query(`
+             SELECT id FROM leads 
+             WHERE ($1::text != '' AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1)
+                OR ($2::text IS NOT NULL AND LOWER(email) = LOWER($2))
+             LIMIT 1
+           `, [phoneDigits, email]);
+           existingLead = existingRes.rows[0];
+        }
+
+        if (existingLead) {
+          // Update existing
+          await pool.query(`
+            UPDATE leads 
+            SET name = COALESCE($1, name),
+                phone = COALESCE($2, phone),
+                email = COALESCE($3, email),
+                status = COALESCE($4, status),
+                client_id = COALESCE($5, client_id),
+                source = COALESCE($6, source),
+                score = COALESCE($7, score),
+                interest = COALESCE($8, interest),
+                assigned_to = COALESCE($9, assigned_to),
+                updated_at = NOW()
+            WHERE id = $10
+          `, [name, phone, email, status, rowClientId, source, score, interest, assignedTo, existingLead.id]);
+        } else {
+          // Insert new
+          await pool.query(`
+            INSERT INTO leads (client_id, name, phone, email, status, source, score, interest, assigned_to, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+          `, [rowClientId, name, phone, email, status, source, score, interest, assignedTo]);
+        }
 
         imported++;
       } catch (e) {

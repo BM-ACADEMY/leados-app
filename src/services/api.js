@@ -52,7 +52,9 @@ class LeadOSAPI {
     }
 
     if (!response.ok) {
-      throw new Error(data.error || 'API Error');
+      const err = new Error(data.error || 'API Error');
+      err.response = { data };
+      throw err;
     }
 
     return data;

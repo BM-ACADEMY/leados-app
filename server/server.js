@@ -2233,6 +2233,7 @@ async function executeCampaign(campaign_id) {
 
           return {
             lead_id: lead.id,
+            phone: lead.phone,
             wa_message_id: waRes.data.messages?.[0]?.id,
             status: 'sent',
             error: null
@@ -2257,10 +2258,23 @@ async function executeCampaign(campaign_id) {
             VALUES ($1, $2, $3, 'sent', NOW())
           `, [campaign_id, res.lead_id, res.wa_message_id]);
 
+          // Upsert conversation for this lead
+          const convRes = await pool.query(`
+            INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+            VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
+            ON CONFLICT (phone, tenant_id) DO UPDATE
+              SET lead_id = EXCLUDED.lead_id,
+                  last_message = EXCLUDED.last_message,
+                  last_message_at = NOW()
+            RETURNING id
+          `, [res.lead_id, campaign.client_id, res.phone, campaign.template_body]);
+
+          const convId = convRes.rows[0].id;
+
           await pool.query(`
-            INSERT INTO messages (client_id, lead_id, direction, type, content, wa_message_id, status, timestamp)
-            VALUES ($1, $2, 'outbound', 'template', $3, $4, 'sent', NOW())
-          `, [campaign.client_id, res.lead_id, campaign.template_body, res.wa_message_id]);
+            INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
+            VALUES ($1, 'outbound', $2, 'template', $3, 'sent', false, NOW())
+          `, [convId, campaign.template_body, res.wa_message_id]);
 
           sentCount++;
         } else {

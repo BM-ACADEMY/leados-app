@@ -7,6 +7,7 @@ import { io as socketIO } from 'socket.io-client';
 import { C } from '../constants/theme.js';
 import { useLeads, useLead } from '../hooks/useLeads.js';
 import { api } from '../services/api.js';
+import { toast } from 'react-hot-toast';
 
 // In local dev (localhost), connect via same origin so Vite's WebSocket proxy works.
 // In production, connect directly to the API server.
@@ -356,9 +357,9 @@ export const InboxView = () => {
       setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
       
       const errorData = err.response?.data;
-      // Do not show an alert if the window is closed, as the template handles it silently in the background
+      // Do not show an error alert if the window is closed, as the template handles it silently in the background
       if (errorData?.reason !== 'window_closed') {
-        alert('Failed to send message: ' + (errorData?.error || err.message));
+        toast.error('Failed to send message: ' + (errorData?.error || err.message));
       }
     } finally {
       setSending(false);

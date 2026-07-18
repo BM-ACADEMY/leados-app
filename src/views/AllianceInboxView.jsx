@@ -46,7 +46,10 @@ export const AllianceInboxView = () => {
       setMsg('');
       refetchLead();
     } catch (err) {
-      alert('Failed to send message: ' + err.message);
+      const errorData = err.response?.data;
+      if (errorData?.reason !== 'window_closed') {
+        alert('Failed to send message: ' + (errorData?.error || err.message));
+      }
     } finally {
       setSending(false);
     }

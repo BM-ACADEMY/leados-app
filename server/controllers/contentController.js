@@ -2335,6 +2335,7 @@ async function suggestCaptions(req, res) {
       targetAudience: "General social media audience"
     };
     const brandVoice = (await findBrandVoice(post.brand_name)) || { tag: post.brand_name, voice: "Professional and engaging" };
+    const isTanglishBrand = /tanglish|tamil/i.test(brandVoice.voice || '');
 
     // Dynamic video transcript extraction
     const transcript = await getOrGenerateTranscript(post);
@@ -2386,6 +2387,46 @@ Respond ONLY with a valid JSON object matching this exact format:
       return res.json({ success: true, meta: allResult });
     }
 
+    // Hashtag generation — completely separate flow
+    if (platform === "hashtags") {
+      const hashtagPrompt = `You are a social media hashtag strategist for "${post.brand_name}".
+Brand Industry: ${brandDetail?.industry || "Business"}
+Target Audience: ${brandDetail?.targetAudience || "General audience"}
+Video Topic/Title: ${post.file_name}
+Video Description: ${post.description || post.caption || "Brand promotion video"}
+Video Transcript: ${transcript || "Not available"}
+
+Generate 3 sets of hashtags for this post. Each set has a different strategy:
+1. "reach" — broad, high-volume tags to maximise impressions
+2. "engagement" — niche, topic-specific tags for higher engagement rate
+3. "local" — brand + location tags for Tamil Nadu / Pondicherry audience (include #Pondicherry #TamilNadu etc. if relevant)
+
+Rules:
+- Each set must have 20-25 hashtags
+- All in English only (no Tamil script characters)
+- Space-separated, each starting with #
+- Directly relevant to the video topic, not generic filler
+
+Respond ONLY as valid JSON:
+{
+  "suggestions": [
+    { "id": 1, "tone": "reach", "caption": "#tag1 #tag2 #tag3 ..." },
+    { "id": 2, "tone": "engagement", "caption": "#tag1 #tag2 #tag3 ..." },
+    { "id": 3, "tone": "local", "caption": "#tag1 #tag2 #tag3 ..." }
+  ]
+}`;
+
+      const hashRes = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 800,
+        temperature: 0.6,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: hashtagPrompt }]
+      });
+      const hashResult = JSON.parse(hashRes.choices[0].message.content.trim());
+      return res.json({ success: true, suggestions: hashResult.suggestions });
+    }
+
     let prompt = `You are an expert social media copywriter. Generate 5 unique caption suggestions for a video post based on the following details:
 - Brand Name: ${post.brand_name}
 - Industry: ${brandDetail.industry}
@@ -2423,7 +2464,7 @@ CRITICAL REQUIREMENTS:
       prompt += `
 CRITICAL RULES FOR INSTAGRAM/FACEBOOK:
 - Focus heavily on an engaging, high-energy hook in the first line.
-- Use a conversational tone, mixing in local slang/Tanglish for brands that request it.
+- Use a conversational tone${isTanglishBrand ? ', mixing in Tanglish/local slang per the brand voice' : ''}.
 - End with a clear call-to-action to WhatsApp (e.g. "WhatsApp 94038 02971 to join now!").
 `;
     } else if (platform === "youtube_description") {
@@ -2458,24 +2499,31 @@ CRITICAL RULES FOR LINKEDIN:
 `;
     }
 
-    prompt += `
+    if (isTanglishBrand) {
+      prompt += `
 CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
 - Do NOT generate captions in pure, formal Tamil script.
-- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters, e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga") mixed with English. DO NOT output any actual Tamil script/characters.
+- Write using Tanglish (Tamil words written using English letters, e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga") mixed with English. DO NOT output any actual Tamil script/characters.
 `;
-
-    if (platform !== "youtube_title" && platform !== "x_caption") {
-      prompt += `
+      if (platform !== "youtube_title" && platform !== "x_caption") {
+        prompt += `
 - Across the 5 suggestions, provide a variety of language splits:
   - 1 or 2 options should be in pure conversational English.
   - 2 or 3 options should be in English letters expressing Tanglish / local slang.
   - 1 option can include short Tamil script words mixed with English (keep it informal).
 `;
-    }
-
-    prompt += `
+      }
+      prompt += `
 - The tone must be energetic, direct, and conversational. Avoid any textbook or formal tone.
 `;
+    } else {
+      prompt += `
+CRITICAL LANGUAGE REQUIREMENT:
+- Write all captions in clear, professional English only.
+- Do NOT use Tamil, Tanglish, or regional slang. This brand communicates in standard business English.
+- The tone must match the brand voice: professional, authoritative, and audience-appropriate.
+`;
+    }
 
     if (tone === "engaging") {
       prompt += `\nGenerate exactly 5 UNIQUE captions, each matching one of these distinct styles:
@@ -2562,13 +2610,17 @@ ${contextInfo ? `- Additional Context/Instructions from User: ${contextInfo}` : 
 - Your suggestions MUST be deeply related to the actual video topic, title/file name, and the video transcript.
 - Do NOT output generic brand-only promotion text. Use the brand guidelines for styling, but write completely original hooks and CTAs centered around the specific content and topics discussed in this video.
 - Do NOT just copy the example sentences from the guidelines.
-- Do NOT generate stories in formal Tamil script unless specified.
-- For brands with Tamil-English/Tanglish requirements (like BM Academy or BM TechX), write using Tanglish (Tamil words written using English letters) mixed with English. DO NOT output any actual Tamil script/characters.
+- Do NOT generate stories in formal Tamil script.
+${isTanglishBrand
+  ? `- Write using Tanglish (Tamil words written using English letters) mixed with English. DO NOT output any actual Tamil script/characters.
 - Across the 5 suggestions, provide a variety of language splits:
   - 1 or 2 options should be in pure conversational English.
   - 2 or 3 options should be in English letters expressing Tanglish / local slang.
   - 1 option can include short Tamil script words mixed with English, but keep it informal.
-- The tone must be energetic, direct, and conversational.
+- The tone must be energetic, direct, and conversational.`
+  : `- Write all story slides in clear, professional English only. Do NOT use Tamil, Tanglish, or regional slang.
+- The tone must match the brand voice: professional, authoritative, and audience-appropriate.`
+}
 `;
 
     if (tone === "engaging") {

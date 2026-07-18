@@ -54,7 +54,8 @@ export function ApprovalRoom({
         thumbnail_title: selectedItem.thumbnail_title || '',
         scheduled_at: selectedItem.scheduled_at || '',
         platforms: [...(selectedItem.platforms || [])],
-        selected_accounts: selectedItem.selected_accounts || {}
+        selected_accounts: selectedItem.selected_accounts || {},
+        hashtags: selectedItem.hashtags || ''
       });
     }
   }, [selectedItem, setEditValues]);
@@ -313,7 +314,8 @@ export function ApprovalRoom({
                                 thumbnail_title: meta.thumbnail_options?.[0]?.title || selectedItem.thumbnail_title || '',
                                 scheduled_at: selectedItem.scheduled_at || '',
                                 platforms: platformsToActivate,
-                                selected_accounts: selectedItem.selected_accounts || {}
+                                selected_accounts: selectedItem.selected_accounts || {},
+                                hashtags: meta.hashtags || selectedItem.hashtags || ''
                             });
                             setEditMode(true);
                           }
@@ -333,6 +335,7 @@ export function ApprovalRoom({
                   </div>
                 ) : (
                   [
+                    { key: 'hashtags', label: 'Hashtags', icon: '#', color: '#8B72F0', alwaysShow: true },
                     { key: 'instagram_caption', label: 'Instagram Caption', icon: '📸', color: 'linear-gradient(135deg,#F58529,#DD2A7B,#8134AF)' },
                     { key: 'facebook_caption', label: 'Facebook Caption', icon: '👍', color: '#1877F2' },
                     { key: 'youtube_title', label: 'YouTube Title', icon: '▶', color: '#FF0000' },
@@ -341,8 +344,10 @@ export function ApprovalRoom({
                     { key: 'linkedin_caption', label: 'LinkedIn Caption', icon: 'in', color: '#0A66C2' }
                   ].map(field => {
                     const isPlatformActive = () => {
+                      if (field.alwaysShow) return true;
+
                       const activePlatforms = editMode ? (editValues.platforms || []) : (selectedItem.platforms || []);
-                      
+
                       const hasLinkedAccount = (plat) => (socialAccounts || []).some(s => isSameBrand(s.brand_name, selectedItem.brand_name) && s.platform === plat);
 
                       let isActive = false;
@@ -351,7 +356,7 @@ export function ApprovalRoom({
                       else if (field.key === 'youtube_title' || field.key === 'youtube_description') isActive = activePlatforms.includes('youtube');
                       else if (field.key === 'x_caption') isActive = activePlatforms.includes('x_twitter');
                       else if (field.key === 'linkedin_caption') isActive = activePlatforms.includes('linkedin');
-                      
+
                       // Enforce it must be linked
                       if (field.key === 'instagram_caption' && !hasLinkedAccount('instagram')) return false;
                       if (field.key === 'facebook_caption' && !hasLinkedAccount('facebook')) return false;
@@ -551,7 +556,8 @@ export function ApprovalRoom({
                                 thumbnail_title: selectedItem.thumbnail_title || '',
                                 scheduled_at: selectedItem.scheduled_at || '',
                                 platforms: [...(selectedItem.platforms || [])],
-                                selected_accounts: selectedItem.selected_accounts || {}
+                                selected_accounts: selectedItem.selected_accounts || {},
+                                hashtags: selectedItem.hashtags || ''
                               });
                               setEditMode(true);
                               

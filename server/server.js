@@ -780,7 +780,12 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
     const windowRes = await pool.query(`
       SELECT 1 FROM messages m
       JOIN conversations c ON m.conversation_id = c.id
-      WHERE c.lead_id = $1 AND m.direction = 'inbound' AND m.sent_at > NOW() - INTERVAL '24 HOURS'
+      WHERE (c.lead_id = $1 
+         OR RIGHT(REGEXP_REPLACE(c.phone, '[^0-9]', '', 'g'), 10) = (
+              SELECT RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) FROM leads WHERE id = $1 LIMIT 1
+            )
+      )
+      AND m.direction = 'inbound' AND m.sent_at > NOW() - INTERVAL '24 HOURS'
       LIMIT 1
     `, [lead_id]);
 
@@ -1045,7 +1050,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
              FROM leads l
              LEFT JOIN clients c ON l.client_id = c.id
              WHERE RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = RIGHT($1, 10)
-             ORDER BY l.created_at ASC LIMIT 1`,
+             ORDER BY l.created_at DESC LIMIT 1`,
             [phoneDigits]
           )).rows[0];
 

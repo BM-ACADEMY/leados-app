@@ -99,7 +99,7 @@ export const CampaignsView = () => {
         target_status: finalTargetStatus, scheduled_at: finalScheduledAt || null 
       });
 
-      if (!scheduledAt) {
+      if (sendType === 'now') {
         await api.request(`/api/campaigns/execute`, {
           method: 'POST',
           body: JSON.stringify({ campaign_id: res.campaign.id })
@@ -318,11 +318,17 @@ export const CampaignsView = () => {
               
               {loadingLogs ? (
                 <p style={{ color: C.muted, fontSize: 13 }}>Loading logs...</p>
-              ) : reportModal.status === 'scheduled' ? (
+              ) : reportModal.status === 'scheduled' && reportModal.scheduled_at ? (
                 <div style={{ padding: 24, textAlign: 'center', background: C.surface, borderRadius: 10, border: `1px dashed ${C.border}` }}>
                   <Clock size={32} color={C.blue} style={{ margin: '0 auto 12px' }} />
                   <p style={{ color: C.text, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Campaign Scheduled</p>
                   <p style={{ color: C.muted, fontSize: 13 }}>It will automatically start running on <strong style={{ color: C.blue }}>{new Date(reportModal.scheduled_at).toLocaleString()}</strong></p>
+                </div>
+              ) : reportModal.status === 'running' || (reportModal.status === 'scheduled' && !reportModal.scheduled_at) ? (
+                <div style={{ padding: 24, textAlign: 'center', background: C.surface, borderRadius: 10, border: `1px dashed ${C.border}` }}>
+                  <Send size={32} color={C.green} style={{ margin: '0 auto 12px', animation: 'pulse 1.5s infinite' }} />
+                  <p style={{ color: C.text, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Campaign is Running</p>
+                  <p style={{ color: C.muted, fontSize: 13 }}>Messages are currently being sent out...</p>
                 </div>
               ) : campaignLogs.length === 0 ? (
                 <p style={{ color: C.muted, fontSize: 13 }}>No logs available yet. Messages may not have sent.</p>

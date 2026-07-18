@@ -2591,6 +2591,9 @@ app.post('/api/internal/update-lead', internalAuth, async (req, res) => {
 });
 
 // ── CRON JOBS ─────────────────────────────────────────────
+// DISABLED: We are now using n8n for campaign execution.
+// This prevents the backend from executing campaigns before n8n gets a chance to.
+/*
 cron.schedule('* * * * *', async () => {
   try {
     const { rows } = await pool.query(`
@@ -2606,6 +2609,7 @@ cron.schedule('* * * * *', async () => {
     console.error('Cron check error:', err);
   }
 });
+*/
 
 // Run every 1 minute to poll Google Drive folders for new videos
 if (process.env.DISABLE_DRIVE_POLLER !== 'true') {

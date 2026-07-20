@@ -190,7 +190,7 @@
     },
     {
       "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/communication/send",
+        "url": "https://leados-api.abmgroups.org/api/communication/send-founder",
         "method": "POST",
         "options": {},
         "sendBody": true,

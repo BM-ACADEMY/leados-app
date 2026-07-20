@@ -12,6 +12,7 @@ const NAV = [
   { path: '/templates', Icon: FileText, label: 'Templates' },
   { path: '/brain', Icon: Brain, label: 'AI Brain' },
   { path: '/reports', Icon: BarChart2, label: 'Reports' },
+  { path: '/founder-reports', Icon: FileText, label: 'Founder Reports' },
   { path: '/clients', Icon: Building2, label: 'Clients' },
 ];
 

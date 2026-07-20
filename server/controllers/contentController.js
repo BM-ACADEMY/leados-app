@@ -2351,37 +2351,60 @@ async function suggestCaptions(req, res) {
     const transcript = await getOrGenerateTranscript(post);
 
     if (platform === 'all') {
-      const allPrompt = `You are the expert social media content writer for "${post.brand_name}" (${brandVoice.tag || brandDetail.industry}).
-BRAND VOICE GUIDE:
-${brandVoice.voice || "Professional and engaging"}
+      const primaryContent = contextInfo
+        ? `USER'S DESCRIPTION OF THE VIDEO (primary source — base all content on this):\n"${contextInfo}"`
+        : `Video File Name: ${post.file_name}\nVideo Transcript: "${transcript || 'No speech detected. Use the brand voice and video file name to generate relevant content.'}"`;
 
-Spoken Video Transcript to analyze:
-"${transcript || "No speech detected in this video. Generate brand promotion metadata based on the brand voice guide."}"
-${contextInfo ? `\nAdditional Context/Instructions from User:\n"${contextInfo}"` : ""}
+      const languageRule = isTanglishBrand
+        ? `LANGUAGE: Write using Tanglish — Tamil words spelled in English letters only (e.g. "padikka aasaiya?", "First step edunga", "join pannunga"). Mix with English naturally. STRICTLY NO Arabic script, NO Tamil script, NO Hindi/Devanagari, NO any non-Latin characters anywhere in the output.`
+        : `LANGUAGE: Write in clear, professional English ONLY. STRICTLY NO Arabic script, NO Tamil script, NO Hindi/Devanagari, NO regional language characters of any kind. Every single word must be in English Latin letters.`;
 
-Generate Title/Caption, Detailed Social Description, Hashtags, 3 Key Moments/Highlights, 3 creative Thumbnail layout/overlay design text descriptions, and 3 Instagram Story slides text (story_1, story_2, story_3) for promoting this video.
-Match the brand voice guides exactly (e.g., Tanglish mix for BM Academy).
+      const allPrompt = `You are the expert social media content writer for "${post.brand_name}".
 
-Respond ONLY with a valid JSON object matching this exact format:
+BRAND: ${post.brand_name} | Industry: ${brandDetail.industry} | Audience: ${brandDetail.targetAudience}
+BRAND VOICE GUIDE: ${brandVoice.voice || "Professional and engaging"}
+
+${primaryContent}
+${transcript && contextInfo ? `\nSupporting Video Transcript: "${transcript}"` : ''}
+
+${languageRule}
+
+Generate ALL of the following for this video post:
+- Platform-specific captions (Instagram, Facebook, LinkedIn, X, YouTube)
+- 20-25 professional hashtags
+- YouTube title (SEO-optimised, under 100 chars)
+- Short story slides (3 slides for Instagram Stories)
+
+RULES:
+- Base everything on the user's description above. Do NOT write generic filler.
+- Every caption must have a strong hook in the first line and end with a CTA (e.g. "WhatsApp 94038 02971 to know more!").
+- LinkedIn caption must be formal and B2B.
+- X caption must be under 240 characters.
+- Hashtags: 20-25 tags, mix of broad reach + niche + local (include #Pondicherry #TamilNadu if relevant).
+
+Respond ONLY with a valid JSON object:
 {
-  "caption": "Primary brand voice caption with emojis",
-  "x_caption": "Twitter/X style caption",
-  "linkedin_caption": "LinkedIn professional style caption",
-  "description": "A detailed descriptive paragraph summarizing the post content and value",
-  "hashtags": "#tag1 #tag2 #tag3",
+  "caption": "Primary Instagram/Facebook caption with emojis and CTA",
+  "instagram_caption": "Instagram-specific caption with emojis and CTA",
+  "facebook_caption": "Facebook-specific caption with emojis and CTA",
+  "x_caption": "X (Twitter) caption under 240 chars",
+  "linkedin_caption": "Professional LinkedIn caption",
+  "youtube_title": "SEO YouTube title under 100 chars",
+  "description": "Detailed paragraph for YouTube description or base description",
+  "hashtags": "#tag1 #tag2 #tag3 ... (20-25 tags)",
   "thumbnail_options": [
     { "title": "Thumbnail Title 1", "layout": "Visual layout description 1" },
     { "title": "Thumbnail Title 2", "layout": "Visual layout description 2" },
     { "title": "Thumbnail Title 3", "layout": "Visual layout description 3" }
   ],
   "key_moments": [
-    { "time": "00:05", "title": "Moment Hook", "desc": "Hook description" },
-    { "time": "00:20", "title": "Key Feature", "desc": "Feature description" },
-    { "time": "00:45", "title": "Call to Action", "desc": "CTA description" }
+    { "time": "00:05", "title": "Hook", "desc": "Opening hook description" },
+    { "time": "00:20", "title": "Key Point", "desc": "Main value description" },
+    { "time": "00:45", "title": "CTA", "desc": "Call to action description" }
   ],
-  "story_1": "Slide 1 text: Engaging hook for Instagram Story",
-  "story_2": "Slide 2 text: Key value point or highlight for Instagram Story",
-  "story_3": "Slide 3 text: Strong Call to Action (CTA) or next steps for Instagram Story"
+  "story_1": "Instagram Story slide 1: Engaging hook text",
+  "story_2": "Instagram Story slide 2: Key value or highlight",
+  "story_3": "Instagram Story slide 3: Strong CTA"
 }`;
 
       const allResponse = await groq.chat.completions.create({
@@ -2512,15 +2535,14 @@ CRITICAL RULES FOR LINKEDIN:
     if (isTanglishBrand) {
       prompt += `
 CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
-- Do NOT generate captions in pure, formal Tamil script.
-- Write using Tanglish (Tamil words written using English letters, e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga") mixed with English. DO NOT output any actual Tamil script/characters.
+- Write using Tanglish — Tamil words spelled in ENGLISH LETTERS only (e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga"). Mix naturally with English.
+- STRICTLY FORBIDDEN: Arabic script, Tamil script, Hindi/Devanagari, or ANY non-Latin characters. Every character in the output must be a standard Latin letter, number, emoji, or punctuation mark.
 `;
       if (platform !== "youtube_title" && platform !== "x_caption") {
         prompt += `
-- Across the 5 suggestions, provide a variety of language splits:
-  - 1 or 2 options should be in pure conversational English.
-  - 2 or 3 options should be in English letters expressing Tanglish / local slang.
-  - 1 option can include short Tamil script words mixed with English (keep it informal).
+- Across the 5 suggestions, vary the language split:
+  - 1-2 options in pure conversational English.
+  - 2-3 options mixing Tanglish (Tamil words in English letters) with English.
 `;
       }
       prompt += `
@@ -2529,9 +2551,10 @@ CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
     } else {
       prompt += `
 CRITICAL LANGUAGE REQUIREMENT:
-- Write all captions in clear, professional English only.
-- Do NOT use Tamil, Tanglish, or regional slang. This brand communicates in standard business English.
-- The tone must match the brand voice: professional, authoritative, and audience-appropriate.
+- Write all captions in clear, professional English ONLY.
+- STRICTLY FORBIDDEN: Arabic script, Tamil script, Hindi/Devanagari, or ANY non-Latin characters. Every character must be a standard Latin letter, number, emoji, or punctuation.
+- Do NOT use Tanglish or any regional slang. Standard business English only.
+- The tone must be professional, authoritative, and audience-appropriate.
 `;
     }
 
@@ -2620,16 +2643,13 @@ ${contextInfo ? `- Additional Context/Instructions from User: ${contextInfo}` : 
 - Your suggestions MUST be deeply related to the actual video topic, title/file name, and the video transcript.
 - Do NOT output generic brand-only promotion text. Use the brand guidelines for styling, but write completely original hooks and CTAs centered around the specific content and topics discussed in this video.
 - Do NOT just copy the example sentences from the guidelines.
-- Do NOT generate stories in formal Tamil script.
+- STRICTLY FORBIDDEN in ALL output: Arabic script, Tamil script, Hindi/Devanagari, or any non-Latin characters. Every character must be a standard Latin letter, number, emoji, or punctuation.
 ${isTanglishBrand
-  ? `- Write using Tanglish (Tamil words written using English letters) mixed with English. DO NOT output any actual Tamil script/characters.
-- Across the 5 suggestions, provide a variety of language splits:
-  - 1 or 2 options should be in pure conversational English.
-  - 2 or 3 options should be in English letters expressing Tanglish / local slang.
-  - 1 option can include short Tamil script words mixed with English, but keep it informal.
+  ? `- Write using Tanglish — Tamil words in English letters only (e.g. "padikka aasaiya?", "First step edunga") mixed with English. NO actual script of any language.
+- Vary the 5 suggestions: 1-2 pure English, 2-3 Tanglish-English mix.
 - The tone must be energetic, direct, and conversational.`
-  : `- Write all story slides in clear, professional English only. Do NOT use Tamil, Tanglish, or regional slang.
-- The tone must match the brand voice: professional, authoritative, and audience-appropriate.`
+  : `- Write all story slides in clear, professional English ONLY. No Tanglish, no regional slang.
+- The tone must be professional, authoritative, and audience-appropriate.`
 }
 `;
 

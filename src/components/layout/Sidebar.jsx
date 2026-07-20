@@ -509,6 +509,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                   <Brain size={14} style={{ marginRight: 8 }} /> GMB Brain
                 </NavLink>
 
+                <NavLink to="/mafiya/rivals" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Rival Families')}>
+                  <Target size={14} style={{ marginRight: 8 }} /> Rival Families
+                </NavLink>
+
               </div>
             )}
           </div>

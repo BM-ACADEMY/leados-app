@@ -2197,6 +2197,16 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         }
         console.log(`[BackgroundPublish] Publishing video story to Facebook for post ${post.id} — URL: ${publicUrl}`);
         publishRes = await publishVideoStoryToFacebook(pageId, decryptedToken, { videoUrl: publicUrl });
+      } else if (channel === 'linkedin') {
+        const authorUrn = account.account_id;
+        if (!authorUrn) {
+          throw new Error(`LinkedIn author URN is missing for account ${account.account_name}`);
+        }
+        console.log(`[BackgroundPublish] Publishing to LinkedIn for post ${post.id} — URN: ${authorUrn}`);
+        publishRes = await publishToLinkedIn(authorUrn, decryptedToken, {
+          caption: finalCaption,
+          videoUrl: publicUrl
+        });
       }
 
       if (publishRes && publishRes.success) {
@@ -2887,6 +2897,192 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
   }
 }
 
+// ── LinkedIn OAuth & Publishing ──────────────────────────────────────────────
+
+async function handleLinkedInAuth(req, res) {
+  const { brand_name } = req.query;
+  if (!brand_name) return res.status(400).json({ error: 'brand_name is required' });
+
+  const clientId = process.env.LINKEDIN_CLIENT_ID;
+  if (!clientId) return res.status(500).json({ error: 'LINKEDIN_CLIENT_ID not configured' });
+
+  const redirectUri = process.env.LINKEDIN_REDIRECT_URI || `${process.env.API_BASE_URL}/api/content/linkedin/callback`;
+  // Using modern OpenID scopes instead of deprecated r_liteprofile, and removing restricted r_organization_social
+  const scope = 'openid profile email w_member_social';
+  const state = Buffer.from(JSON.stringify({ brand_name })).toString('base64url');
+
+  const authUrl = `https://www.linkedin.com/oauth/v2/authorization?response_type=code` +
+    `&client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&scope=${encodeURIComponent(scope)}` +
+    `&state=${encodeURIComponent(state)}`;
+
+  res.redirect(authUrl);
+}
+
+async function handleLinkedInCallback(req, res) {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    return res.redirect(`/admin/content-os/social-connection?linkedin_error=${encodeURIComponent(error)}`);
+  }
+
+  let brand_name = '';
+  if (state) {
+    try { brand_name = JSON.parse(Buffer.from(state, 'base64url').toString()).brand_name || ''; } catch {}
+  }
+
+  try {
+    const clientId = process.env.LINKEDIN_CLIENT_ID;
+    const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+    const redirectUri = process.env.LINKEDIN_REDIRECT_URI || `${process.env.API_BASE_URL}/api/content/linkedin/callback`;
+
+    // Exchange code for access token
+    const tokenRes = await axios.post(
+      'https://www.linkedin.com/oauth/v2/accessToken',
+      new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: clientId, client_secret: clientSecret }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+    const { access_token, expires_in } = tokenRes.data;
+    const tokenExpiresAt = new Date(Date.now() + (expires_in || 5184000) * 1000);
+
+    // Get personal profile (OpenID Connect)
+    const profileRes = await axios.get('https://api.linkedin.com/v2/userinfo', {
+      headers: { Authorization: `Bearer ${access_token}` }
+    });
+    const personUrn = `urn:li:person:${profileRes.data.sub}`;
+    const personName = `${profileRes.data.given_name || ''} ${profileRes.data.family_name || ''}`.trim();
+
+    // Try to fetch organization pages (company pages where user is admin)
+    let authorUrn = personUrn;
+    let accountName = personName;
+    try {
+      const orgRes = await axios.get(
+        'https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&projection=(elements*(organization~(id,localizedName)))',
+        { headers: { Authorization: `Bearer ${access_token}`, 'X-Restli-Protocol-Version': '2.0.0' } }
+      );
+      const elements = orgRes.data?.elements || [];
+      if (elements.length > 0) {
+        const org = elements[0]['organization~'];
+        if (org) {
+          authorUrn = `urn:li:organization:${org.id}`;
+          accountName = org.localizedName || accountName;
+        }
+      }
+    } catch (orgErr) {
+      console.log('[LinkedIn Callback] Could not fetch org pages (using personal profile):', orgErr.message);
+    }
+
+    const encryptedToken = cryptoHelper.encrypt(access_token);
+
+    if (brand_name) {
+      await pool.query(
+        `INSERT INTO brand_social_accounts (brand_name, platform, account_name, account_id, access_token, token_expires_at, is_active)
+         VALUES ($1, 'linkedin', $2, $3, $4, $5, true)
+         ON CONFLICT (brand_name, platform, account_name)
+         DO UPDATE SET account_id = EXCLUDED.account_id, access_token = EXCLUDED.access_token,
+                       token_expires_at = EXCLUDED.token_expires_at, is_active = true`,
+        [brand_name, accountName, authorUrn, encryptedToken, tokenExpiresAt]
+      );
+    }
+
+    res.redirect(
+      `http://localhost:5173/admin/content-os/social-connection?linkedin_success=1&channel=${encodeURIComponent(accountName)}&brand=${encodeURIComponent(brand_name)}`
+    );
+  } catch (err) {
+    console.error('[LinkedIn Callback Error]:', err.response?.data || err.message);
+    res.redirect(`/admin/content-os/social-connection?linkedin_error=${encodeURIComponent(err.message)}`);
+  }
+}
+
+async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+    'X-Restli-Protocol-Version': '2.0.0'
+  };
+
+  // Try direct video upload
+  try {
+    console.log(`[LinkedIn] Registering video upload for ${authorUrn}...`);
+    const registerRes = await axios.post(
+      'https://api.linkedin.com/v2/assets?action=registerUpload',
+      {
+        registerUploadRequest: {
+          recipes: ['urn:li:digitalmediaRecipe:feedshare-video'],
+          owner: authorUrn,
+          serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }]
+        }
+      },
+      { headers }
+    );
+
+    const uploadUrl = registerRes.data.value.uploadMechanism['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'].uploadUrl;
+    const assetUrn = registerRes.data.value.asset;
+
+    console.log(`[LinkedIn] Downloading video from ${videoUrl}...`);
+    const videoData = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 120000 });
+
+    console.log(`[LinkedIn] Uploading video to LinkedIn... (${videoData.data.byteLength} bytes)`);
+    await axios.put(uploadUrl, videoData.data, {
+      headers: { 'Content-Type': 'application/octet-stream', 'media-type-family': 'STILLIMAGE' },
+      maxBodyLength: Infinity,
+      timeout: 300000
+    });
+
+    console.log(`[LinkedIn] Creating video UGC post...`);
+    const postRes = await axios.post(
+      'https://api.linkedin.com/v2/ugcPosts',
+      {
+        author: authorUrn,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+          'com.linkedin.ugc.ShareContent': {
+            shareCommentary: { text: caption },
+            shareMediaCategory: 'VIDEO',
+            media: [{
+              status: 'READY',
+              media: assetUrn,
+              description: { text: caption.substring(0, 200) },
+              title: { text: 'Video Post' }
+            }]
+          }
+        },
+        visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
+      },
+      { headers }
+    );
+
+    const postId = postRes.headers['x-restli-id'] || postRes.data.id;
+    console.log(`[LinkedIn] Video post published. ID: ${postId}`);
+    return { success: true, post_id: postId };
+
+  } catch (videoErr) {
+    console.warn('[LinkedIn] Video upload failed, falling back to text post:', videoErr.response?.data || videoErr.message);
+
+    // Fallback: plain text post with video URL appended
+    const postRes = await axios.post(
+      'https://api.linkedin.com/v2/ugcPosts',
+      {
+        author: authorUrn,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+          'com.linkedin.ugc.ShareContent': {
+            shareCommentary: { text: `${caption}\n\n${videoUrl}` },
+            shareMediaCategory: 'NONE'
+          }
+        },
+        visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
+      },
+      { headers }
+    );
+
+    const postId = postRes.headers['x-restli-id'] || postRes.data.id;
+    console.log(`[LinkedIn] Text post (fallback) published. ID: ${postId}`);
+    return { success: true, post_id: postId, warning: 'Posted as text link (direct video upload failed)' };
+  }
+}
+
 module.exports = {
   getContent,
   getStats,
@@ -2916,6 +3112,9 @@ module.exports = {
   handleYoutubeCallback,
   getFreshYoutubeClient,
   publishVideoToYouTube,
+  handleLinkedInAuth,
+  handleLinkedInCallback,
+  publishToLinkedIn,
   runBackgroundPublish,
   updateOverallPostStatus
 };

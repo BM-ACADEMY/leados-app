@@ -614,6 +614,12 @@ class LeadOSAPI {
     });
   }
 
+  async deleteWorkflowLog(id) {
+    return this.request(`/api/workflows/logs/${id}`, {
+      method: 'DELETE'
+    });
+  }
+
   async getWorkflowTelemetry() {
     return this.request('/api/workflows/telemetry', {
       method: 'GET'

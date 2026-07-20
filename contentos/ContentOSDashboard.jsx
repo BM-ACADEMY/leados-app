@@ -478,7 +478,8 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
         'youtube_title': 'youtube',
         'youtube_description': 'youtube',
         'x_caption': 'x_twitter',
-        'linkedin_caption': 'linkedin'
+        'linkedin_caption': 'linkedin',
+        'hashtags': 'hashtags'
       };
       const platform = platformMap[type] || null;
 

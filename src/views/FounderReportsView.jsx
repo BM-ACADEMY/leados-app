@@ -78,43 +78,40 @@ export const FounderReportsView = () => {
             <p style={{ color: C.muted, maxWidth: 400, margin: '0 auto' }}>Run the Founder Dashboard workflow (WF06) in n8n to generate your first automated AI business report!</p>
           </div>
         ) : (
-          logs.map((log) => (
-            <div key={log.id} style={{
-              background: C.card,
-              borderRadius: 16,
-              border: `1px solid ${C.border}`,
-              overflow: 'hidden',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
-            }}>
-              <div style={{
-                padding: '16px 24px',
-                borderBottom: `1px solid ${C.border}`,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                background: 'rgba(255,255,255,0.02)'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.green, fontSize: 13, fontWeight: 600, background: 'rgba(34,197,94,0.1)', padding: '4px 10px', borderRadius: 20 }}>
-                    <CheckCircle size={14} /> Delivered via WhatsApp
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.muted, fontSize: 13, fontWeight: 500 }}>
-                  <Calendar size={14} />
-                  {new Date(log.created_at).toLocaleString(undefined, {
-                    weekday: 'short', month: 'short', day: 'numeric',
-                    hour: 'numeric', minute: '2-digit'
-                  })}
-                </div>
-              </div>
-
-              <div style={{ padding: '24px' }}>
-                <div style={{ whiteSpace: 'pre-wrap', color: C.text, fontSize: 15, lineHeight: 1.7, opacity: 0.9 }}>
-                  {log.message}
-                </div>
-              </div>
-            </div>
-          ))
+          <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ background: 'rgba(255,255,255,0.02)', borderBottom: `1px solid ${C.border}` }}>
+                  <th style={{ padding: '16px 24px', color: C.muted, fontWeight: 600, fontSize: 13, width: '180px' }}>Date Generated</th>
+                  <th style={{ padding: '16px 24px', color: C.muted, fontWeight: 600, fontSize: 13 }}>AI Executive Summary</th>
+                  <th style={{ padding: '16px 24px', color: C.muted, fontWeight: 600, fontSize: 13, width: '150px' }}>Delivery Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((log) => (
+                  <tr key={log.id} style={{ borderBottom: `1px solid ${C.border}`, transition: 'background 0.2s' }} className="hover-highlight">
+                    <td style={{ padding: '24px', verticalAlign: 'top', color: C.text, fontSize: 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500 }}>
+                        <Calendar size={14} color={C.muted} />
+                        {new Date(log.created_at).toLocaleString(undefined, {
+                          month: 'short', day: 'numeric',
+                          hour: 'numeric', minute: '2-digit'
+                        })}
+                      </div>
+                    </td>
+                    <td style={{ padding: '24px', verticalAlign: 'top', color: C.text, fontSize: 14, lineHeight: 1.6 }}>
+                      <div style={{ whiteSpace: 'pre-wrap', opacity: 0.9 }}>{log.message}</div>
+                    </td>
+                    <td style={{ padding: '24px', verticalAlign: 'top' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: C.green, fontSize: 12, fontWeight: 600, background: 'rgba(34,197,94,0.1)', padding: '6px 12px', borderRadius: 20 }}>
+                        <CheckCircle size={14} /> Delivered
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, RefreshCw, FileText, CheckCircle, ExternalLink, Calendar, Search } from 'lucide-react';
+import { Bot, RefreshCw, FileText, CheckCircle, Calendar, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
@@ -8,6 +8,22 @@ export const FounderReportsView = () => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const ITEMS_PER_PAGE = 10;
+  const totalPages = Math.ceil(logs.length / ITEMS_PER_PAGE);
+  const paginatedLogs = logs.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this report?")) return;
+    try {
+      await api.deleteWorkflowLog(id);
+      toast.success("Report deleted");
+      refreshLogs();
+    } catch (err) {
+      toast.error("Failed to delete report");
+    }
+  };
 
   useEffect(() => {
     const fetchLogs = async () => {
@@ -85,10 +101,11 @@ export const FounderReportsView = () => {
                   <th style={{ padding: '16px 24px', color: C.muted, fontWeight: 600, fontSize: 13, width: '180px' }}>Date Generated</th>
                   <th style={{ padding: '16px 24px', color: C.muted, fontWeight: 600, fontSize: 13 }}>AI Executive Summary</th>
                   <th style={{ padding: '16px 24px', color: C.muted, fontWeight: 600, fontSize: 13, width: '150px' }}>Delivery Status</th>
+                  <th style={{ padding: '16px 24px', width: '60px' }}></th>
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log) => (
+                {paginatedLogs.map((log) => (
                   <tr key={log.id} style={{ borderBottom: `1px solid ${C.border}`, transition: 'background 0.2s' }} className="hover-highlight">
                     <td style={{ padding: '24px', verticalAlign: 'top', color: C.text, fontSize: 14 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500 }}>
@@ -107,10 +124,28 @@ export const FounderReportsView = () => {
                         <CheckCircle size={14} /> Delivered
                       </div>
                     </td>
+                    <td style={{ padding: '24px', verticalAlign: 'top', textAlign: 'right' }}>
+                      <button onClick={() => handleDelete(log.id)} style={{ background: 'transparent', border: 'none', color: C.red, cursor: 'pointer', padding: 8, borderRadius: 6 }} className="hover-bg">
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', borderTop: `1px solid ${C.border}`, background: 'rgba(255,255,255,0.01)' }}>
+                <span style={{ color: C.muted, fontSize: 13 }}>Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, logs.length)} of {logs.length} entries</span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 6, background: C.surface, border: `1px solid ${C.border}`, color: C.text, cursor: currentPage === 1 ? 'not-allowed' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>
+                    <ChevronLeft size={16} />
+                  </button>
+                  <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 6, background: C.surface, border: `1px solid ${C.border}`, color: C.text, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

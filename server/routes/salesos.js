@@ -478,6 +478,16 @@ router.get('/workflows/logs', async (req, res) => {
   }
 });
 
+router.delete('/workflows/logs/:id', async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM workflow_logs WHERE id = $1 RETURNING id', [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Log not found' });
+    res.json({ success: true, deleted_id: req.params.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/workflows/telemetry', async (req, res) => {
   try {
     // 1. Total executions

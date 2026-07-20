@@ -11,6 +11,7 @@ import { CampaignsView } from './views/CampaignsView.jsx';
 import { TemplatesView } from './views/TemplatesView.jsx';
 import { AIBrainView } from './views/AIBrainView.jsx';
 import { ReportsView } from './views/ReportsView.jsx';
+import { FounderReportsView } from './views/FounderReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
 import { SettingsView } from './views/SettingsView.jsx';
 import { WorkflowsView } from './views/WorkflowsView.jsx';
@@ -141,6 +142,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/templates" element={<TemplatesView />} />
               <Route path="/brain" element={<AIBrainView />} />
               <Route path="/reports" element={<ReportsView />} />
+              <Route path="/founder-reports" element={<FounderReportsView />} />
               <Route path="/clients" element={<ClientsView />} />
               <Route path="/settings" element={<SettingsView />} />
               <Route path="/workflows" element={<WorkflowsView />} />

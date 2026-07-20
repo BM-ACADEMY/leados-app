@@ -12,6 +12,7 @@ export function SocialAccounts({
   const [linkingBrand, setLinkingBrand] = useState(false);
   const [metaAppId, setMetaAppId] = useState('');
   const [ytBrand, setYtBrand] = useState('');
+  const [liBrand, setLiBrand] = useState('');
 
   // Load Meta configuration App ID
   useEffect(() => {
@@ -27,18 +28,29 @@ export function SocialAccounts({
     loadConnectedAccounts();
   }, [loadConnectedAccounts]);
 
-  // Handle YouTube URL parameters callback
+  // Handle YouTube / LinkedIn URL parameters callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ytSuccess = params.get('youtube_success');
     const ytError = params.get('youtube_error');
+    const liSuccess = params.get('linkedin_success');
+    const liError = params.get('linkedin_error');
     const channel = params.get('channel');
+    const brand = params.get('brand');
+
     if (ytSuccess) {
       alert(`Successfully connected YouTube channel "${channel}"!`);
       window.history.replaceState({}, document.title, window.location.pathname);
       loadConnectedAccounts();
     } else if (ytError) {
-      alert(`Failed to connect YouTube channel: ${ytError}`);
+      alert(`Failed to connect YouTube: ${ytError}`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (liSuccess) {
+      alert(`Successfully connected LinkedIn "${channel}" to brand "${brand}"!`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      loadConnectedAccounts();
+    } else if (liError) {
+      alert(`Failed to connect LinkedIn: ${liError}`);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, [loadConnectedAccounts]);
@@ -120,6 +132,12 @@ export function SocialAccounts({
   const handleConnectYoutube = () => {
     const apiBase = import.meta.env.VITE_API_URL || '';
     window.location.href = `${apiBase}/api/content/youtube/auth?brand_name=${encodeURIComponent(ytBrand)}`;
+  };
+
+  const handleConnectLinkedIn = () => {
+    if (!liBrand) { alert('Please select a brand first.'); return; }
+    const apiBase = import.meta.env.VITE_API_URL || '';
+    window.location.href = `${apiBase}/api/content/linkedin/auth?brand_name=${encodeURIComponent(liBrand)}`;
   };
 
   const activeConnected = connectedAccounts.filter(acc => acc.access_token);
@@ -261,6 +279,58 @@ export function SocialAccounts({
             </div>
           </div>
 
+          {/* LinkedIn Connect */}
+          <div style={{ borderTop: '1px solid var(--b1)', paddingTop: 20, marginTop: 4 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', marginBottom: 5 }}>LinkedIn · Page or Profile</div>
+            <div className="mono" style={{ fontSize: 9.5, color: 'var(--t3)', marginBottom: 9 }}>
+              scopes: w_member_social · r_organization_social · w_organization_social
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <select
+                value={liBrand}
+                onChange={e => setLiBrand(e.target.value)}
+                style={{
+                  background: 'var(--bg4)',
+                  color: 'var(--t1)',
+                  border: '1px solid var(--b2)',
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  outline: 'none',
+                  cursor: 'pointer',
+                  minWidth: 200
+                }}
+              >
+                <option value="" disabled>Select brand...</option>
+                {brands.map(b => (
+                  <option key={b.id || b.slug} value={b.name}>{b.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleConnectLinkedIn}
+                style={{
+                  background: '#0A66C2',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '12px 20px',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 9,
+                  boxShadow: '0 4px 14px rgba(10,102,194,.3)'
+                }}
+              >
+                <span>in</span> Connect LinkedIn
+              </button>
+            </div>
+            <div className="mono" style={{ fontSize: 9.5, color: 'var(--t3)', marginTop: 10 }}>
+              Auto-detects company page if you are an admin · falls back to personal profile
+            </div>
+          </div>
+
           {/* Loading Banner */}
           {loadingMeta && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg3)', border: '1px solid var(--b1)', borderRadius: 8, padding: 12, marginTop: 20 }}>
@@ -341,7 +411,10 @@ export function SocialAccounts({
                         <span className="cs" style={{ margin: 0 }}>{acc.brand_name}</span>
                       </div>
                       <div className="cs mono" style={{ marginTop: 4 }}>
-                        ID: {acc.platform === 'facebook' ? acc.facebook_page_id : acc.platform === 'youtube' ? acc.account_id : acc.instagram_business_id}
+                        ID: {acc.platform === 'facebook' ? acc.facebook_page_id
+                           : acc.platform === 'youtube' ? acc.account_id
+                           : acc.platform === 'linkedin' ? acc.account_id
+                           : acc.instagram_business_id}
                       </div>
                     </div>
                     <button className="conn-btn linked">● Active</button>

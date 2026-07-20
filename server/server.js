@@ -107,10 +107,12 @@ app.use('/api/chatbot', chatbotRoutes);
 const auth = (req, res, next) => {
   // Bypass JWT auth for OAuth redirect routes where the browser doesn't send a token
   if (
-    req.path.includes('/auth/google') || 
+    req.path.includes('/auth/google') ||
     req.path.includes('/auth/callback') ||
     req.path.includes('/youtube/auth') ||
-    req.path.includes('/youtube/callback')
+    req.path.includes('/youtube/callback') ||
+    req.path.includes('/linkedin/auth') ||
+    req.path.includes('/linkedin/callback')
   ) {
     return next();
   }

@@ -45,6 +45,10 @@ router.post("/meta/link-account", ctrl.linkBrandAccount);
 router.get("/youtube/auth", ctrl.handleYoutubeAuth);
 router.get("/youtube/callback", ctrl.handleYoutubeCallback);
 
+// LinkedIn OAuth routes
+router.get("/linkedin/auth", ctrl.handleLinkedInAuth);
+router.get("/linkedin/callback", ctrl.handleLinkedInCallback);
+
 
 // Trigger publishing
 router.post("/:id/publish", ctrl.publishPost);

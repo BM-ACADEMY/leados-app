@@ -3045,7 +3045,7 @@ async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) 
 
     console.log(`[LinkedIn] Uploading video to LinkedIn... (${videoData.data.byteLength} bytes)`);
     await axios.put(uploadUrl, videoData.data, {
-      headers: { 'Content-Type': 'application/octet-stream', 'media-type-family': 'STILLIMAGE' },
+      headers: { 'Content-Type': 'video/mp4' },
       maxBodyLength: Infinity,
       timeout: 300000
     });

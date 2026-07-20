@@ -158,7 +158,7 @@
     },
     {
       "parameters": {
-        "jsCode": "return [{ json: { revenueToday: ('Get Revenue Today')[0].json, revenueMonth: ('Get Revenue Month')[0].json, brandRevenue: ('Get Brand Revenue')[0].json, leadSources: ('Get Lead Sources')[0].json, conversionRate: ('Get Conversion Rate')[0].json, pendingPayments: ('Get Pending Payments')[0].json, followupsPending: ('Get Followups Pending')[0].json, slaBreaches: ('Get SLA Breaches')[0].json, aiPerformance: ('Get AI Performance')[0].json } }];",
+        "jsCode": "return [{ json: { revenueToday: $items('Get Revenue Today')[0].json, revenueMonth: $items('Get Revenue Month')[0].json, brandRevenue: $items('Get Brand Revenue')[0].json, leadSources: $items('Get Lead Sources')[0].json, conversionRate: $items('Get Conversion Rate')[0].json, pendingPayments: $items('Get Pending Payments')[0].json, followupsPending: $items('Get Followups Pending')[0].json, slaBreaches: $items('Get SLA Breaches')[0].json, aiPerformance: $items('Get AI Performance')[0].json } }];",
         "mode": "runOnceForAllItems"
       },
       "id": "5144ccca-2b97-4986-9464-b878281f3f43",

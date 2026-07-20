@@ -53,6 +53,57 @@ export const FounderReportsView = () => {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  const renderFormattedMessage = (text) => {
+    if (!text) return null;
+    const lines = text.split('\n');
+    let inList = false;
+    const elements = [];
+    let listItems = [];
+
+    const flushList = () => {
+      if (listItems.length > 0) {
+        elements.push(<ul key={`ul-${elements.length}`} style={{ margin: '8px 0', paddingLeft: 24, paddingRight: 12 }}>{listItems}</ul>);
+        listItems = [];
+        inList = false;
+      }
+    };
+
+    const parseInlineFormat = (lineStr) => {
+      const parts = lineStr.split(/(\*\*.*?\*\*)/g);
+      return parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          return <strong key={i} style={{ color: C.text }}>{part.slice(2, -2)}</strong>;
+        }
+        return part;
+      });
+    };
+
+    lines.forEach((line, idx) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('* ') || trimmed.startsWith('- ')) {
+        inList = true;
+        listItems.push(
+          <li key={idx} style={{ marginBottom: 8, paddingLeft: 4 }}>
+            {parseInlineFormat(line.replace(/^(\* |- )\s*/, ''))}
+          </li>
+        );
+      } else {
+        flushList();
+        if (trimmed === '') {
+          elements.push(<div key={`br-${idx}`} style={{ height: 8 }} />);
+        } else {
+          elements.push(
+            <div key={`div-${idx}`} style={{ marginBottom: 4 }}>
+              {parseInlineFormat(line)}
+            </div>
+          );
+        }
+      }
+    });
+    flushList();
+    return elements;
+  };
+
   return (
     <div style={{ padding: '32px', maxWidth: 1200, margin: '0 auto', fontFamily: "'Inter', sans-serif", maxHeight: 'calc(100vh - 80px)', overflowY: 'auto' }}>
       {/* Header */}
@@ -123,7 +174,7 @@ export const FounderReportsView = () => {
                       </div>
                     </td>
                     <td style={{ padding: '24px', verticalAlign: 'top', color: C.text, fontSize: 14, lineHeight: 1.6 }}>
-                      <div style={{ whiteSpace: 'pre-wrap', opacity: 0.9 }}>{log.message}</div>
+                      <div style={{ opacity: 0.9 }}>{renderFormattedMessage(log.message)}</div>
                     </td>
                     <td style={{ padding: '24px', verticalAlign: 'top' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: C.green, fontSize: 12, fontWeight: 600, background: 'rgba(34,197,94,0.1)', padding: '6px 12px', borderRadius: 20 }}>

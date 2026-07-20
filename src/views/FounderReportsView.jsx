@@ -9,19 +9,25 @@ export const FounderReportsView = () => {
   const [loading, setLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [reportToDelete, setReportToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const ITEMS_PER_PAGE = 10;
   const totalPages = Math.ceil(logs.length / ITEMS_PER_PAGE);
   const paginatedLogs = logs.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this report?")) return;
+  const confirmDelete = async () => {
+    if (!reportToDelete) return;
+    setIsDeleting(true);
     try {
-      await api.deleteWorkflowLog(id);
+      await api.deleteWorkflowLog(reportToDelete);
       toast.success("Report deleted");
       refreshLogs();
     } catch (err) {
       toast.error("Failed to delete report");
+    } finally {
+      setIsDeleting(false);
+      setReportToDelete(null);
     }
   };
 
@@ -125,7 +131,7 @@ export const FounderReportsView = () => {
                       </div>
                     </td>
                     <td style={{ padding: '24px', verticalAlign: 'top', textAlign: 'right' }}>
-                      <button onClick={() => handleDelete(log.id)} style={{ background: 'transparent', border: 'none', color: C.red, cursor: 'pointer', padding: 8, borderRadius: 6 }} className="hover-bg">
+                      <button onClick={() => setReportToDelete(log.id)} style={{ background: 'transparent', border: 'none', color: C.red, cursor: 'pointer', padding: 8, borderRadius: 6 }} className="hover-bg">
                         <Trash2 size={16} />
                       </button>
                     </td>
@@ -149,6 +155,33 @@ export const FounderReportsView = () => {
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {reportToDelete && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, width: 400, padding: 32, boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
+            <h3 style={{ margin: '0 0 16px 0', fontSize: 20, color: C.text, fontWeight: 700 }}>Delete Report</h3>
+            <p style={{ margin: '0 0 32px 0', color: C.muted, fontSize: 14, lineHeight: 1.6 }}>Are you sure you want to permanently delete this founder report? This action cannot be undone.</p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button 
+                onClick={() => setReportToDelete(null)}
+                disabled={isDeleting}
+                style={{ padding: '10px 20px', background: 'transparent', color: C.text, border: `1px solid ${C.border}`, borderRadius: 8, fontWeight: 600, cursor: isDeleting ? 'not-allowed' : 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmDelete}
+                disabled={isDeleting}
+                style={{ padding: '10px 20px', background: C.red, color: 'white', border: 'none', borderRadius: 8, fontWeight: 600, cursor: isDeleting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                {isDeleting && <RefreshCw size={16} className="spin" />}
+                Delete Report
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

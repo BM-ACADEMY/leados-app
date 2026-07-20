@@ -404,6 +404,51 @@ router.post('/communication/send', async (req, res) => {
   }
 });
 
+// ─── SEND TO FOUNDER (WF06 REPORT) ──────────────────────
+router.post('/communication/send-founder', async (req, res) => {
+  const { channel, type, content } = req.body;
+  try {
+    const founderPhone = process.env.FOUNDER_WHATSAPP_PHONE || '8807226257';
+    const phoneNumberId = process.env.WA_PHONE_NUMBER_ID;
+    const waAccessToken = process.env.META_PAGE_ACCESS_TOKEN;
+
+    let waMessageId = null;
+    if (channel === 'whatsapp' && founderPhone && phoneNumberId && waAccessToken) {
+      try {
+        const phoneDigits = founderPhone.replace(/\D/g, '');
+        const payload = {
+          messaging_product: 'whatsapp',
+          to: phoneDigits,
+          type: 'text',
+          text: { body: content }
+        };
+
+        console.log(`[Send Founder Report] Sending to ${phoneDigits} via Meta API...`);
+        const waRes = await axios.post(
+          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+          payload,
+          { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+        );
+        waMessageId = waRes.data?.messages?.[0]?.id || null;
+        console.log(`✅ [Send Founder Report] Meta WhatsApp delivered successfully! Message ID: ${waMessageId}`);
+      } catch (waErr) {
+        console.error(`⚠️ [Send Founder Report] Meta Graph API Error:`, waErr.response?.data || waErr.message);
+      }
+    }
+
+    // Automatically log this as a Workflow Log so the UI can display it in FounderReportsView
+    await pool.query(
+      `INSERT INTO workflow_logs (workflow, status, message) VALUES ($1, $2, $3)`,
+      ['WF06', 'success', content]
+    );
+
+    res.json({ success: true, delivered: true, content, wa_msg_id: waMessageId });
+  } catch (err) {
+    console.error('[Send Founder Report Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 9. Workflow Logger
 router.post('/workflows/log', async (req, res) => {
   const { workflow, lead_id, status, message } = req.body;
@@ -428,6 +473,16 @@ router.get('/workflows/logs', async (req, res) => {
       LIMIT 100
     `);
     res.json({ logs: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/workflows/logs/:id', async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM workflow_logs WHERE id = $1 RETURNING id', [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Log not found' });
+    res.json({ success: true, deleted_id: req.params.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -671,7 +726,7 @@ router.get('/reports/hot-leads', async (req, res) => {
 });
 
 router.post('/ai/report-generator', async (req, res) => {
-  const { data } = req.body;
+  const data = req.body.data || req.body.metrics || req.body;
   try {
     if (!ai) return res.json({ summary: "Daily Summary generated." });
     const prompt = `Summarize these daily metrics for a Founder Dashboard:\n${JSON.stringify(data)}\nWrite 3 bullet points.`;

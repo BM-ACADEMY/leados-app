@@ -12,6 +12,7 @@ const NAV = [
   { path: '/templates', Icon: FileText, label: 'Templates' },
   { path: '/brain', Icon: Brain, label: 'AI Brain' },
   { path: '/reports', Icon: BarChart2, label: 'Reports' },
+  { path: '/founder-reports', Icon: FileText, label: 'Founder Reports' },
   { path: '/clients', Icon: Building2, label: 'Clients' },
 ];
 
@@ -506,6 +507,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
 
                 <NavLink to="/mafiya/brain" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GMB Brain')}>
                   <Brain size={14} style={{ marginRight: 8 }} /> GMB Brain
+                </NavLink>
+
+                <NavLink to="/mafiya/rivals" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Rival Families')}>
+                  <Target size={14} style={{ marginRight: 8 }} /> Rival Families
                 </NavLink>
 
               </div>

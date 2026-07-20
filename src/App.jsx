@@ -11,6 +11,7 @@ import { CampaignsView } from './views/CampaignsView.jsx';
 import { TemplatesView } from './views/TemplatesView.jsx';
 import { AIBrainView } from './views/AIBrainView.jsx';
 import { ReportsView } from './views/ReportsView.jsx';
+import { FounderReportsView } from './views/FounderReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
 import { SettingsView } from './views/SettingsView.jsx';
 import { WorkflowsView } from './views/WorkflowsView.jsx';
@@ -49,6 +50,7 @@ import LoyaltyMafiya from './views/mafiya/Loyalty.jsx';
 import GmbBrain from './views/mafiya/GmbBrain.jsx';
 import StreetPosts from './views/mafiya/StreetPosts.jsx';
 import GbpInsights from './views/mafiya/GbpInsights.jsx';
+import RivalFamilies from './views/mafiya/RivalFamilies.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -141,6 +143,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/templates" element={<TemplatesView />} />
               <Route path="/brain" element={<AIBrainView />} />
               <Route path="/reports" element={<ReportsView />} />
+              <Route path="/founder-reports" element={<FounderReportsView />} />
               <Route path="/clients" element={<ClientsView />} />
               <Route path="/settings" element={<SettingsView />} />
               <Route path="/workflows" element={<WorkflowsView />} />
@@ -186,6 +189,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/mafiya/brain" element={<GmbBrain />} />
               <Route path="/mafiya/street-posts" element={<StreetPosts />} />
               <Route path="/mafiya/gbp-insights" element={<GbpInsights />} />
+              <Route path="/mafiya/rivals" element={<RivalFamilies />} />
 
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>

@@ -1,40 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { C } from '../../constants/theme.js';
-import { Shield, Plus, X, Search, Loader2, Target, TrendingUp, AlertTriangle, TrendingDown, Users, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Target, TrendingUp, AlertTriangle, TrendingDown, Users, Loader2, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
-const INITIAL_FORM = {
-  competitor_name: '',
-  gbp_url: '',
-  place_id: '',
-  city: '',
-  keyword: ''
-};
-
 export default function RivalFamilies() {
   const [clients, setClients] = useState([]);
   const [selectedClient, setSelectedClient] = useState('');
-  const [rivals, setRivals] = useState([]);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
-  const [isLoadingRivals, setIsLoadingRivals] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const [showModal, setShowModal] = useState(false);
-  const [showFindModal, setShowFindModal] = useState(false);
-  const [findQuery, setFindQuery] = useState('');
-  const [suggestions, setSuggestions] = useState([]);
+  // Live search states
+  const [searchCategory, setSearchCategory] = useState('');
+  const [searchLocation, setSearchLocation] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const findModalRef = useRef(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [formData, setFormData] = useState({ ...INITIAL_FORM });
-  const [errors, setErrors] = useState({});
-  const modalRef = useRef(null);
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [liveCompetitors, setLiveCompetitors] = useState([]);
+  const [ourRank, setOurRank] = useState('Pending');
+  const [ourReviews, setOurReviews] = useState(120);
+  const [ourRating, setOurRating] = useState(4.6);
 
   const [googleScriptLoaded, setGoogleScriptLoaded] = useState(false);
-  const autocompleteInputRef = useRef(null);
-  const autocompleteInstanceRef = useRef(null);
+  const locationInputRef = useRef(null);
+  const locationAutocompleteRef = useRef(null);
 
   // Load Google Maps Script
   useEffect(() => {
@@ -43,16 +31,34 @@ export default function RivalFamilies() {
       return;
     }
     const scriptId = 'google-maps-places-script';
-    if (!document.getElementById(scriptId)) {
-      const script = document.createElement('script');
-      script.id = scriptId;
-      const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
-      script.async = true;
-      script.defer = true;
-      script.onload = () => setGoogleScriptLoaded(true);
-      document.head.appendChild(script);
-    }
+    if (document.getElementById(scriptId)) return;
+
+    const fetchAndLoadScript = async () => {
+      try {
+        const token = localStorage.getItem('leados_token');
+        const res = await fetch(`${API_URL}/api/mafiya/clients/config/maps-key`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error('Failed to fetch maps API key');
+        const data = await res.json();
+        
+        if (data.apiKey) {
+          const script = document.createElement('script');
+          script.id = scriptId;
+          script.src = `https://maps.googleapis.com/maps/api/js?key=${data.apiKey}&libraries=places&loading=async`;
+          script.async = true;
+          script.defer = true;
+          script.onload = () => setGoogleScriptLoaded(true);
+          document.head.appendChild(script);
+        } else {
+          console.error('Maps API key not found in backend response');
+        }
+      } catch (err) {
+        console.error('Failed to load Google Maps script from backend key:', err);
+      }
+    };
+
+    fetchAndLoadScript();
   }, []);
 
   // Fetch clients
@@ -79,233 +85,158 @@ export default function RivalFamilies() {
     fetchClients();
   }, []);
 
-  // Fetch rivals when client changes
-  useEffect(() => {
-    if (!selectedClient) return;
-    fetchRivals();
-  }, [selectedClient]);
+  // Detect and search competitors based on client details
+  const detectAndSearchCompetitors = (client) => {
+    if (!client) return;
+    const category = client.custom_category || client.business_category || 'Business';
+    setSearchCategory(category);
+    setSearchLocation('');
+    setLiveCompetitors([]);
+    setOurRank('Pending');
+    setIsDetectingLocation(true);
 
-  const fetchRivals = async () => {
-    setIsLoadingRivals(true);
-    try {
-      const token = localStorage.getItem('leados_token');
-      const res = await fetch(`${API_URL}/api/mafiya/rivals/${selectedClient}`, {
-        headers: { Authorization: `Bearer ${token}` },
+    if (window.google && window.google.maps && window.google.maps.places) {
+      const service = new window.google.maps.places.PlacesService(document.createElement('div'));
+      // Search for the client's own business to find its city/location
+      service.textSearch({ query: client.business_name }, (results, status) => {
+        setIsDetectingLocation(false);
+        let detectedCity = '';
+        if (status === window.google.maps.places.PlacesServiceStatus.OK && results.length > 0) {
+          const place = results[0];
+          const parts = place.formatted_address ? place.formatted_address.split(',') : [];
+          if (parts.length > 2) {
+            detectedCity = parts[parts.length - 2].trim().split(' ')[0];
+          }
+        }
+        
+        const finalCity = detectedCity || '';
+        setSearchLocation(finalCity);
+
+        if (finalCity) {
+          executeLiveSearch(category, finalCity);
+        }
       });
-      if (!res.ok) throw new Error('Failed to fetch rivals');
-      const data = await res.json();
-      setRivals(data);
-    } catch (err) {
-      console.error(err);
-      toast.error('Failed to load rivals');
-    } finally {
-      setIsLoadingRivals(false);
+    } else {
+      setIsDetectingLocation(false);
     }
   };
 
-  const handleRefresh = async () => {
-    if (!selectedClient) return;
-    setIsRefreshing(true);
-    try {
-      const token = localStorage.getItem('leados_token');
-      const res = await fetch(`${API_URL}/api/mafiya/rivals/refresh/${selectedClient}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error('Failed to refresh');
-      toast.success('Rivals data refreshed');
-      fetchRivals();
-    } catch (err) {
-      console.error(err);
-      toast.error('Failed to refresh data');
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
-    if (errors[name]) setErrors({ ...errors, [name]: null });
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (!formData.competitor_name) {
-      setErrors({ competitor_name: 'Competitor name is required' });
-      return toast.error('Please enter a competitor name');
-    }
-
-    setIsSaving(true);
-    try {
-      const token = localStorage.getItem('leados_token');
-      const res = await fetch(`${API_URL}/api/mafiya/rivals`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...formData, business_id: selectedClient }),
-      });
-      if (!res.ok) throw new Error('Failed to save');
-      toast.success('Competitor added successfully');
-      setFormData({ ...INITIAL_FORM });
-      setShowModal(false);
-      fetchRivals();
-    } catch (err) {
-      console.error(err);
-      toast.error('Failed to add competitor');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleDelete = async (id) => {
-    if (!confirm('Are you sure you want to remove this competitor?')) return;
-    try {
-      const token = localStorage.getItem('leados_token');
-      const res = await fetch(`${API_URL}/api/mafiya/rivals/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error('Failed to delete');
-      setRivals(rivals.filter(r => r.id !== id));
-      toast.success('Competitor removed');
-    } catch (err) {
-      console.error(err);
-      toast.error('Failed to remove competitor');
-    }
-  };
-
-  // Close modal logic
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      // Don't close if clicking inside a pac-container (Google Maps Autocomplete dropdown)
-      if (e.target.closest('.pac-container')) return;
-      if (modalRef.current && !modalRef.current.contains(e.target)) setShowModal(false);
-      if (findModalRef.current && !findModalRef.current.contains(e.target)) setShowFindModal(false);
-    };
-    if (showModal || showFindModal) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showModal, showFindModal]);
-
-  const handleFindRivals = () => {
-    const client = clients.find(c => c.id === parseInt(selectedClient));
-    if (client) {
-      setFindQuery(`${client.business_category || client.custom_category || 'Business'} in [City]`);
-    }
-    setShowFindModal(true);
-    setSuggestions([]);
-  };
-
-  const executeFindSearch = (e) => {
-    e.preventDefault();
-    if (!findQuery || !googleScriptLoaded) return;
+  const executeLiveSearch = (category, location) => {
+    if (!category || !location || !window.google || !window.google.maps || !window.google.maps.places) return;
     
     setIsSearching(true);
+    const query = `${category} in ${location}`;
     const service = new window.google.maps.places.PlacesService(document.createElement('div'));
-    service.textSearch({ query: findQuery }, (results, status) => {
+    
+    service.textSearch({ query }, (results, status) => {
       setIsSearching(false);
-      if (status === window.google.maps.places.PlacesServiceStatus.OK) {
-        setSuggestions(results);
+      if (status === window.google.maps.places.PlacesServiceStatus.OK && results.length > 0) {
+        const client = clients.find(c => c.id === parseInt(selectedClient));
+        let clientIndex = -1;
+        
+        if (client) {
+          clientIndex = results.findIndex(r => r.name.toLowerCase().includes(client.business_name.toLowerCase()) || client.business_name.toLowerCase().includes(r.name.toLowerCase()));
+        }
+        
+        if (clientIndex !== -1) {
+          setOurRank(clientIndex + 1);
+          setOurReviews(results[clientIndex].user_ratings_total || 120);
+          setOurRating(results[clientIndex].rating || 4.6);
+        } else {
+          setOurRank('Not in Top 20');
+          setOurReviews(120);
+          setOurRating(4.6);
+        }
+
+        // Filter out our own business from competitor list
+        const filtered = client 
+          ? results.filter(r => r.name.toLowerCase() !== client.business_name.toLowerCase())
+          : results;
+          
+        setLiveCompetitors(filtered);
       } else {
         toast.error('No competitors found for this query');
-        setSuggestions([]);
+        setLiveCompetitors([]);
+        setOurRank('Not Found');
       }
     });
   };
 
-  const handleAddSuggestion = async (place) => {
-    // Attempt to extract city from formatted_address if possible, or leave blank for now
-    let city = '';
-    const parts = place.formatted_address ? place.formatted_address.split(',') : [];
-    if (parts.length > 2) {
-      city = parts[parts.length - 2].trim().split(' ')[0]; // rough guess for city
-    }
-
-    const newRival = {
-      business_id: selectedClient,
-      competitor_name: place.name,
-      place_id: place.place_id,
-      gbp_url: `https://www.google.com/maps/place/?q=place_id:${place.place_id}`,
-      city: city,
-      keyword: findQuery
-    };
-
-    try {
-      const token = localStorage.getItem('leados_token');
-      const res = await fetch(`${API_URL}/api/mafiya/rivals`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(newRival),
-      });
-      if (!res.ok) throw new Error('Failed to save');
-      toast.success(`${place.name} added as rival`);
-      fetchRivals();
-      
-      // Remove from suggestions
-      setSuggestions(prev => prev.filter(s => s.place_id !== place.place_id));
-    } catch (err) {
-      console.error(err);
-      toast.error('Failed to add competitor');
-    }
-  };
-
-  // Init Google Maps Autocomplete
+  // Trigger search on client select
   useEffect(() => {
-    if (showModal && googleScriptLoaded && autocompleteInputRef.current) {
-      autocompleteInstanceRef.current = new window.google.maps.places.Autocomplete(autocompleteInputRef.current, {
-        types: ['establishment']
+    if (!selectedClient) return;
+    const client = clients.find(c => c.id === parseInt(selectedClient));
+    if (client) {
+      detectAndSearchCompetitors(client);
+    }
+  }, [selectedClient, clients, googleScriptLoaded]);
+
+  // Google Maps Autocomplete for location input
+  useEffect(() => {
+    if (googleScriptLoaded && window.google && window.google.maps && window.google.maps.places && locationInputRef.current) {
+      locationAutocompleteRef.current = new window.google.maps.places.Autocomplete(locationInputRef.current, {
+        types: ['(regions)'],
       });
 
-      // Prevent form submission on pressing Enter in the autocomplete dropdown
       const handleKeyDown = (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
+          executeLiveSearch(searchCategory, e.target.value);
         }
       };
-      autocompleteInputRef.current.addEventListener('keydown', handleKeyDown);
+      locationInputRef.current.addEventListener('keydown', handleKeyDown);
 
-      const listener = autocompleteInstanceRef.current.addListener('place_changed', () => {
-        const place = autocompleteInstanceRef.current.getPlace();
-        if (!place.geometry) return;
-
-        let city = '';
+      const listener = locationAutocompleteRef.current.addListener('place_changed', () => {
+        const place = locationAutocompleteRef.current.getPlace();
+        if (!place) return;
+        
+        let cityName = '';
         for (const component of place.address_components || []) {
-          if (component.types.includes('locality')) {
-            city = component.long_name;
+          if (component.types.includes('locality') || component.types.includes('administrative_area_level_2')) {
+            cityName = component.long_name;
             break;
           }
         }
-
-        setFormData(prev => ({
-          ...prev,
-          competitor_name: place.name || '',
-          place_id: place.place_id || '',
-          gbp_url: place.url || `https://www.google.com/maps/place/?q=place_id:${place.place_id}`,
-          city: city || prev.city
-        }));
-
-        setErrors(prev => ({ ...prev, competitor_name: null }));
+        if (!cityName) {
+          cityName = place.name || place.formatted_address || '';
+        }
+        
+        setSearchLocation(cityName);
+        if (cityName) {
+          executeLiveSearch(searchCategory, cityName);
+        }
       });
 
       return () => {
-        if (autocompleteInstanceRef.current) {
+        if (locationAutocompleteRef.current && listener) {
           window.google.maps.event.removeListener(listener);
         }
-        if (autocompleteInputRef.current) {
-          autocompleteInputRef.current.removeEventListener('keydown', handleKeyDown);
+        if (locationInputRef.current) {
+          locationInputRef.current.removeEventListener('keydown', handleKeyDown);
         }
-      }
+      };
     }
-  }, [showModal, googleScriptLoaded]);
+  }, [googleScriptLoaded, searchCategory]);
 
-  // Calculate metrics
-  const winning = rivals.filter(r => r.metrics?.status === 'winning').length;
-  const losing = rivals.filter(r => r.metrics?.status === 'losing').length;
-  const watchClosely = rivals.filter(r => r.metrics?.status === 'watch_closely').length;
-  const total = rivals.length;
+  const handleManualSearch = (e) => {
+    e.preventDefault();
+    executeLiveSearch(searchCategory, searchLocation);
+  };
+
+  // Calculate metrics based on live competitors
+  const total = liveCompetitors.length;
+  const winning = typeof ourRank === 'number' 
+    ? liveCompetitors.filter((_, idx) => ourRank < (idx + 1)).length 
+    : 0;
+  const losing = ourRank === 'Not in Top 20'
+    ? total
+    : typeof ourRank === 'number'
+      ? liveCompetitors.filter((_, idx) => ourRank > (idx + 1)).length
+      : 0;
+  const watchClosely = total - winning - losing;
   const healthScore = total > 0 ? Math.round((winning / total) * 100) : 0;
 
   const inputStyle = { background: 'rgba(0,0,0,0.2)', border: `1px solid ${C.border}`, borderRadius: 8, color: '#fff', padding: '12px 14px', outline: 'none', fontSize: 13, width: '100%' };
-  const labelStyle = { display: 'block', fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: 'uppercase' };
 
   if (isLoadingClients) {
     return (
@@ -329,7 +260,13 @@ export default function RivalFamilies() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <form onSubmit={handleManualSearch} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          {isDetectingLocation && (
+            <div style={{ color: '#3b82f6', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, marginRight: 8 }}>
+              <Loader2 size={14} className="spin" /> Detecting location...
+            </div>
+          )}
+          
           <select
             value={selectedClient}
             onChange={e => setSelectedClient(e.target.value)}
@@ -339,34 +276,29 @@ export default function RivalFamilies() {
             {clients.map(c => <option key={c.id} value={c.id}>{c.business_name}</option>)}
           </select>
 
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing || !selectedClient}
-            style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, padding: '10px 14px', borderRadius: 10, color: '#fff', fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, transition: 'background 0.15s' }}
-            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-          >
-            <RefreshCw size={16} className={isRefreshing ? 'spin' : ''} /> {isRefreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <input
+            value={searchCategory}
+            onChange={e => setSearchCategory(e.target.value)}
+            placeholder="Category / Keyword"
+            style={{ ...inputStyle, width: 180, padding: '10px 14px', background: C.surface }}
+          />
+
+          <input
+            ref={locationInputRef}
+            value={searchLocation}
+            onChange={e => setSearchLocation(e.target.value)}
+            placeholder="Location / City"
+            style={{ ...inputStyle, width: 180, padding: '10px 14px', background: C.surface }}
+          />
 
           <button
-            onClick={handleFindRivals}
-            disabled={!selectedClient}
-            style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '10px 16px', borderRadius: 10, color: '#3b82f6', fontSize: 13, fontWeight: 700, cursor: selectedClient ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 8, opacity: selectedClient ? 1 : 0.5, transition: 'background 0.15s' }}
-            onMouseEnter={e => { if(selectedClient) e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)' }}
-            onMouseLeave={e => { if(selectedClient) e.currentTarget.style.background = 'rgba(59, 130, 246, 0.1)' }}
+            type="submit"
+            disabled={isSearching || !searchCategory || !searchLocation}
+            style={{ background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)', border: 'none', padding: '10px 20px', borderRadius: 10, color: '#fff', fontSize: 13, fontWeight: 700, cursor: (isSearching || !searchCategory || !searchLocation) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
           >
-            <Search size={16} /> Auto-Find
+            {isSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />} Search
           </button>
-
-          <button
-            onClick={() => setShowModal(true)}
-            disabled={!selectedClient}
-            style={{ background: 'linear-gradient(135deg, #ef4444, #b91c1c)', border: 'none', padding: '10px 20px', borderRadius: 10, color: '#fff', fontSize: 13, fontWeight: 700, cursor: selectedClient ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 8, opacity: selectedClient ? 1 : 0.5 }}
-          >
-            <Plus size={16} /> Add Rival
-          </button>
-        </div>
+        </form>
       </div>
 
       {!selectedClient ? (
@@ -380,7 +312,7 @@ export default function RivalFamilies() {
           {/* ═══ Dashboard Summary ═══ */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 24 }}>
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 }}>
-              <span style={{ fontSize: 12, color: C.muted, textTransform: 'uppercase', fontWeight: 700 }}>Competitors Tracked</span>
+              <span style={{ fontSize: 12, color: C.muted, textTransform: 'uppercase', fontWeight: 700 }}>Competitors Found</span>
               <div style={{ fontSize: 28, fontWeight: 800, marginTop: 8, color: '#fff' }}>{total}</div>
             </div>
             <div style={{ background: 'linear-gradient(to right bottom, rgba(16, 185, 129, 0.1), rgba(16, 185, 129, 0.02))', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: 14, padding: 20 }}>
@@ -417,85 +349,108 @@ export default function RivalFamilies() {
           </div>
 
           {/* ═══ Table ═══ */}
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden' }}>
-            {isLoadingRivals ? (
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflowX: 'auto' }}>
+            {isSearching ? (
               <div style={{ padding: 60, textAlign: 'center' }}><Loader2 className="spin" size={32} color={C.muted} style={{ margin: '0 auto' }}/></div>
-            ) : rivals.length === 0 ? (
+            ) : liveCompetitors.length === 0 ? (
               <div style={{ padding: 60, textAlign: 'center' }}>
                 <Target size={42} color={C.border} style={{ margin: '0 auto 16px' }} />
-                <p style={{ color: C.muted }}>No competitors added yet.</p>
+                <p style={{ color: C.muted }}>No competitor search results loaded.</p>
               </div>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: 'rgba(255,255,255,0.02)', borderBottom: `1px solid ${C.border}` }}>
-                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 600 }}>Competitor</th>
-                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 600 }}>City / Keyword</th>
-                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 600 }}>Their Rank vs Our Rank</th>
-                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 600 }}>Their Reviews vs Our Reviews</th>
-                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 600 }}>Status</th>
-                    <th style={{ padding: '16px 20px' }}></th>
+                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Competitor</th>
+                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Their Rank</th>
+                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Our Rank</th>
+                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Their Reviews</th>
+                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Their Rating</th>
+                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Status</th>
+                    <th style={{ padding: '16px 20px', color: C.muted, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', whiteSpace: 'nowrap', textAlign: 'right' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rivals.map(rival => {
-                    const m = rival.metrics;
-                    let statusLabel = '—';
-                    let statusColor = C.muted;
-                    let statusBg = 'transparent';
+                  {liveCompetitors.map((competitor, idx) => {
+                    const competitorRank = idx + 1;
+                    const competitorReviews = competitor.user_ratings_total || 0;
+                    const competitorRating = competitor.rating || '0.0';
 
-                    if (m) {
-                      if (m.status === 'winning') {
-                        statusLabel = '✅ We\'re Winning';
+                    let statusLabel = 'Watch closely';
+                    let statusColor = '#f59e0b';
+                    let statusBg = 'rgba(245, 158, 11, 0.08)';
+                    let statusBorder = '1px solid rgba(245, 158, 11, 0.25)';
+                    let subtitle = `${competitor.formatted_address || searchLocation}`;
+                    let subtitleColor = C.muted;
+
+                    if (typeof ourRank === 'number') {
+                      if (ourRank < competitorRank) {
+                        statusLabel = 'We\'re winning';
                         statusColor = '#10b981';
-                        statusBg = 'rgba(16, 185, 129, 0.1)';
-                      } else if (m.status === 'losing') {
-                        statusLabel = '❌ We\'re Losing';
+                        statusBg = 'rgba(16, 185, 129, 0.08)';
+                        statusBorder = '1px solid rgba(16, 185, 129, 0.25)';
+                        subtitle = 'Main competitor — we\'re winning';
+                        subtitleColor = '#10b981';
+                      } else if (ourRank > competitorRank) {
+                        statusLabel = 'We\'re losing';
                         statusColor = '#ef4444';
-                        statusBg = 'rgba(239, 68, 68, 0.1)';
-                      } else if (m.status === 'watch_closely') {
-                        statusLabel = '⚠️ Watch Closely';
-                        statusColor = '#f59e0b';
-                        statusBg = 'rgba(245, 158, 11, 0.1)';
+                        statusBg = 'rgba(239, 68, 68, 0.08)';
+                        statusBorder = '1px solid rgba(239, 68, 68, 0.25)';
+                        subtitle = '⚠️ Main competitor — losing ground';
+                        subtitleColor = '#ef4444';
                       }
+                    } else if (ourRank === 'Not in Top 20') {
+                      statusLabel = 'We\'re losing';
+                      statusColor = '#ef4444';
+                      statusBg = 'rgba(239, 68, 68, 0.08)';
+                      statusBorder = '1px solid rgba(239, 68, 68, 0.25)';
+                      subtitle = '⚠️ Main competitor — losing ground';
+                      subtitleColor = '#ef4444';
                     }
 
+                    // Rank helper style
+                    const getRankBadgeStyle = (rank) => {
+                      if (rank <= 3) return { bg: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#10b981' };
+                      if (rank <= 5) return { bg: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', color: '#f59e0b' };
+                      return { bg: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444' };
+                    };
+
+                    const theirBadge = getRankBadgeStyle(competitorRank);
+                    const competitorUrl = `https://www.google.com/maps/place/?q=place_id:${competitor.place_id}`;
+
                     return (
-                      <tr key={rival.id} style={{ borderBottom: `1px solid ${C.border}`, background: 'transparent', transition: 'background 0.2s' }}>
-                        <td style={{ padding: '16px 20px', fontWeight: 600, color: '#fff' }}>
-                          <a href={rival.gbp_url} target="_blank" rel="noreferrer" style={{ color: '#fff', textDecoration: 'none' }}>{rival.competitor_name}</a>
+                      <tr key={competitor.place_id} style={{ borderBottom: `1px solid ${C.border}`, background: 'transparent', transition: 'background 0.2s' }}>
+                        <td style={{ padding: '16px 20px', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', maxWidth: 300 }}>
+                          <a href={competitorUrl} target="_blank" rel="noreferrer" style={{ color: '#fff', textDecoration: 'none', display: 'block', fontSize: 14, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 280 }} title={competitor.name}>{competitor.name}</a>
+                          <span style={{ fontSize: 11, color: subtitleColor, marginTop: 4, display: 'block', fontWeight: 500, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 280 }} title={subtitle}>{subtitle}</span>
                         </td>
-                        <td style={{ padding: '16px 20px', color: C.muted }}>
-                          {rival.city} <br />
-                          <span style={{ fontSize: 11, opacity: 0.7 }}>{rival.keyword}</span>
+                        <td style={{ padding: '16px 20px', whiteSpace: 'nowrap' }}>
+                          <span style={{ display: 'inline-block', padding: '4px 8px', borderRadius: 6, background: theirBadge.bg, border: theirBadge.border, color: theirBadge.color, fontWeight: 700, fontSize: 12 }}>
+                            #{competitorRank}
+                          </span>
                         </td>
-                        <td style={{ padding: '16px 20px' }}>
-                          {m ? (
-                            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                              <span style={{ fontWeight: 700, color: '#fff' }}>#{m.their_rank}</span>
-                              <span style={{ color: C.muted, fontSize: 11 }}>vs</span>
-                              <span style={{ fontWeight: 700, color: '#93c5fd' }}>#{m.our_rank}</span>
-                            </div>
-                          ) : <span style={{ color: C.muted }}>Pending</span>}
-                        </td>
-                        <td style={{ padding: '16px 20px' }}>
-                          {m ? (
-                            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                              <span style={{ fontWeight: 700, color: '#fff' }}>{m.their_reviews}</span>
-                              <span style={{ color: C.muted, fontSize: 11 }}>vs</span>
-                              <span style={{ fontWeight: 700, color: '#93c5fd' }}>{m.our_reviews}</span>
-                            </div>
-                          ) : <span style={{ color: C.muted }}>Pending</span>}
-                        </td>
-                        <td style={{ padding: '16px 20px' }}>
-                          {m ? (
-                            <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, color: statusColor, background: statusBg }}>
-                              {statusLabel}
+                        <td style={{ padding: '16px 20px', whiteSpace: 'nowrap' }}>
+                          {typeof ourRank === 'number' ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 6, background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.3)', color: '#fbbf24', fontWeight: 700, fontSize: 12 }}>
+                              🏆 #{ourRank}
                             </span>
-                          ) : <span style={{ color: C.muted }}>Pending</span>}
+                          ) : (
+                            <span style={{ color: C.muted, fontWeight: 600 }}>{ourRank}</span>
+                          )}
                         </td>
-                        <td style={{ padding: '16px 20px', textAlign: 'right' }}>
-                          <button onClick={() => handleDelete(rival.id)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12 }}>Remove</button>
+                        <td style={{ padding: '16px 20px', whiteSpace: 'nowrap', color: '#fff', fontWeight: 600 }}>
+                          {competitorReviews}
+                        </td>
+                        <td style={{ padding: '16px 20px', whiteSpace: 'nowrap', color: '#fff', fontWeight: 600 }}>
+                          {competitorRating}★
+                        </td>
+                        <td style={{ padding: '16px 20px', whiteSpace: 'nowrap' }}>
+                          <span style={{ display: 'inline-block', padding: '6px 12px', borderRadius: 20, fontSize: 11, fontWeight: 700, color: statusColor, background: statusBg, border: statusBorder }}>
+                            {statusLabel}
+                          </span>
+                        </td>
+                        <td style={{ padding: '16px 20px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <a href={competitorUrl} target="_blank" rel="noreferrer" style={{ color: '#3b82f6', textDecoration: 'none', fontSize: 12, fontWeight: 600 }}>View on Maps</a>
                         </td>
                       </tr>
                     );
@@ -507,114 +462,7 @@ export default function RivalFamilies() {
         </>
       )}
 
-      {/* ═══ Add Modal ═══ */}
-      {showModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 80, zIndex: 9999 }}>
-          <div ref={modalRef} style={{ background: C.surface, width: '100%', maxWidth: 500, borderRadius: 16, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)', animation: 'slideUp 0.2s ease-out' }}>
-            <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, transparent 100%)' }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#fff' }}>Add Competitor</h2>
-                <p style={{ margin: 0, color: C.muted, fontSize: 12, marginTop: 4 }}>Track their rankings & reviews</p>
-              </div>
-              <button onClick={() => setShowModal(false)} style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 6, cursor: 'pointer' }}>
-                <X size={16} color={C.muted} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSave} style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <label style={labelStyle}>Competitor Name / Location Search *</label>
-                <input ref={autocompleteInputRef} name="competitor_name" value={formData.competitor_name} onChange={handleInputChange} placeholder="E.g. Digital Wave Academy" style={{ ...inputStyle, border: `1px solid ${errors.competitor_name ? '#ef4444' : C.border}` }} />
-                {errors.competitor_name && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.competitor_name}</span>}
-              </div>
-
-              <div>
-                <label style={labelStyle}>GBP URL</label>
-                <input name="gbp_url" value={formData.gbp_url} onChange={handleInputChange} placeholder="https://maps.google.com/..." style={inputStyle} />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div>
-                  <label style={labelStyle}>City</label>
-                  <input name="city" value={formData.city} onChange={handleInputChange} placeholder="E.g. Pondicherry" style={inputStyle} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Target Keyword</label>
-                  <input name="keyword" value={formData.keyword} onChange={handleInputChange} placeholder="E.g. Best Digital Marketing..." style={inputStyle} />
-                </div>
-              </div>
-
-              <button type="submit" disabled={isSaving} style={{ background: 'linear-gradient(135deg, #ef4444, #b91c1c)', border: 'none', padding: '12px', borderRadius: 8, color: '#fff', fontSize: 13, fontWeight: 700, cursor: isSaving ? 'not-allowed' : 'pointer', marginTop: 8, display: 'flex', justifyContent: 'center', gap: 8 }}>
-                {isSaving ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />} Save Competitor
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ Find Competitors Modal ═══ */}
-      {showFindModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 80, zIndex: 9999 }}>
-          <div ref={findModalRef} style={{ background: C.surface, width: '100%', maxWidth: 550, borderRadius: 16, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)', animation: 'slideUp 0.2s ease-out', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
-            <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%)' }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#fff' }}>Auto-Find Competitors</h2>
-                <p style={{ margin: 0, color: C.muted, fontSize: 12, marginTop: 4 }}>Search maps for similar businesses in your area</p>
-              </div>
-              <button onClick={() => setShowFindModal(false)} style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 6, cursor: 'pointer' }}>
-                <X size={16} color={C.muted} />
-              </button>
-            </div>
-            
-            <form onSubmit={executeFindSearch} style={{ padding: '20px 24px', display: 'flex', gap: 12, borderBottom: `1px solid ${C.border}` }}>
-              <input 
-                value={findQuery} 
-                onChange={e => setFindQuery(e.target.value)} 
-                placeholder="E.g. Dentists in Pondicherry" 
-                style={{ ...inputStyle, flex: 1 }} 
-              />
-              <button type="submit" disabled={isSearching || !findQuery} style={{ background: '#3b82f6', border: 'none', padding: '0 20px', borderRadius: 8, color: '#fff', fontSize: 13, fontWeight: 700, cursor: isSearching ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-                {isSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />} Search
-              </button>
-            </form>
-
-            <div style={{ flex: 1, overflowY: 'auto', padding: '12px 24px' }}>
-              {isSearching ? (
-                <div style={{ padding: 40, textAlign: 'center', color: C.muted }}><Loader2 className="spin" size={24} style={{ margin: '0 auto 12px' }} /> Searching Google Maps...</div>
-              ) : suggestions.length === 0 ? (
-                <div style={{ padding: 40, textAlign: 'center', color: C.muted }}>No suggestions yet. Enter a query and search.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {suggestions.map(place => {
-                    const isAdded = rivals.some(r => r.place_id === place.place_id);
-                    return (
-                      <div key={place.place_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px', background: 'rgba(255,255,255,0.02)', border: `1px solid ${C.border}`, borderRadius: 10 }}>
-                        <div style={{ flex: 1, paddingRight: 16 }}>
-                          <h4 style={{ margin: '0 0 4px 0', fontSize: 14, color: '#fff', fontWeight: 600 }}>{place.name}</h4>
-                          <p style={{ margin: 0, fontSize: 12, color: C.muted, display: 'flex', alignItems: 'center', gap: 6 }}>
-                            {place.rating && <span style={{ color: '#f59e0b', fontWeight: 700 }}>★ {place.rating} ({place.user_ratings_total})</span>}
-                            {place.formatted_address}
-                          </p>
-                        </div>
-                        <button 
-                          onClick={() => handleAddSuggestion(place)}
-                          disabled={isAdded}
-                          style={{ background: isAdded ? 'transparent' : 'rgba(16, 185, 129, 0.1)', border: isAdded ? `1px solid ${C.border}` : '1px solid rgba(16, 185, 129, 0.3)', color: isAdded ? C.muted : '#10b981', padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: isAdded ? 'default' : 'pointer' }}
-                        >
-                          {isAdded ? 'Added' : '+ Add'}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       <style>{`
-        @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
         .pac-container {

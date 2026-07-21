@@ -2197,6 +2197,16 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         }
         console.log(`[BackgroundPublish] Publishing video story to Facebook for post ${post.id} — URL: ${publicUrl}`);
         publishRes = await publishVideoStoryToFacebook(pageId, decryptedToken, { videoUrl: publicUrl });
+      } else if (channel === 'linkedin') {
+        const authorUrn = account.account_id;
+        if (!authorUrn) {
+          throw new Error(`LinkedIn author URN is missing for account ${account.account_name}`);
+        }
+        console.log(`[BackgroundPublish] Publishing to LinkedIn for post ${post.id} — URN: ${authorUrn}`);
+        publishRes = await publishToLinkedIn(authorUrn, decryptedToken, {
+          caption: finalCaption,
+          videoUrl: publicUrl
+        });
       }
 
       if (publishRes && publishRes.success) {
@@ -2341,37 +2351,60 @@ async function suggestCaptions(req, res) {
     const transcript = await getOrGenerateTranscript(post);
 
     if (platform === 'all') {
-      const allPrompt = `You are the expert social media content writer for "${post.brand_name}" (${brandVoice.tag || brandDetail.industry}).
-BRAND VOICE GUIDE:
-${brandVoice.voice || "Professional and engaging"}
+      const primaryContent = contextInfo
+        ? `USER'S DESCRIPTION OF THE VIDEO (primary source — base all content on this):\n"${contextInfo}"`
+        : `Video File Name: ${post.file_name}\nVideo Transcript: "${transcript || 'No speech detected. Use the brand voice and video file name to generate relevant content.'}"`;
 
-Spoken Video Transcript to analyze:
-"${transcript || "No speech detected in this video. Generate brand promotion metadata based on the brand voice guide."}"
-${contextInfo ? `\nAdditional Context/Instructions from User:\n"${contextInfo}"` : ""}
+      const languageRule = isTanglishBrand
+        ? `LANGUAGE: Write using Tanglish — Tamil words spelled in English letters only (e.g. "padikka aasaiya?", "First step edunga", "join pannunga"). Mix with English naturally. STRICTLY NO Arabic script, NO Tamil script, NO Hindi/Devanagari, NO any non-Latin characters anywhere in the output.`
+        : `LANGUAGE: Write in clear, professional English ONLY. STRICTLY NO Arabic script, NO Tamil script, NO Hindi/Devanagari, NO regional language characters of any kind. Every single word must be in English Latin letters.`;
 
-Generate Title/Caption, Detailed Social Description, Hashtags, 3 Key Moments/Highlights, 3 creative Thumbnail layout/overlay design text descriptions, and 3 Instagram Story slides text (story_1, story_2, story_3) for promoting this video.
-Match the brand voice guides exactly (e.g., Tanglish mix for BM Academy).
+      const allPrompt = `You are the expert social media content writer for "${post.brand_name}".
 
-Respond ONLY with a valid JSON object matching this exact format:
+BRAND: ${post.brand_name} | Industry: ${brandDetail.industry} | Audience: ${brandDetail.targetAudience}
+BRAND VOICE GUIDE: ${brandVoice.voice || "Professional and engaging"}
+
+${primaryContent}
+${transcript && contextInfo ? `\nSupporting Video Transcript: "${transcript}"` : ''}
+
+${languageRule}
+
+Generate ALL of the following for this video post:
+- Platform-specific captions (Instagram, Facebook, LinkedIn, X, YouTube)
+- 20-25 professional hashtags
+- YouTube title (SEO-optimised, under 100 chars)
+- Short story slides (3 slides for Instagram Stories)
+
+RULES:
+- Base everything on the user's description above. Do NOT write generic filler.
+- Every caption must have a strong hook in the first line and end with a CTA (e.g. "WhatsApp 94038 02971 to know more!").
+- LinkedIn caption must be formal and B2B.
+- X caption must be under 240 characters.
+- Hashtags: 20-25 tags, mix of broad reach + niche + local (include #Pondicherry #TamilNadu if relevant).
+
+Respond ONLY with a valid JSON object:
 {
-  "caption": "Primary brand voice caption with emojis",
-  "x_caption": "Twitter/X style caption",
-  "linkedin_caption": "LinkedIn professional style caption",
-  "description": "A detailed descriptive paragraph summarizing the post content and value",
-  "hashtags": "#tag1 #tag2 #tag3",
+  "caption": "Primary Instagram/Facebook caption with emojis and CTA",
+  "instagram_caption": "Instagram-specific caption with emojis and CTA",
+  "facebook_caption": "Facebook-specific caption with emojis and CTA",
+  "x_caption": "X (Twitter) caption under 240 chars",
+  "linkedin_caption": "Professional LinkedIn caption",
+  "youtube_title": "SEO YouTube title under 100 chars",
+  "description": "Detailed paragraph for YouTube description or base description",
+  "hashtags": "#tag1 #tag2 #tag3 ... (20-25 tags)",
   "thumbnail_options": [
     { "title": "Thumbnail Title 1", "layout": "Visual layout description 1" },
     { "title": "Thumbnail Title 2", "layout": "Visual layout description 2" },
     { "title": "Thumbnail Title 3", "layout": "Visual layout description 3" }
   ],
   "key_moments": [
-    { "time": "00:05", "title": "Moment Hook", "desc": "Hook description" },
-    { "time": "00:20", "title": "Key Feature", "desc": "Feature description" },
-    { "time": "00:45", "title": "Call to Action", "desc": "CTA description" }
+    { "time": "00:05", "title": "Hook", "desc": "Opening hook description" },
+    { "time": "00:20", "title": "Key Point", "desc": "Main value description" },
+    { "time": "00:45", "title": "CTA", "desc": "Call to action description" }
   ],
-  "story_1": "Slide 1 text: Engaging hook for Instagram Story",
-  "story_2": "Slide 2 text: Key value point or highlight for Instagram Story",
-  "story_3": "Slide 3 text: Strong Call to Action (CTA) or next steps for Instagram Story"
+  "story_1": "Instagram Story slide 1: Engaging hook text",
+  "story_2": "Instagram Story slide 2: Key value or highlight",
+  "story_3": "Instagram Story slide 3: Strong CTA"
 }`;
 
       const allResponse = await groq.chat.completions.create({
@@ -2502,15 +2535,14 @@ CRITICAL RULES FOR LINKEDIN:
     if (isTanglishBrand) {
       prompt += `
 CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
-- Do NOT generate captions in pure, formal Tamil script.
-- Write using Tanglish (Tamil words written using English letters, e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga") mixed with English. DO NOT output any actual Tamil script/characters.
+- Write using Tanglish — Tamil words spelled in ENGLISH LETTERS only (e.g., "programming padikka aasaiya?", "job guarantee ready!", "First step edunga"). Mix naturally with English.
+- STRICTLY FORBIDDEN: Arabic script, Tamil script, Hindi/Devanagari, or ANY non-Latin characters. Every character in the output must be a standard Latin letter, number, emoji, or punctuation mark.
 `;
       if (platform !== "youtube_title" && platform !== "x_caption") {
         prompt += `
-- Across the 5 suggestions, provide a variety of language splits:
-  - 1 or 2 options should be in pure conversational English.
-  - 2 or 3 options should be in English letters expressing Tanglish / local slang.
-  - 1 option can include short Tamil script words mixed with English (keep it informal).
+- Across the 5 suggestions, vary the language split:
+  - 1-2 options in pure conversational English.
+  - 2-3 options mixing Tanglish (Tamil words in English letters) with English.
 `;
       }
       prompt += `
@@ -2519,9 +2551,10 @@ CRITICAL LANGUAGE & SCRIPT REQUIREMENT:
     } else {
       prompt += `
 CRITICAL LANGUAGE REQUIREMENT:
-- Write all captions in clear, professional English only.
-- Do NOT use Tamil, Tanglish, or regional slang. This brand communicates in standard business English.
-- The tone must match the brand voice: professional, authoritative, and audience-appropriate.
+- Write all captions in clear, professional English ONLY.
+- STRICTLY FORBIDDEN: Arabic script, Tamil script, Hindi/Devanagari, or ANY non-Latin characters. Every character must be a standard Latin letter, number, emoji, or punctuation.
+- Do NOT use Tanglish or any regional slang. Standard business English only.
+- The tone must be professional, authoritative, and audience-appropriate.
 `;
     }
 
@@ -2610,16 +2643,13 @@ ${contextInfo ? `- Additional Context/Instructions from User: ${contextInfo}` : 
 - Your suggestions MUST be deeply related to the actual video topic, title/file name, and the video transcript.
 - Do NOT output generic brand-only promotion text. Use the brand guidelines for styling, but write completely original hooks and CTAs centered around the specific content and topics discussed in this video.
 - Do NOT just copy the example sentences from the guidelines.
-- Do NOT generate stories in formal Tamil script.
+- STRICTLY FORBIDDEN in ALL output: Arabic script, Tamil script, Hindi/Devanagari, or any non-Latin characters. Every character must be a standard Latin letter, number, emoji, or punctuation.
 ${isTanglishBrand
-  ? `- Write using Tanglish (Tamil words written using English letters) mixed with English. DO NOT output any actual Tamil script/characters.
-- Across the 5 suggestions, provide a variety of language splits:
-  - 1 or 2 options should be in pure conversational English.
-  - 2 or 3 options should be in English letters expressing Tanglish / local slang.
-  - 1 option can include short Tamil script words mixed with English, but keep it informal.
+  ? `- Write using Tanglish — Tamil words in English letters only (e.g. "padikka aasaiya?", "First step edunga") mixed with English. NO actual script of any language.
+- Vary the 5 suggestions: 1-2 pure English, 2-3 Tanglish-English mix.
 - The tone must be energetic, direct, and conversational.`
-  : `- Write all story slides in clear, professional English only. Do NOT use Tamil, Tanglish, or regional slang.
-- The tone must match the brand voice: professional, authoritative, and audience-appropriate.`
+  : `- Write all story slides in clear, professional English ONLY. No Tanglish, no regional slang.
+- The tone must be professional, authoritative, and audience-appropriate.`
 }
 `;
 
@@ -2887,6 +2917,192 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
   }
 }
 
+// ── LinkedIn OAuth & Publishing ──────────────────────────────────────────────
+
+async function handleLinkedInAuth(req, res) {
+  const { brand_name } = req.query;
+  if (!brand_name) return res.status(400).json({ error: 'brand_name is required' });
+
+  const clientId = process.env.LINKEDIN_CLIENT_ID;
+  if (!clientId) return res.status(500).json({ error: 'LINKEDIN_CLIENT_ID not configured' });
+
+  const redirectUri = process.env.LINKEDIN_REDIRECT_URI || `${process.env.API_BASE_URL}/api/content/linkedin/callback`;
+  // Using modern OpenID scopes instead of deprecated r_liteprofile, and removing restricted r_organization_social
+  const scope = 'openid profile email w_member_social';
+  const state = Buffer.from(JSON.stringify({ brand_name })).toString('base64url');
+
+  const authUrl = `https://www.linkedin.com/oauth/v2/authorization?response_type=code` +
+    `&client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&scope=${encodeURIComponent(scope)}` +
+    `&state=${encodeURIComponent(state)}`;
+
+  res.redirect(authUrl);
+}
+
+async function handleLinkedInCallback(req, res) {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    return res.redirect(`/admin/content-os/social-connection?linkedin_error=${encodeURIComponent(error)}`);
+  }
+
+  let brand_name = '';
+  if (state) {
+    try { brand_name = JSON.parse(Buffer.from(state, 'base64url').toString()).brand_name || ''; } catch {}
+  }
+
+  try {
+    const clientId = process.env.LINKEDIN_CLIENT_ID;
+    const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+    const redirectUri = process.env.LINKEDIN_REDIRECT_URI || `${process.env.API_BASE_URL}/api/content/linkedin/callback`;
+
+    // Exchange code for access token
+    const tokenRes = await axios.post(
+      'https://www.linkedin.com/oauth/v2/accessToken',
+      new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: clientId, client_secret: clientSecret }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+    const { access_token, expires_in } = tokenRes.data;
+    const tokenExpiresAt = new Date(Date.now() + (expires_in || 5184000) * 1000);
+
+    // Get personal profile (OpenID Connect)
+    const profileRes = await axios.get('https://api.linkedin.com/v2/userinfo', {
+      headers: { Authorization: `Bearer ${access_token}` }
+    });
+    const personUrn = `urn:li:person:${profileRes.data.sub}`;
+    const personName = `${profileRes.data.given_name || ''} ${profileRes.data.family_name || ''}`.trim();
+
+    // Try to fetch organization pages (company pages where user is admin)
+    let authorUrn = personUrn;
+    let accountName = personName;
+    try {
+      const orgRes = await axios.get(
+        'https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&projection=(elements*(organization~(id,localizedName)))',
+        { headers: { Authorization: `Bearer ${access_token}`, 'X-Restli-Protocol-Version': '2.0.0' } }
+      );
+      const elements = orgRes.data?.elements || [];
+      if (elements.length > 0) {
+        const org = elements[0]['organization~'];
+        if (org) {
+          authorUrn = `urn:li:organization:${org.id}`;
+          accountName = org.localizedName || accountName;
+        }
+      }
+    } catch (orgErr) {
+      console.log('[LinkedIn Callback] Could not fetch org pages (using personal profile):', orgErr.message);
+    }
+
+    const encryptedToken = cryptoHelper.encrypt(access_token);
+
+    if (brand_name) {
+      await pool.query(
+        `INSERT INTO brand_social_accounts (brand_name, platform, account_name, account_id, access_token, token_expires_at, is_active)
+         VALUES ($1, 'linkedin', $2, $3, $4, $5, true)
+         ON CONFLICT (brand_name, platform, account_name)
+         DO UPDATE SET account_id = EXCLUDED.account_id, access_token = EXCLUDED.access_token,
+                       token_expires_at = EXCLUDED.token_expires_at, is_active = true`,
+        [brand_name, accountName, authorUrn, encryptedToken, tokenExpiresAt]
+      );
+    }
+
+    res.redirect(
+      `http://localhost:5173/admin/content-os/social-connection?linkedin_success=1&channel=${encodeURIComponent(accountName)}&brand=${encodeURIComponent(brand_name)}`
+    );
+  } catch (err) {
+    console.error('[LinkedIn Callback Error]:', err.response?.data || err.message);
+    res.redirect(`/admin/content-os/social-connection?linkedin_error=${encodeURIComponent(err.message)}`);
+  }
+}
+
+async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+    'X-Restli-Protocol-Version': '2.0.0'
+  };
+
+  // Try direct video upload
+  try {
+    console.log(`[LinkedIn] Registering video upload for ${authorUrn}...`);
+    const registerRes = await axios.post(
+      'https://api.linkedin.com/v2/assets?action=registerUpload',
+      {
+        registerUploadRequest: {
+          recipes: ['urn:li:digitalmediaRecipe:feedshare-video'],
+          owner: authorUrn,
+          serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }]
+        }
+      },
+      { headers }
+    );
+
+    const uploadUrl = registerRes.data.value.uploadMechanism['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'].uploadUrl;
+    const assetUrn = registerRes.data.value.asset;
+
+    console.log(`[LinkedIn] Downloading video from ${videoUrl}...`);
+    const videoData = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 120000 });
+
+    console.log(`[LinkedIn] Uploading video to LinkedIn... (${videoData.data.byteLength} bytes)`);
+    await axios.put(uploadUrl, videoData.data, {
+      headers: { 'Content-Type': 'video/mp4' },
+      maxBodyLength: Infinity,
+      timeout: 300000
+    });
+
+    console.log(`[LinkedIn] Creating video UGC post...`);
+    const postRes = await axios.post(
+      'https://api.linkedin.com/v2/ugcPosts',
+      {
+        author: authorUrn,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+          'com.linkedin.ugc.ShareContent': {
+            shareCommentary: { text: caption },
+            shareMediaCategory: 'VIDEO',
+            media: [{
+              status: 'READY',
+              media: assetUrn,
+              description: { text: caption.substring(0, 200) },
+              title: { text: 'Video Post' }
+            }]
+          }
+        },
+        visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
+      },
+      { headers }
+    );
+
+    const postId = postRes.headers['x-restli-id'] || postRes.data.id;
+    console.log(`[LinkedIn] Video post published. ID: ${postId}`);
+    return { success: true, post_id: postId };
+
+  } catch (videoErr) {
+    console.warn('[LinkedIn] Video upload failed, falling back to text post:', videoErr.response?.data || videoErr.message);
+
+    // Fallback: plain text post with video URL appended
+    const postRes = await axios.post(
+      'https://api.linkedin.com/v2/ugcPosts',
+      {
+        author: authorUrn,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+          'com.linkedin.ugc.ShareContent': {
+            shareCommentary: { text: `${caption}\n\n${videoUrl}` },
+            shareMediaCategory: 'NONE'
+          }
+        },
+        visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
+      },
+      { headers }
+    );
+
+    const postId = postRes.headers['x-restli-id'] || postRes.data.id;
+    console.log(`[LinkedIn] Text post (fallback) published. ID: ${postId}`);
+    return { success: true, post_id: postId, warning: 'Posted as text link (direct video upload failed)' };
+  }
+}
+
 module.exports = {
   getContent,
   getStats,
@@ -2916,6 +3132,9 @@ module.exports = {
   handleYoutubeCallback,
   getFreshYoutubeClient,
   publishVideoToYouTube,
+  handleLinkedInAuth,
+  handleLinkedInCallback,
+  publishToLinkedIn,
   runBackgroundPublish,
   updateOverallPostStatus
 };

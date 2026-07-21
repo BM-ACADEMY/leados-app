@@ -149,4 +149,14 @@ router.post('/:id/disconnect-gmb', async (req, res) => {
   }
 });
 
+// GET: Get Google Maps API Key from server config
+router.get('/config/maps-key', async (req, res) => {
+  try {
+    res.json({ apiKey: process.env.GOOGLE_MAPS_API_KEY });
+  } catch (err) {
+    console.error('[Mafiya] GET /config/maps-key error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

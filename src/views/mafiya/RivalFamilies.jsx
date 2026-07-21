@@ -346,7 +346,7 @@ export default function RivalFamilies() {
             className="rivals-input"
           >
             {clients.length === 0 && <option value="">No clients available</option>}
-            {clients.map(c => <option key={c.id} value={c.id}>{c.business_name}</option>)}
+            {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
           </select>
 
           <input

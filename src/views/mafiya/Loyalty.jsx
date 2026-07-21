@@ -122,14 +122,14 @@ export default function Loyalty() {
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const businessName = activeClient?.business_name || 'our company';
+      const businessName = activeClient?.display_name || activeClient?.business_name || 'our company';
       const author = review.author || 'customer';
       const wrappedReply = `${author},\n\n${data.reply}\n\nWarm Regards,\nTeam ${businessName}`;
       setReplyText(wrappedReply);
     } catch (e) {
       console.error("AI Generation failed, falling back to template:", e);
       toast.error(`AI API Limit Exceeded / Error: ${e.message}`);
-      const businessName = activeClient?.business_name || 'our company';
+      const businessName = activeClient?.display_name || activeClient?.business_name || 'our company';
       const author = review.author || 'customer';
       let text = '';
       if (review.rating >= 5) {
@@ -298,7 +298,7 @@ export default function Loyalty() {
             </span>
           </div>
           <p style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>
-            Manage GMB reviews, ratings, and customer sentiment for <strong style={{ color: '#fff' }}>{activeClient?.business_name}</strong>
+            Manage GMB reviews, ratings, and customer sentiment for <strong style={{ color: '#fff' }}>{activeClient?.display_name || activeClient?.business_name}</strong>
           </p>
         </div>
 
@@ -348,7 +348,7 @@ export default function Loyalty() {
           >
             {clients.map(c => (
               <option key={c.id} value={c.id}>
-                {c.business_name}
+                 {c.display_name || c.business_name}
               </option>
             ))}
           </select>

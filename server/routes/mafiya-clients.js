@@ -18,6 +18,7 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const {
     business_name,
+    display_name,
     business_category,
     custom_category,
     contact_person,
@@ -36,10 +37,10 @@ router.post('/', async (req, res) => {
   try {
     const result = await pool.query(
       `INSERT INTO mafiya_gmb_clients
-        (business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, ga4_property_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        (business_name, display_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, ga4_property_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
-      [business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, ga4_property_id]
+      [business_name, display_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, ga4_property_id]
     );
 
     const savedClient = result.rows[0];
@@ -63,6 +64,7 @@ router.put('/:id', async (req, res) => {
   const { id } = req.params;
   const {
     business_name,
+    display_name,
     business_category,
     custom_category,
     contact_person,
@@ -81,10 +83,10 @@ router.put('/:id', async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE mafiya_gmb_clients
-       SET business_name = $1, business_category = $2, custom_category = $3, contact_person = $4, phone_number = $5, website_url = $6, gmb_url = $7, gmb_email = $8, logo_url = $9, ga4_property_id = $10
-       WHERE id = $11
+       SET business_name = $1, display_name = $2, business_category = $3, custom_category = $4, contact_person = $5, phone_number = $6, website_url = $7, gmb_url = $8, gmb_email = $9, logo_url = $10, ga4_property_id = $11
+       WHERE id = $12
        RETURNING *`,
-      [business_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, ga4_property_id, id]
+      [business_name, display_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, ga4_property_id, id]
     );
 
     if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });

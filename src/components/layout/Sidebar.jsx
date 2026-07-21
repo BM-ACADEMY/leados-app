@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, Users, LineChart, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, CheckSquare, MonitorPlay, Search, Activity, FileSearch, ShieldAlert, FileOutput, MapPin, Share2, Eye, FileJson, GitPullRequest, Link as LinkIcon, Target, Shield, UserPlus, Heart, Megaphone } from 'lucide-react';
+import { Home, Users, LineChart, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, CheckSquare, MonitorPlay, Search, Activity, FileSearch, ShieldAlert, FileOutput, MapPin, Share2, Eye, FileJson, GitPullRequest, Link as LinkIcon, Target, Shield, UserPlus, Heart, Megaphone, Globe } from 'lucide-react';
 import { C } from '../../constants/theme.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
 
@@ -497,20 +497,24 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                   <Heart size={14} style={{ marginRight: 8 }} /> Loyalty (Review)
                 </NavLink>
 
-                <NavLink to="/mafiya/gbp-insights" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GBP Insights')}>
-                  <BarChart2 size={14} style={{ marginRight: 8 }} /> GBP Insights
-                </NavLink>
-
                 <NavLink to="/mafiya/street-posts" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Street Posts')}>
                   <Megaphone size={14} style={{ marginRight: 8 }} /> Street Posts
                 </NavLink>
 
-                <NavLink to="/mafiya/brain" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GMB Brain')}>
-                  <Brain size={14} style={{ marginRight: 8 }} /> GMB Brain
+                <NavLink to="/mafiya/citations" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Citation')}>
+                  <Globe size={14} style={{ marginRight: 8 }} /> Citation
                 </NavLink>
 
                 <NavLink to="/mafiya/rivals" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Rival Families')}>
                   <Target size={14} style={{ marginRight: 8 }} /> Rival Families
+                </NavLink>
+
+                <NavLink to="/mafiya/gbp-insights" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GBP Insights')}>
+                  <BarChart2 size={14} style={{ marginRight: 8 }} /> GBP Insights
+                </NavLink>
+
+                <NavLink to="/mafiya/brain" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, "Don's Brain")}>
+                  <Brain size={14} style={{ marginRight: 8 }} /> Don's Brain
                 </NavLink>
 
               </div>

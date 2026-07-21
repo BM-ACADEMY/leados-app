@@ -254,7 +254,7 @@ export default function GmbBrain() {
     ? entries 
     : entries.filter(e => e.entry_type.toLowerCase() === activeTab.toLowerCase());
 
-  const clientName = activeClient?.business_name || 'GMB Profile';
+  const clientName = activeClient?.display_name || activeClient?.business_name || 'GMB Profile';
 
   // Extract main title and subtitle from potentially long GMB names
   let displayTitle = clientName;
@@ -305,7 +305,7 @@ export default function GmbBrain() {
           >
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.business_name}
+                {c.display_name || c.business_name}
               </option>
             ))}
           </select>

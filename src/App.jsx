@@ -51,6 +51,7 @@ import GmbBrain from './views/mafiya/GmbBrain.jsx';
 import StreetPosts from './views/mafiya/StreetPosts.jsx';
 import GbpInsights from './views/mafiya/GbpInsights.jsx';
 import RivalFamilies from './views/mafiya/RivalFamilies.jsx';
+import Citations from './views/mafiya/Citations.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -188,6 +189,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/mafiya/loyalty" element={<LoyaltyMafiya />} />
               <Route path="/mafiya/brain" element={<GmbBrain />} />
               <Route path="/mafiya/street-posts" element={<StreetPosts />} />
+              <Route path="/mafiya/citations" element={<Citations />} />
               <Route path="/mafiya/gbp-insights" element={<GbpInsights />} />
               <Route path="/mafiya/rivals" element={<RivalFamilies />} />
 

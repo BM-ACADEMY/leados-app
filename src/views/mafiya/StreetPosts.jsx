@@ -406,7 +406,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
     }
   };
 
-  const clientName = activeClient?.business_name || 'GMB Profile';
+  const clientName = activeClient?.display_name || activeClient?.business_name || 'GMB Profile';
   const contactPhone = activeClient?.phone_number || '';
 
   return (
@@ -1753,7 +1753,7 @@ export default function StreetPosts() {
     );
   }
 
-  const clientName = activeClient?.business_name || 'GMB Profile';
+  const clientName = activeClient?.display_name || activeClient?.business_name || 'GMB Profile';
   const contactPhone = activeClient?.phone_number || '';
 
 
@@ -1813,7 +1813,7 @@ export default function StreetPosts() {
               }}
             >
               {clients.map((c) => (
-                <option key={c.id} value={c.id}>{c.business_name}</option>
+                <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>
               ))}
             </select>
             <button

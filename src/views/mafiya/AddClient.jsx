@@ -21,6 +21,7 @@ const CATEGORIES = [
 
 const INITIAL_FORM = {
   business_name: '',
+  display_name: '',
   business_category: '',
   custom_category: '',
   phone_number: '',
@@ -28,7 +29,6 @@ const INITIAL_FORM = {
   website_url: '',
   gmb_url: '',
   gmb_email: '',
-  logo_url: '',
   ga4_property_id: '',
 };
 
@@ -53,6 +53,7 @@ export default function AddClient() {
     const categoryExists = CATEGORIES.includes(client.business_category);
     setFormData({
       business_name: client.business_name || '',
+      display_name: client.display_name || '',
       business_category: categoryExists ? client.business_category : 'Other',
       custom_category: !categoryExists ? client.business_category : '',
       phone_number: client.phone_number || '',
@@ -60,7 +61,6 @@ export default function AddClient() {
       website_url: client.website_url || '',
       gmb_url: client.gmb_url || '',
       gmb_email: client.gmb_email || '',
-      logo_url: client.logo_url || '',
       ga4_property_id: client.ga4_property_id || '',
     });
     setShowOtherCategory(!categoryExists && client.business_category !== '');
@@ -274,6 +274,7 @@ export default function AddClient() {
 
   const filteredClients = clients.filter(c =>
     c.business_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.contact_person?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.gmb_email?.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -355,7 +356,10 @@ export default function AddClient() {
                     <Building size={16} color="#f97316" />
                   </div>
                   <div>
-                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#fff' }}>{client.business_name}</h3>
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#fff' }}>{client.display_name || client.business_name}</h3>
+                    {client.display_name && (
+                      <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }} title="Official Google Business Name">GBP: {client.business_name}</div>
+                    )}
                     <span style={{ fontSize: 11, color: C.muted }}>{client.business_category || client.custom_category || '—'}</span>
                   </div>
                 </div>
@@ -492,13 +496,13 @@ export default function AddClient() {
               </div>
 
               {/* Card Footer */}
-              <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                 <span style={{ fontSize: 10, color: C.muted }}>
                   Added {new Date(client.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                 </span>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   {client.gmb_email && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 10, fontWeight: 700, color: client.gmb_verified ? '#10b981' : '#f59e0b', background: client.gmb_verified ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)', padding: '3px 10px', borderRadius: 20, textTransform: 'uppercase', letterSpacing: 0.5, border: `1px solid ${client.gmb_verified ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
                         {client.gmb_verified ? '🟢 GMB Connected' : '🟡 GMB Pending'}
                       </span>
@@ -576,14 +580,21 @@ export default function AddClient() {
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: C.accent, marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Business Basics</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                   <div>
-                    <label style={labelStyle}>Business Name *</label>
+                    <label style={labelStyle}>Display Name (Internal)</label>
+                    <div style={{ ...inputWrapStyle, border: `1px solid ${C.border}` }}>
+                      <Building size={15} color={C.muted} />
+                      <input name="display_name" value={formData.display_name} onChange={handleInputChange} placeholder="E.g. Raahath Dental (Internal)" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Official Business Name (GBP Name) *</label>
                     <div style={{ ...inputWrapStyle, border: `1px solid ${errors.business_name ? '#ef4444' : C.border}` }}>
                       <Building size={15} color={C.muted} />
                       <input name="business_name" value={formData.business_name} onChange={handleInputChange} placeholder="E.g. Raahath Dental Care" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
                     </div>
                     {errors.business_name && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.business_name}</span>}
                   </div>
-                  <div>
+                  <div style={{ gridColumn: 'span 2' }}>
                     <label style={labelStyle}>Business Type / Category *</label>
                     <select name="business_category" value={formData.business_category} onChange={handleInputChange} style={{ ...inputStyle, background: '#0a0f1d' }}>
                       <option value="">Select Category...</option>
@@ -650,13 +661,6 @@ export default function AddClient() {
                       <input name="gmb_email" value={formData.gmb_email} onChange={handleInputChange} placeholder="E.g. owner@gmail.com" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
                     </div>
                     {errors.gmb_email && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.gmb_email}</span>}
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Business Logo URL</label>
-                    <div style={{ ...inputWrapStyle, border: `1px solid ${C.border}` }}>
-                      <Globe size={15} color={C.muted} />
-                      <input name="logo_url" value={formData.logo_url} onChange={handleInputChange} placeholder="E.g. https://domain.com/logo.png" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
-                    </div>
                   </div>
                   <div>
                     <label style={labelStyle}>GA4 Property ID (For Post Analytics)</label>

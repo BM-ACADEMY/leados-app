@@ -31,16 +31,34 @@ export default function RivalFamilies() {
       return;
     }
     const scriptId = 'google-maps-places-script';
-    if (!document.getElementById(scriptId)) {
-      const script = document.createElement('script');
-      script.id = scriptId;
-      const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&loading=async`;
-      script.async = true;
-      script.defer = true;
-      script.onload = () => setGoogleScriptLoaded(true);
-      document.head.appendChild(script);
-    }
+    if (document.getElementById(scriptId)) return;
+
+    const fetchAndLoadScript = async () => {
+      try {
+        const token = localStorage.getItem('leados_token');
+        const res = await fetch(`${API_URL}/api/mafiya/clients/config/maps-key`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error('Failed to fetch maps API key');
+        const data = await res.json();
+        
+        if (data.apiKey) {
+          const script = document.createElement('script');
+          script.id = scriptId;
+          script.src = `https://maps.googleapis.com/maps/api/js?key=${data.apiKey}&libraries=places&loading=async`;
+          script.async = true;
+          script.defer = true;
+          script.onload = () => setGoogleScriptLoaded(true);
+          document.head.appendChild(script);
+        } else {
+          console.error('Maps API key not found in backend response');
+        }
+      } catch (err) {
+        console.error('Failed to load Google Maps script from backend key:', err);
+      }
+    };
+
+    fetchAndLoadScript();
   }, []);
 
   // Fetch clients

@@ -1463,12 +1463,12 @@ app.post('/api/templates/sync-all', auth, async (req, res) => {
 
 app.post('/api/templates', auth, async (req, res) => {
   try {
-    const { name, category, language, header_format, header, body, footer, buttons, client_id } = req.body;
+    const { name, category, language, header_format, header, body, footer, buttons, client_id, samples } = req.body;
     const { rows } = await pool.query(`
-      INSERT INTO templates (name, category, language, header_format, header, body, footer, buttons, client_id, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', NOW())
+      INSERT INTO templates (name, category, language, header_format, header, body, footer, buttons, client_id, status, created_at, samples)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', NOW(), $10)
       RETURNING *
-    `, [name, category, language || 'en', header_format || 'TEXT', header || null, body, footer || null, JSON.stringify(buttons || []), client_id || null]);
+    `, [name, category, language || 'en', header_format || 'TEXT', header || null, body, footer || null, JSON.stringify(buttons || []), client_id || null, samples ? JSON.stringify(samples) : '[]']);
     res.status(201).json({ template: rows[0] });
   } catch (err) {
     console.error('Create template err:', err);
@@ -1500,7 +1500,11 @@ app.post('/api/templates/:id/submit', auth, async (req, res) => {
       components.push({ type: 'HEADER', format: 'TEXT', text: tpl.header });
     }
 
-    components.push({ type: 'BODY', text: tpl.body });
+    const bodyComp = { type: 'BODY', text: tpl.body };
+    if (tpl.samples && Array.isArray(tpl.samples) && tpl.samples.length > 0) {
+      bodyComp.example = { body_text: [tpl.samples] };
+    }
+    components.push(bodyComp);
     if (tpl.footer) components.push({ type: 'FOOTER', text: tpl.footer });
     if (tpl.buttons && tpl.buttons.length > 0) {
       components.push({ type: 'BUTTONS', buttons: tpl.buttons });
@@ -1512,6 +1516,7 @@ app.post('/api/templates/:id/submit', auth, async (req, res) => {
         name: tpl.name,
         language: tpl.language || 'en',
         category: tpl.category || 'UTILITY',
+        allow_category_change: true,
         components,
       },
       { headers: { Authorization: `Bearer ${waToken}` } }
@@ -1576,7 +1581,7 @@ app.get('/api/templates/:id/sync', auth, async (req, res) => {
 // PUT /api/templates/:id
 app.put('/api/templates/:id', auth, async (req, res) => {
   try {
-    const { name, category, language, header_format, header, body, footer, buttons, client_id } = req.body;
+    const { name, category, language, header_format, header, body, footer, buttons, client_id, samples } = req.body;
     const { id } = req.params;
 
     const { rows: currentRows } = await pool.query('SELECT * FROM templates WHERE id = $1', [id]);
@@ -1596,7 +1601,13 @@ app.put('/api/templates/:id', auth, async (req, res) => {
       components.push({ type: 'HEADER', format: 'TEXT', text: finalHeader });
     }
 
-    components.push({ type: 'BODY', text: body || current.body });
+    const bodyComp = { type: 'BODY', text: body || current.body };
+    const finalSamples = samples !== undefined ? samples : current.samples;
+    if (finalSamples && Array.isArray(finalSamples) && finalSamples.length > 0) {
+      bodyComp.example = { body_text: [finalSamples] };
+    }
+    components.push(bodyComp);
+
     if (footer !== undefined ? footer : current.footer) components.push({ type: 'FOOTER', text: footer !== undefined ? footer : current.footer });
     const finalBtns = buttons !== undefined ? buttons : current.buttons;
     if (finalBtns && finalBtns.length > 0) {
@@ -1625,9 +1636,10 @@ app.put('/api/templates/:id', auth, async (req, res) => {
           footer = $7, 
           buttons = COALESCE($8, buttons),
           client_id = COALESCE($9, client_id),
+          samples = COALESCE($10, samples),
           status = CASE WHEN status != 'draft' THEN 'pending' ELSE status END,
           updated_at = NOW()
-      WHERE id = $10
+      WHERE id = $11
       RETURNING *
     `, [
       name, category, language,
@@ -1637,6 +1649,7 @@ app.put('/api/templates/:id', auth, async (req, res) => {
       footer !== undefined ? footer : current.footer,
       buttons ? JSON.stringify(buttons) : null,
       client_id || null,
+      samples ? JSON.stringify(samples) : null,
       id
     ]);
 

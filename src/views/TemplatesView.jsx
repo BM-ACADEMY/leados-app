@@ -246,6 +246,7 @@ export const TemplatesView = () => {
     footer: CATEGORY_DEFAULTS.MARKETING.footer,
     buttons: [],
     client_id: '',
+    samples: [],
   };
   const [form, setForm] = useState(defaultForm);
 
@@ -356,6 +357,17 @@ export const TemplatesView = () => {
     if (!form.name.trim()) return showToast('Template name is required', 'error');
     if (!form.body.trim()) return showToast('Message body is required', 'error');
     if (!/^[a-z0-9_]+$/.test(form.name)) return showToast('Template name must be lowercase letters, numbers, underscores only', 'error');
+    
+    const matches = form.body.match(/\{\{(\d+)\}\}/g);
+    const maxVar = matches ? Math.max(...matches.map(m => parseInt(m.replace(/\D/g, '')))) : 0;
+    if (maxVar > 0) {
+      for (let i = 0; i < maxVar; i++) {
+        if (!form.samples || !form.samples[i] || !form.samples[i].trim()) {
+          return showToast(`Please provide a sample value for {{${i + 1}}}`, 'error');
+        }
+      }
+    }
+
     setSubmitting(true);
     try {
       const payload = {
@@ -368,6 +380,7 @@ export const TemplatesView = () => {
         footer: form.footer || null,
         buttons: form.buttons,
         client_id: form.client_id || null,
+        samples: form.samples,
       };
       if (editingId) {
         await api.updateTemplate(editingId, payload);
@@ -398,6 +411,7 @@ export const TemplatesView = () => {
       footer: t.footer || '',
       buttons: (() => { try { return typeof t.buttons === 'string' ? JSON.parse(t.buttons) : (t.buttons || []); } catch { return []; } })(),
       client_id: t.client_id || '',
+      samples: (() => { try { return typeof t.samples === 'string' ? JSON.parse(t.samples) : (t.samples || []); } catch { return []; } })(),
     });
     setEditingId(t.id);
     setShowBuilder(true);
@@ -1168,6 +1182,39 @@ export const TemplatesView = () => {
                     onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
                   />
                   <p style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Use <code style={{ color: C.accent, background: C.accent + '10', padding: '1px 4px', borderRadius: 3 }}>{'{{1}}'}</code> for dynamic variables</p>
+                  
+                  {(() => {
+                    const matches = form.body.match(/\{\{(\d+)\}\}/g);
+                    const maxVar = matches ? Math.max(...matches.map(m => parseInt(m.replace(/\D/g, '')))) : 0;
+                    if (maxVar > 0) {
+                      return (
+                        <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '14px', marginTop: 12 }}>
+                          <h4 style={{ fontSize: 12, color: C.text, fontWeight: 700, marginBottom: 4 }}>Variable samples</h4>
+                          <p style={{ fontSize: 10, color: C.muted, marginBottom: 12 }}>Add a sample for each variable so Meta can review your template.</p>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {Array.from({ length: maxVar }).map((_, i) => (
+                              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <div style={{ width: 45, textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.muted, background: C.surface, padding: '6px 0', borderRadius: 6, border: `1px solid ${C.border}` }}>
+                                  {`{{${i + 1}}}`}
+                                </div>
+                                <input
+                                  style={{ ...inp(), flex: 1, padding: '6px 10px' }}
+                                  placeholder={`Enter sample text for {{${i + 1}}}`}
+                                  value={form.samples?.[i] || ''}
+                                  onChange={e => {
+                                    const newSamples = [...(form.samples || [])];
+                                    newSamples[i] = e.target.value;
+                                    setForm(f => ({ ...f, samples: newSamples }));
+                                  }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
 
                 {/* Footer */}

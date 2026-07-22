@@ -1281,39 +1281,43 @@ async function publishPhotoStoryToFacebook(pageId, pageAccessToken, { imageUrl }
 
 // Facebook Video Story Publishing
 async function publishVideoStoryToFacebook(pageId, pageAccessToken, { videoUrl }) {
+  // Approach 1: single-step URL-based upload (avoids resumable upload protocol issues)
+  try {
+    console.log(`[FB Story] Trying single-step video_url approach for page ${pageId}`);
+    const res = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, {
+      video_url: videoUrl,
+      published: true,
+      access_token: pageAccessToken
+    });
+    console.log(`[FB Story] Single-step success:`, res.data);
+    return { success: true, post_id: res.data.id || res.data.video_id };
+  } catch (err1) {
+    console.warn(`[FB Story] Single-step failed (${err1.response?.data?.error?.message || err1.message}), trying 3-step upload...`);
+  }
+
+  // Approach 2: 3-step resumable upload
   try {
     const initRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, {
       upload_phase: 'start',
       access_token: pageAccessToken
     });
     const { video_id, upload_url } = initRes.data;
-    if (!video_id || !upload_url) {
-      throw new Error("Failed to initialize Facebook video story session.");
-    }
-    console.log(`Facebook video story session initialized: video_id = ${video_id}`);
+    if (!video_id || !upload_url) throw new Error('No video_id or upload_url from init step');
 
     await axios.post(upload_url, null, {
-      headers: {
-        'file_url': videoUrl,
-        'Authorization': `OAuth ${pageAccessToken}`
-      }
-    });
-    console.log(`Facebook video story upload completed for video_id = ${video_id}`);
-
-    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, null, {
-      params: {
-        upload_phase: 'finish',
-        video_id: video_id,
-        access_token: pageAccessToken
-      }
+      headers: { 'file_url': videoUrl, 'Authorization': `OAuth ${pageAccessToken}` }
     });
 
+    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, {
+      upload_phase: 'finish',
+      video_id,
+      access_token: pageAccessToken
+    });
     return { success: true, post_id: finishRes.data.id || video_id };
-  } catch (err) {
-    const fullError = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error('Facebook video story publishing failed. Full Meta error:', fullError);
-    const msg = err.response?.data?.error?.message || err.message;
-    throw new Error(`${msg} (Full Meta details: ${fullError})`);
+  } catch (err2) {
+    const fullError = err2.response?.data ? JSON.stringify(err2.response.data) : err2.message;
+    console.error('[FB Story] Both approaches failed. Full Meta error:', fullError);
+    throw new Error(`${err2.response?.data?.error?.message || err2.message} (Full Meta details: ${fullError})`);
   }
 }
 

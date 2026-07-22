@@ -389,36 +389,36 @@ export function ApprovalRoom({
                   const active = isPlatformActive();
                   if (!active) return null;
 
-                  const val = editMode ? (editValues[field.key] || '') : (selectedItem[field.key] || '');
+                  const val = editValues[field.key] || '';
 
                   return (
-                    <div 
-                      key={field.key} 
-                      style={{ 
-                        background: 'var(--bg3)', 
-                        border: '1px solid var(--b1)', 
-                        borderRadius: 8, 
+                    <div
+                      key={field.key}
+                      style={{
+                        background: 'var(--bg3)',
+                        border: '1px solid var(--b1)',
+                        borderRadius: 8,
                         padding: 12
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                         <span style={{ fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ 
-                            width: 20, 
-                            height: 20, 
-                            borderRadius: 4, 
-                            background: field.color, 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'center', 
-                            fontSize: 10, 
-                            color: '#fff' 
+                          <span style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 4,
+                            background: field.color,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 10,
+                            color: '#fff'
                           }}>
                             {field.icon}
                           </span>
                           {field.label}
                         </span>
-                        
+
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <span className="mono" style={{ fontSize: 10, color: 'var(--t3)' }}>
                             {val.length} chars
@@ -430,11 +430,11 @@ export function ApprovalRoom({
                               if (!editMode) setEditMode(true);
                               handleOpenAiSuggestions(field.key);
                             }}
-                            style={{ 
-                              padding: '2px 8px', 
-                              fontSize: 9, 
-                              background: 'rgba(0,196,160,0.12)', 
-                              color: 'var(--teal)', 
+                            style={{
+                              padding: '2px 8px',
+                              fontSize: 9,
+                              background: 'rgba(0,196,160,0.12)',
+                              color: 'var(--teal)',
                               borderColor: 'rgba(0,196,160,0.2)',
                               cursor: 'pointer'
                             }}
@@ -444,30 +444,24 @@ export function ApprovalRoom({
                         </div>
                       </div>
 
-                      {editMode ? (
-                        <textarea
-                          value={val}
-                          onChange={e => setEditValues(prev => ({ ...prev, [field.key]: e.target.value }))}
-                          style={{
-                            width: '100%',
-                            background: 'var(--bg)',
-                            color: 'var(--t1)',
-                            border: '1px solid var(--b2)',
-                            borderRadius: 6,
-                            padding: 8,
-                            fontSize: 12.5,
-                            lineHeight: 1.5,
-                            minHeight: 50,
-                            outline: 'none',
-                            resize: 'vertical',
-                            boxSizing: 'border-box'
-                          }}
-                        />
-                      ) : (
-                        <div style={{ fontSize: 12.5, color: 'var(--t1)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-                          {val || <span style={{ color: 'var(--t3)', fontStyle: 'italic' }}>Not set</span>}
-                        </div>
-                      )}
+                      <textarea
+                        value={val}
+                        onChange={e => setEditValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                        style={{
+                          width: '100%',
+                          background: 'var(--bg)',
+                          color: 'var(--t1)',
+                          border: '1px solid var(--b2)',
+                          borderRadius: 6,
+                          padding: 8,
+                          fontSize: 12.5,
+                          lineHeight: 1.5,
+                          minHeight: field.key === 'instagram_caption' || field.key === 'facebook_caption' || field.key === 'linkedin_caption' || field.key === 'youtube_description' ? 120 : 50,
+                          outline: 'none',
+                          resize: 'vertical',
+                          boxSizing: 'border-box'
+                        }}
+                      />
                     </div>
                   );
                 }))}
@@ -509,27 +503,13 @@ export function ApprovalRoom({
                       </button>
                     )}
                     
-                    {(statusUpper === 'PENDING' || statusUpper === 'PENDING_APPROVAL' || statusUpper === 'REJECTED' || statusUpper === 'FAILED') && (
-                      <button 
-                        className="tb-btn" 
-                        onClick={() => {
-                          if (editMode) {
-                            handleSaveEdit(selectedItem.id);
-                          } else {
-                            setEditMode(true);
-                          }
-                        }}
-                        style={{ background: editMode ? 'var(--teal)' : 'var(--bg4)', color: editMode ? 'var(--bg)' : 'var(--t1)', fontWeight: 600, padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer' }}
-                      >
-                        {editMode ? '✓ Save Captions' : '✏️ Edit Captions'}
-                      </button>
-                    )}
-                    
-                    {editMode && (
-                      <button className="tb-btn" onClick={() => setEditMode(false)} style={{ background: 'transparent', border: '1px solid var(--b2)', padding: '10px 16px', borderRadius: 8, color: 'var(--t2)', cursor: 'pointer' }}>
-                        Cancel
-                      </button>
-                    )}
+                    <button
+                      className="tb-btn"
+                      onClick={() => handleSaveEdit(selectedItem.id)}
+                      style={{ background: 'var(--teal)', color: 'var(--bg)', fontWeight: 600, padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer' }}
+                    >
+                      ✓ Save Captions
+                    </button>
 
                     {(statusUpper === 'PUBLISHED' || statusUpper === 'PARTIAL') && (
                       <button

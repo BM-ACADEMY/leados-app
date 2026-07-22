@@ -36,10 +36,10 @@ export function ReachReport({ items, selectedBrand, isSameBrand }) {
   const publishedItems = useMemo(() => {
     return items.filter(item => {
       const s = (item.status || '').toUpperCase();
-      if (s !== 'PUBLISHED') return false;
+      if (s !== 'PUBLISHED' && s !== 'PARTIAL') return false;
       if (selectedBrand !== 'all' && !isSameBrand(item.brand_name, selectedBrand)) return false;
       if (cutoff) {
-        const pub = new Date(item.approved_at || item.created_at || 0);
+        const pub = new Date(item.published_at || item.approved_at || item.created_at || 0);
         if (pub < cutoff) return false;
       }
       return true;

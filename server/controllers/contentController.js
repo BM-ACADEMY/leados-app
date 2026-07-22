@@ -2398,7 +2398,7 @@ ${languageRule}
 
 Generate ALL of the following for this video post:
 - Platform-specific captions (Instagram, Facebook, LinkedIn, X, YouTube)
-- 20-25 professional hashtags
+- 5-7 professional hashtags
 - YouTube title (SEO-optimised, under 100 chars)
 - Short story slides (3 slides for Instagram Stories)
 
@@ -2407,10 +2407,11 @@ RULES:
 - Every caption must have a strong hook in the first line and end with a CTA (e.g. "WhatsApp 94038 02971 to know more!").
 - LinkedIn caption must be formal and B2B.
 - X caption must be under 240 characters.
-- Hashtags: 20-25 tags, mix of broad reach + niche + local (include #Pondicherry #TamilNadu if relevant).
+- Hashtags: 5-7 tags only, mix of broad reach + niche + local (include #Pondicherry #TamilNadu if relevant).
 
 Respond ONLY with a valid JSON object:
 {
+  "hashtags": "#tag1 #tag2 #tag3 #tag4 #tag5 (5-7 tags only)",
   "caption": "Primary Instagram/Facebook caption with emojis and CTA",
   "instagram_caption": "Instagram-specific caption with emojis and CTA",
   "facebook_caption": "Facebook-specific caption with emojis and CTA",
@@ -2418,7 +2419,6 @@ Respond ONLY with a valid JSON object:
   "linkedin_caption": "Professional LinkedIn caption",
   "youtube_title": "SEO YouTube title under 100 chars",
   "description": "Detailed paragraph for YouTube description or base description",
-  "hashtags": "#tag1 #tag2 #tag3 ... (20-25 tags)",
   "thumbnail_options": [
     { "title": "Thumbnail Title 1", "layout": "Visual layout description 1" },
     { "title": "Thumbnail Title 2", "layout": "Visual layout description 2" },
@@ -2428,15 +2428,12 @@ Respond ONLY with a valid JSON object:
     { "time": "00:05", "title": "Hook", "desc": "Opening hook description" },
     { "time": "00:20", "title": "Key Point", "desc": "Main value description" },
     { "time": "00:45", "title": "CTA", "desc": "Call to action description" }
-  ],
-  "story_1": "Instagram Story slide 1: Engaging hook text",
-  "story_2": "Instagram Story slide 2: Key value or highlight",
-  "story_3": "Instagram Story slide 3: Strong CTA"
+  ]
 }`;
 
       const allResponse = await groq.chat.completions.create({
         model: 'llama-3.3-70b-versatile',
-        max_tokens: 1500,
+        max_tokens: 2000,
         temperature: 0.7,
         response_format: { type: 'json_object' },
         messages: [{ role: 'user', content: allPrompt }]

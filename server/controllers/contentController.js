@@ -2400,21 +2400,43 @@ Generate ALL of the following for this video post:
 - Platform-specific captions (Instagram, Facebook, LinkedIn, X, YouTube)
 - 5-7 professional hashtags
 - YouTube title (SEO-optimised, under 100 chars)
-- Short story slides (3 slides for Instagram Stories)
 
-RULES:
-- Base everything on the user's description above. Do NOT write generic filler.
-- Every caption must have a strong hook in the first line and end with a CTA (e.g. "WhatsApp 94038 02971 to know more!").
-- LinkedIn caption must be formal and B2B.
-- X caption must be under 240 characters.
-- Hashtags: 5-7 tags only, mix of broad reach + niche + local (include #Pondicherry #TamilNadu if relevant).
+CAPTION FORMAT RULES (Instagram & Facebook):
+Every Instagram and Facebook caption MUST follow this exact structure with blank lines between each section:
+
+Line 1: [Emoji] Strong hook title related to the video topic [Emoji]
+
+[blank line]
+
+Short intro sentence or context paragraph about what's in the video.
+
+[blank line]
+
+[Emoji] Key point or highlight 1
+[Emoji] Key point or highlight 2
+[Emoji] Key point or highlight 3 (add more if relevant)
+
+[blank line]
+
+One emotional or motivational closing sentence.
+
+[blank line]
+
+[Emoji] CTA line — e.g. "WhatsApp 94038 02971 to know more!" [Emoji]
+
+ADDITIONAL RULES:
+- Base everything on the user's description. Do NOT write generic filler.
+- Use relevant emojis naturally throughout — not just at the start.
+- LinkedIn caption: formal, no bullet emojis, B2B tone, 3–4 short paragraphs.
+- X caption: under 240 characters, punchy hook + CTA only.
+- Hashtags: 5-7 tags only, mix of broad + niche + local (include #Pondicherry #TamilNadu if relevant).
 
 Respond ONLY with a valid JSON object:
 {
-  "hashtags": "#tag1 #tag2 #tag3 #tag4 #tag5 (5-7 tags only)",
-  "caption": "Primary Instagram/Facebook caption with emojis and CTA",
-  "instagram_caption": "Instagram-specific caption with emojis and CTA",
-  "facebook_caption": "Facebook-specific caption with emojis and CTA",
+  "hashtags": "#tag1 #tag2 #tag3 #tag4 #tag5",
+  "caption": "Formatted Instagram/Facebook caption following the structure above (use \\n for line breaks)",
+  "instagram_caption": "Formatted Instagram caption following the structure above (use \\n for line breaks)",
+  "facebook_caption": "Formatted Facebook caption following the structure above (use \\n for line breaks)",
   "x_caption": "X (Twitter) caption under 240 chars",
   "linkedin_caption": "Professional LinkedIn caption",
   "youtube_title": "SEO YouTube title under 100 chars",
@@ -2433,7 +2455,7 @@ Respond ONLY with a valid JSON object:
 
       const allResponse = await groq.chat.completions.create({
         model: 'llama-3.3-70b-versatile',
-        max_tokens: 2000,
+        max_tokens: 2500,
         temperature: 0.7,
         response_format: { type: 'json_object' },
         messages: [{ role: 'user', content: allPrompt }]

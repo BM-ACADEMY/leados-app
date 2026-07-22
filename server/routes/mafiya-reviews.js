@@ -1478,7 +1478,7 @@ router.post('/posts/generate-from-image', async (req, res) => {
     let response;
     try {
       response = await genAI.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-flash',
         contents: [
           {
             inlineData: {
@@ -1490,10 +1490,10 @@ router.post('/posts/generate-from-image', async (req, res) => {
         ]
       });
     } catch (firstErr) {
-      console.warn('[Gemini 2.5 Unavailable, trying gemini-2.0-flash]:', firstErr.message);
+      console.warn('[Gemini 3.5-flash Unavailable, trying gemini-3.5-flash-lite]:', firstErr.message);
       try {
         response = await genAI.models.generateContent({
-          model: 'gemini-2.0-flash',
+          model: 'gemini-3.5-flash-lite',
           contents: [
             {
               inlineData: {
@@ -1505,9 +1505,9 @@ router.post('/posts/generate-from-image', async (req, res) => {
           ]
         });
       } catch (secondErr) {
-        console.warn('[Gemini 2.0 Unavailable, trying gemini-1.5-flash]:', secondErr.message);
+        console.warn('[Gemini 3.5-flash-lite Unavailable, trying gemini-3.6-flash]:', secondErr.message);
         response = await genAI.models.generateContent({
-          model: 'gemini-1.5-flash',
+          model: 'gemini-3.6-flash',
           contents: [
             {
               inlineData: {

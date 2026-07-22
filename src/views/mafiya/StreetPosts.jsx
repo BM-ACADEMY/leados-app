@@ -411,6 +411,17 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
 
   return (
     <>
+      <style>{`
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        .skeleton-shimmer {
+          background: linear-gradient(90deg, #27272a 25%, #3f3f46 50%, #27272a 75%);
+          background-size: 200% 100%;
+          animation: shimmer 1.5s infinite linear;
+        }
+      `}</style>
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(9, 9, 11, 0.8)', backdropFilter: 'blur(8px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: 20 }}>
           <div style={{ background: '#18181b', width: '100%', maxWidth: 840, maxHeight: '90vh', borderRadius: 16, border: '1px solid rgba(255, 255, 255, 0.08)', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column' }}>
@@ -517,61 +528,94 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                       
                       {/* Dynamic Title for Offer & Event */}
                       {(postType === 'Offer' || postType === 'Event') && (
-                        <div style={{ position: 'relative' }}>
-                          <input 
-                            type="text"
-                            value={postTitle}
-                            onChange={(e) => setPostTitle(e.target.value.slice(0, 58))}
-                            placeholder="Title*"
+                        generatingAi ? (
+                          <div 
+                            className="skeleton-shimmer" 
                             style={{ 
-                              width: '100%',
+                              width: '100%', 
+                              height: 58, 
+                              borderRadius: 8, 
+                              border: '1px solid rgba(255,255,255,0.08)',
+                              boxSizing: 'border-box'
+                            }} 
+                          />
+                        ) : (
+                          <div style={{ position: 'relative' }}>
+                            <input 
+                              type="text"
+                              value={postTitle}
+                              onChange={(e) => setPostTitle(e.target.value.slice(0, 58))}
+                              placeholder="Title*"
+                              style={{ 
+                                width: '100%',
+                                background: '#27272a', 
+                                border: '1px solid rgba(255,255,255,0.12)', 
+                                borderRadius: 8, 
+                                padding: '16px 16px 20px 16px', 
+                                color: '#fff', 
+                                fontSize: 14, 
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                transition: 'border-color 0.2s'
+                              }}
+                              onFocus={e => e.target.style.borderColor = '#f97316'}
+                              onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
+                            />
+                            <div style={{ position: 'absolute', bottom: 6, right: 12, fontSize: 10, color: '#71717a' }}>
+                              {postTitle.length}/58
+                            </div>
+                          </div>
+                        )
+                      )}
+
+                      {/* Description */}
+                      {generatingAi ? (
+                        <div style={{ 
+                          width: '100%', 
+                          height: 120, 
+                          background: '#1c1c1e',
+                          border: '1px solid rgba(255,255,255,0.08)', 
+                          borderRadius: 8, 
+                          padding: '16px',
+                          boxSizing: 'border-box',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 12
+                        }}>
+                          <div className="skeleton-shimmer" style={{ width: '80%', height: 14, borderRadius: 4 }} />
+                          <div className="skeleton-shimmer" style={{ width: '95%', height: 14, borderRadius: 4 }} />
+                          <div className="skeleton-shimmer" style={{ width: '60%', height: 14, borderRadius: 4 }} />
+                          <div className="skeleton-shimmer" style={{ width: '75%', height: 14, borderRadius: 4 }} />
+                        </div>
+                      ) : (
+                        <div style={{ position: 'relative' }}>
+                          <textarea
+                            value={description}
+                            onChange={(e) => setDescription(e.target.value.slice(0, 1500))}
+                            placeholder="What's new? (Description)*"
+                            style={{ 
+                              width: '100%', 
+                              height: 120, 
                               background: '#27272a', 
                               border: '1px solid rgba(255,255,255,0.12)', 
                               borderRadius: 8, 
-                              padding: '16px 16px 20px 16px', 
+                              padding: '16px 16px 24px 16px', 
                               color: '#fff', 
                               fontSize: 14, 
-                              outline: 'none',
+                              outline: 'none', 
+                              resize: 'none',
                               boxSizing: 'border-box',
+                              lineHeight: 1.5,
                               transition: 'border-color 0.2s'
                             }}
                             onFocus={e => e.target.style.borderColor = '#f97316'}
                             onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
                           />
-                          <div style={{ position: 'absolute', bottom: 6, right: 12, fontSize: 10, color: '#71717a' }}>
-                            {postTitle.length}/58
+                          <div style={{ position: 'absolute', bottom: 8, right: 12, fontSize: 10, color: '#71717a' }}>
+                            {description.length}/1,500
                           </div>
                         </div>
                       )}
-
-                      {/* Description */}
-                      <div style={{ position: 'relative' }}>
-                        <textarea
-                          value={description}
-                          onChange={(e) => setDescription(e.target.value.slice(0, 1500))}
-                          placeholder="What's new? (Description)*"
-                          style={{ 
-                            width: '100%', 
-                            height: 120, 
-                            background: '#27272a', 
-                            border: '1px solid rgba(255,255,255,0.12)', 
-                            borderRadius: 8, 
-                            padding: '16px 16px 24px 16px', 
-                            color: '#fff', 
-                            fontSize: 14, 
-                            outline: 'none', 
-                            resize: 'none',
-                            boxSizing: 'border-box',
-                            lineHeight: 1.5,
-                            transition: 'border-color 0.2s'
-                          }}
-                          onFocus={e => e.target.style.borderColor = '#f97316'}
-                          onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
-                        />
-                        <div style={{ position: 'absolute', bottom: 8, right: 12, fontSize: 10, color: '#71717a' }}>
-                          {description.length}/1,500
-                        </div>
-                      </div>
 
                       {/* Date and Time Fields for Offer / Event */}
                       {(postType === 'Offer' || postType === 'Event') && (

@@ -313,10 +313,10 @@ export function ApprovalRoom({
                             
                             const platformsToActivate = [];
                             if (linkedPlats.has('instagram')) {
-                              platformsToActivate.push('instagram_post', 'instagram_story');
+                              platformsToActivate.push('instagram_post');
                             }
                             if (linkedPlats.has('facebook')) {
-                              platformsToActivate.push('facebook_post', 'facebook_story');
+                              platformsToActivate.push('facebook_post');
                             }
                             if (linkedPlats.has('youtube')) platformsToActivate.push('youtube');
                             if (linkedPlats.has('x_twitter')) platformsToActivate.push('x_twitter');
@@ -370,8 +370,8 @@ export function ApprovalRoom({
                       const hasLinkedAccount = (plat) => (socialAccounts || []).some(s => isSameBrand(s.brand_name, selectedItem.brand_name) && s.platform === plat);
 
                       let isActive = false;
-                      if (field.key === 'instagram_caption') isActive = activePlatforms.includes('instagram') || activePlatforms.includes('instagram_story') || activePlatforms.includes('instagram_post');
-                      else if (field.key === 'facebook_caption') isActive = activePlatforms.includes('facebook') || activePlatforms.includes('facebook_story') || activePlatforms.includes('facebook_post');
+                      if (field.key === 'instagram_caption') isActive = activePlatforms.includes('instagram') || activePlatforms.includes('instagram_post');
+                      else if (field.key === 'facebook_caption') isActive = activePlatforms.includes('facebook') || activePlatforms.includes('facebook_post');
                       else if (field.key === 'youtube_title' || field.key === 'youtube_description') isActive = activePlatforms.includes('youtube');
                       else if (field.key === 'x_caption') isActive = activePlatforms.includes('x_twitter');
                       else if (field.key === 'linkedin_caption') isActive = activePlatforms.includes('linkedin');
@@ -601,7 +601,7 @@ export function ApprovalRoom({
               <div className="panel">
                 <div className="panel-h">Platforms &amp; Formats</div>
                 <div className="panel-b">
-                  {['instagram', 'instagram_story', 'facebook', 'facebook_story', 'youtube', 'linkedin', 'x_twitter'].map(platformKey => {
+                  {['instagram_post', 'facebook_post', 'youtube', 'linkedin', 'x_twitter'].map(platformKey => {
                     const p = getPlatformConfig(platformKey);
                     const active = editMode 
                       ? editValues.platforms?.includes(platformKey)

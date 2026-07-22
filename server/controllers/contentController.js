@@ -1406,7 +1406,7 @@ async function publishToFacebookPage(pageId, pageAccessToken, { caption, videoUr
 }
 
 // Instagram Business Container Creation
-async function createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false }) {
+async function createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null }) {
   const containerUrl = `https://graph.facebook.com/v19.0/${instagramBusinessId}/media`;
 
   // Check if media is video or image
@@ -1421,6 +1421,10 @@ async function createInstagramContainer(instagramBusinessId, accessToken, { vide
       params.video_url = videoUrl;
     } else {
       params.image_url = videoUrl;
+    }
+    if (linkStickerUrl) {
+      params.link_sticker_url = linkStickerUrl;
+      console.log(`[IG Story] Adding link sticker → ${linkStickerUrl}`);
     }
   } else {
     params.caption = caption;
@@ -1598,9 +1602,9 @@ async function publishInstagramContainer(instagramBusinessId, accessToken, conta
 }
 
 // Publish to Instagram Coordinator
-async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false }) {
+async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null }) {
   try {
-    const containerId = await createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory });
+    const containerId = await createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl });
     await waitForInstagramContainer(containerId, accessToken);
     const mediaId = await publishInstagramContainer(instagramBusinessId, accessToken, containerId);
     return { success: true, post_id: mediaId };
@@ -1613,14 +1617,14 @@ async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, 
 }
 
 // Publish to Instagram Coordinator with retry mechanism for transient errors
-async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false }) {
+async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null }) {
   const maxRetries = 3;
   let lastErr = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[publishToInstagramWithRetry] Attempt ${attempt}/${maxRetries} to publish to Instagram. URL: ${videoUrl}`);
-      const res = await module.exports.publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory });
+      const res = await module.exports.publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl });
       return res;
     } catch (err) {
       lastErr = err;
@@ -2188,11 +2192,30 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         if (!account.instagram_business_id) {
           throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
         }
+        // Try to get the reel permalink so we can add a link sticker in the story
+        let linkStickerUrl = null;
+        try {
+          const reelJob = await pool.query(
+            `SELECT post_id FROM publish_queue WHERE content_id = $1 AND channel IN ('instagram', 'instagram_post') AND status = 'success' AND post_id IS NOT NULL LIMIT 1`,
+            [post.id]
+          );
+          if (reelJob.rows.length > 0) {
+            const reelMediaId = reelJob.rows[0].post_id;
+            const permalinkRes = await axios.get(`https://graph.facebook.com/v19.0/${reelMediaId}`, {
+              params: { fields: 'permalink', access_token: decryptedToken }
+            });
+            linkStickerUrl = permalinkRes.data.permalink || null;
+            console.log(`[BackgroundPublish] Found reel permalink for story link sticker: ${linkStickerUrl}`);
+          }
+        } catch (stickerErr) {
+          console.warn(`[BackgroundPublish] Could not fetch reel permalink for link sticker:`, stickerErr.message);
+        }
         console.log(`[BackgroundPublish] Publishing video story to Instagram for post ${post.id} — URL: ${publicUrl}`);
         publishRes = await publishToInstagramWithRetry(account.instagram_business_id, decryptedToken, {
           caption: '',
           videoUrl: publicUrl,
-          isStory: true
+          isStory: true,
+          linkStickerUrl
         });
       } else if (channel === 'facebook_story') {
         const pageId = account.facebook_page_id || account.account_id;

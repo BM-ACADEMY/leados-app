@@ -2953,7 +2953,7 @@ async function deletePost(req, res) {
 
       let decryptedToken;
       try {
-        decryptedToken = decryptToken(job.access_token);
+        decryptedToken = cryptoHelper.decrypt(job.access_token);
       } catch {
         results.push({ channel: job.channel, status: 'skipped', reason: 'Token decryption failed' });
         continue;
@@ -2973,7 +2973,7 @@ async function deletePost(req, res) {
           results.push({ channel: job.channel, status: 'deleted' });
 
         } else if (job.channel === 'youtube') {
-          const oauth2Client = await getFreshYoutubeClient(job.access_token);
+          const oauth2Client = await getFreshYoutubeClient(job.access_token); // passes encrypted tokens; getFreshYoutubeClient handles decryption internally
           const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
           await youtube.videos.delete({ id: job.post_id });
           results.push({ channel: job.channel, status: 'deleted' });

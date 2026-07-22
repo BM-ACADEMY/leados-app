@@ -2917,6 +2917,102 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
   }
 }
 
+// ── Delete Post from All Platforms ──────────────────────────────────────────
+
+async function deletePost(req, res) {
+  const { id } = req.params;
+  try {
+    const postRes = await pool.query('SELECT * FROM content_queue WHERE id = $1', [id]);
+    if (!postRes.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+    const post = postRes.rows[0];
+
+    // Get all successfully published jobs with their platform post IDs
+    const jobsRes = await pool.query(
+      `SELECT pq.channel, pq.post_id, bsa.access_token, bsa.instagram_business_id, bsa.facebook_page_id, bsa.account_id, bsa.platform
+       FROM publish_queue pq
+       LEFT JOIN brand_social_accounts bsa ON (
+         LOWER(REPLACE(REPLACE(bsa.brand_name,' ',''),'-','_')) = LOWER(REPLACE(REPLACE($2,' ',''),'-','_'))
+         AND (
+           (pq.channel IN ('instagram','instagram_post','instagram_story') AND bsa.platform = 'instagram') OR
+           (pq.channel IN ('facebook','facebook_post','facebook_story') AND bsa.platform = 'facebook') OR
+           (pq.channel = 'youtube' AND bsa.platform = 'youtube') OR
+           (pq.channel = 'linkedin' AND bsa.platform = 'linkedin')
+         )
+       )
+       WHERE pq.content_id = $1 AND pq.status IN ('success','partial') AND pq.post_id IS NOT NULL`,
+      [id, post.brand_name]
+    );
+
+    const results = [];
+
+    for (const job of jobsRes.rows) {
+      if (!job.post_id || !job.access_token) {
+        results.push({ channel: job.channel, status: 'skipped', reason: 'No post ID or token' });
+        continue;
+      }
+
+      let decryptedToken;
+      try {
+        decryptedToken = decryptToken(job.access_token);
+      } catch {
+        results.push({ channel: job.channel, status: 'skipped', reason: 'Token decryption failed' });
+        continue;
+      }
+
+      try {
+        if (job.channel === 'instagram' || job.channel === 'instagram_post' || job.channel === 'instagram_story') {
+          await axios.delete(`https://graph.facebook.com/v19.0/${job.post_id}`, {
+            params: { access_token: decryptedToken }
+          });
+          results.push({ channel: job.channel, status: 'deleted' });
+
+        } else if (job.channel === 'facebook' || job.channel === 'facebook_post' || job.channel === 'facebook_story') {
+          await axios.delete(`https://graph.facebook.com/v19.0/${job.post_id}`, {
+            params: { access_token: decryptedToken }
+          });
+          results.push({ channel: job.channel, status: 'deleted' });
+
+        } else if (job.channel === 'youtube') {
+          const oauth2Client = await getFreshYoutubeClient(job.access_token);
+          const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+          await youtube.videos.delete({ id: job.post_id });
+          results.push({ channel: job.channel, status: 'deleted' });
+
+        } else if (job.channel === 'linkedin') {
+          const encodedUrn = encodeURIComponent(job.post_id);
+          await axios.delete(`https://api.linkedin.com/v2/ugcPosts/${encodedUrn}`, {
+            headers: { Authorization: `Bearer ${decryptedToken}`, 'X-Restli-Protocol-Version': '2.0.0' }
+          });
+          results.push({ channel: job.channel, status: 'deleted' });
+
+        } else {
+          results.push({ channel: job.channel, status: 'skipped', reason: 'Platform not supported for deletion' });
+        }
+
+        await pool.query(
+          "UPDATE publish_queue SET status = 'deleted', updated_at = NOW() WHERE content_id = $1 AND channel = $2",
+          [id, job.channel]
+        );
+      } catch (platformErr) {
+        const errMsg = platformErr.response?.data?.error?.message || platformErr.message;
+        console.error(`[deletePost] Failed to delete from ${job.channel}:`, errMsg);
+        results.push({ channel: job.channel, status: 'failed', reason: errMsg });
+      }
+    }
+
+    // Mark post as DELETED in content_queue
+    await pool.query(
+      "UPDATE content_queue SET status = 'DELETED', updated_at = NOW() WHERE id = $1",
+      [id]
+    );
+
+    res.json({ success: true, results });
+  } catch (err) {
+    console.error('[deletePost] Error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
 // ── LinkedIn OAuth & Publishing ──────────────────────────────────────────────
 
 async function handleLinkedInAuth(req, res) {
@@ -3135,6 +3231,7 @@ module.exports = {
   handleLinkedInAuth,
   handleLinkedInCallback,
   publishToLinkedIn,
+  deletePost,
   runBackgroundPublish,
   updateOverallPostStatus
 };

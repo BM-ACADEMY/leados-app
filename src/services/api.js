@@ -566,6 +566,10 @@ class LeadOSAPI {
     });
   }
 
+  async deletePostFromPlatforms(id) {
+    return this.request(`/api/content/${id}`, { method: 'DELETE' });
+  }
+
   async generateCaptions(brandName, videoUrl, platforms) {
     return this.request('/api/content/generate-captions', {
       method: 'POST',

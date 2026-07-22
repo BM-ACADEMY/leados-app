@@ -53,6 +53,9 @@ router.get("/linkedin/callback", ctrl.handleLinkedInCallback);
 // Trigger publishing
 router.post("/:id/publish", ctrl.publishPost);
 
+// Delete post from all platforms
+router.delete("/:id", ctrl.deletePost);
+
 // Called by n8n after successful publish
 router.post('/:id/publish-success', async (req, res) => {
   const { id } = req.params;

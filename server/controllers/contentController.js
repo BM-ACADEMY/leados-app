@@ -2441,7 +2441,7 @@ ADDITIONAL RULES:
   CTA line — e.g. "Connect with us to learn more." or "WhatsApp 94038 02971"
 - X caption: under 240 characters, punchy hook + CTA only.
 - Hashtags: 5-7 tags only, mix of broad + niche + local (include #Pondicherry #TamilNadu if relevant).
-- YouTube title: must describe the specific action/event/content in the video — NOT a generic topic label. Include brand name or academy name when relevant.
+- YouTube title: must describe the specific action/event/content shown in the video — NOT a generic topic label.
 
 Respond ONLY with a valid JSON object:
 {
@@ -2451,7 +2451,7 @@ Respond ONLY with a valid JSON object:
   "facebook_caption": "Formatted Facebook caption following the structure above (use \\n for line breaks)",
   "x_caption": "X (Twitter) caption under 240 chars",
   "linkedin_caption": "Structured LinkedIn caption following the format above (use \\n for line breaks)",
-  "youtube_title": "Specific descriptive YouTube title — describe what is happening in the video, not just the topic. E.g. 'Digital Marketing Course Presentation by Our Students at ABM Academy' not just 'Digital Marketing Course'. Under 100 chars.",
+  "youtube_title": "Specific descriptive YouTube title — describe what is actually happening in the video, not just the topic name. E.g. 'Digital Marketing Course Presentation by Our Students' not just 'Digital Marketing Course'. Under 100 chars.",
   "description": "Detailed paragraph for YouTube description or base description",
   "thumbnail_options": [
     { "title": "Thumbnail Title 1", "layout": "Visual layout description 1" },

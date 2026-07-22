@@ -690,23 +690,71 @@ export function ApprovalRoom({
               <div className="panel">
                 <div className="panel-h">Scheduled Window</div>
                 <div className="panel-b">
-                  <div className="sched-box">
-                    <div className="sched-ic">◷</div>
-                    <div>
-                      {editMode ? (
-                        <input
-                          type="datetime-local"
-                          value={editValues.scheduled_at?.slice(0, 16) || ''}
-                          onChange={e => setEditValues(prev => ({ ...prev, scheduled_at: e.target.value + ':00+05:30' }))}
-                          style={{ background: 'var(--bg3)', color: 'var(--t1)', border: '1px solid var(--b2)', borderRadius: 5, padding: '4px 6px', fontSize: 11, outline: 'none' }}
-                        />
-                      ) : (
-                        <>
-                          <div className="sched-t">{formatTime(selectedItem.scheduled_at)}</div>
-                          <div className="sched-s">peak window · auto-picked by LeadOS</div>
-                        </>
-                      )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {/* Date row */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <label style={{ fontSize: 10, color: 'var(--t3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Date</label>
+                      <input
+                        type="date"
+                        value={editValues.scheduled_at?.slice(0, 10) || ''}
+                        onChange={e => {
+                          const time = editValues.scheduled_at?.slice(11, 16) || '09:00';
+                          setEditValues(prev => ({ ...prev, scheduled_at: `${e.target.value}T${time}:00+05:30` }));
+                          if (!editMode) setEditMode(true);
+                        }}
+                        style={{
+                          width: '100%',
+                          background: 'var(--bg)',
+                          color: 'var(--t1)',
+                          border: '1px solid var(--b2)',
+                          borderRadius: 8,
+                          padding: '9px 12px',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          cursor: 'pointer',
+                          colorScheme: 'dark'
+                        }}
+                      />
                     </div>
+                    {/* Time row */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <label style={{ fontSize: 10, color: 'var(--t3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Time (IST)</label>
+                      <input
+                        type="time"
+                        value={editValues.scheduled_at?.slice(11, 16) || ''}
+                        onChange={e => {
+                          const date = editValues.scheduled_at?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+                          setEditValues(prev => ({ ...prev, scheduled_at: `${date}T${e.target.value}:00+05:30` }));
+                          if (!editMode) setEditMode(true);
+                        }}
+                        style={{
+                          width: '100%',
+                          background: 'var(--bg)',
+                          color: 'var(--t1)',
+                          border: '1px solid var(--b2)',
+                          borderRadius: 8,
+                          padding: '9px 12px',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          cursor: 'pointer',
+                          colorScheme: 'dark'
+                        }}
+                      />
+                    </div>
+                    {/* Summary row */}
+                    {editValues.scheduled_at && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,196,160,0.08)', border: '1px solid rgba(0,196,160,0.2)', borderRadius: 8, padding: '8px 12px' }}>
+                        <span style={{ fontSize: 14 }}>◷</span>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--teal)' }}>{formatTime(editValues.scheduled_at)}</div>
+                          <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 2 }}>scheduled · IST</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

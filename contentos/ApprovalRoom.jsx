@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { api } from '../src/services/api.js';
 
 
 
@@ -39,6 +40,24 @@ export function ApprovalRoom({
   const [seg, setSeg] = useState('pending'); // pending | published (live)
   const [firstGenContext, setFirstGenContext] = useState("");
   const [firstGenTone, setFirstGenTone] = useState("engaging");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteResults, setDeleteResults] = useState(null);
+
+  const handleDeleteFromPlatforms = async () => {
+    if (!selectedItem) return;
+    setIsDeleting(true);
+    try {
+      const res = await api.deletePostFromPlatforms(selectedItem.id);
+      setDeleteResults(res.results || []);
+      setDeleteConfirm(false);
+    } catch (err) {
+      setDeleteResults([{ channel: 'error', status: 'failed', reason: err.message }]);
+      setDeleteConfirm(false);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Sync edits if item changes
   useEffect(() => {
@@ -511,12 +530,68 @@ export function ApprovalRoom({
                         Cancel
                       </button>
                     )}
+
+                    {(statusUpper === 'PUBLISHED' || statusUpper === 'PARTIAL') && (
+                      <button
+                        className="tb-btn"
+                        onClick={() => { setDeleteConfirm(true); setDeleteResults(null); }}
+                        style={{ background: 'rgba(240,74,94,.12)', color: 'var(--red)', border: '1px solid rgba(240,74,94,.3)', padding: '10px 16px', borderRadius: 8, fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}
+                      >
+                        🗑 Delete from All Platforms
+                      </button>
+                    )}
                   </div>
                 );
               })()}
             </>
           )}
         </div>
+
+        {/* Delete Confirmation Modal */}
+        {deleteConfirm && selectedItem && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--b1)', borderRadius: 12, padding: 28, maxWidth: 420, width: '90%' }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--red)', marginBottom: 10 }}>🗑 Delete from All Platforms?</div>
+              <div style={{ fontSize: 13, color: 'var(--t2)', marginBottom: 18, lineHeight: 1.6 }}>
+                This will permanently delete <b style={{ color: 'var(--t1)' }}>{selectedItem.file_name}</b> from every platform it was published to — including Instagram, Facebook, YouTube, LinkedIn and their stories. This cannot be undone.
+              </div>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button onClick={() => setDeleteConfirm(false)} style={{ background: 'transparent', border: '1px solid var(--b2)', color: 'var(--t2)', padding: '9px 18px', borderRadius: 8, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteFromPlatforms}
+                  disabled={isDeleting}
+                  style={{ background: 'var(--red)', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 700, cursor: isDeleting ? 'not-allowed' : 'pointer', opacity: isDeleting ? 0.6 : 1 }}
+                >
+                  {isDeleting ? 'Deleting...' : 'Yes, Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Results Modal */}
+        {deleteResults && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--b1)', borderRadius: 12, padding: 28, maxWidth: 420, width: '90%' }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--t1)', marginBottom: 14 }}>Deletion Results</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+                {deleteResults.map((r, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg3)', borderRadius: 8, padding: '8px 12px' }}>
+                    <span style={{ fontSize: 13, color: 'var(--t1)', textTransform: 'capitalize' }}>{r.channel}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: r.status === 'deleted' ? 'var(--grn)' : r.status === 'skipped' ? 'var(--amb)' : 'var(--red)' }}>
+                      {r.status === 'deleted' ? '✓ Deleted' : r.status === 'skipped' ? `⚠ Skipped${r.reason ? ` — ${r.reason}` : ''}` : `✕ Failed — ${r.reason}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setDeleteResults(null)} style={{ width: '100%', background: 'var(--bg4)', border: '1px solid var(--b2)', color: 'var(--t1)', padding: '9px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
+                Close
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Column 3: Platform selection, Schedule window, Pipeline trace */}
         <div>

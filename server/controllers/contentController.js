@@ -299,7 +299,7 @@ const CONTENT_COLUMNS = `
   story_1, story_2, story_3,
   platforms, selected_accounts, scheduled_at, status,
   approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
-  error_message, created_at, description, hashtags, thumbnail_options,
+  error_message, created_at, published_at, description, hashtags, thumbnail_options,
   key_moments, drive_file_id, brand_id, video_name, transcript
 `;
 

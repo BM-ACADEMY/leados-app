@@ -3102,8 +3102,9 @@ async function handleLinkedInCallback(req, res) {
       );
     }
 
+    const portalUrl = process.env.PORTAL_URL || 'https://leados-app.abmgroups.org';
     res.redirect(
-      `http://localhost:5173/admin/content-os/social-connection?linkedin_success=1&channel=${encodeURIComponent(accountName)}&brand=${encodeURIComponent(brand_name)}`
+      `${portalUrl}/admin/content-os/social-connection?linkedin_success=1&channel=${encodeURIComponent(accountName)}&brand=${encodeURIComponent(brand_name)}`
     );
   } catch (err) {
     console.error('[LinkedIn Callback Error]:', err.response?.data || err.message);

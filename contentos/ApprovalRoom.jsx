@@ -284,8 +284,8 @@ export function ApprovalRoom({
                 <div className="vwm">@LEARN WITH KAMAR · 1080×1920 · faststart ✓</div>
               </div>
 
-              {/* Thumbnail Generator */}
-              <div style={{ margin: '0 14px 0', borderTop: '1px solid var(--b1)' }}>
+              {/* Thumbnail Generator — only show when captions already exist or have been generated */}
+              {(selectedItem.caption || editMode || thumbOptions.length > 0) && <div style={{ margin: '0 14px 0', borderTop: '1px solid var(--b1)' }}>
                 {/* Header row */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 2px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -362,7 +362,7 @@ export function ApprovalRoom({
                     </div>
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* Stacked captions list or First-Time Generation */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '10px 16px', borderTop: '1px solid var(--b1)' }}>

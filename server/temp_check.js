@@ -1,23 +1,17 @@
-const { Pool } = require('pg');
-const pool = new Pool({
-  host: 'leados-api.abmgroups.org',
-  user: 'leados_user',
-  password: 'LeadOS_DB@2026',
-  database: 'leados_db',
-  port: 5432
-});
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
+const { runCheckForBusiness } = require('./services/citations/citation.service');
 
-async function run() {
+async function test() {
   try {
-    const res = await pool.query(
-      "SELECT id, brand_name, status, platforms, published_at FROM content_queue WHERE brand_name ILIKE '%ABM%' ORDER BY id DESC LIMIT 10"
-    );
-    console.log("ABM GROUPS CONTENT QUEUE:");
-    console.log(JSON.stringify(res.rows, null, 2));
-  } catch (e) {
-    console.error('Error:', e.message);
-  } finally {
-    await pool.end();
+    console.log('Running test scan with Claude-updated scraper configurations...');
+    const result = await runCheckForBusiness(9);
+    console.log('Scan completed successfully!');
+    console.log('Scan Details:', JSON.stringify(result.scan, null, 2));
+    console.log('Results:', JSON.stringify(result.results, null, 2));
+  } catch (err) {
+    console.error('Scan failed:', err);
   }
 }
-run();
+
+test();

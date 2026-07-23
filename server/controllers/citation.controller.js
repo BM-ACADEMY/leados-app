@@ -27,7 +27,7 @@ async function getScan(req, res) {
     const scanRes = await pool.query(
       `SELECT * FROM citation_scans 
        WHERE "businessId" = $1 
-       ORDER BY "lastScan" DESC LIMIT 1`,
+       ORDER BY id DESC LIMIT 1`,
       [businessId]
     );
 

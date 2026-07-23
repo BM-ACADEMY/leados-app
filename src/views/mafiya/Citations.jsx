@@ -101,7 +101,7 @@ export default function Citations() {
       
       if (res.data.errors && res.data.errors.length > 0) {
         res.data.errors.forEach(errMsg => {
-          toast.warn(errMsg, { autoClose: 7000 });
+          toast(errMsg, { icon: '⚠️', duration: 7000 });
         });
       }
       

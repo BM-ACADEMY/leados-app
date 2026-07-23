@@ -293,7 +293,7 @@ export function ApprovalRoom({
                     <div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>AI Thumbnail Poster</div>
                       <div style={{ fontSize: 10, color: 'var(--t3)' }}>
-                        {editValues.thumbnail_url ? 'Poster selected — save to apply' : 'Generate AI poster from your video title'}
+                        {editValues.thumbnail_url ? 'Poster selected — save to apply' : 'Auto-generated with captions · or regenerate manually'}
                       </div>
                     </div>
                   </div>
@@ -393,14 +393,18 @@ export function ApprovalRoom({
                         <option value="educational">Educational</option>
                         <option value="sales">Sales-Oriented</option>
                       </select>
-                      <button 
+                      <button
                         className="tb-btn"
                         onClick={async () => {
                           if (!firstGenContext || firstGenContext.trim() === '') {
                             alert("Please provide a short description first.");
                             return;
                           }
-                          const meta = await handleGenerateFirstTime(selectedItem.id, firstGenTone, firstGenContext);
+                          // Run captions and poster generation in parallel
+                          const [meta] = await Promise.all([
+                            handleGenerateFirstTime(selectedItem.id, firstGenTone, firstGenContext),
+                            handleGenerateThumbnails()
+                          ]);
                           if (meta) {
                             const linkedPlats = new Set();
                             (socialAccounts || []).forEach(s => {
@@ -408,7 +412,7 @@ export function ApprovalRoom({
                                 linkedPlats.add(s.platform);
                               }
                             });
-                            
+
                             const platformsToActivate = [];
                             if (linkedPlats.has('instagram')) {
                               platformsToActivate.push('instagram_post');
@@ -437,15 +441,15 @@ export function ApprovalRoom({
                             setEditMode(true);
                           }
                         }}
-                        disabled={loadingSuggestions || !firstGenContext || firstGenContext.trim() === ''}
-                        style={{ 
-                          background: 'var(--gold)', color: '#000', padding: '10px 20px', 
-                          borderRadius: 8, fontWeight: 700, border: 'none', 
-                          cursor: (!firstGenContext || firstGenContext.trim() === '') ? 'not-allowed' : 'pointer', 
-                          opacity: (loadingSuggestions || !firstGenContext || firstGenContext.trim() === '') ? 0.5 : 1 
+                        disabled={loadingSuggestions || generatingThumbs || !firstGenContext || firstGenContext.trim() === ''}
+                        style={{
+                          background: 'var(--gold)', color: '#000', padding: '10px 20px',
+                          borderRadius: 8, fontWeight: 700, border: 'none',
+                          cursor: (!firstGenContext || firstGenContext.trim() === '') ? 'not-allowed' : 'pointer',
+                          opacity: (loadingSuggestions || generatingThumbs || !firstGenContext || firstGenContext.trim() === '') ? 0.5 : 1
                         }}
                       >
-                        {loadingSuggestions ? 'Generating...' : '🚀 Generate Captions'}
+                        {(loadingSuggestions || generatingThumbs) ? 'Generating...' : '🚀 Generate Captions & Poster'}
                       </button>
                     </div>
                     {suggestionsError && <div style={{ color: 'var(--red)', marginTop: 10, fontSize: 12 }}>{suggestionsError}</div>}

@@ -78,10 +78,10 @@ async function refreshClientToken(clientId) {
     oauth2Client.setCredentials({ refresh_token });
     const { credentials } = await oauth2Client.refreshAccessToken();
     const newExpiresAt = credentials.expiry_date ? new Date(credentials.expiry_date) : null;
-    
+
     await pool.query(
-      `UPDATE mafiya_gmb_tokens 
-       SET access_token = $1, expires_at = $2 
+      `UPDATE mafiya_gmb_tokens
+       SET access_token = $1, expires_at = $2
        WHERE client_id = $3`,
       [credentials.access_token, newExpiresAt, clientId]
     );
@@ -101,14 +101,14 @@ async function getClientGoogleToken(clientId) {
   if (tokenRes.rowCount === 0) return null;
 
   const { access_token, refresh_token, expires_at } = tokenRes.rows[0];
-  
+
   if (expires_at && new Date(expires_at).getTime() < Date.now() + 5 * 60 * 1000) {
     if (refresh_token) {
       const refreshed = await refreshClientToken(clientId);
       if (refreshed) return refreshed;
     }
   }
-  
+
   return access_token;
 }
 
@@ -189,14 +189,28 @@ router.get('/data', async (req, res) => {
       let success = false;
       const attemptFetch = async (token) => {
         const headers = { Authorization: `Bearer ${token}` };
+
+        const getWithRetry = async (url, config, retries = 2, delay = 1000) => {
+          try {
+            return await axios.get(url, config);
+          } catch (err) {
+            if (retries > 0 && (err.response?.status === 503 || err.response?.status === 429)) {
+              console.warn(`[Mafiya Reviews] Google API returned status ${err.response?.status}. Retrying in ${delay}ms...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              return getWithRetry(url, config, retries - 1, delay * 2);
+            }
+            throw err;
+          }
+        };
+
         // 1. Get Accounts
-        const accRes = await axios.get('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', { headers });
+        const accRes = await getWithRetry('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', { headers });
         const accounts = accRes.data.accounts || [];
         if (accounts.length > 0) {
           let allLocations = [];
           for (const acc of accounts) {
             try {
-              const locRes = await axios.get(`https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations?readMask=name,title,storeCode`, { headers });
+              const locRes = await getWithRetry(`https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations?readMask=name,title,storeCode`, { headers });
               if (locRes.data.locations) {
                 const locs = locRes.data.locations.map(l => ({ ...l, accountName: acc.name }));
                 allLocations = allLocations.concat(locs);
@@ -215,7 +229,7 @@ router.get('/data', async (req, res) => {
               return cleanTitle.includes(cleanBizName) || cleanBizName.includes(cleanTitle);
             }) || allLocations[0];
             const locationId = `${loc.accountName}/${loc.name}`;
-            
+
             // 3. Get Reviews (with pagination to fetch all)
             let allReviews = [];
             let nextPageToken = null;
@@ -223,7 +237,7 @@ router.get('/data', async (req, res) => {
             try {
               do {
                 const url = `https://mybusiness.googleapis.com/v4/${locationId}/reviews?pageSize=50` + (nextPageToken ? `&pageToken=${nextPageToken}` : '');
-                const revRes = await axios.get(url, { headers });
+                const revRes = await getWithRetry(url, { headers });
                 const reviews = revRes.data.reviews || [];
                 allReviews = allReviews.concat(reviews);
                 nextPageToken = revRes.data.nextPageToken;
@@ -232,7 +246,7 @@ router.get('/data', async (req, res) => {
             } catch (pageErr) {
               console.error('[Mafiya Reviews] Error paginating reviews:', pageErr.message);
             }
-            
+
             const realReviews = allReviews.map(r => {
               const reviewIdStr = r.name;
               const hasLocalReply = localRepliesMap[reviewIdStr];
@@ -262,7 +276,8 @@ router.get('/data', async (req, res) => {
                   phone: 'Verified Google Location',
                   rating: (realReviews.reduce((acc, r) => acc + r.rating, 0) / realReviews.length).toFixed(1),
                   totalReviews: realReviews.length,
-                  profileUrl: ''
+                  profileUrl: '',
+                  gmbLocationId: locationId
                 },
                 insights: {
                   views: Math.floor((parseInt(clientId, 10) * 147 + 520) * 1.8),
@@ -288,12 +303,103 @@ router.get('/data', async (req, res) => {
         }
       };
 
-      try {
-        await attemptFetch(accessToken);
-        if (success) return;
-      } catch (err) {
-        googleApiError = err.response ? err.response.data : err.message;
-        
+      // Fast path: use cached GMB location ID to fetch reviews directly (skips account/location lists lookup)
+      let cachedLocationId = null;
+      if (client.reviews_cache) {
+        try {
+          const parsed = JSON.parse(client.reviews_cache);
+          if (parsed?.business?.gmbLocationId) {
+            cachedLocationId = parsed.business.gmbLocationId;
+          }
+        } catch (cacheErr) {
+          console.warn('[Mafiya Reviews] Failed to read gmbLocationId from cache:', cacheErr.message);
+        }
+      }
+
+      if (cachedLocationId) {
+        console.log(`[Mafiya Reviews] Fast path sync using cached location ID: ${cachedLocationId}`);
+        try {
+          // Define a fast-path fetcher helper
+          const headers = { Authorization: `Bearer ${accessToken}` };
+          const getWithRetry = async (url, config, retries = 2, delay = 1000) => {
+            try { return await axios.get(url, config); }
+            catch (err) {
+              if (retries > 0 && (err.response?.status === 503 || err.response?.status === 429)) {
+                await new Promise(res => setTimeout(res, delay));
+                return getWithRetry(url, config, retries - 1, delay * 2);
+              }
+              throw err;
+            }
+          };
+
+          let allReviews = [];
+          let nextPageToken = null;
+          let pageNum = 0;
+          do {
+            const url = `https://mybusiness.googleapis.com/v4/${cachedLocationId}/reviews?pageSize=50` + (nextPageToken ? `&pageToken=${nextPageToken}` : '');
+            const revRes = await getWithRetry(url, { headers });
+            const reviews = revRes.data.reviews || [];
+            allReviews = allReviews.concat(reviews);
+            nextPageToken = revRes.data.nextPageToken;
+            pageNum++;
+          } while (nextPageToken && pageNum < 15);
+
+          const realReviews = allReviews.map(r => {
+            const reviewIdStr = r.name;
+            const hasLocalReply = localRepliesMap[reviewIdStr];
+            return {
+              id: reviewIdStr,
+              author: r.reviewer?.displayName || 'Google User',
+              rating: r.starRating === 'FIVE' ? 5 : r.starRating === 'FOUR' ? 4 : r.starRating === 'THREE' ? 3 : r.starRating === 'TWO' ? 2 : 1,
+              text: r.comment || '',
+              date: r.createTime ? new Date(r.createTime).toLocaleDateString() : 'Recently',
+              replied: !!r.reviewReply || !!hasLocalReply,
+              replyText: r.reviewReply?.comment || hasLocalReply || '',
+              timestamp: r.createTime || ''
+            };
+          });
+
+          realReviews.sort((a, b) => {
+            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+            return timeB - timeA;
+          });
+
+          const resData = {
+            business: {
+              name: businessName,
+              address: 'Verified Google Location',
+              phone: 'Verified Google Location',
+              rating: realReviews.length > 0 ? (realReviews.reduce((acc, r) => acc + r.rating, 0) / realReviews.length).toFixed(1) : '5.0',
+              totalReviews: realReviews.length,
+              profileUrl: '',
+              gmbLocationId: cachedLocationId
+            },
+            insights: {
+              views: Math.floor((parseInt(clientId, 10) * 147 + 520) * 1.8),
+              viewsTrend: `+${((parseInt(clientId, 10) * 3 + 8) % 15) + 5}%`,
+              searches: Math.floor((parseInt(clientId, 10) * 89 + 310) * 1.5),
+              searchesTrend: `+${((parseInt(clientId, 10) * 2 + 5) % 10) + 3}%`,
+              actions: Math.floor((parseInt(clientId, 10) * 34 + 115) * 1.2),
+              actionsTrend: `+${((parseInt(clientId, 10) * 4 + 7) % 12) + 4}%`
+            },
+            recentReviews: realReviews
+          };
+          saveToCache(clientId, resData);
+          res.json(resData);
+          success = true;
+        } catch (fastErr) {
+          console.warn('[Mafiya Reviews] Fast path fetch failed. Falling back to full account traversal...', fastErr.message);
+        }
+      }
+
+      if (!success) {
+        try {
+          await attemptFetch(accessToken);
+          if (success) return;
+        } catch (err) {
+          googleApiError = err.response ? err.response.data : err.message;
+
         if (err.response && err.response.status === 401) {
           console.log('[Mafiya Reviews] Access token 401 expired, attempting refresh...');
           const newAccessToken = await refreshClientToken(clientId);
@@ -303,21 +409,28 @@ router.get('/data', async (req, res) => {
               return;
             } catch (retryErr) {
               googleApiError = retryErr.response ? retryErr.response.data : retryErr.message;
+              console.error('[Mafiya Reviews] Failed to fetch reviews after refreshing token:', googleApiError);
               await pool.query('DELETE FROM mafiya_gmb_tokens WHERE client_id = $1', [clientId]);
               await pool.query('UPDATE mafiya_gmb_clients SET gmb_verified = false WHERE id = $1', [clientId]);
             }
           } else {
+            console.error('[Mafiya Reviews] Failed to refresh token (refresh token might be missing or invalid):', googleApiError);
             await pool.query('DELETE FROM mafiya_gmb_tokens WHERE client_id = $1', [clientId]);
             await pool.query('UPDATE mafiya_gmb_clients SET gmb_verified = false WHERE id = $1', [clientId]);
           }
+        } else if (err.response) {
+          console.error(`[Mafiya Reviews] Google API failed with status ${err.response.status}:`, err.response.data);
+        } else {
+          console.error('[Mafiya Reviews] Google API failed with message:', err.message);
         }
       }
+    }
     }
 
     // Fallback to DataForSEO Maps SERP scraping and polling reviews
     try {
-      const mapsQuery = client.website_url 
-        ? client.website_url.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0] 
+      const mapsQuery = client.website_url
+        ? client.website_url.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0]
         : `${businessName} Pondicherry`;
 
       const mapsPostData = [{ keyword: mapsQuery, language_code: "en", location_name: "India" }];
@@ -349,7 +462,7 @@ router.get('/data', async (req, res) => {
       let realReviewsDfs = [];
       if (cid || resolvedTitle) {
         try {
-          const taskPostData = cid 
+          const taskPostData = cid
             ? { cid, location_name: "India", language_code: "en", depth: 100, sort_by: "newest" }
             : { keyword: resolvedTitle, location_name: "India", language_code: "en", depth: 100, sort_by: "newest" };
 
@@ -363,7 +476,7 @@ router.get('/data', async (req, res) => {
           const task = postRes.data.tasks?.[0];
           if (task && task.status_code === 20100) {
             const taskId = task.id;
-            
+
             // Poll for completion (up to 7 attempts, total 10.5 seconds max)
             let attempts = 0;
             const maxAttempts = 7;
@@ -439,7 +552,7 @@ router.get('/data', async (req, res) => {
       res.json(resData);
     } catch (error) {
       console.error('[Mafiya Reviews] Error fetching GBP data:', error.message);
-      
+
       const resData = {
         business: {
           name: businessName,
@@ -474,13 +587,13 @@ router.post('/reply-review', async (req, res) => {
   if (!clientId || !reviewId || !replyText) {
     return res.status(400).json({ error: 'Missing required fields: clientId, reviewId, replyText' });
   }
-  
+
   // Save reply persistently to database and clear cache
   try {
     await pool.query(
       `INSERT INTO mafiya_review_replies (client_id, review_id, reply_text)
        VALUES ($1, $2, $3)
-       ON CONFLICT (review_id) 
+       ON CONFLICT (review_id)
        DO UPDATE SET reply_text = EXCLUDED.reply_text`,
       [clientId, reviewId.toString(), replyText]
     );
@@ -513,12 +626,83 @@ router.post('/reply-review', async (req, res) => {
   res.json({ success: true, message: 'Reply saved successfully' });
 });
 
+// Helper to format structured GMB Brain JSON entries into readable instructions for the LLM
+function formatBrainContent(type, content) {
+  try {
+    const data = JSON.parse(content);
+    if (typeof data !== 'object' || data === null) {
+      return content;
+    }
+    
+    switch (type) {
+      case 'tone': {
+        const parts = [];
+        if (data.voice) parts.push(`Voice/Tone: ${data.voice}`);
+        if (data.style && data.style.length > 0) parts.push(`Style: ${data.style.join(', ')}`);
+        if (data.emoji) parts.push(`Emojis: ${data.emoji}`);
+        if (data.length) parts.push(`Response Length: ${data.length}`);
+        if (data.avoid && data.avoid.length > 0) parts.push(`Avoid: ${data.avoid.join(', ')}`);
+        return parts.join(' | ');
+      }
+      case 'review_rules': {
+        const parts = [];
+        if (data.positive) parts.push(`For Positive reviews: ${data.positive}`);
+        if (data.neutral) parts.push(`For Neutral reviews: ${data.neutral}`);
+        if (data.negative) parts.push(`For Negative reviews: ${data.negative}`);
+        if (data.additional && data.additional.length > 0) parts.push(`Additional guidelines: ${data.additional.join(', ')}`);
+        return parts.join('\n');
+      }
+      case 'keyword': {
+        if (Array.isArray(data)) return data.join(', ');
+        if (data.keywords) return Array.isArray(data.keywords) ? data.keywords.join(', ') : data.keywords;
+        return content;
+      }
+      case 'blacklist': {
+        if (Array.isArray(data)) return data.join(', ');
+        if (data.words) return Array.isArray(data.words) ? data.words.join(', ') : data.words;
+        return content;
+      }
+      case 'offer': {
+        if (Array.isArray(data)) {
+          return data.map(o => `[Offer: ${o.title}] ${o.description}${o.validUntil ? ` (Valid until: ${o.validUntil})` : ''}${o.cta ? ` (CTA: ${o.cta})` : ''}`).join('\n');
+        }
+        return `[Offer: ${data.title}] ${data.description}${data.validUntil ? ` (Valid until: ${data.validUntil})` : ''}${data.cta ? ` (CTA: ${data.cta})` : ''}`;
+      }
+      case 'qa': {
+        if (Array.isArray(data)) {
+          return data.map(q => `Q: ${q.question}\nA: ${q.answer}`).join('\n\n');
+        }
+        return `Q: ${data.question}\nA: ${data.answer}`;
+      }
+      case 'seasonal': {
+        if (Array.isArray(data)) {
+          return data.map(s => `[Season/Occasion: ${s.occasion}] From ${s.startDate} to ${s.endDate} - Instructions: ${s.instructions}`).join('\n');
+        }
+        return `[Season/Occasion: ${data.occasion}] From ${data.startDate} to ${data.endDate} - Instructions: ${data.instructions}`;
+      }
+      case 'creative_brief': {
+        const parts = [];
+        if (data.brandStyle) parts.push(`Brand Visual Style: ${data.brandStyle}`);
+        if (data.brandColors && data.brandColors.length > 0) parts.push(`Brand Colors: ${Array.isArray(data.brandColors) ? data.brandColors.join(', ') : data.brandColors}`);
+        if (data.imageStyle && data.imageStyle.length > 0) parts.push(`Image Preferences: ${Array.isArray(data.imageStyle) ? data.imageStyle.join(', ') : data.imageStyle}`);
+        if (data.negativePrompt && data.negativePrompt.length > 0) parts.push(`Do Not Use/Avoid in image: ${Array.isArray(data.negativePrompt) ? data.negativePrompt.join(', ') : data.negativePrompt}`);
+        if (data.typography) parts.push(`Typography/Text notes: ${data.typography}`);
+        return parts.join('\n');
+      }
+      default:
+        return content;
+    }
+  } catch (e) {
+    return content;
+  }
+}
+
 // POST generate AI reply content via Groq/OpenAI API
 router.post('/generate-ai-reply', async (req, res) => {
   const { clientId, author, rating, text } = req.body;
   const fs = require('fs');
   const path = require('path');
-  
+
   fs.appendFileSync(
     path.join(__dirname, '../debug_error.log'),
     `[${new Date().toISOString()}] API Called: clientId=${clientId}, author=${author}, rating=${rating}, text=${text}\n`
@@ -547,26 +731,30 @@ router.post('/generate-ai-reply', async (req, res) => {
       'SELECT entry_type, content FROM mafiya_gmb_brain WHERE client_id = $1',
       [clientId]
     );
-    
+
     const brain = {
       tone: [],
       offer: [],
       keyword: [],
       qa: [],
       blacklist: [],
-      seasonal: []
+      seasonal: [],
+      review_rules: []
     };
 
     brainRes.rows.forEach(row => {
       const typeKey = (row.entry_type || '').toLowerCase().trim();
       if (brain[typeKey]) {
-        brain[typeKey].push(row.content);
+        brain[typeKey].push(formatBrainContent(typeKey, row.content));
       }
     });
 
     let brainDirectives = '';
     if (brain.tone.length > 0) {
       brainDirectives += `\nTONE AND STYLE GUIDELINES (Adhere strictly to this tone):\n${brain.tone.map(t => `- ${t}`).join('\n')}\n`;
+    }
+    if (brain.review_rules && brain.review_rules.length > 0) {
+      brainDirectives += `\nSPECIFIC REVIEW REPLY RULES (Adhere strictly to these response instructions):\n${brain.review_rules.map(r => `- ${r}`).join('\n')}\n`;
     }
     if (brain.offer.length > 0) {
       brainDirectives += `\nPROMOTIONS / OFFERS (Incorporate or refer to these active offers if appropriate, especially for positive reviews):\n${brain.offer.map(o => `- ${o}`).join('\n')}\n`;
@@ -591,7 +779,7 @@ router.post('/generate-ai-reply', async (req, res) => {
       }).join('\n')}\n`;
     }
 
-    const prompt = `You are an expert customer relations manager representing the business "${businessName}". 
+    const prompt = `You are an expert customer relations manager representing the business "${businessName}".
 Write a highly personalized, friendly, and very short response to this Google Review.
 
 Reviewer Name: ${author}
@@ -599,12 +787,14 @@ Rating: ${rating} out of 5 stars
 Review Text: "${text || 'No comment provided.'}"
 ${brainDirectives}
 Guidelines:
-- Keep the response warm and engaging: around 2 to 3 detailed sentences (about 250 to 450 characters).
-- Include 1 or 2 friendly emojis (like 😊, 👍, 🌟, 🙌) to make the message warm.
+- **CRITICAL**: If TONE AND STYLE GUIDELINES or SPECIFIC REVIEW REPLY RULES are provided above, follow them STRICTLY. They override any default guidelines below.
+- Default guidelines (only use if not overridden by GMB Brain):
+  * Keep the response warm and engaging: around 2 to 3 detailed sentences (about 250 to 450 characters).
+  * Include 1 or 2 friendly emojis (like 😊, 👍, 🌟, 🙌) to make the message warm.
+  * If the rating is 4 or 5 stars, thank them warmly and say we look forward to working with them again.
+  * If the rating is 1, 2, or 3 stars, apologize professionally and invite them to contact us directly.
 - If the reviewer has left a comment/feedback, briefly mention the specific thing they praised.
-- If the rating is 4 or 5 stars, thank them warmly and say we look forward to working with them again.
-- If the rating is 1, 2, or 3 stars, apologize professionally and invite them to contact us directly.
-- **IMPORTANT**: Generate ONLY the body paragraph(s) of the response. Do NOT include any greetings (like "Dear...", "Hi...") or sign-offs (like "Warm Regards", "Best Regards", "Team...") as these will be automatically added by the template.`;
+- **IMPORTANT**: Generate ONLY the body paragraph(s) of the response. Do NOT start the text with the reviewer's name (e.g. do NOT start with "Aakash," or "[Name],"), and do NOT include any greetings (like "Dear...", "Hi...") or sign-offs (like "Warm Regards", "Best Regards", "Team...") as these will be automatically added by the template.`;
 
     const chatRes = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -622,7 +812,7 @@ Guidelines:
       }
     );
 
-    const reply = chatRes.data?.choices?.[0]?.message?.content?.trim() || 
+    const reply = chatRes.data?.choices?.[0]?.message?.content?.trim() ||
                   `Thank you ${author} for your review! We appreciate your feedback.`;
 
     fs.appendFileSync(
@@ -642,19 +832,284 @@ Guidelines:
   }
 });
 
-// GET GMB Brain entries
+// GET GMB Brain entries sorted logically by category then date
 router.get('/brain', async (req, res) => {
   const { clientId } = req.query;
   if (!clientId) return res.status(400).json({ error: 'clientId is required' });
   try {
     const result = await pool.query(
-      'SELECT * FROM mafiya_gmb_brain WHERE client_id = $1 ORDER BY created_at DESC',
+      `SELECT * FROM mafiya_gmb_brain 
+       WHERE client_id = $1 
+       ORDER BY 
+         CASE entry_type
+           WHEN 'tone' THEN 1
+           WHEN 'review_rules' THEN 2
+           WHEN 'offer' THEN 3
+           WHEN 'keyword' THEN 4
+           WHEN 'qa' THEN 5
+           WHEN 'blacklist' THEN 6
+           WHEN 'seasonal' THEN 7
+           WHEN 'creative_brief' THEN 8
+           ELSE 9
+         END ASC,
+         created_at DESC`,
       [clientId]
     );
     res.json(result.rows);
   } catch (err) {
     console.error('[Mafiya Reviews] GET /brain error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/mafiya/reviews/brain/polish
+router.post('/brain/polish', async (req, res) => {
+  const { content, entryType } = req.body;
+  if (!content || !entryType) {
+    return res.status(400).json({ error: 'content and entryType are required' });
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+  }
+
+  try {
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const prompt = `You are an expert prompt engineer for Google My Business settings optimization.
+Optimize and refine the following user instruction under the category "${entryType}".
+Transform it into a clear, professional, and well-structured directive suitable for an LLM constraint.
+Keep the original meaning exactly the same, but improve the grammar, professionalism, and clarity.
+
+User input: "${content}"
+
+Return ONLY the polished instruction. Do NOT wrap in quotes, do NOT add introductory text (like "Here is the polished instruction:"), and do NOT use markdown bolding. Keep it very short (1 to 2 sentences max).`;
+
+    let response;
+    try {
+      response = await genAI.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: prompt
+      });
+    } catch (apiErr) {
+      console.warn('[Gemini 3.5-flash Unavailable, trying gemini-3.5-flash-lite]:', apiErr.message);
+      response = await genAI.models.generateContent({
+        model: 'gemini-3.5-flash-lite',
+        contents: prompt
+      });
+    }
+
+    const polishedText = response.text?.trim() || content;
+    res.json({ polishedText });
+  } catch (err) {
+    console.error('[Mafiya Reviews] Brain polish error:', err);
+    res.status(500).json({ error: 'Failed to polish content with AI' });
+  }
+});
+
+// POST /api/mafiya/reviews/brain/suggest-config
+router.post('/brain/suggest-config', async (req, res) => {
+  const { clientId, entryType, currentConfig } = req.body;
+  if (!clientId || !entryType) {
+    return res.status(400).json({ error: 'clientId and entryType are required' });
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+  }
+
+  try {
+    // Fetch business profile details
+    const clientRes = await pool.query(
+      'SELECT business_name FROM mafiya_gmb_clients WHERE id = $1',
+      [clientId]
+    );
+    if (clientRes.rowCount === 0) {
+      return res.status(404).json({ error: 'Client business profile not found.' });
+    }
+    const businessName = clientRes.rows[0].business_name;
+
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    let prompt = '';
+    const hasCurrent = currentConfig && Object.keys(currentConfig).length > 0 && JSON.stringify(currentConfig) !== '{}' && (
+      (Array.isArray(currentConfig) && currentConfig.length > 0) ||
+      (!Array.isArray(currentConfig) && Object.values(currentConfig).some(v => Array.isArray(v) ? v.length > 0 : (v && v.trim && v.trim() !== '')))
+    );
+
+    if (entryType === 'tone') {
+      prompt = hasCurrent 
+        ? `You are an AI expert. Optimize, refine, and improve the following Tone config for "${businessName}". Correct any slang, improve professional alignment, and fill in missing fields:
+Current Tone config: ${JSON.stringify(currentConfig)}
+Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
+{
+  "voice": "Friendly",
+  "style": ["Appreciative", "Conversational"],
+  "emoji": "Minimal",
+  "length": "Medium",
+  "avoid": ["Robotic", "Defensive"]
+}`
+        : `Generate the ideal tone guidelines JSON config for a GMB profile named "${businessName}".
+Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
+{
+  "voice": "Friendly",
+  "style": ["Appreciative", "Conversational"],
+  "emoji": "Minimal",
+  "length": "Medium",
+  "avoid": ["Robotic", "Defensive"]
+}`;
+    } else if (entryType === 'review_rules') {
+      prompt = hasCurrent 
+        ? `You are an AI expert. Optimize, refine, and improve the following Review Reply Guidelines rules for "${businessName}". Correct grammar, structure it beautifully, and improve rule detail:
+Current rules: ${JSON.stringify(currentConfig)}
+Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
+{
+  "positive": "Respond to positive reviews...",
+  "neutral": "Respond to neutral reviews...",
+  "negative": "Respond to negative reviews...",
+  "additional": ["Rule 1", "Rule 2"]
+}`
+        : `Generate review guidelines rules for a GMB business profile named "${businessName}".
+Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
+{
+  "positive": "A short 1-sentence prompt on how to respond to positive reviews for this type of business.",
+  "neutral": "A short 1-sentence prompt on how to respond to neutral (3-star) reviews.",
+  "negative": "A short 1-sentence prompt on how to handle negative (1-2 star) reviews calmly and redirect to offline help.",
+  "additional": ["Rule 1", "Rule 2"]
+}`;
+    } else if (entryType === 'keyword') {
+      prompt = hasCurrent 
+        ? `You are an AI expert. Optimize, refine, and expand the following local SEO keywords for "${businessName}". Clean up typos, and suggest relevant high-performance search terms:
+Current keywords: ${JSON.stringify(currentConfig)}
+Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
+["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]`
+        : `Generate an array of 5 target SEO keyword phrases suitable for a GMB business profile named "${businessName}".
+Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
+["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]`;
+    } else if (entryType === 'blacklist') {
+      prompt = hasCurrent 
+        ? `You are an AI expert. Optimize and add relevant words to avoid for the business "${businessName}":
+Current blacklist: ${JSON.stringify(currentConfig)}
+Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
+["word1", "word2", "word3", "word4"]`
+        : `Generate an array of 4 words or concepts the business "${businessName}" should never mention in customer replies.
+Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
+["word1", "word2", "word3", "word4"]`;
+    } else if (entryType === 'offer') {
+      prompt = hasCurrent 
+        ? `You are an AI expert. Optimize and improve the copywriting of these promotions/offers for "${businessName}":
+Current offers: ${JSON.stringify(currentConfig)}
+Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
+[
+  {
+    "title": "Offer title",
+    "description": "Attractive offer description",
+    "validUntil": "Expiry date",
+    "cta": "CTA button label"
+  }
+]`
+        : `Generate 2 realistic promotions/offers cards for the business "${businessName}".
+Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
+[
+  {
+    "title": "Offer title",
+    "description": "Attractive offer description detailing Rs/Discount/Freebie",
+    "validUntil": "Expiry date (e.g. Aug 31)",
+    "cta": "Call to action button label"
+  }
+]`;
+    } else if (entryType === 'qa') {
+      prompt = hasCurrent 
+        ? `You are an AI expert. Optimize, correct, and professionalize these Q&As for "${businessName}":
+Current Q&As: ${JSON.stringify(currentConfig)}
+Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
+[
+  {
+    "question": "Question",
+    "answer": "Answer"
+  }
+]`
+        : `Generate 2 common Q&As for a GMB profile of "${businessName}".
+Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
+[
+  {
+    "question": "What is the fee or starting cost?",
+    "answer": "Detailed helpful starting price or demo offer."
+  },
+  {
+    "question": "Do you offer courses or services on weekends?",
+    "answer": "Yes, we offer weekend batches and flexible timings."
+  }
+]`;
+    } else if (entryType === 'seasonal') {
+      const currentDateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      prompt = hasCurrent 
+        ? `You are an AI expert. The current date is ${currentDateStr}. Optimize and improve this seasonal campaign for "${businessName}", correcting dates and aligning options:
+Current seasonal config: ${JSON.stringify(currentConfig)}
+Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
+[
+  {
+    "occasion": "Festival name",
+    "startDate": "Start Date",
+    "endDate": "End Date",
+    "instructions": "Instructions"
+  }
+]`
+        : `The current date is ${currentDateStr}. Generate a future seasonal campaign (upcoming months from this date onwards, e.g. late 2026/2027) for the business "${businessName}". Do NOT generate past campaigns.
+Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
+[
+  {
+    "occasion": "Upcoming Festival/Event name",
+    "startDate": "Start Date (e.g. Oct 15)",
+    "endDate": "End Date (e.g. Nov 15)",
+    "instructions": "Campaign details and key discount triggers"
+  }
+]`;
+    } else if (entryType === 'creative_brief') {
+      prompt = hasCurrent 
+        ? `You are an AI expert. Optimize and refine this creative brief brand style instructions for "${businessName}":
+Current brief: ${JSON.stringify(currentConfig)}
+Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
+{
+  "brandStyle": "Modern",
+  "brandColors": ["Orange", "Grey"],
+  "imageStyle": ["Professional photography"],
+  "negativePrompt": ["no watermark"],
+  "typography": "Typography instructions"
+}`
+        : `Generate creative brief brand style instructions for "${businessName}".
+Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
+{
+  "brandStyle": "Modern",
+  "brandColors": ["Orange", "Grey"],
+  "imageStyle": ["Professional photography"],
+  "negativePrompt": ["no watermark"],
+  "typography": "Clean sans-serif fonts, bold titles"
+}`;
+    }
+
+    let response;
+    try {
+      response = await genAI.models.generateContent({
+        model: 'gemini-3.5-flash-lite',
+        contents: prompt
+      });
+    } catch (apiErr) {
+      console.warn('[Gemini Lite suggest failed, trying gemini-3.6-flash]:', apiErr.message);
+      response = await genAI.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: prompt
+      });
+    }
+
+    let cleanedText = response.text?.trim() || '';
+    if (cleanedText.startsWith('```')) {
+      cleanedText = cleanedText.replace(/^```json\s*/, '').replace(/```$/, '').trim();
+    }
+    
+    const parsedData = JSON.parse(cleanedText);
+    res.json({ suggestedConfig: parsedData });
+  } catch (err) {
+    console.error('[Mafiya Reviews] GMB Brain suggest config error:', err);
+    res.status(500).json({ error: 'Failed to suggest config via AI: ' + err.message });
   }
 });
 
@@ -726,15 +1181,15 @@ router.get('/posts', async (req, res) => {
 router.post('/posts', async (req, res) => {
   const fs = require('fs');
   const path = require('path');
-  
-  let { 
-    clientId, 
-    postType, 
-    caption, 
-    posterTitle, 
-    posterSubtitle, 
-    bgTheme, 
-    status, 
+
+  let {
+    clientId,
+    postType,
+    caption,
+    posterTitle,
+    posterSubtitle,
+    bgTheme,
+    status,
     imageUrl,
     postTitle,
     startDate,
@@ -754,7 +1209,7 @@ router.post('/posts', async (req, res) => {
   if (!clientId || !postType || !caption) {
     return res.status(400).json({ error: 'clientId, postType, and caption are required' });
   }
-  
+
   try {
     let finalScheduledAt = scheduledAt;
     if (scheduledAt && clientNow) {
@@ -770,19 +1225,19 @@ router.post('/posts', async (req, res) => {
         const base64Data = imageUrl.replace(/^data:(image|video)\/\w+;base64,/, '');
         const filename = `gmb_post_${Date.now()}.${ext}`;
         const uploadDir = path.join(__dirname, '..', 'uploads', 'gmb_posts');
-        
+
         if (!fs.existsSync(uploadDir)) {
           fs.mkdirSync(uploadDir, { recursive: true });
         }
-        
+
         const filepath = path.join(uploadDir, filename);
         fs.writeFileSync(filepath, base64Data, 'base64');
-        
+
         // Dynamically get the exact API domain that this request came from (e.g. leados-api.abmgroups.org)
         const host = req.headers['x-forwarded-host'] || req.headers.host || 'leados-api.abmgroups.org';
         const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
         const apiUrl = `${protocol}://${host}`;
-        
+
         // Use a dedicated dynamic API route to serve the image, bypassing Nginx static file intercepts
         finalImageUrl = `${apiUrl}/api/mafiya/reviews/image/${filename}`;
       } catch (err) {
@@ -793,19 +1248,19 @@ router.post('/posts', async (req, res) => {
 
     // 1. Save to local database
     const result = await pool.query(
-      `INSERT INTO mafiya_gmb_posts 
+      `INSERT INTO mafiya_gmb_posts
         (client_id, post_type, caption, poster_title, poster_subtitle, bg_theme, status, image_url,
          post_title, start_date, end_date, start_time, end_time, coupon_code, redeem_link, terms, repeats, custom_days, repeat_end_date, scheduled_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING *`,
       [
-        clientId, 
-        postType, 
-        caption, 
-        posterTitle, 
-        posterSubtitle, 
-        bgTheme || 'orange', 
-        status || 'draft', 
+        clientId,
+        postType,
+        caption,
+        posterTitle,
+        posterSubtitle,
+        bgTheme || 'orange',
+        status || 'draft',
         finalImageUrl,
         postTitle || null,
         startDate || null,
@@ -832,7 +1287,7 @@ router.post('/posts', async (req, res) => {
     try {
       const clientRes = await pool.query('SELECT google_account_id, google_location_id FROM mafiya_gmb_clients WHERE id = $1', [clientId]);
       const tokenString = await getClientGoogleToken(clientId);
-      
+
       const client = clientRes.rows[0];
 
       if (client && client.google_account_id && client.google_location_id && tokenString) {
@@ -891,7 +1346,7 @@ router.post('/posts', async (req, res) => {
           const endD = parseGoogleDate(endDate);
           const startT = parseGoogleTime(startTime);
           const endT = parseGoogleTime(endTime);
-          
+
           gmbPostBody.event = {
             title: postTitle || posterTitle || 'Special Offer',
             schedule: {
@@ -948,20 +1403,20 @@ router.post('/posts', async (req, res) => {
             }
           }
         }
-        
+
         // Add image (Google requires a public URL, so base64 won't work natively without upload)
         if (finalImageUrl && finalImageUrl.startsWith('http')) {
             // Automatically detect if running on local Windows PC vs Live Ubuntu Server
              const isLocalWindows = __dirname.includes(':\\') || __dirname.includes('Desktop');
              const isVideo = finalImageUrl.endsWith('.mp4') || finalImageUrl.endsWith('.webm') || finalImageUrl.endsWith('.mov') || finalImageUrl.endsWith('.avi');
-             let googleImageUrl = isLocalWindows 
+             let googleImageUrl = isLocalWindows
                ? (isVideo ? 'https://www.w3schools.com/html/mov_bbb.mp4' : 'https://picsum.photos/600/400') // Use dummy public media for local testing
                : finalImageUrl; // Use actual media on live server
- 
+
              console.log(`[GMB API Debug] Local OS detected? ${isLocalWindows}`);
              console.log(`[GMB API Debug] finalImageUrl saved to DB: ${finalImageUrl}`);
              console.log(`[GMB API Debug] googleImageUrl sent to API: ${googleImageUrl}`);
- 
+
              gmbPostBody.media = [{
                  mediaFormat: isVideo ? 'VIDEO' : 'PHOTO',
                  sourceUrl: googleImageUrl
@@ -1107,7 +1562,7 @@ router.post('/posts/import', async (req, res) => {
         const createdAt = item.createTime ? new Date(item.createTime) : new Date();
 
         await pool.query(
-          `INSERT INTO mafiya_gmb_posts 
+          `INSERT INTO mafiya_gmb_posts
             (client_id, post_type, caption, status, image_url, gmb_post_name, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [clientId, postType, caption, 'published', imageUrl, item.name, createdAt]
@@ -1142,9 +1597,9 @@ router.get('/posts/sync-metrics', async (req, res) => {
     const client = clientRes.rows[0];
 
     if (!client || !client.ga4_property_id) {
-      return res.json({ 
-        success: true, 
-        message: 'Sync skipped. No GA4 Property ID configured for this client. Please add it to track post clicks.' 
+      return res.json({
+        success: true,
+        message: 'Sync skipped. No GA4 Property ID configured for this client. Please add it to track post clicks.'
       });
     }
 
@@ -1224,13 +1679,13 @@ router.get('/posts/sync-metrics', async (req, res) => {
 // PUT/EDIT a GMB Post
 router.put('/posts/:id', async (req, res) => {
   const { id } = req.params;
-  let { 
-    postType, 
-    caption, 
-    posterTitle, 
-    posterSubtitle, 
-    bgTheme, 
-    status, 
+  let {
+    postType,
+    caption,
+    posterTitle,
+    posterSubtitle,
+    bgTheme,
+    status,
     imageUrl,
     postTitle,
     startDate,
@@ -1256,7 +1711,7 @@ router.put('/posts/:id', async (req, res) => {
     let finalImageUrl = imageUrl;
     const fs = require('fs');
     const path = require('path');
-    
+
     if (imageUrl && (imageUrl.startsWith('data:image') || imageUrl.startsWith('data:video'))) {
       try {
         const isVideo = imageUrl.startsWith('data:video');
@@ -1265,18 +1720,18 @@ router.put('/posts/:id', async (req, res) => {
         const base64Data = imageUrl.replace(/^data:(image|video)\/\w+;base64,/, '');
         const filename = `gmb_post_${Date.now()}.${ext}`;
         const uploadDir = path.join(__dirname, '..', 'uploads', 'gmb_posts');
-        
+
         if (!fs.existsSync(uploadDir)) {
           fs.mkdirSync(uploadDir, { recursive: true });
         }
-        
+
         const filepath = path.join(uploadDir, filename);
         fs.writeFileSync(filepath, base64Data, 'base64');
-        
+
         const host = req.headers['x-forwarded-host'] || req.headers.host || 'leados-api.abmgroups.org';
         const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
         const apiUrl = `${protocol}://${host}`;
-        
+
         finalImageUrl = `${apiUrl}/api/mafiya/reviews/image/${filename}`;
       } catch (err) {
         console.error('[Mafiya Reviews] Failed to process base64 file:', err);
@@ -1284,20 +1739,20 @@ router.put('/posts/:id', async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE mafiya_gmb_posts 
-       SET post_type = $1, caption = $2, poster_title = $3, poster_subtitle = $4, bg_theme = $5, 
-           status = $6, image_url = $7, post_title = $8, start_date = $9, end_date = $10, 
-           start_time = $11, end_time = $12, coupon_code = $13, redeem_link = $14, terms = $15, 
+      `UPDATE mafiya_gmb_posts
+       SET post_type = $1, caption = $2, poster_title = $3, poster_subtitle = $4, bg_theme = $5,
+           status = $6, image_url = $7, post_title = $8, start_date = $9, end_date = $10,
+           start_time = $11, end_time = $12, coupon_code = $13, redeem_link = $14, terms = $15,
            repeats = $16, custom_days = $17, repeat_end_date = $18, scheduled_at = $19
        WHERE id = $20
        RETURNING *`,
       [
-        postType, 
-        caption, 
-        posterTitle, 
-        posterSubtitle, 
-        bgTheme || 'orange', 
-        status || 'draft', 
+        postType,
+        caption,
+        posterTitle,
+        posterSubtitle,
+        bgTheme || 'orange',
+        status || 'draft',
         finalImageUrl,
         postTitle || null,
         startDate || null,
@@ -1346,7 +1801,7 @@ router.get('/google-locations', async (req, res) => {
     const headers = { Authorization: `Bearer ${token}` };
     const accRes = await axios.get('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', { headers });
     const accounts = accRes.data.accounts || [];
-    
+
     let allLocations = [];
     for (const acc of accounts) {
       try {
@@ -1376,7 +1831,7 @@ router.put('/google-locations', async (req, res) => {
   if (!clientId || !google_account_id || !google_location_id) {
     return res.status(400).json({ error: 'Missing parameters' });
   }
-  
+
   try {
     const cleanAccountId = google_account_id.replace('accounts/', '');
     const cleanLocationId = google_location_id.replace('locations/', '');
@@ -1462,13 +1917,13 @@ router.post('/posts/generate-from-image', async (req, res) => {
 
     const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `Analyze this uploaded image (which is a digital poster/creative/flyer) and write an engaging post title and description.
-    
+
     Requirements:
     1. Title: Under 60 characters, catchy, matches GMB post format.
     2. Description: Detailed, under 1000 characters. Extract key information from the image (like program name, dates, discounts, fees, contact phone, website) and present them in clear bullet points, followed by a professional call-to-action and relevant hashtags.
     3. Formatting: Do NOT use any markdown bold formatting (like double asterisks **). GMB does not support markdown, so print plain text only. Use capital letters for emphasis if needed.
     4. Emojis: Use plenty of relevant, engaging emojis in both the title and the description to make the copy visually appealing and friendly.
-    
+
     Return ONLY a valid JSON object. Do NOT wrap the JSON in markdown blocks like \`\`\`json. The JSON object must have exactly these keys:
     {
       "title": "the generated title",
@@ -1478,7 +1933,7 @@ router.post('/posts/generate-from-image', async (req, res) => {
     let response;
     try {
       response = await genAI.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-flash',
         contents: [
           {
             inlineData: {
@@ -1490,10 +1945,10 @@ router.post('/posts/generate-from-image', async (req, res) => {
         ]
       });
     } catch (firstErr) {
-      console.warn('[Gemini 2.5 Unavailable, trying gemini-2.0-flash]:', firstErr.message);
+      console.warn('[Gemini 3.5-flash Unavailable, trying gemini-3.5-flash-lite]:', firstErr.message);
       try {
         response = await genAI.models.generateContent({
-          model: 'gemini-2.0-flash',
+          model: 'gemini-3.5-flash-lite',
           contents: [
             {
               inlineData: {
@@ -1505,9 +1960,9 @@ router.post('/posts/generate-from-image', async (req, res) => {
           ]
         });
       } catch (secondErr) {
-        console.warn('[Gemini 2.0 Unavailable, trying gemini-1.5-flash]:', secondErr.message);
+        console.warn('[Gemini 3.5-flash-lite Unavailable, trying gemini-3.6-flash]:', secondErr.message);
         response = await genAI.models.generateContent({
-          model: 'gemini-1.5-flash',
+          model: 'gemini-3.6-flash',
           contents: [
             {
               inlineData: {
@@ -1529,13 +1984,13 @@ router.post('/posts/generate-from-image', async (req, res) => {
     if (groqKey) {
       try {
         const groqPrompt = `Analyze this uploaded image (which is a digital poster/creative/flyer) and write an engaging post title and description.
-        
+
         Requirements:
         1. Title: Under 60 characters, catchy, matches GMB post format.
         2. Description: Detailed, under 1000 characters. Extract key information from the image (like program name, dates, discounts, fees, contact phone, website) and present them in clear bullet points, followed by a professional call-to-action and relevant hashtags.
         3. Formatting: Do NOT use any markdown bold formatting (like double asterisks **). GMB does not support markdown, so print plain text only. Use capital letters for emphasis if needed.
         4. Emojis: Use plenty of relevant, engaging emojis in both the title and the description to make the copy visually appealing and friendly.
-        
+
         Return ONLY a JSON object. Do NOT wrap the JSON in markdown blocks. The JSON must match this schema:
         {
           "title": "the generated title",
@@ -1618,7 +2073,9 @@ router.post('/posts/generate', async (req, res) => {
       const k = (row.entry_type || '').toLowerCase().trim();
       // Map frontend category names to DB types
       const mappedKey = k === 'offers' ? 'offer' : k === 'q&a bank' ? 'qa' : k === 'keywords' ? 'keyword' : k;
-      if (brain[mappedKey]) brain[mappedKey].push(row.content);
+      if (brain[mappedKey]) {
+        brain[mappedKey].push(formatBrainContent(mappedKey, row.content));
+      }
     });
 
     // 3. Select directives based on type
@@ -1630,7 +2087,7 @@ router.post('/posts/generate', async (req, res) => {
     let creativeBriefContext = '';
     let imageDesignPrompt = '';
     let dallENegative = '';
-    
+
     if (brain.creative_brief && brain.creative_brief.length > 0) {
       try {
         const briefData = JSON.parse(brain.creative_brief[0]);
@@ -1642,7 +2099,7 @@ router.post('/posts/generate', async (req, res) => {
 - Visual Theme: ${briefData.imageStyle || 'Realistic photography'}
 - Camera Perspective: ${briefData.cameraAngle || 'Front shot'}
 - Lighting: ${briefData.lighting || 'Cinematic lighting'}`;
-        
+
         imageDesignPrompt = `Theme colors: ${briefData.brandColors}. Style: ${briefData.brandStyle}. Quality/Look: ${briefData.imageStyle}, using ${briefData.cameraAngle} and ${briefData.lighting}. Make it look like a highly professional, state-of-the-art visual ad suitable for Google Business.`;
         dallENegative = briefData.negativePrompt ? `, avoid ${briefData.negativePrompt}` : '';
       } catch (e) {
@@ -1711,7 +2168,7 @@ Generate a JSON object with exactly these fields:
     );
 
     let rawOutput = chatRes.data?.choices?.[0]?.message?.content?.trim() || '';
-    
+
     // Clean code fences if LLM ignored instructions
     if (rawOutput.startsWith('```')) {
       rawOutput = rawOutput.replace(/^```(json)?/, '').replace(/```$/, '').trim();
@@ -1741,7 +2198,7 @@ Generate a JSON object with exactly these fields:
       if (customImagePrompt) {
         dallEPrompt = `A premium advertisement visual poster for "${businessName}". Heading: "${parsed.posterTitle}". Subheading: "${parsed.posterSubtitle}". Prompt: ${customImagePrompt}`;
       }
-      
+
       const encodedPrompt = encodeURIComponent(dallEPrompt);
       imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
     } catch (err) {
@@ -1770,12 +2227,12 @@ async function publishPostToGmb(postId) {
       return;
     }
     const post = postRes.rows[0];
-    const { 
-      client_id: clientId, 
-      post_type: postType, 
-      caption, 
-      poster_title: posterTitle, 
-      poster_subtitle: posterSubtitle, 
+    const {
+      client_id: clientId,
+      post_type: postType,
+      caption,
+      poster_title: posterTitle,
+      poster_subtitle: posterSubtitle,
       image_url: finalImageUrl,
       post_title: postTitle,
       start_date: startDate,
@@ -1888,7 +2345,7 @@ async function publishPostToGmb(postId) {
       if (finalImageUrl && finalImageUrl.startsWith('http')) {
         const isLocalWindows = __dirname.includes(':\\') || __dirname.includes('Desktop');
         const isVideo = finalImageUrl.endsWith('.mp4') || finalImageUrl.endsWith('.webm') || finalImageUrl.endsWith('.mov') || finalImageUrl.endsWith('.avi');
-        let googleImageUrl = isLocalWindows 
+        let googleImageUrl = isLocalWindows
           ? (isVideo ? 'https://www.w3schools.com/html/mov_bbb.mp4' : 'https://picsum.photos/600/400')
           : finalImageUrl;
 
@@ -1935,7 +2392,7 @@ async function publishPostToGmb(postId) {
         }
       }
       console.log(`[GMB API] Post ${postId} successfully published:`, gmbResponse.data);
-      
+
       // Update status and post name in the database
       const gmbPostName = gmbResponse && gmbResponse.data && gmbResponse.data.name ? gmbResponse.data.name : null;
       await pool.query(

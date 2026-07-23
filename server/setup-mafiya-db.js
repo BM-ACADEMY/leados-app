@@ -20,6 +20,7 @@ async function setup() {
       custom_category VARCHAR(255),
       contact_person  VARCHAR(255) NOT NULL,
       phone_number    VARCHAR(20) NOT NULL,
+      business_address TEXT,
       website_url     VARCHAR(500),
       gmb_url         TEXT,
       gmb_email       VARCHAR(255),

@@ -3,8 +3,8 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 import { C } from '../../constants/theme.js';
-import { 
-  Megaphone, Plus, Trash2, Download, Sparkles, 
+import {
+  Megaphone, Plus, Trash2, Download, Sparkles,
   Loader2, Check, Star, X, MoreVertical, ImagePlus,
   Play, Link, BarChart2, ArrowLeft, Calendar, TrendingUp, RefreshCw, Eye, MousePointer
 } from 'lucide-react';
@@ -17,13 +17,13 @@ const formatTimeAgo = (dateStr) => {
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
-  
+
   if (diffMins < 1) return 'Published just now';
   if (diffMins < 60) return `Published ${diffMins}m ago`;
   if (diffHours < 24) return `Published ${diffHours}h ago`;
   if (diffDays === 1) return 'Published yesterday';
   if (diffDays < 30) return `Published ${diffDays} days ago`;
-  
+
   const diffMonths = Math.floor(diffDays / 30);
   if (diffMonths === 1) return 'Published last month';
   return `Published ${diffMonths} months ago`;
@@ -42,14 +42,14 @@ const PostCountdown = ({ scheduledAt }) => {
       const hrs = Math.floor(diff / 3600000);
       const mins = Math.floor((diff % 3600000) / 60000);
       const secs = Math.floor((diff % 60000) / 1000);
-      
+
       let str = '';
       if (hrs > 0) str += `${hrs}h `;
       if (mins > 0 || hrs > 0) str += `${mins}m `;
       str += `${secs}s`;
       setTimeLeft(`Scheduled in ${str}`);
     };
-    
+
     calculateTime();
     const interval = setInterval(calculateTime, 1000);
     return () => clearInterval(interval);
@@ -68,7 +68,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
   const [hasButton, setHasButton] = useState(false);
   const [buttonType, setButtonType] = useState('None');
   const [buttonLink, setButtonLink] = useState('');
-  
+
   // Offer & Event specific states
   const [postTitle, setPostTitle] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -83,7 +83,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
   const [repeatEndDate, setRepeatEndDate] = useState('');
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('');
-  
+
   const [showCoupon, setShowCoupon] = useState(false);
   const [showRedeem, setShowRedeem] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -107,7 +107,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (res.data.title) setPostTitle(res.data.title);
       if (res.data.description) setDescription(res.data.description);
       toast.success('AI suggestions loaded successfully!', { id: aiToast });
@@ -153,7 +153,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
         setDescription(editingPost.caption || '');
         setSelectedImage(editingPost.image_url || null);
         setPostTitle(editingPost.post_title || editingPost.poster_title || '');
-        
+
         const formatDate = (dateVal) => {
           if (!dateVal) return '';
           const d = new Date(dateVal);
@@ -163,7 +163,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
           if (!timeVal) return '';
           return timeVal.substring(0, 5); // HH:MM
         };
-        
+
         setStartDate(formatDate(editingPost.start_date));
         setEndDate(formatDate(editingPost.end_date));
         setStartTime(formatTime(editingPost.start_time));
@@ -174,7 +174,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
         setRepeats(editingPost.repeats || 'Does not repeat');
         setCustomDays(editingPost.custom_days ? editingPost.custom_days.split(',') : []);
         setRepeatEndDate(formatDate(editingPost.repeat_end_date));
-        
+
         if (editingPost.scheduled_at) {
           setSchedulePost(true);
           const d = new Date(editingPost.scheduled_at);
@@ -258,7 +258,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
     const file = e.target.files[0];
     if (file) {
       const limit = 5 * 1024 * 1024;
-      
+
       if (file.size > limit) {
         toast.error('Upload 5MB only');
         return;
@@ -319,8 +319,8 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
     setSaving(true);
     try {
       const token = localStorage.getItem('leados_token');
-      const url = editingPost 
-        ? `${API_URL}/api/mafiya/reviews/posts/${editingPost.id}` 
+      const url = editingPost
+        ? `${API_URL}/api/mafiya/reviews/posts/${editingPost.id}`
         : `${API_URL}/api/mafiya/reviews/posts`;
       const method = editingPost ? 'put' : 'post';
 
@@ -406,15 +406,27 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
     }
   };
 
-  const clientName = activeClient?.business_name || 'GMB Profile';
+  const clientName = activeClient?.display_name || activeClient?.business_name || 'GMB Profile';
   const contactPhone = activeClient?.phone_number || '';
 
   return (
     <>
+      <style>{`
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        .skeleton-shimmer {
+          background: linear-gradient(90deg, #27272a 25%, #3f3f46 50%, #27272a 75%);
+          background-size: 200% 100%;
+          animation: shimmer 1.5s infinite linear;
+        }
+          
+      `}</style>
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(9, 9, 11, 0.8)', backdropFilter: 'blur(8px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: 20 }}>
           <div style={{ background: '#18181b', width: '100%', maxWidth: 840, maxHeight: '90vh', borderRadius: 16, border: '1px solid rgba(255, 255, 255, 0.08)', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column' }}>
-            
+
             {/* Header */}
             <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -423,7 +435,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                 </div>
                 <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: '#f4f4f5', fontFamily: "'Syne', sans-serif" }}>Create GMB Post</h2>
               </div>
-              <button 
+              <button
                 onClick={() => setShowModal(false)}
                 style={{ background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' }}
                 onMouseEnter={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'}
@@ -444,7 +456,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                   <p style={{ color: '#a1a1aa', fontSize: 14, maxWidth: 440, marginBottom: 28, lineHeight: 1.6 }}>
                     To publish posts directly to Google, please connect the specific business location for <strong style={{ color: '#fff' }}>{clientName}</strong>.
                   </p>
-                  
+
                   {fetchingLocations ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f97316' }}>
                       <Loader2 size={18} className="animate-spin" />
@@ -452,7 +464,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                     </div>
                   ) : locations.length > 0 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 380 }}>
-                      <select 
+                      <select
                         value={selectedLocationStr}
                         onChange={e => setSelectedLocationStr(e.target.value)}
                         style={{ background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', color: '#f4f4f5', padding: '14px 18px', borderRadius: 8, fontSize: 14, outline: 'none', cursor: 'pointer' }}
@@ -461,7 +473,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           <option key={i} value={loc.accountId + '|' + loc.locationId}>{loc.title}</option>
                         ))}
                       </select>
-                      <button 
+                      <button
                         onClick={handleSaveConnection}
                         disabled={saving}
                         style={{ background: 'linear-gradient(135deg, #f97316, #ea580c)', color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer', boxShadow: '0 4px 14px rgba(249,115,22,0.3)', transition: 'all 0.2s' }}
@@ -484,11 +496,11 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                     {['Update', 'Offer', 'Event'].map(tab => {
                       const isActive = postType === tab;
                       return (
-                        <button 
+                        <button
                           key={tab}
                           onClick={() => setPostType(tab)}
-                          style={{ 
-                            background: isActive ? 'linear-gradient(135deg, #f97316, #ea580c)' : 'transparent', 
+                          style={{
+                            background: isActive ? 'linear-gradient(135deg, #f97316, #ea580c)' : 'transparent',
                             border: 'none',
                             color: isActive ? '#fff' : '#a1a1aa',
                             padding: '8px 20px',
@@ -511,67 +523,100 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 32 }}>
-                    
+
                     {/* Left Column (Inputs) */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                      
+
                       {/* Dynamic Title for Offer & Event */}
                       {(postType === 'Offer' || postType === 'Event') && (
-                        <div style={{ position: 'relative' }}>
-                          <input 
-                            type="text"
-                            value={postTitle}
-                            onChange={(e) => setPostTitle(e.target.value.slice(0, 58))}
-                            placeholder="Title*"
-                            style={{ 
+                        generatingAi ? (
+                          <div
+                            className="skeleton-shimmer"
+                            style={{
                               width: '100%',
-                              background: '#27272a', 
-                              border: '1px solid rgba(255,255,255,0.12)', 
-                              borderRadius: 8, 
-                              padding: '16px 16px 20px 16px', 
-                              color: '#fff', 
-                              fontSize: 14, 
+                              height: 58,
+                              borderRadius: 8,
+                              border: '1px solid rgba(255,255,255,0.08)',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        ) : (
+                          <div style={{ position: 'relative' }}>
+                            <input
+                              type="text"
+                              value={postTitle}
+                              onChange={(e) => setPostTitle(e.target.value.slice(0, 58))}
+                              placeholder="Title*"
+                              style={{
+                                width: '100%',
+                                background: '#27272a',
+                                border: '1px solid rgba(255,255,255,0.12)',
+                                borderRadius: 8,
+                                padding: '16px 16px 20px 16px',
+                                color: '#fff',
+                                fontSize: 14,
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                transition: 'border-color 0.2s'
+                              }}
+                              onFocus={e => e.target.style.borderColor = '#f97316'}
+                              onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
+                            />
+                            <div style={{ position: 'absolute', bottom: 6, right: 12, fontSize: 10, color: '#71717a' }}>
+                              {postTitle.length}/58
+                            </div>
+                          </div>
+                        )
+                      )}
+
+                      {/* Description */}
+                      {generatingAi ? (
+                        <div style={{
+                          width: '100%',
+                          height: 120,
+                          background: '#1c1c1e',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          borderRadius: 8,
+                          padding: '16px',
+                          boxSizing: 'border-box',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 12
+                        }}>
+                          <div className="skeleton-shimmer" style={{ width: '80%', height: 14, borderRadius: 4 }} />
+                          <div className="skeleton-shimmer" style={{ width: '95%', height: 14, borderRadius: 4 }} />
+                          <div className="skeleton-shimmer" style={{ width: '60%', height: 14, borderRadius: 4 }} />
+                          <div className="skeleton-shimmer" style={{ width: '75%', height: 14, borderRadius: 4 }} />
+                        </div>
+                      ) : (
+                        <div style={{ position: 'relative' }}>
+                          <textarea
+                            value={description}
+                            onChange={(e) => setDescription(e.target.value.slice(0, 1500))}
+                            placeholder="What's new? (Description)*"
+                            style={{
+                              width: '100%',
+                              height: 120,
+                              background: '#27272a',
+                              border: '1px solid rgba(255,255,255,0.12)',
+                              borderRadius: 8,
+                              padding: '16px 16px 24px 16px',
+                              color: '#fff',
+                              fontSize: 14,
                               outline: 'none',
+                              resize: 'none',
                               boxSizing: 'border-box',
+                              lineHeight: 1.5,
                               transition: 'border-color 0.2s'
                             }}
                             onFocus={e => e.target.style.borderColor = '#f97316'}
                             onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
                           />
-                          <div style={{ position: 'absolute', bottom: 6, right: 12, fontSize: 10, color: '#71717a' }}>
-                            {postTitle.length}/58
+                          <div style={{ position: 'absolute', bottom: 8, right: 12, fontSize: 10, color: '#71717a' }}>
+                            {description.length}/1,500
                           </div>
                         </div>
                       )}
-
-                      {/* Description */}
-                      <div style={{ position: 'relative' }}>
-                        <textarea
-                          value={description}
-                          onChange={(e) => setDescription(e.target.value.slice(0, 1500))}
-                          placeholder="What's new? (Description)*"
-                          style={{ 
-                            width: '100%', 
-                            height: 120, 
-                            background: '#27272a', 
-                            border: '1px solid rgba(255,255,255,0.12)', 
-                            borderRadius: 8, 
-                            padding: '16px 16px 24px 16px', 
-                            color: '#fff', 
-                            fontSize: 14, 
-                            outline: 'none', 
-                            resize: 'none',
-                            boxSizing: 'border-box',
-                            lineHeight: 1.5,
-                            transition: 'border-color 0.2s'
-                          }}
-                          onFocus={e => e.target.style.borderColor = '#f97316'}
-                          onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
-                        />
-                        <div style={{ position: 'absolute', bottom: 8, right: 12, fontSize: 10, color: '#71717a' }}>
-                          {description.length}/1,500
-                        </div>
-                      </div>
 
                       {/* Date and Time Fields for Offer / Event */}
                       {(postType === 'Offer' || postType === 'Event') && (
@@ -579,7 +624,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                             <div style={{ position: 'relative' }}>
                               <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Start Date*</label>
-                              <input 
+                              <input
                                 type="date"
                                 value={startDate}
                                 onChange={(e) => setStartDate(e.target.value)}
@@ -588,7 +633,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                             </div>
                             <div style={{ position: 'relative' }}>
                               <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Start Time</label>
-                              <input 
+                              <input
                                 type="time"
                                 value={startTime}
                                 onChange={(e) => setStartTime(e.target.value)}
@@ -600,7 +645,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                             <div style={{ position: 'relative' }}>
                               <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>End Date*</label>
-                              <input 
+                              <input
                                 type="date"
                                 value={endDate}
                                 onChange={(e) => setEndDate(e.target.value)}
@@ -609,7 +654,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                             </div>
                             <div style={{ position: 'relative' }}>
                               <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>End Time</label>
-                              <input 
+                              <input
                                 type="time"
                                 value={endTime}
                                 onChange={(e) => setEndTime(e.target.value)}
@@ -621,7 +666,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           {/* Repeats Cadence */}
                           <div style={{ position: 'relative' }}>
                             <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Repeats</label>
-                            <select 
+                            <select
                               value={repeats}
                               onChange={(e) => setRepeats(e.target.value)}
                               style={{ width: '100%', boxSizing: 'border-box', background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '12px 14px', color: '#fff', fontSize: 13.5, outline: 'none', cursor: 'pointer' }}
@@ -663,10 +708,10 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                                   );
                                 })}
                               </div>
-                              
+
                               <div style={{ position: 'relative', marginTop: 8 }}>
                                 <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Repeating post will end on</label>
-                                <input 
+                                <input
                                   type="date"
                                   value={repeatEndDate}
                                   onChange={(e) => setRepeatEndDate(e.target.value)}
@@ -684,20 +729,20 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           <span style={{ fontSize: 14.5, color: '#fff', fontWeight: 600, display: 'block' }}>Schedule this post</span>
                           <span style={{ fontSize: 11.5, color: '#71717a' }}>Publish at a customized future date</span>
                         </div>
-                        <div 
+                        <div
                           onClick={() => setSchedulePost(!schedulePost)}
-                          style={{ 
-                            width: 40, height: 22, 
-                            background: schedulePost ? '#f97316' : '#3f3f46', 
-                            borderRadius: 100, 
+                          style={{
+                            width: 40, height: 22,
+                            background: schedulePost ? '#f97316' : '#3f3f46',
+                            borderRadius: 100,
                             position: 'relative',
                             cursor: 'pointer',
                             transition: 'background 0.2s'
                           }}
                         >
-                          <div style={{ 
-                            width: 16, height: 16, 
-                            background: '#fff', 
+                          <div style={{
+                            width: 16, height: 16,
+                            background: '#fff',
                             borderRadius: '50%',
                             position: 'absolute',
                             top: 3, left: schedulePost ? 21 : 3,
@@ -711,7 +756,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, background: '#27272a4d', padding: 16, borderRadius: 12, border: '1px solid rgba(255,255,255,0.04)', marginTop: -8 }}>
                           <div>
                             <label style={{ fontSize: 11.5, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Schedule Date*</label>
-                            <input 
+                            <input
                               type="date"
                               value={scheduledDate}
                               onChange={(e) => setScheduledDate(e.target.value)}
@@ -720,7 +765,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           </div>
                           <div>
                             <label style={{ fontSize: 11.5, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Schedule Time*</label>
-                            <input 
+                            <input
                               type="time"
                               value={scheduledTime}
                               onChange={(e) => setScheduledTime(e.target.value)}
@@ -729,11 +774,11 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           </div>
                         </div>
                       )}
-                      
+
                       {/* Add more details (Buttons/Offers specific) */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#27272a4d', padding: 18, borderRadius: 12, border: '1px solid rgba(255,255,255,0.04)' }}>
                         <h3 style={{ margin: 0, fontSize: 14.5, fontWeight: 700, color: '#fff' }}>Add more details</h3>
-                        
+
                         {postType === 'Offer' ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -760,14 +805,14 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           </div>
                         ) : (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                            <button 
+                            <button
                               onClick={() => { setHasButton(!hasButton); if(!hasButton) setButtonType('Call now'); }}
-                              style={{ 
+                              style={{
                                 display: 'inline-flex', alignItems: 'center', gap: 6,
-                                background: hasButton ? 'rgba(249,115,22,0.1)' : 'rgba(255,255,255,0.04)', 
+                                background: hasButton ? 'rgba(249,115,22,0.1)' : 'rgba(255,255,255,0.04)',
                                 border: `1px solid ${hasButton ? '#f97316' : 'rgba(255,255,255,0.1)'}`,
-                                borderRadius: 20, padding: '6px 14px', 
-                                color: hasButton ? '#f97316' : '#a1a1aa', 
+                                borderRadius: 20, padding: '6px 14px',
+                                color: hasButton ? '#f97316' : '#a1a1aa',
                                 fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
                                 alignSelf: 'flex-start',
                                 transition: 'all 0.2s'
@@ -775,12 +820,12 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                             >
                               {hasButton ? <X size={13}/> : <Plus size={13}/>} Action Button
                             </button>
-                            
+
                             {hasButton && (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 14, background: '#1e1e21', padding: 16, borderRadius: 8 }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                   <label style={{ fontSize: 12, color: '#a1a1aa' }}>Select Button Type</label>
-                                  <select 
+                                  <select
                                     value={buttonType}
                                     onChange={(e) => setButtonType(e.target.value)}
                                     style={{
@@ -817,7 +862,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                                 ) : buttonType !== 'None' ? (
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                     <label style={{ fontSize: 11.5, color: '#a1a1aa' }}>Button Link Destination*</label>
-                                    <input 
+                                    <input
                                       type="url"
                                       value={buttonLink}
                                       onChange={(e) => setButtonLink(e.target.value)}
@@ -838,10 +883,10 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                     <div style={{ width: '100%' }}>
                       <div style={{ position: 'sticky', top: 0, width: '100%' }}>
                         <label style={{ fontSize: 13.5, color: '#a1a1aa', display: 'block', marginBottom: 8, fontWeight: 600 }}>Media (Image / Video)</label>
-                        <label style={{ 
-                          display: 'flex', 
-                          flexDirection: 'column', 
-                          alignItems: 'center', 
+                        <label style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
                           justifyContent: 'center',
                           height: 240,
                           width: '100%',
@@ -880,7 +925,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                           )}
                           <input type="file" accept="image/*,video/*" style={{ display: 'none' }} onChange={handleImageUpload} />
                         </label>
-                        
+
                         {/* AI Suggestion Button */}
                         {selectedImage && (
                           <button
@@ -931,14 +976,14 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
             <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: '1px solid rgba(255, 255, 255, 0.08)', background: '#1c1c1f' }}>
               <button
                 onClick={() => setShowModal(false)}
-                style={{ 
-                  background: 'transparent', 
-                  color: '#a1a1aa', 
-                  border: '1px solid rgba(255,255,255,0.1)', 
-                  borderRadius: 8, 
-                  padding: '10px 22px', 
-                  fontSize: 13.5, 
-                  fontWeight: 600, 
+                style={{
+                  background: 'transparent',
+                  color: '#a1a1aa',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 8,
+                  padding: '10px 22px',
+                  fontSize: 13.5,
+                  fontWeight: 600,
                   cursor: 'pointer',
                   transition: 'all 0.2s'
                 }}
@@ -950,14 +995,14 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
               <button
                 onClick={handleSavePost}
                 disabled={saving || !description}
-                style={{ 
-                  background: (saving || !description) ? '#27272a' : 'linear-gradient(135deg, #f97316, #ea580c)', 
-                  color: (saving || !description) ? '#71717a' : '#fff', 
-                  border: 'none', 
-                  borderRadius: 8, 
-                  padding: '10px 24px', 
-                  fontSize: 13.5, 
-                  fontWeight: 700, 
+                style={{
+                  background: (saving || !description) ? '#27272a' : 'linear-gradient(135deg, #f97316, #ea580c)',
+                  color: (saving || !description) ? '#71717a' : '#fff',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '10px 24px',
+                  fontSize: 13.5,
+                  fontWeight: 700,
                   cursor: (saving || !description) ? 'not-allowed' : 'pointer',
                   opacity: (saving || !description) ? 0.6 : 1,
                   boxShadow: (saving || !description) ? 'none' : '0 4px 14px rgba(249,115,22,0.3)',
@@ -980,15 +1025,15 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
 const PostAnalyticsView = ({ post, onBack, activeClient }) => {
   // Filters
   const [rangeType, setRangeType] = useState('Month'); // 'Month' or 'Date'
-  
+
   // Custom range dialog states
   const [showRangePopover, setShowRangePopover] = useState(false);
   const [tempRangeType, setTempRangeType] = useState('Month');
-  
+
   // Month range values
   const [fromMonth, setFromMonth] = useState('February, 2026');
   const [toMonth, setToMonth] = useState('July, 2026');
-  
+
   // Date range values
   const [fromDate, setFromDate] = useState('2026-02-01');
   const [toDate, setToDate] = useState('2026-07-31');
@@ -1005,8 +1050,8 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
   const monthsList = [
-    'January, 2026', 'February, 2026', 'March, 2026', 'April, 2026', 
-    'May, 2026', 'June, 2026', 'July, 2026', 'August, 2026', 
+    'January, 2026', 'February, 2026', 'March, 2026', 'April, 2026',
+    'May, 2026', 'June, 2026', 'July, 2026', 'August, 2026',
     'September, 2026', 'October, 2026', 'November, 2026', 'December, 2026'
   ];
 
@@ -1066,7 +1111,7 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
   // Apply range filtering
   const filteredData = allMockData.filter(item => {
     const itemDate = new Date(item.date);
-    
+
     if (appliedRangeType === 'Month') {
       const startLimit = parseMonthYearString(appliedFromMonth);
       const endLimit = parseMonthYearString(appliedToMonth);
@@ -1159,16 +1204,16 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
   };
 
   const isVideo = post.image_url && (
-    post.image_url.endsWith('.mp4') || 
-    post.image_url.endsWith('.webm') || 
-    post.image_url.endsWith('.mov') || 
+    post.image_url.endsWith('.mp4') ||
+    post.image_url.endsWith('.webm') ||
+    post.image_url.endsWith('.mov') ||
     post.image_url.endsWith('.avi')
   );
 
   return (
     <div style={{ padding: '26px 26px 80px 26px', background: '#090a0f', height: '100%', overflowY: 'auto', boxSizing: 'border-box', color: '#fff', position: 'relative' }}>
       {/* Back Button */}
-      <button 
+      <button
         onClick={onBack}
         style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', color: '#a1a1aa', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, marginBottom: 24, padding: 0, transition: 'color 0.2s' }}
         onMouseEnter={e => e.currentTarget.style.color = '#fff'}
@@ -1191,13 +1236,13 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
           {/* Donut Chart block (Screenshot 2 style) */}
           <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 16, padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
             <h3 style={{ fontSize: 13, fontWeight: 700, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 20 }}>Metric Proportion</h3>
-            
+
             {/* SVG Donut */}
             <div style={{ position: 'relative', width: 120, height: 120, marginBottom: 18 }}>
               {(() => {
                 const total = filteredViews + filteredClicks;
                 const showChart = total > 0;
-                
+
                 if (!showChart) {
                   return (
                     <svg width="120" height="120" viewBox="0 0 120 120">
@@ -1285,10 +1330,10 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
           <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 16, padding: 22, position: 'relative' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h3 style={{ fontSize: 14, fontWeight: 700, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}><TrendingUp size={15} color="#f97316" /> Performance Trend</h3>
-              
+
               {/* Range Picker Trigger Button (Screenshot 3 trigger style) */}
               <div style={{ position: 'relative' }}>
-                <button 
+                <button
                   onClick={() => setShowRangePopover(!showRangePopover)}
                   style={{ background: '#1e2130', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '8px 14px', color: '#fff', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
                 >
@@ -1300,16 +1345,16 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
                   <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 8px)', zIndex: 100, background: '#161924', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, padding: 18, width: 320, boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5 }}>Custom Range</span>
-                      
+
                       {/* Pill toggle (Month / Date) */}
                       <div style={{ display: 'flex', background: '#0e1017', borderRadius: 6, padding: 2 }}>
-                        <button 
+                        <button
                           onClick={() => setTempRangeType('Month')}
                           style={{ border: 'none', background: tempRangeType === 'Month' ? '#f97316' : 'transparent', color: '#fff', fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 4, cursor: 'pointer', transition: 'all 0.2s' }}
                         >
                           Month
                         </button>
-                        <button 
+                        <button
                           onClick={() => setTempRangeType('Date')}
                           style={{ border: 'none', background: tempRangeType === 'Date' ? '#f97316' : 'transparent', color: '#fff', fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 4, cursor: 'pointer', transition: 'all 0.2s' }}
                         >
@@ -1323,8 +1368,8 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
                         <div>
                           <label style={{ fontSize: 11, color: '#71717a', display: 'block', marginBottom: 6 }}>From</label>
-                          <select 
-                            value={fromMonth} 
+                          <select
+                            value={fromMonth}
                             onChange={e => setFromMonth(e.target.value)}
                             style={{ width: '100%', background: '#0e1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }}
                           >
@@ -1333,8 +1378,8 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
                         </div>
                         <div>
                           <label style={{ fontSize: 11, color: '#71717a', display: 'block', marginBottom: 6 }}>To</label>
-                          <select 
-                            value={toMonth} 
+                          <select
+                            value={toMonth}
                             onChange={e => setToMonth(e.target.value)}
                             style={{ width: '100%', background: '#0e1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '8px 10px', color: '#fff', fontSize: 12, outline: 'none' }}
                           >
@@ -1346,18 +1391,18 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
                         <div>
                           <label style={{ fontSize: 11, color: '#71717a', display: 'block', marginBottom: 6 }}>From</label>
-                          <input 
-                            type="date" 
-                            value={fromDate} 
+                          <input
+                            type="date"
+                            value={fromDate}
                             onChange={e => setFromDate(e.target.value)}
                             style={{ width: '100%', boxSizing: 'border-box', background: '#0e1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '7px 8px', color: '#fff', fontSize: 12, outline: 'none' }}
                           />
                         </div>
                         <div>
                           <label style={{ fontSize: 11, color: '#71717a', display: 'block', marginBottom: 6 }}>To</label>
-                          <input 
-                            type="date" 
-                            value={toDate} 
+                          <input
+                            type="date"
+                            value={toDate}
                             onChange={e => setToDate(e.target.value)}
                             style={{ width: '100%', boxSizing: 'border-box', background: '#0e1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '7px 8px', color: '#fff', fontSize: 12, outline: 'none' }}
                           />
@@ -1367,7 +1412,7 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
 
                     {/* Popover Footer Buttons */}
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 14 }}>
-                      <button 
+                      <button
                         onClick={() => {
                           setTempRangeType(appliedRangeType);
                           setFromMonth(appliedFromMonth);
@@ -1380,7 +1425,7 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
                       >
                         Cancel
                       </button>
-                      <button 
+                      <button
                         onClick={() => {
                           setAppliedRangeType(tempRangeType);
                           setAppliedFromMonth(fromMonth);
@@ -1476,7 +1521,7 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
           {/* Daily Table Breakdown */}
           <div style={{ background: '#11131c', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 16, padding: 22 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 6 }}><TrendingUp size={15} color="#22c55e" /> Daily Performance Breakdown</h3>
-            
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 220, overflowY: 'auto', paddingRight: 6 }}>
               {(() => {
                 const activeBreakdown = filteredData.filter(item => item.views > 0 || item.clicks > 0);
@@ -1486,7 +1531,7 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
                 return activeBreakdown.map((item, idx) => (
                   <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: 8 }}>
                     <span style={{ fontSize: 13, fontWeight: 600, color: '#f4f4f5' }}>{new Date(item.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                    
+
                     <div style={{ flex: 1, margin: '0 24px', display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 9, color: '#71717a', width: 30 }}>Views</span>
@@ -1495,7 +1540,7 @@ const PostAnalyticsView = ({ post, onBack, activeClient }) => {
                         </div>
                         <span style={{ fontSize: 10.5, fontWeight: 700, color: '#fff', width: 25, textAlign: 'right' }}>{item.views}</span>
                       </div>
-                      
+
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 9, color: '#71717a', width: 30 }}>Clicks</span>
                         <div style={{ flex: 1, height: 5, background: 'rgba(249,115,22,0.1)', borderRadius: 3, overflow: 'hidden' }}>
@@ -1571,13 +1616,13 @@ export default function StreetPosts() {
         headers: { Authorization: `Bearer ${token}` }
       });
       toast.success('Connected to GMB Location!');
-      
+
       // Update active client state properties
       const updated = { ...activeClient, google_account_id: accId, google_location_id: locId };
       setActiveClientState(updated);
       localStorage.setItem('activeGmbClient', JSON.stringify(updated));
       setClients(prev => prev.map(c => c.id === activeClient.id ? updated : c));
-      
+
       // Fetch posts
       fetchGmbPosts(activeClient.id);
     } catch(err) {
@@ -1659,7 +1704,7 @@ export default function StreetPosts() {
     const importToast = toast.loading('Importing posts from Google...');
     try {
       const token = localStorage.getItem('leados_token');
-      const res = await axios.post(`${API_URL}/api/mafiya/reviews/posts/import`, 
+      const res = await axios.post(`${API_URL}/api/mafiya/reviews/posts/import`,
         { clientId: activeClient.id },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -1680,7 +1725,7 @@ export default function StreetPosts() {
   useEffect(() => {
     if (activeClient) {
       fetchGmbPosts(activeClient.id);
-      
+
       // Sync metrics in background
       const token = localStorage.getItem('leados_token');
       axios.get(`${API_URL}/api/mafiya/reviews/posts/sync-metrics?clientId=${activeClient.id}`, {
@@ -1705,7 +1750,7 @@ export default function StreetPosts() {
   // Polling to auto-refresh scheduled posts status without manual page reload
   useEffect(() => {
     if (!activeClient) return;
-    
+
     const hasScheduled = posts.some(p => p.status === 'scheduled');
     if (!hasScheduled) return;
 
@@ -1753,7 +1798,7 @@ export default function StreetPosts() {
     );
   }
 
-  const clientName = activeClient?.business_name || 'GMB Profile';
+  const clientName = activeClient?.display_name || activeClient?.business_name || 'GMB Profile';
   const contactPhone = activeClient?.phone_number || '';
 
 
@@ -1761,9 +1806,9 @@ export default function StreetPosts() {
   if (selectedAnalyticsPost) {
     const activePost = posts.find(p => p.id === selectedAnalyticsPost.id) || selectedAnalyticsPost;
     return (
-      <PostAnalyticsView 
-        post={activePost} 
-        onBack={() => setSelectedAnalyticsPost(null)} 
+      <PostAnalyticsView
+        post={activePost}
+        onBack={() => setSelectedAnalyticsPost(null)}
         activeClient={activeClient}
       />
     );
@@ -1774,7 +1819,7 @@ export default function StreetPosts() {
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 400, background: 'radial-gradient(circle at 50% -20%, rgba(249,115,22,0.05) 0%, transparent 70%)', pointerEvents: 'none', zIndex: 0 }} />
 
       <div style={{ position: 'relative', zIndex: 1 }}>
-        
+
         {/* Header toolbar */}
         <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 26 }}>
           <div>
@@ -1789,21 +1834,21 @@ export default function StreetPosts() {
           </div>
 
           <div style={{ display: 'flex', gap: 12, width: '100%', maxWidth: 500, justifyContent: 'flex-end', alignItems: 'center' }} className="flex-col-mobile">
-            <select 
-              value={activeClient ? activeClient.id : ''} 
+            <select
+              value={activeClient ? activeClient.id : ''}
               onChange={(e) => {
                 const c = clients.find(cl => cl.id === parseInt(e.target.value));
                 if (c) setActiveClient(c);
-              }} 
-              style={{ 
-                background: C.card, 
-                border: `1px solid ${C.border}`, 
-                borderRadius: 10, 
-                color: C.text, 
-                padding: '10px 14px', 
-                fontSize: 13, 
-                outline: 'none', 
-                cursor: 'pointer', 
+              }}
+              style={{
+                background: C.card,
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                color: C.text,
+                padding: '10px 14px',
+                fontSize: 13,
+                outline: 'none',
+                cursor: 'pointer',
                 flex: 1,
                 maxWidth: '320px',
                 width: '100%',
@@ -1813,24 +1858,24 @@ export default function StreetPosts() {
               }}
             >
               {clients.map((c) => (
-                <option key={c.id} value={c.id}>{c.business_name}</option>
+                <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>
               ))}
             </select>
             <button
               onClick={handleImportGmbPosts}
               disabled={importing}
-              style={{ 
-                background: 'rgba(255,255,255,0.04)', 
-                border: `1px solid ${C.border}`, 
-                borderRadius: 10, 
-                padding: '10px 18px', 
-                color: C.text, 
-                fontSize: 13, 
-                fontWeight: 700, 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 6, 
-                cursor: importing ? 'not-allowed' : 'pointer', 
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                padding: '10px 18px',
+                color: C.text,
+                fontSize: 13,
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                cursor: importing ? 'not-allowed' : 'pointer',
                 whiteSpace: 'nowrap',
                 opacity: importing ? 0.7 : 1,
                 transition: 'all 0.2s'
@@ -1845,18 +1890,18 @@ export default function StreetPosts() {
                 setEditingPost(null);
                 setShowModal(true);
               }}
-              style={{ 
-                background: 'linear-gradient(135deg,#f97316,#ea580c)', 
-                border: 'none', 
-                borderRadius: 10, 
-                padding: '10px 18px', 
-                color: '#fff', 
-                fontSize: 13, 
-                fontWeight: 700, 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 6, 
-                cursor: 'pointer', 
+              style={{
+                background: 'linear-gradient(135deg,#f97316,#ea580c)',
+                border: 'none',
+                borderRadius: 10,
+                padding: '10px 18px',
+                color: '#fff',
+                fontSize: 13,
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                cursor: 'pointer',
                 boxShadow: '0 4px 14px rgba(249,115,22,0.25)',
                 whiteSpace: 'nowrap'
               }}
@@ -1875,7 +1920,7 @@ export default function StreetPosts() {
             <p style={{ color: '#a1a1aa', fontSize: 14, maxWidth: 440, marginBottom: 28, lineHeight: 1.6 }}>
               To publish posts directly to Google, please connect the specific business location for <strong style={{ color: '#fff' }}>{clientName}</strong>.
             </p>
-            
+
             {dashFetchingLocs ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f97316' }}>
                 <Loader2 size={18} className="spin" />
@@ -1883,7 +1928,7 @@ export default function StreetPosts() {
               </div>
             ) : dashLocations.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%', maxWidth: 380 }}>
-                <select 
+                <select
                   value={dashSelectedLocStr}
                   onChange={e => setDashSelectedLocStr(e.target.value)}
                   style={{ background: '#27272a', border: '1px solid rgba(255,255,255,0.1)', color: '#f4f4f5', padding: '14px 18px', borderRadius: 8, fontSize: 14, outline: 'none', cursor: 'pointer' }}
@@ -1892,7 +1937,7 @@ export default function StreetPosts() {
                     <option key={i} value={loc.accountId + '|' + loc.locationId}>{loc.title}</option>
                   ))}
                 </select>
-                <button 
+                <button
                   onClick={handleDashSaveConnection}
                   disabled={dashSavingLoc}
                   style={{ background: 'linear-gradient(135deg, #f97316, #ea580c)', color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontWeight: 700, cursor: dashSavingLoc ? 'not-allowed' : 'pointer', boxShadow: '0 4px 14px rgba(249,115,22,0.3)', transition: 'all 0.2s' }}
@@ -1919,7 +1964,7 @@ export default function StreetPosts() {
                   <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 600 }}>Live</span>
                 </div>
               </div>
-              
+
               <div style={{ background: '#18181b', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: 12, padding: 18 }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: '#71717a', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>Total Views</span>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
@@ -1975,18 +2020,18 @@ export default function StreetPosts() {
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
                           {currentPosts.map((post, idx) => {
                             const isVideo = post.image_url && (
-                              post.image_url.endsWith('.mp4') || 
-                              post.image_url.endsWith('.webm') || 
-                              post.image_url.endsWith('.mov') || 
+                              post.image_url.endsWith('.mp4') ||
+                              post.image_url.endsWith('.webm') ||
+                              post.image_url.endsWith('.mov') ||
                               post.image_url.endsWith('.avi')
                             );
-                            
+
                             const hasCta = post.poster_subtitle && post.poster_subtitle.includes('|');
                             const ctaText = hasCta ? post.poster_subtitle.split('|')[0] : '';
                             const posterNumber = post.id;
-                            
+
                             return (
-                              <div 
+                              <div
                                 key={post.id}
                                 style={{
                                   display: 'flex',
@@ -1999,15 +2044,15 @@ export default function StreetPosts() {
                                 }}
                               >
                                 {/* Left Side: Mock Google Post card (Media preview + details inside card) */}
-                                <div 
+                                <div
                                   onClick={() => {
                                       setEditingPost(post);
                                       setShowModal(true);
                                   }}
-                                  style={{ 
-                                    display: 'flex', 
-                                    gap: 16, 
-                                    alignItems: 'center', 
+                                  style={{
+                                    display: 'flex',
+                                    gap: 16,
+                                    alignItems: 'center',
                                     background: '#121214',
                                     border: '1px solid rgba(255, 255, 255, 0.08)',
                                     borderRadius: 10,
@@ -2021,11 +2066,11 @@ export default function StreetPosts() {
                                   onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
                                 >
                                   {/* Media Container */}
-                                  <div style={{ 
-                                    width: 90, 
-                                    height: 75, 
-                                    borderRadius: 6, 
-                                    overflow: 'hidden', 
+                                  <div style={{
+                                    width: 90,
+                                    height: 75,
+                                    borderRadius: 6,
+                                    overflow: 'hidden',
                                     position: 'relative',
                                     background: 'rgba(255,255,255,0.02)',
                                     flexShrink: 0,
@@ -2048,7 +2093,7 @@ export default function StreetPosts() {
                                       </div>
                                     )}
                                   </div>
-                                  
+
                                   {/* Text / Details Container */}
                                   <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -2061,11 +2106,11 @@ export default function StreetPosts() {
                                         </span>
                                       )}
                                     </div>
-                                    <p style={{ 
-                                      fontSize: 13, 
+                                    <p style={{
+                                      fontSize: 13,
                                       fontWeight: 600,
-                                      color: '#e4e4e7', 
-                                      margin: '0 0 6px 0', 
+                                      color: '#e4e4e7',
+                                      margin: '0 0 6px 0',
                                       lineHeight: 1.4,
                                       display: '-webkit-box',
                                       WebkitLineClamp: 2,
@@ -2075,7 +2120,7 @@ export default function StreetPosts() {
                                     }}>
                                       {post.caption}
                                     </p>
-                                    
+
                                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#a1a1aa', fontSize: 11.5 }}>
                                       <Link size={11} color="#a1a1aa" /> <span>{ctaText || 'Call now'}</span>
                                     </div>
@@ -2098,7 +2143,7 @@ export default function StreetPosts() {
                                 {/* Right Side: Options / Action Menu */}
                                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                   {post.status === 'published' && (
-                                    <button 
+                                    <button
                                       onClick={() => setSelectedAnalyticsPost(post)}
                                       style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.15)', borderRadius: 8, padding: '7px 12px', color: '#f97316', display: 'flex', cursor: 'pointer', transition: 'all 0.2s', gap: 5, alignItems: 'center', fontSize: 11.5, fontWeight: 700 }}
                                       onMouseEnter={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.15)'; e.currentTarget.style.color = '#fff'; }}
@@ -2107,7 +2152,7 @@ export default function StreetPosts() {
                                       <BarChart2 size={13} /> Analysis
                                     </button>
                                   )}
-                                  <button 
+                                  <button
                                     onClick={() => {
                                       setEditingPost(post);
                                       setShowModal(true);
@@ -2144,7 +2189,7 @@ export default function StreetPosts() {
                             >
                               Previous
                             </button>
-                            
+
                             {Array.from({ length: totalPages }).map((_, idx) => (
                               <button
                                 key={idx}
@@ -2198,11 +2243,11 @@ export default function StreetPosts() {
         )}
 
         {/* ═══ GMB Upload Post Modal ═══ */}
-        <GmbPostModal 
-          activeClient={activeClient} 
-          fetchGmbPosts={fetchGmbPosts} 
-          showModal={showModal} 
-          setShowModal={setShowModal} 
+        <GmbPostModal
+          activeClient={activeClient}
+          fetchGmbPosts={fetchGmbPosts}
+          showModal={showModal}
+          setShowModal={setShowModal}
           editingPost={editingPost}
           setEditingPost={setEditingPost}
         />

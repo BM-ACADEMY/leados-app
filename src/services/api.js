@@ -570,6 +570,13 @@ class LeadOSAPI {
     return this.request(`/api/content/${id}`, { method: 'DELETE' });
   }
 
+  async generateThumbnails(id, context = '') {
+    return this.request(`/api/content/${id}/generate-thumbnails`, {
+      method: 'POST',
+      body: JSON.stringify({ context }),
+    });
+  }
+
   async generateCaptions(brandName, videoUrl, platforms) {
     return this.request('/api/content/generate-captions', {
       method: 'POST',

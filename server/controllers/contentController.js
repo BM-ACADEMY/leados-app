@@ -3258,6 +3258,57 @@ async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) 
   }
 }
 
+async function generateThumbnails(req, res) {
+  const { id } = req.params;
+  const uploadsDir = path.join(__dirname, '../uploads');
+  const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT brand_name, thumbnail_title, youtube_title, caption, instagram_caption, description
+       FROM content_queue WHERE id = $1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Content not found' });
+
+    const item = rows[0];
+    const userContext = (req.body.context || '').substring(0, 300);
+    const title = item.youtube_title || item.thumbnail_title || item.caption?.substring(0, 80) || 'Video Thumbnail';
+    const fallbackContext = (item.description || item.instagram_caption || item.caption || '').substring(0, 200);
+    const context = userContext || fallbackContext;
+
+    // Build a purely visual prompt — no text overlay (FLUX renders text as garbled)
+    const promptText = `Cinematic professional YouTube thumbnail background image. Topic: ${context}. Style: dramatic studio lighting, vibrant bold colors, high contrast, photorealistic, 8K quality, modern social media aesthetic, no text, no words, no letters, clean composition, 16:9 landscape`;
+    const encodedPrompt = encodeURIComponent(promptText);
+
+    const seeds = [42, 137, 256, 891];
+
+    // Generate all 4 in parallel
+    const results = await Promise.all(
+      seeds.map(async (seed, i) => {
+        const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=720&seed=${seed}&model=flux&nologo=true`;
+        try {
+          const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 90000 });
+          const thumbPath = path.join(uploadsDir, `aithumb_${id}_${i}.jpg`);
+          fs.writeFileSync(thumbPath, Buffer.from(response.data));
+          return `${baseUrl}/uploads/aithumb_${id}_${i}.jpg`;
+        } catch (imgErr) {
+          console.warn(`[generateThumbnails] Variation ${i} failed:`, imgErr.message);
+          return null;
+        }
+      })
+    );
+
+    const thumbnails = results.filter(Boolean);
+    if (!thumbnails.length) return res.status(500).json({ error: 'AI image generation failed — try again' });
+
+    res.json({ success: true, thumbnails });
+  } catch (err) {
+    console.error('[generateThumbnails] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getContent,
   getStats,
@@ -3292,5 +3343,6 @@ module.exports = {
   publishToLinkedIn,
   deletePost,
   runBackgroundPublish,
-  updateOverallPostStatus
+  updateOverallPostStatus,
+  generateThumbnails
 };

@@ -2,13 +2,14 @@ const pool = require('../db/connection');
 const { runCheckForBusiness } = require('../services/citations/citation.service');
 
 async function runCheck(req, res) {
-  const { businessId } = req.body;
+  const { businessId, forceRefresh = false } = req.body;
   if (!businessId) {
     return res.status(400).json({ error: 'businessId is required' });
   }
 
   try {
-    const result = await runCheckForBusiness(businessId);
+    const io = req.app ? req.app.get('io') : null;
+    const result = await runCheckForBusiness(businessId, forceRefresh, io);
     res.json(result);
   } catch (err) {
     console.error('[Citation Controller] runCheck error:', err);

@@ -517,6 +517,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                   <Brain size={14} style={{ marginRight: 8 }} /> Don's Brain
                 </NavLink>
 
+                <NavLink to="/mafiya/usage" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Usage')}>
+                  <Activity size={14} style={{ marginRight: 8 }} /> Usage
+                </NavLink>
+
               </div>
             )}
           </div>

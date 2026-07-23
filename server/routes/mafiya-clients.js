@@ -23,6 +23,7 @@ router.post('/', async (req, res) => {
     custom_category,
     contact_person,
     phone_number,
+    business_address,
     website_url,
     gmb_url,
     gmb_email,
@@ -30,17 +31,17 @@ router.post('/', async (req, res) => {
     ga4_property_id,
   } = req.body;
 
-  if (!business_name || !contact_person || !phone_number) {
-    return res.status(400).json({ error: 'business_name, contact_person, and phone_number are required' });
+  if (!business_name || !contact_person || !phone_number || !business_address) {
+    return res.status(400).json({ error: 'business_name, contact_person, phone_number, and business_address are required' });
   }
 
   try {
     const result = await pool.query(
       `INSERT INTO mafiya_gmb_clients
-        (business_name, display_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, ga4_property_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        (business_name, display_name, business_category, custom_category, contact_person, phone_number, business_address, website_url, gmb_url, gmb_email, logo_url, ga4_property_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
-      [business_name, display_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, ga4_property_id]
+      [business_name, display_name, business_category, custom_category, contact_person, phone_number, business_address, website_url, gmb_url, gmb_email, logo_url, ga4_property_id]
     );
 
     const savedClient = result.rows[0];
@@ -69,6 +70,7 @@ router.put('/:id', async (req, res) => {
     custom_category,
     contact_person,
     phone_number,
+    business_address,
     website_url,
     gmb_url,
     gmb_email,
@@ -76,17 +78,17 @@ router.put('/:id', async (req, res) => {
     ga4_property_id,
   } = req.body;
 
-  if (!business_name || !contact_person || !phone_number) {
-    return res.status(400).json({ error: 'business_name, contact_person, and phone_number are required' });
+  if (!business_name || !contact_person || !phone_number || !business_address) {
+    return res.status(400).json({ error: 'business_name, contact_person, phone_number, and business_address are required' });
   }
 
   try {
     const result = await pool.query(
       `UPDATE mafiya_gmb_clients
-       SET business_name = $1, display_name = $2, business_category = $3, custom_category = $4, contact_person = $5, phone_number = $6, website_url = $7, gmb_url = $8, gmb_email = $9, logo_url = $10, ga4_property_id = $11
-       WHERE id = $12
+       SET business_name = $1, display_name = $2, business_category = $3, custom_category = $4, contact_person = $5, phone_number = $6, business_address = $7, website_url = $8, gmb_url = $9, gmb_email = $10, logo_url = $11, ga4_property_id = $12
+       WHERE id = $13
        RETURNING *`,
-      [business_name, display_name, business_category, custom_category, contact_person, phone_number, website_url, gmb_url, gmb_email, logo_url, ga4_property_id, id]
+      [business_name, display_name, business_category, custom_category, contact_person, phone_number, business_address, website_url, gmb_url, gmb_email, logo_url, ga4_property_id, id]
     );
 
     if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found' });

@@ -31,10 +31,40 @@ async function ensureTables() {
       )
     `);
     await pool.query(`
-      ALTER TABLE mafiya_gmb_clients ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);
-    `).catch(err => console.error('[DB Init] failed to alter mafiya_gmb_clients:', err));
+      CREATE TABLE IF NOT EXISTS api_usage_logs (
+        id SERIAL PRIMARY KEY,
+        provider VARCHAR(50) DEFAULT 'valueserp',
+        client_id INTEGER REFERENCES mafiya_gmb_clients(id) ON DELETE SET NULL,
+        client_name VARCHAR(255),
+        search_query TEXT,
+        directory VARCHAR(100),
+        credits_consumed INTEGER DEFAULT 1,
+        request_time TIMESTAMP DEFAULT NOW(),
+        response_status VARCHAR(50) DEFAULT '200',
+        scan_duration_ms INTEGER DEFAULT 0,
+        is_cached BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
 
-    console.log('✅ Mafiya Citation tables checked/created successfully.');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS client_directory_cache (
+        id SERIAL PRIMARY KEY,
+        client_id INTEGER REFERENCES mafiya_gmb_clients(id) ON DELETE CASCADE,
+        directory VARCHAR(100) NOT NULL,
+        listing_url TEXT,
+        business_name VARCHAR(255),
+        address TEXT,
+        phone VARCHAR(50),
+        website VARCHAR(500),
+        status VARCHAR(50),
+        last_scraped_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(client_id, directory)
+      )
+    `);
+
+    console.log('✅ Mafiya Citation & Usage tables checked/created successfully.');
   } catch (err) {
     console.error('❌ Failed to ensure Mafiya citation tables:', err);
   }

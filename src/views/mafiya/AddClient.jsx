@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { C } from '../../constants/theme.js';
-import { User, Loader2, CheckCircle2, Building, Phone, Mail, Globe, Shield, Link2, Plus, Trash2, Search, X, Users, Send, MoreVertical } from 'lucide-react';
+import { User, Loader2, CheckCircle2, Building, Phone, Mail, Globe, Shield, Link2, Plus, Trash2, Search, X, Users, Send, MoreVertical, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { io as socketIO } from 'socket.io-client';
 
@@ -25,6 +25,7 @@ const INITIAL_FORM = {
   business_category: '',
   custom_category: '',
   phone_number: '',
+  business_address: '',
   contact_person: '',
   website_url: '',
   gmb_url: '',
@@ -57,6 +58,7 @@ export default function AddClient() {
       business_category: categoryExists ? client.business_category : 'Other',
       custom_category: !categoryExists ? client.business_category : '',
       phone_number: client.phone_number || '',
+      business_address: client.business_address || '',
       contact_person: client.contact_person || '',
       website_url: client.website_url || '',
       gmb_url: client.gmb_url || '',
@@ -196,6 +198,7 @@ export default function AddClient() {
     if (!formData.business_name) newErrors.business_name = 'Business name is required';
     if (!formData.phone_number) newErrors.phone_number = 'Phone number is required';
     if (!formData.contact_person) newErrors.contact_person = 'Contact person is required';
+    if (!formData.business_address) newErrors.business_address = 'Business address is required';
     if (showOtherCategory && !formData.custom_category) {
       newErrors.custom_category = 'Please specify your business category';
     }
@@ -478,6 +481,11 @@ export default function AddClient() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
                   <Phone size={13} /> <span style={{ color: '#fff' }}>{client.phone_number}</span>
                 </div>
+                {client.business_address && (
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: C.muted }}>
+                    <MapPin size={13} style={{ marginTop: 2, flexShrink: 0 }} /> <span style={{ color: '#fff', whiteSpace: 'pre-line' }}>{client.business_address}</span>
+                  </div>
+                )}
                 {client.gmb_email && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
                     <Mail size={13} /> <span style={{ color: '#fff' }}>{client.gmb_email}</span>
@@ -640,6 +648,25 @@ export default function AddClient() {
                     </div>
                     {errors.phone_number && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.phone_number}</span>}
                   </div>
+                </div>
+
+                <div style={{ marginTop: 14 }}>
+                  <label style={labelStyle}>Business Address *</label>
+                  <textarea
+                    name="business_address"
+                    value={formData.business_address}
+                    onChange={handleInputChange}
+                    rows={5}
+                    placeholder={`Enter the complete business address\nExample:\n123, Business Road,\nKottakuppam,\nPuducherry - 605104,\nIndia`}
+                    style={{
+                      ...inputStyle,
+                      border: `1px solid ${errors.business_address ? '#ef4444' : C.border}`,
+                      resize: 'vertical',
+                      lineHeight: 1.5,
+                      fontFamily: 'inherit'
+                    }}
+                  />
+                  {errors.business_address && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.business_address}</span>}
                 </div>
               </div>
 

@@ -52,6 +52,7 @@ import StreetPosts from './views/mafiya/StreetPosts.jsx';
 import GbpInsights from './views/mafiya/GbpInsights.jsx';
 import RivalFamilies from './views/mafiya/RivalFamilies.jsx';
 import Citations from './views/mafiya/Citations.jsx';
+import UsageMafiya from './views/mafiya/Usage.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -192,6 +193,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/mafiya/citations" element={<Citations />} />
               <Route path="/mafiya/gbp-insights" element={<GbpInsights />} />
               <Route path="/mafiya/rivals" element={<RivalFamilies />} />
+              <Route path="/mafiya/usage" element={<UsageMafiya />} />
 
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>

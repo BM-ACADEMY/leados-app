@@ -50,6 +50,9 @@ router.get("/linkedin/auth", ctrl.handleLinkedInAuth);
 router.get("/linkedin/callback", ctrl.handleLinkedInCallback);
 
 
+// Generate thumbnail options from video
+router.post("/:id/generate-thumbnails", ctrl.generateThumbnails);
+
 // Trigger publishing
 router.post("/:id/publish", ctrl.publishPost);
 

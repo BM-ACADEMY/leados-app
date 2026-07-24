@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useLocation } from 'react-router-dom';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 import { C } from '../../constants/theme.js';
@@ -1581,6 +1582,19 @@ export default function StreetPosts() {
   const [dashFetchingLocs, setDashFetchingLocs] = useState(false);
   const [dashSelectedLocStr, setDashSelectedLocStr] = useState('');
   const [dashSavingLoc, setDashSavingLoc] = useState(false);
+
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.state && (location.state.caption || location.state.title)) {
+      setEditingPost({
+        caption: location.state.caption,
+        post_title: location.state.title,
+        post_type: 'Update'
+      });
+      setShowModal(true);
+    }
+  }, [location.state]);
 
   const fetchDashLocations = async (clientId) => {
     if (!clientId) return;

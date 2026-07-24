@@ -295,16 +295,6 @@ export default function Citations() {
         recommendation: isAddressMatch
           ? 'Address matches master information.'
           : 'Update the complete address including building number, locality, city, and postal code.'
-      },
-      {
-        field: 'Website',
-        key: 'website',
-        currentVal: dirWebsite || 'Not Found / Missing',
-        expectedVal: expectedWebsite,
-        isMatch: !!isWebsiteMatch,
-        recommendation: isWebsiteMatch
-          ? 'Website URL matches master information.'
-          : 'Update the website URL to the official business website.'
       }
     ];
   };
@@ -819,7 +809,6 @@ export default function Citations() {
                       <th style={{ padding: '16px 20px', color: '#fff', fontSize: 12.5, fontWeight: 700 }}>Business Name</th>
                       <th style={{ padding: '16px 20px', color: '#fff', fontSize: 12.5, fontWeight: 700 }}>Phone</th>
                       <th style={{ padding: '16px 20px', color: '#fff', fontSize: 12.5, fontWeight: 700 }}>Address</th>
-                      <th style={{ padding: '16px 20px', color: '#fff', fontSize: 12.5, fontWeight: 700 }}>Website</th>
                       <th style={{ padding: '16px 20px', color: '#fff', fontSize: 12.5, fontWeight: 700 }}>Status</th>
                       <th style={{ padding: '16px 20px', color: '#fff', fontSize: 12.5, fontWeight: 700, textAlign: 'right' }}>Action</th>
                     </tr>
@@ -870,9 +859,6 @@ export default function Citations() {
                           </td>
                           <td style={{ padding: '16px 20px', fontSize: 13, color: displayStatus === 'Missing Listing' ? C.muted : C.text, maxWidth: 200, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={resItem.address}>
                             {displayStatus === 'Missing Listing' ? '—' : (resItem.address || '—')}
-                          </td>
-                          <td style={{ padding: '16px 20px', fontSize: 13, color: displayStatus === 'Missing Listing' ? C.muted : C.text, maxWidth: 120, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                            {displayStatus === 'Missing Listing' ? '—' : (resItem.website || '—')}
                           </td>
                           <td style={{ padding: '16px 20px' }}>
                             <span style={{
@@ -1225,7 +1211,6 @@ export default function Citations() {
                                 { key: 'name', label: 'Business Name Updated' },
                                 { key: 'address', label: 'Address Updated' },
                                 { key: 'phone', label: 'Phone Number Updated' },
-                                { key: 'website', label: 'Website Updated' },
                                 { key: 'saved', label: 'Save Changes on Directory Portal' }
                               ].map((checkItem) => {
                                 const isChecked = !!currentChecklist[checkItem.key];

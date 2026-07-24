@@ -53,6 +53,7 @@ import GbpInsights from './views/mafiya/GbpInsights.jsx';
 import RivalFamilies from './views/mafiya/RivalFamilies.jsx';
 import Citations from './views/mafiya/Citations.jsx';
 import UsageMafiya from './views/mafiya/Usage.jsx';
+import MafiyaOrders from './views/mafiya/Orders.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -186,6 +187,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/thedal/local-citations" element={<LocalCitations />} />
               <Route path="/thedal/local-seo-bridge" element={<LocalSeoBridge />} />
 
+              <Route path="/mafiya/orders" element={<MafiyaOrders />} />
               <Route path="/mafiya/add-client" element={<AddClientMafiya />} />
               <Route path="/mafiya/loyalty" element={<LoyaltyMafiya />} />
               <Route path="/mafiya/brain" element={<GmbBrain />} />

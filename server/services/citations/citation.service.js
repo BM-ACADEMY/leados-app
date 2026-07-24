@@ -20,8 +20,17 @@ const SUPPORTED_DIRECTORIES = [
 const DIRECTORY_HOST_DENYLIST = [
   'facebook.com', 'justdial.com', 'sulekha.com', 'bingplaces.com', 'bing.com',
   'indiamart.com', 'yelp.com', 'yellowpages.com', 'yellowpages.in', 'hotfrog.in', 'hotfrog.com',
-  'instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'youtube.com'
+  'instagram.com', 'twitter.com', 'x.com', 'linkedin.com', 'youtube.com',
+  'play.google.com', 'apps.apple.com', 'google.com', 'whatsapp.com', 'wa.me', 'com.justdial'
 ];
+
+function isValidBusinessWebsite(url) {
+  if (!url || typeof url !== 'string') return false;
+  const str = url.trim().toLowerCase();
+  if (!/^https?:\/\//i.test(str)) return false;
+  if (DIRECTORY_HOST_DENYLIST.some(host => str.includes(host))) return false;
+  return true;
+}
 
 // ── UTILITIES ───────────────────────────────────────────────
 function calculateScore(matchedCount, totalCount) {
@@ -161,31 +170,27 @@ function compareDetails(master, scraped) {
     // Name was extracted but doesn't correspond to the master business.
     status = 'Mismatch';
   } else {
-    // Only compare fields the master record actually has values for —
-    // we can't fault a listing for not matching data we never had to check against.
+    // Compare fields (Phone, Address) the master record actually has values for
     const masterAvailable = {
       phone: masterPhoneNorm !== '',
-      address: masterAddrNorm !== '',
-      website: masterWebNorm !== ''
+      address: masterAddrNorm !== ''
     };
     const masterAvailableCount = Object.values(masterAvailable).filter(Boolean).length;
 
     // A field that WAS extracted but does NOT match its master counterpart is a hard mismatch.
     const hasConflict =
       (phoneExtracted && masterAvailable.phone && !phoneMatch) ||
-      (addressExtracted && masterAvailable.address && !addressMatch) ||
-      (websiteExtracted && masterAvailable.website && !websiteMatch);
+      (addressExtracted && masterAvailable.address && !addressMatch);
 
     if (hasConflict) {
       status = 'Mismatch';
     } else if (masterAvailableCount === 0) {
-      // Master has no phone/address/website to check against — name match is all we can verify.
-      status = phoneExtracted || addressExtracted || websiteExtracted ? 'Verified' : 'Partial Data';
+      // Master has no phone/address to check against — name match is all we can verify.
+      status = phoneExtracted || addressExtracted ? 'Verified' : 'Partial Data';
     } else {
       const matchedAvailableCount = [
         masterAvailable.phone && phoneMatch,
-        masterAvailable.address && addressMatch,
-        masterAvailable.website && websiteMatch
+        masterAvailable.address && addressMatch
       ].filter(Boolean).length;
 
       status = matchedAvailableCount === masterAvailableCount ? 'Verified' : 'Partial Data';
@@ -260,14 +265,12 @@ async function fetchListingHtmlData(url, expectedDetails = {}) {
               extractedName = targetNode.name.trim();
             }
             if (targetNode.telephone) extractedPhone = String(targetNode.telephone).trim();
-            if (targetNode.url && !targetNode.url.toLowerCase().includes('justdial.com')) extractedWeb = String(targetNode.url).trim();
+            if (targetNode.url && isValidBusinessWebsite(targetNode.url)) {
+              extractedWeb = String(targetNode.url).trim();
+            }
             // sameAs often carries the business's real external website alongside social profile links
             if (!extractedWeb && Array.isArray(targetNode.sameAs)) {
-              const externalSite = targetNode.sameAs.find(link =>
-                typeof link === 'string' &&
-                /^https?:\/\//i.test(link) &&
-                !DIRECTORY_HOST_DENYLIST.some(host => link.toLowerCase().includes(host))
-              );
+              const externalSite = targetNode.sameAs.find(link => typeof link === 'string' && isValidBusinessWebsite(link));
               if (externalSite) extractedWeb = externalSite.trim();
             }
             if (targetNode.address) {
@@ -335,7 +338,7 @@ async function fetchListingHtmlData(url, expectedDetails = {}) {
     if (!extractedWeb) {
       const externalLink = $('a[rel="me"], a.website, [itemprop="url"]').filter((_, el) => {
         const href = $(el).attr('href') || '';
-        return /^https?:\/\//i.test(href) && !DIRECTORY_HOST_DENYLIST.some(host => href.toLowerCase().includes(host));
+        return isValidBusinessWebsite(href);
       }).first().attr('href');
       if (externalLink) extractedWeb = externalLink.trim();
     }
@@ -359,7 +362,7 @@ async function fetchListingHtmlData(url, expectedDetails = {}) {
         businessName: extractedName.trim(),
         phone: extractedPhone ? extractedPhone.trim() : null,
         address: extractedAddr ? extractedAddr.trim().replace(/\s+/g, ' ') : null,
-        website: extractedWeb ? extractedWeb.trim() : null
+        website: (extractedWeb && isValidBusinessWebsite(extractedWeb)) ? extractedWeb.trim() : null
       };
     }
   } catch (err) {
@@ -838,12 +841,13 @@ async function scrapeListingWithTimeout(directory, url, expectedDetails = {}) {
     }, DIRECTORY_HOST_DENYLIST).catch(() => null);
 
     if (pName && isValidBusinessName(pName)) {
-      console.log(`  [Playwright] SUCCESS → BusinessName="${pName}", Phone="${pPhone || 'N/A'}", Address="${aAddr ? 'found' : 'N/A'}", Website="${pWeb || 'N/A'}"`);
+      const validWeb = (pWeb && isValidBusinessWebsite(pWeb)) ? pWeb.trim() : null;
+      console.log(`  [Playwright] SUCCESS → BusinessName="${pName}", Phone="${pPhone || 'N/A'}", Address="${aAddr ? 'found' : 'N/A'}", Website="${validWeb || 'N/A'}"`);
       return {
         businessName: pName.trim(),
         phone: pPhone ? pPhone.trim() : null,
         address: aAddr ? aAddr.trim().replace(/\s+/g, ' ') : null,
-        website: pWeb ? pWeb.trim() : null
+        website: validWeb
       };
     }
 

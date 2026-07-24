@@ -8,23 +8,40 @@ const axios = require('axios');
 // ==========================================
 
 const { GoogleGenAI } = require('@google/genai');
+
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
+// Gemini-only fallback chain (paid key — higher rate limits).
+// Tries 4 models in order: if one is busy/overloaded the next kicks in automatically.
 async function generateGeminiContent(prompt) {
-  if (!ai) throw new Error("Gemini API not initialized");
-  const models = ['gemini-3.5-flash', 'gemini-2.5-flash'];
-  for (const model of models) {
+  if (!ai) throw new Error('Gemini API key not configured.');
+
+  const geminiModels = [
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
+  ];
+
+  const errors = [];
+  for (const model of geminiModels) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const aiRes = await ai.models.generateContent({ model, contents: prompt });
+        console.log(`[AI] ✅ Gemini (${model})`);
         return aiRes.text.trim();
       } catch (err) {
-        console.warn(`Gemini (${model}) attempt ${attempt} error: ${err.message}`);
-        if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
+        const msg = err.message || '';
+        console.warn(`[AI] Gemini (${model}) attempt ${attempt} failed: ${msg}`);
+        errors.push(`${model}#${attempt}: ${msg}`);
+        // Short back-off before retry
+        if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
       }
     }
   }
-  throw new Error("AI models temporarily in high demand after automatic retries. Please try again.");
+
+  console.error('[AI] ❌ All Gemini models exhausted:', errors.join(' | '));
+  throw new Error('AI temporarily overloaded across all Gemini models. Please try again shortly.');
 }
 
 async function getOrUpsertConversation(lead_id) {

@@ -3391,10 +3391,8 @@ async function generatePoster(req, res) {
   const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
 
   if (!frame_url) return res.status(400).json({ error: 'frame_url is required' });
-  if (!genAI) return res.status(400).json({ error: 'GEMINI_API_KEY not configured' });
 
   try {
-    // Resolve local file path from the URL
     const filename = frame_url.split('/uploads/').pop()?.split('?')[0];
     if (!filename) return res.status(400).json({ error: 'Invalid frame_url' });
 
@@ -3405,67 +3403,46 @@ async function generatePoster(req, res) {
 
     const frameBase64 = fs.readFileSync(framePath).toString('base64');
 
-    // Get video title/context for better poster generation
+    // Get video context
     const { rows } = await pool.query(
-      `SELECT youtube_title, thumbnail_title, caption FROM content_queue WHERE id = $1`,
+      `SELECT youtube_title, thumbnail_title, caption, instagram_caption FROM content_queue WHERE id = $1`,
       [id]
     );
     const title = rows[0]?.youtube_title || rows[0]?.thumbnail_title || '';
 
-    const prompt = `You are a professional YouTube thumbnail designer.
-Transform this video frame into a stunning, high-quality thumbnail poster.
-${title ? `Video topic: "${title}".` : ''}
-Requirements:
-- Enhance lighting, contrast, and color vibrancy dramatically
-- Make the subject (person/object) visually pop with sharp focus
-- Apply a cinematic, professional look with rich colors
-- Keep the composition clean and engaging
-- Output a 16:9 landscape image
-- Do NOT add any text, watermarks, or logos`;
-
-    const response = await genAI.models.generateContent({
-      model: 'gemini-2.0-flash-preview-image-generation',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
-            { text: prompt }
+    // Step 1: Gemini Vision analyzes the selected frame for a rich scene description
+    let sceneDesc = title || 'professional video content';
+    if (genAI) {
+      try {
+        const descRes = await genAI.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
+                { text: 'Describe this video frame in 1-2 sentences to help generate a YouTube thumbnail poster. Include: the person\'s appearance and expression, background, mood, lighting, and color palette. Be specific and vivid. Output only the description.' }
+              ]
+            }
           ]
-        }
-      ],
-      config: { responseModalities: ['IMAGE', 'TEXT'] }
-    });
-
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    let imagePart = parts.find(p => p.inlineData?.data);
-
-    // Fallback: if Gemini image gen returned no image, use vision to describe then Pollinations
-    if (!imagePart) {
-      console.warn('[generatePoster] No image in response, falling back to vision+Pollinations');
-      const descResponse = await genAI.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
-              { text: 'Describe the visual scene in this video frame in 1 sentence for creating a YouTube thumbnail. Include: subject, expression, setting, mood, colors. Be specific and vivid.' }
-            ]
-          }
-        ]
-      });
-      const sceneDesc = descResponse.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || title || 'professional educational video thumbnail';
-      const pollinationsPrompt = encodeURIComponent(`Cinematic YouTube thumbnail, ${sceneDesc}, dramatic lighting, vibrant colors, high contrast, photorealistic, 8K, no text, no words`);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${pollinationsPrompt}?width=1280&height=720&seed=${Date.now() % 9999}&model=flux&nologo=true`;
-      const imgRes = await axios.get(pollinationsUrl, { responseType: 'arraybuffer', timeout: 90000 });
-      const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
-      fs.writeFileSync(posterPath, Buffer.from(imgRes.data));
-      return res.json({ success: true, poster_url: `${baseUrl}/uploads/poster_${id}.jpg` });
+        });
+        const desc = descRes.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (desc) sceneDesc = desc;
+        console.log(`[generatePoster] Gemini scene description: ${sceneDesc}`);
+      } catch (visionErr) {
+        console.warn('[generatePoster] Gemini vision failed, using title:', visionErr.message);
+      }
     }
 
+    // Step 2: Pollinations FLUX generates a cinematic poster from the description
+    const promptText = `Cinematic professional YouTube thumbnail poster. ${sceneDesc}${title ? `. Topic: ${title}` : ''}. Style: dramatic studio lighting, vivid bold colors, high contrast, photorealistic, 8K quality, modern thumbnail aesthetic, no text, no words, no letters, clean 16:9 composition`;
+    const encodedPrompt = encodeURIComponent(promptText);
+    const seed = Date.now() % 99999;
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=720&seed=${seed}&model=flux&nologo=true`;
+
+    const imgRes = await axios.get(pollinationsUrl, { responseType: 'arraybuffer', timeout: 90000 });
     const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
-    fs.writeFileSync(posterPath, Buffer.from(imagePart.inlineData.data, 'base64'));
+    fs.writeFileSync(posterPath, Buffer.from(imgRes.data));
 
     res.json({ success: true, poster_url: `${baseUrl}/uploads/poster_${id}.jpg` });
   } catch (err) {

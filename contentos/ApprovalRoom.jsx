@@ -291,9 +291,9 @@ export function ApprovalRoom({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(139,114,240,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>🖼</div>
                     <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>AI Thumbnail Poster</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>Thumbnail</div>
                       <div style={{ fontSize: 10, color: 'var(--t3)' }}>
-                        {editValues.thumbnail_url ? 'Poster selected — save to apply' : 'Auto-generated with captions · or regenerate manually'}
+                        {editValues.thumbnail_url ? 'Frame selected — save to apply' : 'Pick a frame from the video to use as thumbnail'}
                       </div>
                     </div>
                   </div>
@@ -310,8 +310,8 @@ export function ApprovalRoom({
                     }}
                   >
                     {generatingThumbs ? (
-                      <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Generating…</>
-                    ) : <>✦ Generate AI Poster</>}
+                      <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Extracting…</>
+                    ) : <>⬡ Pick Frame</>}
                   </button>
                 </div>
 
@@ -322,7 +322,7 @@ export function ApprovalRoom({
                       <img src={editValues.thumbnail_url} alt="Thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                       <div style={{ position: 'absolute', bottom: 4, right: 4, background: 'var(--teal)', color: 'var(--bg)', fontSize: 8, fontWeight: 700, padding: '2px 5px', borderRadius: 3 }}>ACTIVE</div>
                     </div>
-                    <div style={{ fontSize: 10, color: 'var(--t3)', lineHeight: 1.5 }}>AI poster set.<br/>Generate again to create new variations.</div>
+                    <div style={{ fontSize: 10, color: 'var(--t3)', lineHeight: 1.5 }}>Frame set as thumbnail.<br/>Click "Pick Frame" to choose a different one.</div>
                   </div>
                 )}
 
@@ -330,7 +330,7 @@ export function ApprovalRoom({
                 {thumbOptions.length > 0 && (
                   <div style={{ paddingBottom: 12 }}>
                     <div style={{ fontSize: 10, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 8 }}>
-                      ✦ AI Generated — pick your favourite
+                      ⬡ Video Frames — pick your thumbnail
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 7, marginBottom: 8 }}>
                       {thumbOptions.map((url, i) => {
@@ -449,7 +449,7 @@ export function ApprovalRoom({
                           opacity: (loadingSuggestions || generatingThumbs || !firstGenContext || firstGenContext.trim() === '') ? 0.5 : 1
                         }}
                       >
-                        {(loadingSuggestions || generatingThumbs) ? 'Generating...' : '🚀 Generate Captions & Poster'}
+                        {(loadingSuggestions || generatingThumbs) ? 'Generating...' : '🚀 Generate Captions & Thumbnail'}
                       </button>
                     </div>
                     {suggestionsError && <div style={{ color: 'var(--red)', marginTop: 10, fontSize: 12 }}>{suggestionsError}</div>}

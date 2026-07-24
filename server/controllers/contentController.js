@@ -3265,42 +3265,52 @@ async function generateThumbnails(req, res) {
 
   try {
     const { rows } = await pool.query(
-      `SELECT brand_name, thumbnail_title, youtube_title, caption, instagram_caption, description
-       FROM content_queue WHERE id = $1`,
+      `SELECT video_url, public_video_url FROM content_queue WHERE id = $1`,
       [id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Content not found' });
 
     const item = rows[0];
-    const userContext = (req.body.context || '').substring(0, 300);
-    const title = item.youtube_title || item.thumbnail_title || item.caption?.substring(0, 80) || 'Video Thumbnail';
-    const fallbackContext = (item.description || item.instagram_caption || item.caption || '').substring(0, 200);
-    const context = userContext || fallbackContext;
+    const driveFileId = extractDriveFileId(item.video_url);
+    const localPath = driveFileId ? path.join(uploadsDir, `transcoded_${driveFileId}.mp4`) : null;
 
-    // Build a purely visual prompt — no text overlay (FLUX renders text as garbled)
-    const promptText = `Cinematic professional YouTube thumbnail background image. Topic: ${context}. Style: dramatic studio lighting, vibrant bold colors, high contrast, photorealistic, 8K quality, modern social media aesthetic, no text, no words, no letters, clean composition, 16:9 landscape`;
-    const encodedPrompt = encodeURIComponent(promptText);
+    if (!localPath || !fs.existsSync(localPath)) {
+      return res.status(400).json({ error: 'Transcoded video not found on server. Please wait for processing to complete.' });
+    }
 
-    const seeds = [42, 137, 256, 891];
+    // Get video duration via ffprobe
+    const duration = await new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(localPath, (err, meta) => {
+        if (err) reject(err);
+        else resolve(meta.format.duration || 30);
+      });
+    });
 
-    // Generate all 4 in parallel
+    // Extract 4 frames spread across the video (avoid very start/end)
+    const pcts = [0.1, 0.3, 0.6, 0.85];
+    const timestamps = pcts.map(p => Math.max(1, Math.floor(duration * p)));
+
     const results = await Promise.all(
-      seeds.map(async (seed, i) => {
-        const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=720&seed=${seed}&model=flux&nologo=true`;
-        try {
-          const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 90000 });
-          const thumbPath = path.join(uploadsDir, `aithumb_${id}_${i}.jpg`);
-          fs.writeFileSync(thumbPath, Buffer.from(response.data));
-          return `${baseUrl}/uploads/aithumb_${id}_${i}.jpg`;
-        } catch (imgErr) {
-          console.warn(`[generateThumbnails] Variation ${i} failed:`, imgErr.message);
-          return null;
-        }
-      })
+      timestamps.map((ts, i) => new Promise((resolve) => {
+        const framePath = path.join(uploadsDir, `frame_${id}_${i}.jpg`);
+        ffmpeg(localPath)
+          .seekInput(ts)
+          .frames(1)
+          .size('1280x720')
+          .aspect('16:9')
+          .autopad()
+          .output(framePath)
+          .on('end', () => resolve(`${baseUrl}/uploads/frame_${id}_${i}.jpg`))
+          .on('error', (err) => {
+            console.warn(`[generateThumbnails] Frame ${i} failed:`, err.message);
+            resolve(null);
+          })
+          .run();
+      }))
     );
 
     const thumbnails = results.filter(Boolean);
-    if (!thumbnails.length) return res.status(500).json({ error: 'AI image generation failed — try again' });
+    if (!thumbnails.length) return res.status(500).json({ error: 'Frame extraction failed — try again' });
 
     res.json({ success: true, thumbnails });
   } catch (err) {

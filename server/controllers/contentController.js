@@ -3323,7 +3323,8 @@ async function generateThumbnails(req, res) {
           .seekInput(ts)
           .frames(1)
           .outputOptions([
-            '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black',
+            // Scale to fill 1280×720 (zoom in, no black bars), then center-crop
+            '-vf', 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720:(iw-1280)/2:(ih-720)/2',
             '-q:v', '2'
           ])
           .output(framePath)

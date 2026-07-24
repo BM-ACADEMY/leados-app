@@ -3424,7 +3424,7 @@ Requirements:
 - Do NOT add any text, watermarks, or logos`;
 
     const response = await genAI.models.generateContent({
-      model: 'gemini-2.0-flash-exp-image-generation',
+      model: 'gemini-2.0-flash-preview-image-generation',
       contents: [
         {
           role: 'user',
@@ -3434,14 +3434,34 @@ Requirements:
           ]
         }
       ],
-      config: { responseModalities: ['image', 'text'] }
+      config: { responseModalities: ['IMAGE', 'TEXT'] }
     });
 
     const parts = response.candidates?.[0]?.content?.parts || [];
-    const imagePart = parts.find(p => p.inlineData?.data);
+    let imagePart = parts.find(p => p.inlineData?.data);
 
+    // Fallback: if Gemini image gen returned no image, use vision to describe then Pollinations
     if (!imagePart) {
-      return res.status(500).json({ error: 'Gemini did not return an image. The model may be unavailable — try again or use the raw frame.' });
+      console.warn('[generatePoster] No image in response, falling back to vision+Pollinations');
+      const descResponse = await genAI.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
+              { text: 'Describe the visual scene in this video frame in 1 sentence for creating a YouTube thumbnail. Include: subject, expression, setting, mood, colors. Be specific and vivid.' }
+            ]
+          }
+        ]
+      });
+      const sceneDesc = descResponse.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || title || 'professional educational video thumbnail';
+      const pollinationsPrompt = encodeURIComponent(`Cinematic YouTube thumbnail, ${sceneDesc}, dramatic lighting, vibrant colors, high contrast, photorealistic, 8K, no text, no words`);
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${pollinationsPrompt}?width=1280&height=720&seed=${Date.now() % 9999}&model=flux&nologo=true`;
+      const imgRes = await axios.get(pollinationsUrl, { responseType: 'arraybuffer', timeout: 90000 });
+      const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
+      fs.writeFileSync(posterPath, Buffer.from(imgRes.data));
+      return res.json({ success: true, poster_url: `${baseUrl}/uploads/poster_${id}.jpg` });
     }
 
     const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);

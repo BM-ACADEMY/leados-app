@@ -46,6 +46,7 @@ export function ApprovalRoom({
   const [thumbOptions, setThumbOptions] = useState([]);
   const [thumbBestIndex, setThumbBestIndex] = useState(0);
   const [generatingThumbs, setGeneratingThumbs] = useState(false);
+  const [generatingPoster, setGeneratingPoster] = useState(false);
   const [thumbError, setThumbError] = useState('');
   const prevItemIdRef = useRef(null);
 
@@ -115,6 +116,23 @@ export function ApprovalRoom({
       setThumbError(err.message || 'Frame extraction failed. The video may still be processing.');
     } finally {
       setGeneratingThumbs(false);
+    }
+  };
+
+  const handleGeneratePoster = async () => {
+    if (!selectedItem || !editValues.thumbnail_url) return;
+    setGeneratingPoster(true);
+    setThumbError('');
+    try {
+      const res = await api.generatePoster(selectedItem.id, editValues.thumbnail_url);
+      if (res.success && res.poster_url) {
+        setEditValues(prev => ({ ...prev, thumbnail_url: res.poster_url }));
+        setThumbOptions([]);
+      }
+    } catch (err) {
+      setThumbError(err.message || 'Poster generation failed. Try again.');
+    } finally {
+      setGeneratingPoster(false);
     }
   };
 
@@ -359,9 +377,29 @@ export function ApprovalRoom({
                       <div style={{ position: 'absolute', top: 8, left: 8, background: 'var(--teal)', color: 'var(--bg)', fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.05em' }}>
                         ✓ SELECTED THUMBNAIL
                       </div>
+                      {generatingPoster && (
+                        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                          <span style={{ display: 'inline-block', width: 28, height: 28, borderRadius: '50%', border: '3px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--gold)', animation: 'spin 0.8s linear infinite' }} />
+                          <span style={{ color: '#fff', fontSize: 11, fontWeight: 600 }}>Gemini is enhancing…</span>
+                        </div>
+                      )}
                     </div>
-                    <div style={{ fontSize: 10, color: 'var(--teal)', marginTop: 5 }}>
-                      Thumbnail set — click Save Captions to apply
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                      <div style={{ fontSize: 10, color: 'var(--teal)' }}>Thumbnail set — click Save Captions to apply</div>
+                      <button
+                        onClick={handleGeneratePoster}
+                        disabled={generatingPoster}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 5,
+                          padding: '5px 11px', fontSize: 10, fontWeight: 700, borderRadius: 6,
+                          background: generatingPoster ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(255,196,0,0.2), rgba(255,140,0,0.15))',
+                          color: generatingPoster ? 'var(--t3)' : 'var(--gold)',
+                          border: generatingPoster ? '1px solid var(--b1)' : '1px solid rgba(255,196,0,0.35)',
+                          cursor: generatingPoster ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {generatingPoster ? 'Enhancing…' : '✦ Make AI Poster'}
+                      </button>
                     </div>
                   </div>
                 )}

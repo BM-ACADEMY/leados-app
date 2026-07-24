@@ -67,20 +67,24 @@ export function ApprovalRoom({
   // Sync edits if item changes
   useEffect(() => {
     if (selectedItem) {
-      setEditValues({
-        caption: selectedItem.caption || '',
-        instagram_caption: selectedItem.instagram_caption || selectedItem.caption || '',
-        facebook_caption: selectedItem.facebook_caption || selectedItem.caption || '',
-        x_caption: selectedItem.x_caption || '',
-        linkedin_caption: selectedItem.linkedin_caption || '',
-        youtube_title: selectedItem.youtube_title || selectedItem.thumbnail_title || '',
-        youtube_description: selectedItem.youtube_description || selectedItem.description || selectedItem.caption || '',
-        thumbnail_title: selectedItem.thumbnail_title || '',
-        scheduled_at: selectedItem.scheduled_at || '',
-        platforms: [...(selectedItem.platforms || [])],
-        selected_accounts: selectedItem.selected_accounts || {},
-        hashtags: selectedItem.hashtags || '',
-        thumbnail_url: selectedItem.thumbnail_url || ''
+      setEditValues(prev => {
+        // If user is actively picking from generated frames, keep their selection
+        const preserveThumbUrl = thumbOptions.length > 0 && prev.thumbnail_url;
+        return {
+          caption: selectedItem.caption || '',
+          instagram_caption: selectedItem.instagram_caption || selectedItem.caption || '',
+          facebook_caption: selectedItem.facebook_caption || selectedItem.caption || '',
+          x_caption: selectedItem.x_caption || '',
+          linkedin_caption: selectedItem.linkedin_caption || '',
+          youtube_title: selectedItem.youtube_title || selectedItem.thumbnail_title || '',
+          youtube_description: selectedItem.youtube_description || selectedItem.description || selectedItem.caption || '',
+          thumbnail_title: selectedItem.thumbnail_title || '',
+          scheduled_at: selectedItem.scheduled_at || '',
+          platforms: [...(selectedItem.platforms || [])],
+          selected_accounts: selectedItem.selected_accounts || {},
+          hashtags: selectedItem.hashtags || '',
+          thumbnail_url: preserveThumbUrl ? prev.thumbnail_url : (selectedItem.thumbnail_url || '')
+        };
       });
     }
     // Only reset thumbnail frame options when switching to a DIFFERENT item

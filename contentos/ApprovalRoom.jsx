@@ -44,7 +44,9 @@ export function ApprovalRoom({
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteResults, setDeleteResults] = useState(null);
   const [thumbOptions, setThumbOptions] = useState([]);
+  const [thumbBestIndex, setThumbBestIndex] = useState(0);
   const [generatingThumbs, setGeneratingThumbs] = useState(false);
+  const [thumbError, setThumbError] = useState('');
 
   const handleDeleteFromPlatforms = async () => {
     if (!selectedItem) return;
@@ -81,17 +83,26 @@ export function ApprovalRoom({
       });
     }
     setThumbOptions([]);
+    setThumbBestIndex(0);
+    setThumbError('');
   }, [selectedItem, setEditValues]);
 
   const handleGenerateThumbnails = async () => {
     if (!selectedItem) return;
     setGeneratingThumbs(true);
+    setThumbError('');
     try {
       const context = firstGenContext || editValues.youtube_description || editValues.caption || '';
       const res = await api.generateThumbnails(selectedItem.id, context);
-      if (res.success) setThumbOptions(res.thumbnails || []);
+      if (res.success && res.thumbnails?.length) {
+        const best = res.bestIndex ?? 0;
+        setThumbOptions(res.thumbnails);
+        setThumbBestIndex(best);
+        setEditValues(prev => ({ ...prev, thumbnail_url: res.thumbnails[best] }));
+      }
     } catch (err) {
       console.error('Thumbnail generation failed:', err);
+      setThumbError(err.message || 'Frame extraction failed. The video may still be processing.');
     } finally {
       setGeneratingThumbs(false);
     }
@@ -254,22 +265,26 @@ export function ApprovalRoom({
                     const driveId = extractDriveFileId(selectedItem.video_url);
                     const API_URL = import.meta.env.VITE_API_URL || '';
 
+                    const posterUrl = editValues.thumbnail_url || selectedItem.thumbnail_url;
                     if (pubUrl && !extractDriveFileId(pubUrl)) {
                       return (
-                        <video 
-                          src={pubUrl} 
-                          controls 
+                        <video
+                          key={posterUrl}
+                          src={pubUrl}
+                          controls
                           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                          poster={selectedItem.thumbnail_url}
+                          poster={posterUrl}
                         />
                       );
                     } else if (driveId) {
                       const proxyUrl = `${API_URL}/api/content/drive-proxy?id=${driveId}`;
                       return (
-                        <video 
-                          src={proxyUrl} 
-                          controls 
+                        <video
+                          key={posterUrl}
+                          src={proxyUrl}
+                          controls
                           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                          poster={posterUrl}
                         />
                       );
                     } else {
@@ -291,9 +306,9 @@ export function ApprovalRoom({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(139,114,240,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>🖼</div>
                     <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>AI Thumbnail Poster</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>Thumbnail</div>
                       <div style={{ fontSize: 10, color: 'var(--t3)' }}>
-                        {editValues.thumbnail_url ? 'Poster selected — save to apply' : 'Auto-generated with captions · or regenerate manually'}
+                        {editValues.thumbnail_url ? 'Thumbnail ready — save to apply' : 'Click "Pick Frame" to extract frames from the video'}
                       </div>
                     </div>
                   </div>
@@ -310,55 +325,69 @@ export function ApprovalRoom({
                     }}
                   >
                     {generatingThumbs ? (
-                      <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Generating…</>
-                    ) : <>✦ Generate AI Poster</>}
+                      <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Extracting…</>
+                    ) : <>⬡ Pick Frame</>}
                   </button>
                 </div>
 
-                {/* Current thumbnail (when no grid open) */}
-                {!thumbOptions.length && editValues.thumbnail_url && (
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', paddingBottom: 10 }}>
-                    <div style={{ position: 'relative', borderRadius: 7, overflow: 'hidden', width: 120, flexShrink: 0, aspectRatio: '16/9', border: '2px solid var(--teal)' }}>
-                      <img src={editValues.thumbnail_url} alt="Thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                      <div style={{ position: 'absolute', bottom: 4, right: 4, background: 'var(--teal)', color: 'var(--bg)', fontSize: 8, fontWeight: 700, padding: '2px 5px', borderRadius: 3 }}>ACTIVE</div>
-                    </div>
-                    <div style={{ fontSize: 10, color: 'var(--t3)', lineHeight: 1.5 }}>AI poster set.<br/>Generate again to create new variations.</div>
+                {/* Error */}
+                {thumbError && (
+                  <div style={{ background: 'rgba(240,74,94,0.08)', border: '1px solid rgba(240,74,94,0.3)', borderRadius: 7, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--red)' }}>
+                    ✕ {thumbError}
                   </div>
                 )}
 
-                {/* AI Poster grid */}
+                {/* Selected frame large preview */}
+                {editValues.thumbnail_url && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', width: '100%', aspectRatio: '16/9', border: '2px solid var(--teal)', boxShadow: '0 0 0 3px rgba(0,196,160,0.15)' }}>
+                      <img
+                        src={editValues.thumbnail_url}
+                        alt="Selected thumbnail"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                      <div style={{ position: 'absolute', top: 8, left: 8, background: 'var(--teal)', color: 'var(--bg)', fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.05em' }}>
+                        ✓ SELECTED THUMBNAIL
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--teal)', marginTop: 5 }}>
+                      Thumbnail set — click Save Captions to apply
+                    </div>
+                  </div>
+                )}
+
+                {/* Frame grid */}
                 {thumbOptions.length > 0 && (
                   <div style={{ paddingBottom: 12 }}>
                     <div style={{ fontSize: 10, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 8 }}>
-                      ✦ AI Generated — pick your favourite
+                      ⬡ Pick a different frame
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 7, marginBottom: 8 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
                       {thumbOptions.map((url, i) => {
                         const isSelected = editValues.thumbnail_url === url;
+                        const isAiPick = i === thumbBestIndex;
                         return (
                           <div key={i} onClick={() => setEditValues(prev => ({ ...prev, thumbnail_url: url }))}
                             style={{
-                              position: 'relative', cursor: 'pointer', borderRadius: 8, overflow: 'hidden',
+                              position: 'relative', cursor: 'pointer', borderRadius: 7, overflow: 'hidden',
                               aspectRatio: '16/9',
                               border: isSelected ? '2px solid var(--teal)' : '2px solid var(--b1)',
-                              boxShadow: isSelected ? '0 0 0 3px rgba(0,196,160,0.2)' : 'none',
+                              opacity: isSelected ? 1 : 0.65,
                               transition: 'all 0.15s'
                             }}
                           >
-                            <img src={url} alt={`Poster ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                            {!isSelected && <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.1)' }} />}
-                            <div style={{ position: 'absolute', bottom: 4, left: 6, fontSize: 8, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.9)', background: 'rgba(0,0,0,0.4)', padding: '1px 5px', borderRadius: 3 }}>
-                              Variation {i + 1}
-                            </div>
-                            {isSelected && (
-                              <div style={{ position: 'absolute', top: 5, right: 5, background: 'var(--teal)', color: 'var(--bg)', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, boxShadow: '0 2px 6px rgba(0,196,160,0.5)' }}>✓</div>
+                            <img src={url} alt={`Frame ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                            {isAiPick && (
+                              <div style={{ position: 'absolute', top: 4, left: 4, background: 'var(--gold)', color: '#000', fontSize: 7, fontWeight: 800, padding: '2px 5px', borderRadius: 3, letterSpacing: '0.04em' }}>
+                                ✦ AI PICK
+                              </div>
                             )}
+                            <div style={{ position: 'absolute', bottom: 3, left: 5, fontSize: 8, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.9)', background: 'rgba(0,0,0,0.5)', padding: '1px 5px', borderRadius: 3 }}>
+                              {isSelected ? '✓ Active' : `Frame ${i + 1}`}
+                            </div>
                           </div>
                         );
                       })}
-                    </div>
-                    <div style={{ fontSize: 10, color: editValues.thumbnail_url ? 'var(--teal)' : 'var(--t3)' }}>
-                      {editValues.thumbnail_url ? '✓ Poster selected — hit Save Captions to apply' : 'Click a poster to set as thumbnail'}
                     </div>
                   </div>
                 )}
@@ -449,7 +478,7 @@ export function ApprovalRoom({
                           opacity: (loadingSuggestions || generatingThumbs || !firstGenContext || firstGenContext.trim() === '') ? 0.5 : 1
                         }}
                       >
-                        {(loadingSuggestions || generatingThumbs) ? 'Generating...' : '🚀 Generate Captions & Poster'}
+                        {(loadingSuggestions || generatingThumbs) ? 'Generating...' : '🚀 Generate Captions & Thumbnail'}
                       </button>
                     </div>
                     {suggestionsError && <div style={{ color: 'var(--red)', marginTop: 10, fontSize: 12 }}>{suggestionsError}</div>}

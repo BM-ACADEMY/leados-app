@@ -17,6 +17,8 @@ const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
 ffmpeg.setFfmpegPath(ffmpegPath);
 const ffprobePath = require("@ffprobe-installer/ffprobe").path;
 ffmpeg.setFfprobePath(ffprobePath);
+const { GoogleGenAI } = require("@google/genai");
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 
 function extractDriveFileId(url) {
@@ -3265,44 +3267,115 @@ async function generateThumbnails(req, res) {
 
   try {
     const { rows } = await pool.query(
-      `SELECT brand_name, thumbnail_title, youtube_title, caption, instagram_caption, description
-       FROM content_queue WHERE id = $1`,
+      `SELECT video_url, public_video_url FROM content_queue WHERE id = $1`,
       [id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Content not found' });
 
     const item = rows[0];
-    const userContext = (req.body.context || '').substring(0, 300);
-    const title = item.youtube_title || item.thumbnail_title || item.caption?.substring(0, 80) || 'Video Thumbnail';
-    const fallbackContext = (item.description || item.instagram_caption || item.caption || '').substring(0, 200);
-    const context = userContext || fallbackContext;
 
-    // Build a purely visual prompt — no text overlay (FLUX renders text as garbled)
-    const promptText = `Cinematic professional YouTube thumbnail background image. Topic: ${context}. Style: dramatic studio lighting, vibrant bold colors, high contrast, photorealistic, 8K quality, modern social media aesthetic, no text, no words, no letters, clean composition, 16:9 landscape`;
-    const encodedPrompt = encodeURIComponent(promptText);
+    // Find the local video file — try multiple strategies
+    let videoPath = null;
 
-    const seeds = [42, 137, 256, 891];
+    // Strategy 1: transcoded_<driveFileId>.mp4
+    const driveFileId = extractDriveFileId(item.video_url);
+    if (driveFileId) {
+      const p = path.join(uploadsDir, `transcoded_${driveFileId}.mp4`);
+      if (fs.existsSync(p)) videoPath = p;
+    }
 
-    // Generate all 4 in parallel
+    // Strategy 2: derive filename from public_video_url (handles any naming scheme)
+    if (!videoPath && item.public_video_url) {
+      const match = item.public_video_url.match(/\/uploads\/([^?#]+)$/);
+      if (match) {
+        const p = path.join(uploadsDir, match[1]);
+        if (fs.existsSync(p)) videoPath = p;
+      }
+    }
+
+    // Strategy 3: scan uploads dir for any mp4 that contains the content id
+    if (!videoPath) {
+      const files = fs.readdirSync(uploadsDir);
+      const candidate = files.find(f => f.includes(String(id)) && f.endsWith('.mp4'));
+      if (candidate) videoPath = path.join(uploadsDir, candidate);
+    }
+
+    console.log(`[generateThumbnails] id=${id} video_url=${item.video_url} public_video_url=${item.public_video_url} resolved=${videoPath}`);
+
+    if (!videoPath) {
+      return res.status(400).json({ error: 'Video file not found on server. Please wait for transcoding to complete or re-upload the video.' });
+    }
+
+    // Get video duration via ffprobe
+    const duration = await new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(videoPath, (err, meta) => {
+        if (err) reject(err);
+        else resolve(meta.format.duration || 30);
+      });
+    });
+
+    // Extract 4 frames spread across the video (avoid very start/end)
+    const pcts = [0.1, 0.3, 0.6, 0.85];
+    const timestamps = pcts.map(p => Math.max(1, Math.floor(duration * p)));
+
+    const framePaths = timestamps.map((_, i) => path.join(uploadsDir, `frame_${id}_${i}.jpg`));
+
     const results = await Promise.all(
-      seeds.map(async (seed, i) => {
-        const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=720&seed=${seed}&model=flux&nologo=true`;
-        try {
-          const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 90000 });
-          const thumbPath = path.join(uploadsDir, `aithumb_${id}_${i}.jpg`);
-          fs.writeFileSync(thumbPath, Buffer.from(response.data));
-          return `${baseUrl}/uploads/aithumb_${id}_${i}.jpg`;
-        } catch (imgErr) {
-          console.warn(`[generateThumbnails] Variation ${i} failed:`, imgErr.message);
-          return null;
-        }
-      })
+      timestamps.map((ts, i) => new Promise((resolve) => {
+        ffmpeg(videoPath)
+          .seekInput(ts)
+          .frames(1)
+          .outputOptions([
+            '-vf', 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720:(iw-1280)/2:(ih-720)/2',
+            '-q:v', '2'
+          ])
+          .output(framePaths[i])
+          .on('end', () => resolve(`${baseUrl}/uploads/frame_${id}_${i}.jpg`))
+          .on('error', (e) => {
+            console.warn(`[generateThumbnails] Frame ${i} at ${ts}s failed:`, e.message);
+            resolve(null);
+          })
+          .run();
+      }))
     );
 
     const thumbnails = results.filter(Boolean);
-    if (!thumbnails.length) return res.status(500).json({ error: 'AI image generation failed — try again' });
+    if (!thumbnails.length) return res.status(500).json({ error: 'Frame extraction failed — FFmpeg could not read the video file.' });
 
-    res.json({ success: true, thumbnails });
+    // Ask Gemini 2.0 Flash to pick the best frame for a thumbnail
+    let bestIndex = 0;
+    if (genAI && thumbnails.length > 1) {
+      try {
+        const contents = [
+          'These are frames extracted from a video. Which frame number (1, 2, 3, or 4) makes the best YouTube or Instagram thumbnail? Look for: clear subject visibility, good lighting, expressive face or action, sharp focus. Reply with ONLY a single digit — 1, 2, 3, or 4.'
+        ];
+        for (let i = 0; i < framePaths.length; i++) {
+          if (fs.existsSync(framePaths[i])) {
+            contents.push(`Frame ${i + 1}:`);
+            contents.push({
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: fs.readFileSync(framePaths[i]).toString('base64')
+              }
+            });
+          }
+        }
+        const response = await genAI.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents
+        });
+        const text = (response.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+        const picked = parseInt(text.match(/[1-4]/)?.[0]) - 1;
+        if (!isNaN(picked) && picked >= 0 && picked < thumbnails.length) {
+          bestIndex = picked;
+        }
+        console.log(`[generateThumbnails] Gemini picked frame ${picked + 1} (raw: "${text}")`);
+      } catch (geminiErr) {
+        console.warn('[generateThumbnails] Gemini selection failed, using first frame:', geminiErr.message);
+      }
+    }
+
+    res.json({ success: true, thumbnails, bestIndex });
   } catch (err) {
     console.error('[generateThumbnails] Error:', err);
     res.status(500).json({ error: err.message });

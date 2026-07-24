@@ -129,6 +129,12 @@ export default function ApprovalDashboard() {
   const [suggestionType, setSuggestionType] = useState("caption");
   const [suggestionPlatform, setSuggestionPlatform] = useState(null);
 
+  // Thumbnail feature states
+  const [isThumbnailModalOpen, setIsThumbnailModalOpen] = useState(false);
+  const [isGeneratingThumbnails, setIsGeneratingThumbnails] = useState(false);
+  const [thumbnailCandidates, setThumbnailCandidates] = useState([]);
+  const [selectedThumbnailCandidate, setSelectedThumbnailCandidate] = useState(null);
+
   async function fetchMonitors() {
     setLoadingMonitors(true);
     try {
@@ -596,6 +602,41 @@ export default function ApprovalDashboard() {
     }
     
     fetchAiSuggestions(selected.id, toneToUse, type, platform);
+  };
+
+  const handleGenerateThumbnails = async () => {
+    if (!selected) return;
+    setIsGeneratingThumbnails(true);
+    try {
+      const res = await api.generateThumbnails(selected.id);
+      if (res.success && res.thumbnails && res.thumbnails.length > 0) {
+        setThumbnailCandidates(res.thumbnails);
+        setSelectedThumbnailCandidate(res.thumbnails[0]);
+        setIsThumbnailModalOpen(true);
+      } else {
+        showToast(res.error || "Failed to extract thumbnail frames", "error");
+      }
+    } catch (err) {
+      showToast(err.message || "Error extracting frames", "error");
+    } finally {
+      setIsGeneratingThumbnails(false);
+    }
+  };
+
+  const handleSaveThumbnail = async () => {
+    if (!selected || !selectedThumbnailCandidate) return;
+    try {
+      const updated = await api.updateContent(selected.id, { thumbnail_url: selectedThumbnailCandidate });
+      setItems(prev => prev.map(i => i.id === selected.id ? { ...i, thumbnail_url: selectedThumbnailCandidate } : i));
+      setSelected(prev => ({ ...prev, thumbnail_url: selectedThumbnailCandidate }));
+      if (editMode) {
+        setEditValues(prev => ({ ...prev, thumbnail_url: selectedThumbnailCandidate }));
+      }
+      setIsThumbnailModalOpen(false);
+      showToast("Thumbnail updated successfully!");
+    } catch (err) {
+      showToast("Failed to update thumbnail", "error");
+    }
   };
 
   const fetchAiSuggestions = async (itemId, tone, type = "caption", platform = null) => {
@@ -1329,7 +1370,7 @@ export default function ApprovalDashboard() {
                   </div>
                   <div style={{ padding: 16 }}>
                     {selected.thumbnail_url ? (
-                      <div style={{ position: "relative", width: "100%", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
+                      <div style={{ position: "relative", width: "100%", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", group: "thumbnail-preview" }}>
                         <img src={selected.thumbnail_url} alt="thumbnail" style={{ width: "100%", display: "block" }} />
                         {(editMode ? editValues.thumbnail_title : selected.thumbnail_title) && (
                           <div style={{
@@ -1361,16 +1402,50 @@ export default function ApprovalDashboard() {
                             </div>
                           </div>
                         )}
+                        <div 
+                          onClick={handleGenerateThumbnails}
+                          style={{
+                            position: "absolute",
+                            top: 8,
+                            right: 8,
+                            background: "rgba(255,255,255,0.9)",
+                            backdropFilter: "blur(4px)",
+                            color: "#1A1A2E",
+                            padding: "6px 12px",
+                            borderRadius: 6,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            transition: "all 0.2s"
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.transform = "scale(1.05)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.9)"; e.currentTarget.style.transform = "scale(1)"; }}
+                        >
+                          {isGeneratingThumbnails ? (
+                            <div style={{ width: 12, height: 12, border: "2px solid #7C3AED", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+                          ) : "✨"}
+                          {isGeneratingThumbnails ? "Generating..." : "Pick Custom Frame"}
+                        </div>
                       </div>
                     ) : (
                       <div style={{
                         background: `linear-gradient(135deg, ${brandConf.color}22, ${brandConf.color}44)`,
                         border: `1px dashed ${brandConf.color}66`,
-                        borderRadius: 8, padding: "32px 16px", textAlign: "center"
-                      }}>
+                        borderRadius: 8, padding: "32px 16px", textAlign: "center",
+                        cursor: "pointer",
+                        transition: "all 0.2s"
+                      }} 
+                      onClick={handleGenerateThumbnails}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = `linear-gradient(135deg, ${brandConf.color}33, ${brandConf.color}55)`; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = `linear-gradient(135deg, ${brandConf.color}22, ${brandConf.color}44)`; }}
+                      >
                         <div style={{ fontSize: 24, marginBottom: 8 }}>🖼️</div>
                         <div style={{ fontSize: 12, fontWeight: 700, color: brandConf.color, marginBottom: 4 }}>
-                          {selected.thumbnail_title || 'Thumbnail Generating...'}
+                          {isGeneratingThumbnails ? "Extracting Frames..." : "Pick Custom Frame"}
                         </div>
                       </div>
                     )}
@@ -1635,6 +1710,83 @@ export default function ApprovalDashboard() {
                 flex: 1, padding: 12, borderRadius: 8, border: "none",
                 background: rejectionReason.trim() ? "#EF4444" : "#FCA5A5", color: "#fff", cursor: rejectionReason.trim() ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 13
               }}>Yes, Reject</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── THUMBNAIL PICKER MODAL ── */}
+      {isThumbnailModalOpen && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 998,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16
+        }}>
+          <div style={{
+            background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 640,
+            maxHeight: "85vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,0.2)"
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>
+                ✨ Select Thumbnail Frame
+              </div>
+              <button 
+                onClick={() => setIsThumbnailModalOpen(false)}
+                style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#6B6B80" }}
+              >✕</button>
+            </div>
+            
+            <p style={{ margin: "0 0 20px 0", fontSize: 13, color: "#6B6B80", lineHeight: 1.5 }}>
+              We've extracted a few key frames from your video. Select the one that looks best!
+            </p>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, overflowY: "auto", paddingBottom: 16 }}>
+              {thumbnailCandidates.map((url, idx) => {
+                const isChosen = selectedThumbnailCandidate === url;
+                return (
+                  <div 
+                    key={idx}
+                    onClick={() => setSelectedThumbnailCandidate(url)}
+                    style={{
+                      position: "relative",
+                      borderRadius: 12,
+                      overflow: "hidden",
+                      border: `2px solid ${isChosen ? "#7C3AED" : "transparent"}`,
+                      boxShadow: isChosen ? "0 4px 16px rgba(124,90,237,0.3)" : "0 2px 8px rgba(0,0,0,0.1)",
+                      cursor: "pointer",
+                      transition: "all 0.2s"
+                    }}
+                    onMouseEnter={(e) => { if (!isChosen) e.currentTarget.style.transform = "scale(1.02)"; }}
+                    onMouseLeave={(e) => { if (!isChosen) e.currentTarget.style.transform = "scale(1)"; }}
+                  >
+                    <img src={url} alt={`Frame ${idx + 1}`} style={{ width: "100%", display: "block" }} />
+                    {isChosen && (
+                      <div style={{
+                        position: "absolute", top: 8, right: 8,
+                        background: "#7C3AED", color: "#fff",
+                        width: 24, height: 24, borderRadius: "50%",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 12, fontWeight: "bold",
+                        boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
+                      }}>✓</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", gap: 12, marginTop: "auto", paddingTop: 16, borderTop: "1px solid #E5E4F0" }}>
+              <button 
+                onClick={() => setIsThumbnailModalOpen(false)}
+                style={{ flex: 1, padding: 12, borderRadius: 8, border: "1px solid #E5E4F0", background: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13 }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSaveThumbnail}
+                style={{ flex: 1, padding: 12, borderRadius: 8, border: "none", background: "#7C3AED", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}
+              >
+                Save Thumbnail
+              </button>
             </div>
           </div>
         </div>

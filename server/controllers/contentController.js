@@ -1794,10 +1794,42 @@ async function linkBrandAccount(req, res) {
       brand_name, platform, account_name, account_id, facebook_page_id, instagram_business_id, encryptedToken, expiry
     ]);
 
+    // ── Auto-Subscribe to Meta Leads Webhook for Facebook Pages ──
+    if (platform === 'facebook' && (facebook_page_id || account_id)) {
+      const pageIdToSubscribe = facebook_page_id || account_id;
+      try {
+        console.log(`[Meta Webhook] Auto-subscribing page ${pageIdToSubscribe} to leadgen webhooks...`);
+        await axios.post(
+          `https://graph.facebook.com/v18.0/${pageIdToSubscribe}/subscribed_apps`,
+          { subscribed_fields: ['leadgen'] },
+          { params: { access_token } }
+        );
+        console.log(`[Meta Webhook] Successfully subscribed page ${pageIdToSubscribe}.`);
+      } catch (subErr) {
+        console.error(`[Meta Webhook] Failed to auto-subscribe page ${pageIdToSubscribe}:`, subErr.response?.data || subErr.message);
+        // We log the error but don't fail the linking process
+      }
+    }
+
     res.json({ success: true, account: rows[0] });
   } catch (err) {
     console.error('Link brand account error:', err);
     res.status(500).json({ success: false, error: 'Database saving failed: ' + err.message });
+  }
+}
+
+// DELETE /api/content/meta/account/:id
+async function deleteBrandAccount(req, res) {
+  const { id } = req.params;
+  try {
+    const { rowCount } = await pool.query('DELETE FROM brand_social_accounts WHERE id = $1', [id]);
+    if (rowCount === 0) {
+      return res.status(404).json({ success: false, error: 'Account not found' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting brand account:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 }
 
@@ -3547,6 +3579,7 @@ module.exports = {
   checkNewDriveVideos,
   handleMetaCallback,
   linkBrandAccount,
+  deleteBrandAccount,
   publishPost,
   suggestCaptions,
   suggestStories,

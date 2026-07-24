@@ -7,6 +7,7 @@ import { useClient } from '../../contexts/ClientContext.jsx';
 const NAV = [
   { path: '/dashboard', Icon: Home, label: 'Dashboard' },
   { path: '/leads', Icon: Users, label: 'Leads' },
+  { path: '/sales-tasks', Icon: User, label: 'Sales Task' },
   { path: '/inbox', Icon: Inbox, label: 'Inbox', showBadge: true },
   { path: '/campaigns', Icon: Zap, label: 'Campaigns' },
   { path: '/templates', Icon: FileText, label: 'Templates' },
@@ -14,6 +15,7 @@ const NAV = [
   { path: '/reports', Icon: BarChart2, label: 'Reports' },
   { path: '/founder-reports', Icon: FileText, label: 'Founder Reports' },
   { path: '/clients', Icon: Building2, label: 'Clients' },
+  { path: '/integrations', Icon: Share2, label: 'Integrations' },
 ];
 
 export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }) => {

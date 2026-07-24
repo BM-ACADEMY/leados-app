@@ -5,6 +5,7 @@ import { Sidebar } from './components/layout/Sidebar.jsx';
 import { Header } from './components/layout/Header.jsx';
 import { useAuth } from './hooks/useAuth.js';
 import { Dashboard } from './views/Dashboard.jsx';
+import { SalesTasksView } from './views/SalesTasksView.jsx';
 import { LeadsView } from './views/LeadsView.jsx';
 import { InboxView } from './views/InboxView.jsx';
 import { CampaignsView } from './views/CampaignsView.jsx';
@@ -15,6 +16,7 @@ import { FounderReportsView } from './views/FounderReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
 import { SettingsView } from './views/SettingsView.jsx';
 import { WorkflowsView } from './views/WorkflowsView.jsx';
+import { IntegrationsView } from './views/IntegrationsView.jsx';
 
 
 import { AllianceDashboard } from './views/AllianceDashboard.jsx';
@@ -139,7 +141,8 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/leads" element={<LeadsView onLeadClick={handleLeadClick} refreshTrigger={leadRefresh} />} />
+              <Route path="/sales-tasks" element={<SalesTasksView />} />
+                <Route path="/leads" element={<LeadsView onLeadClick={handleLeadClick} refreshTrigger={leadRefresh} />} />
               <Route path="/inbox" element={<InboxView />} />
               <Route path="/campaigns" element={<CampaignsView />} />
               <Route path="/templates" element={<TemplatesView />} />
@@ -149,6 +152,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/clients" element={<ClientsView />} />
               <Route path="/settings" element={<SettingsView />} />
               <Route path="/workflows" element={<WorkflowsView />} />
+              <Route path="/integrations" element={<IntegrationsView />} />
               
               <Route path="/alliance-dashboard" element={<AllianceDashboard />} />
               <Route path="/upload-leads" element={<UploadLeads />} />

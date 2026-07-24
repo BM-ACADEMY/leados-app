@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Upload, Download, Plus, Eye, Phone, Trash, FileSpreadsheet, X, CreditCard, Copy, CheckCheck } from 'lucide-react';
+import { Search, Upload, Download, Plus, Eye, Phone, Trash, FileSpreadsheet, X, CreditCard, Copy, CheckCheck, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { Badge, ScoreBar } from '../components/ui.jsx';
@@ -359,12 +359,15 @@ function PaymentLinkModal({ lead, onClose }) {
 export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [syncingFB, setSyncingFB] = useState(false);
   const itemsPerPage = 10;
 
   const { leads: apiLeads, total, loading, error, refetch } = useLeads({ 
     status: filter !== 'all' ? filter : undefined, 
     search,
+    source: sourceFilter !== 'all' ? sourceFilter : undefined,
     limit: itemsPerPage,
     offset: (currentPage - 1) * itemsPerPage
   });
@@ -381,7 +384,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filter, search]);
+  }, [filter, search, sourceFilter]);
 
   const totalPages = Math.ceil((total || 0) / itemsPerPage);
 
@@ -514,6 +517,32 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
           <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', opacity: importing ? 0.6 : 1 }}><Upload size={12} />{importing ? 'Importing...' : 'Import CSV'}</button>
           <button onClick={handleExport} style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}><Download size={12} />Export</button>
           <button
+            onClick={async () => {
+              if (syncingFB) return;
+              setSyncingFB(true);
+              try {
+                const res = await api.post('/api/integrations/meta/sync-all-leads');
+                if (res.success) {
+                  toast.success(res.message || 'Syncing started in the background!');
+                  if (refetch) refetch();
+                } else {
+                  toast.error('Sync failed: ' + res.error);
+                }
+              } catch (err) {
+                toast.error('Sync error: ' + err.message);
+              } finally {
+                setSyncingFB(false);
+              }
+            }}
+            title="Sync all historical Facebook Leads"
+            disabled={syncingFB}
+            style={{ background: 'linear-gradient(135deg,#3b5998,#1e2e50)', border: '1px solid #4c70ba', color: '#fff', padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: syncingFB ? 'default' : 'pointer', fontWeight: 600, transition: 'opacity .2s', opacity: syncingFB ? 0.7 : 1 }}
+            onMouseEnter={e => !syncingFB && (e.currentTarget.style.opacity = '0.8')}
+            onMouseLeave={e => !syncingFB && (e.currentTarget.style.opacity = '1')}
+          >
+            <RefreshCw size={12} className={syncingFB ? "spin-animation" : ""} /> {syncingFB ? 'Syncing...' : 'Sync FB Leads'}
+          </button>
+          <button
             onClick={() => setShowAddModal(true)}
             style={{ background: C.accent, border: 'none', color: '#fff', padding: '7px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}
           >
@@ -536,9 +565,19 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
             </button>
           ))}
         </div>
-        <div className="w-full-mobile" style={{ display: 'flex', alignItems: 'center', gap: 7, background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36 }}>
-          <Search size={12} color={C.muted} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or phone..." style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', width: '100%' }} />
+        <div className="w-full-mobile" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36, flex: 1 }}>
+            <Search size={12} color={C.muted} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or phone..." style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', width: '100%' }} />
+          </div>
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36, display: 'flex', alignItems: 'center' }}>
+            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', cursor: 'pointer', textTransform: 'capitalize' }}>
+              <option value="all" style={{ background: C.card, color: C.text }}>All Sources</option>
+              {modalSources.map(s => (
+                <option key={s} value={s} style={{ background: C.card, color: C.text }}>{s}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -546,7 +585,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid ' + C.border }}>
-              {['Lead', 'Phone', 'Source', 'Brand', 'Status', 'Score', 'Assigned', 'Last Contact', ''].map((h) => (
+              {['Lead', 'Phone', 'Source', 'Brand', 'Status', 'Score', 'Assigned', 'Date', ''].map((h) => (
                 <th key={h} style={{ padding: '11px 14px', fontSize: 9, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'left' }}>{h}</th>
               ))}
             </tr>
@@ -569,7 +608,9 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
                 <td style={{ padding: '13px 14px' }}><Badge status={l.status} /></td>
                 <td style={{ padding: '13px 14px' }}><ScoreBar score={l.score || 0} /></td>
                 <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{l.assigned_name || 'Unassigned'}</td>
-                <td style={{ padding: '13px 14px', fontSize: 10, color: C.dim }}>{l.last_contact || 'N/A'}</td>
+                <td style={{ padding: '13px 14px', fontSize: 10, color: C.dim }}>
+                  {l.created_at ? new Date(l.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : (l.last_contact || 'N/A')}
+                </td>
                 <td style={{ padding: '13px 14px' }}>
                   <div style={{ display: 'flex', gap: 5 }}>
                     <button title="View lead" style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); onLeadClick(l); }}><Eye size={11} color={C.muted} /></button>

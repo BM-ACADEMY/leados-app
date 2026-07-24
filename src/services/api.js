@@ -115,6 +115,7 @@ class LeadOSAPI {
       ...(filters.status && { status: filters.status }),
       ...(filters.brand && { brand: filters.brand }),
       ...(filters.search && { search: filters.search }),
+      ...(filters.source && { source: filters.source }),
     });
     return this.request(`/api/leads?${params}`);
   }

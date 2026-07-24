@@ -3384,6 +3384,76 @@ async function generateThumbnails(req, res) {
   }
 }
 
+async function generatePoster(req, res) {
+  const { id } = req.params;
+  const { frame_url } = req.body;
+  const uploadsDir = path.join(__dirname, '../uploads');
+  const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+
+  if (!frame_url) return res.status(400).json({ error: 'frame_url is required' });
+  if (!genAI) return res.status(400).json({ error: 'GEMINI_API_KEY not configured' });
+
+  try {
+    // Resolve local file path from the URL
+    const filename = frame_url.split('/uploads/').pop()?.split('?')[0];
+    if (!filename) return res.status(400).json({ error: 'Invalid frame_url' });
+
+    const framePath = path.join(uploadsDir, filename);
+    if (!fs.existsSync(framePath)) {
+      return res.status(400).json({ error: 'Frame file not found. Please extract frames again.' });
+    }
+
+    const frameBase64 = fs.readFileSync(framePath).toString('base64');
+
+    // Get video title/context for better poster generation
+    const { rows } = await pool.query(
+      `SELECT youtube_title, thumbnail_title, caption FROM content_queue WHERE id = $1`,
+      [id]
+    );
+    const title = rows[0]?.youtube_title || rows[0]?.thumbnail_title || '';
+
+    const prompt = `You are a professional YouTube thumbnail designer.
+Transform this video frame into a stunning, high-quality thumbnail poster.
+${title ? `Video topic: "${title}".` : ''}
+Requirements:
+- Enhance lighting, contrast, and color vibrancy dramatically
+- Make the subject (person/object) visually pop with sharp focus
+- Apply a cinematic, professional look with rich colors
+- Keep the composition clean and engaging
+- Output a 16:9 landscape image
+- Do NOT add any text, watermarks, or logos`;
+
+    const response = await genAI.models.generateContent({
+      model: 'gemini-2.0-flash-exp-image-generation',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
+            { text: prompt }
+          ]
+        }
+      ],
+      config: { responseModalities: ['image', 'text'] }
+    });
+
+    const parts = response.candidates?.[0]?.content?.parts || [];
+    const imagePart = parts.find(p => p.inlineData?.data);
+
+    if (!imagePart) {
+      return res.status(500).json({ error: 'Gemini did not return an image. The model may be unavailable — try again or use the raw frame.' });
+    }
+
+    const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
+    fs.writeFileSync(posterPath, Buffer.from(imagePart.inlineData.data, 'base64'));
+
+    res.json({ success: true, poster_url: `${baseUrl}/uploads/poster_${id}.jpg` });
+  } catch (err) {
+    console.error('[generatePoster] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getContent,
   getStats,
@@ -3419,5 +3489,6 @@ module.exports = {
   deletePost,
   runBackgroundPublish,
   updateOverallPostStatus,
-  generateThumbnails
+  generateThumbnails,
+  generatePoster
 };

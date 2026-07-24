@@ -53,6 +53,9 @@ router.get("/linkedin/callback", ctrl.handleLinkedInCallback);
 // Generate thumbnail options from video
 router.post("/:id/generate-thumbnails", ctrl.generateThumbnails);
 
+// AI-enhance selected frame into a poster
+router.post("/:id/generate-poster", ctrl.generatePoster);
+
 // Trigger publishing
 router.post("/:id/publish", ctrl.publishPost);
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../src/services/api.js';
 
 
@@ -47,6 +47,7 @@ export function ApprovalRoom({
   const [thumbBestIndex, setThumbBestIndex] = useState(0);
   const [generatingThumbs, setGeneratingThumbs] = useState(false);
   const [thumbError, setThumbError] = useState('');
+  const prevItemIdRef = useRef(null);
 
   const handleDeleteFromPlatforms = async () => {
     if (!selectedItem) return;
@@ -82,9 +83,14 @@ export function ApprovalRoom({
         thumbnail_url: selectedItem.thumbnail_url || ''
       });
     }
-    setThumbOptions([]);
-    setThumbBestIndex(0);
-    setThumbError('');
+    // Only reset thumbnail frame options when switching to a DIFFERENT item
+    // (not when the same item refreshes after a save)
+    if (selectedItem && selectedItem.id !== prevItemIdRef.current) {
+      prevItemIdRef.current = selectedItem.id;
+      setThumbOptions([]);
+      setThumbBestIndex(0);
+      setThumbError('');
+    }
   }, [selectedItem, setEditValues]);
 
   const handleGenerateThumbnails = async () => {
@@ -326,7 +332,7 @@ export function ApprovalRoom({
                   >
                     {generatingThumbs ? (
                       <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Extracting…</>
-                    ) : <>⬡ Pick Frame</>}
+                    ) : <>✦ AI Pick</>}
                   </button>
                 </div>
 
@@ -362,7 +368,7 @@ export function ApprovalRoom({
                     <div style={{ fontSize: 10, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 8 }}>
                       ⬡ Pick a different frame
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
                       {thumbOptions.map((url, i) => {
                         const isSelected = editValues.thumbnail_url === url;
                         const isAiPick = i === thumbBestIndex;

@@ -3314,9 +3314,9 @@ async function generateThumbnails(req, res) {
       });
     });
 
-    // Extract 4 frames spread across the video (avoid very start/end)
-    const pcts = [0.1, 0.3, 0.6, 0.85];
-    const timestamps = pcts.map(p => Math.max(1, Math.floor(duration * p)));
+    // Extract 8 frames spread across the video for better variety
+    const pcts = [0.05, 0.15, 0.25, 0.4, 0.5, 0.65, 0.8, 0.92];
+    const timestamps = pcts.map(p => Math.max(0.5, Math.floor(duration * p)));
 
     const framePaths = timestamps.map((_, i) => path.join(uploadsDir, `frame_${id}_${i}.jpg`));
 
@@ -3326,8 +3326,8 @@ async function generateThumbnails(req, res) {
           .seekInput(ts)
           .frames(1)
           .outputOptions([
-            '-vf', 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720:(iw-1280)/2:(ih-720)/2',
-            '-q:v', '2'
+            '-q:v', '2',
+            '-y'
           ])
           .output(framePaths[i])
           .on('end', () => resolve(`${baseUrl}/uploads/frame_${id}_${i}.jpg`))
@@ -3342,17 +3342,18 @@ async function generateThumbnails(req, res) {
     const thumbnails = results.filter(Boolean);
     if (!thumbnails.length) return res.status(500).json({ error: 'Frame extraction failed — FFmpeg could not read the video file.' });
 
-    // Ask Gemini 2.0 Flash to pick the best frame for a thumbnail
+    // Ask Gemini to pick the best frame for a thumbnail
     let bestIndex = 0;
     if (genAI && thumbnails.length > 1) {
       try {
-        const contents = [
-          'These are frames extracted from a video. Which frame number (1, 2, 3, or 4) makes the best YouTube or Instagram thumbnail? Look for: clear subject visibility, good lighting, expressive face or action, sharp focus. Reply with ONLY a single digit — 1, 2, 3, or 4.'
+        // Build multimodal parts array for @google/genai SDK
+        const parts = [
+          { text: `I have ${thumbnails.length} frames extracted from a social media video. Which frame makes the BEST thumbnail for YouTube or Instagram? Look for: clear subject face visibility, good lighting, expressive emotion or action, sharp focus, and visual appeal. Reply with ONLY the frame number (1-${thumbnails.length}).` }
         ];
         for (let i = 0; i < framePaths.length; i++) {
           if (fs.existsSync(framePaths[i])) {
-            contents.push(`Frame ${i + 1}:`);
-            contents.push({
+            parts.push({ text: `Frame ${i + 1}:` });
+            parts.push({
               inlineData: {
                 mimeType: 'image/jpeg',
                 data: fs.readFileSync(framePaths[i]).toString('base64')
@@ -3362,14 +3363,15 @@ async function generateThumbnails(req, res) {
         }
         const response = await genAI.models.generateContent({
           model: 'gemini-2.0-flash',
-          contents
+          contents: [{ role: 'user', parts }]
         });
-        const text = (response.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
-        const picked = parseInt(text.match(/[1-4]/)?.[0]) - 1;
-        if (!isNaN(picked) && picked >= 0 && picked < thumbnails.length) {
+        const text = (response.text || '').trim();
+        const pickedMatch = text.match(/\d+/);
+        const picked = pickedMatch ? parseInt(pickedMatch[0]) - 1 : -1;
+        if (picked >= 0 && picked < thumbnails.length) {
           bestIndex = picked;
         }
-        console.log(`[generateThumbnails] Gemini picked frame ${picked + 1} (raw: "${text}")`);
+        console.log(`[generateThumbnails] Gemini picked frame ${picked + 1} of ${thumbnails.length} (raw: "${text}")`);
       } catch (geminiErr) {
         console.warn('[generateThumbnails] Gemini selection failed, using first frame:', geminiErr.message);
       }

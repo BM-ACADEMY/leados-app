@@ -1408,7 +1408,7 @@ async function publishToFacebookPage(pageId, pageAccessToken, { caption, videoUr
 }
 
 // Instagram Business Container Creation
-async function createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null }) {
+async function createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null, coverUrl = null }) {
   const containerUrl = `https://graph.facebook.com/v19.0/${instagramBusinessId}/media`;
 
   // Check if media is video or image
@@ -1433,6 +1433,7 @@ async function createInstagramContainer(instagramBusinessId, accessToken, { vide
     if (isVideo) {
       params.media_type = 'REELS';
       params.video_url = videoUrl;
+      if (coverUrl) params.cover_url = coverUrl;
     } else {
       params.image_url = videoUrl;
     }
@@ -1604,9 +1605,9 @@ async function publishInstagramContainer(instagramBusinessId, accessToken, conta
 }
 
 // Publish to Instagram Coordinator
-async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null }) {
+async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null, coverUrl = null }) {
   try {
-    const containerId = await createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl });
+    const containerId = await createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl, coverUrl });
     await waitForInstagramContainer(containerId, accessToken);
     const mediaId = await publishInstagramContainer(instagramBusinessId, accessToken, containerId);
     return { success: true, post_id: mediaId };
@@ -1619,14 +1620,14 @@ async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, 
 }
 
 // Publish to Instagram Coordinator with retry mechanism for transient errors
-async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null }) {
+async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null, coverUrl = null }) {
   const maxRetries = 3;
   let lastErr = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[publishToInstagramWithRetry] Attempt ${attempt}/${maxRetries} to publish to Instagram. URL: ${videoUrl}`);
-      const res = await module.exports.publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl });
+      const res = await module.exports.publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl, coverUrl });
       return res;
     } catch (err) {
       lastErr = err;
@@ -2154,7 +2155,8 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         publishRes = await publishToInstagramWithRetry(account.instagram_business_id, decryptedToken, {
           caption: finalCaption,
           videoUrl: publicUrl,
-          isStory: false
+          isStory: false,
+          coverUrl: post.thumbnail_url || null
         });
       } else if (channel === 'youtube') {
         let localVideoPath = null;

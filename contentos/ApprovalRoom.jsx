@@ -89,7 +89,11 @@ export function ApprovalRoom({
     try {
       const context = firstGenContext || editValues.youtube_description || editValues.caption || '';
       const res = await api.generateThumbnails(selectedItem.id, context);
-      if (res.success) setThumbOptions(res.thumbnails || []);
+      if (res.success && res.thumbnails?.length) {
+        setThumbOptions(res.thumbnails);
+        // Auto-select the first frame as thumbnail immediately
+        setEditValues(prev => ({ ...prev, thumbnail_url: res.thumbnails[0] }));
+      }
     } catch (err) {
       console.error('Thumbnail generation failed:', err);
     } finally {
@@ -254,22 +258,26 @@ export function ApprovalRoom({
                     const driveId = extractDriveFileId(selectedItem.video_url);
                     const API_URL = import.meta.env.VITE_API_URL || '';
 
+                    const posterUrl = editValues.thumbnail_url || selectedItem.thumbnail_url;
                     if (pubUrl && !extractDriveFileId(pubUrl)) {
                       return (
-                        <video 
-                          src={pubUrl} 
-                          controls 
+                        <video
+                          key={posterUrl}
+                          src={pubUrl}
+                          controls
                           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                          poster={selectedItem.thumbnail_url}
+                          poster={posterUrl}
                         />
                       );
                     } else if (driveId) {
                       const proxyUrl = `${API_URL}/api/content/drive-proxy?id=${driveId}`;
                       return (
-                        <video 
-                          src={proxyUrl} 
-                          controls 
+                        <video
+                          key={posterUrl}
+                          src={proxyUrl}
+                          controls
                           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                          poster={posterUrl}
                         />
                       );
                     } else {
@@ -293,7 +301,7 @@ export function ApprovalRoom({
                     <div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>Thumbnail</div>
                       <div style={{ fontSize: 10, color: 'var(--t3)' }}>
-                        {editValues.thumbnail_url ? 'Frame selected — save to apply' : 'Pick a frame from the video to use as thumbnail'}
+                        {editValues.thumbnail_url ? 'Thumbnail set — save to apply' : 'Extract frames from the video to pick a thumbnail'}
                       </div>
                     </div>
                   </div>

@@ -73,7 +73,7 @@ router.post('/refresh/:id', async (req, res) => {
   const item = keywords[itemIndex];
   
   try {
-    const apiKey = process.env.SERPER_API_KEY || process.env.SERP_API_KEY;
+    const apiKey = process.env.VALUESERP_API_KEY || process.env.SERPER_API_KEY || process.env.SERP_API_KEY;
     const isDemo = req.headers['x-data-mode'] === 'demo' || !apiKey;
 
     if (isDemo) {
@@ -87,20 +87,18 @@ router.post('/refresh/:id', async (req, res) => {
       return res.json(item);
     }
 
-    const response = await axios.post('https://google.serper.dev/search', {
-      q: item.keyword,
-      gl: "in",
-      hl: "en",
-      num: 100
-    }, {
-      headers: {
-        'X-API-KEY': apiKey,
-        'Content-Type': 'application/json'
+    const response = await axios.get('https://api.valueserp.com/search', {
+      params: {
+        q: item.keyword,
+        gl: "in",
+        hl: "en",
+        api_key: apiKey,
+        num: 100
       }
     });
 
     let rank = null;
-    const organicResults = response.data.organic || [];
+    const organicResults = response.data.organic_results || [];
     
     // Scan organic array to find targetUrl domain
     try {

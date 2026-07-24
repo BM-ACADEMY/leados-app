@@ -20,6 +20,7 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const cryptoHelper = require('./utils/crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 
 const app = express();
@@ -95,6 +96,8 @@ const thedalLocalSeoBridgeRoutes = require('./routes/thedal-localseobridge');
 const thedalRankDropAlertRoutes = require('./routes/thedal-rank-drop-alert');
 const thedalContentRoutes = require('./routes/thedal-content');
 const contentRoutes = require('./routes/contentRoutes');
+const integrationsRoutes = require('./routes/integrationsRoutes');
+
 const salesosRoutes = require('./routes/salesos');
 
 app.use('/api', salesosRoutes);
@@ -134,6 +137,7 @@ const internalAuth = (req, res, next) => {
 
 // ── CONTENT OS ROUTES ─────────────────────────────────────
 app.use('/api/content', internalAuth, contentRoutes);
+app.use('/api/integrations', internalAuth, integrationsRoutes);
 app.use('/api/content-os', internalAuth, contentOsRoutes);
 
 // Thedal OS Routes
@@ -538,7 +542,7 @@ app.get('/api/leads/sources', auth, async (req, res) => {
 // GET /api/leads
 app.get('/api/leads', auth, async (req, res) => {
   try {
-    const { status, brand, search, limit = 100, offset = 0 } = req.query;
+    const { status, brand, search, source, limit = 100, offset = 0 } = req.query;
     let q = `
       SELECT l.*, c.name as brand_name, u.name as assigned_name,
         COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id), 0) as unread,
@@ -570,6 +574,10 @@ app.get('/api/leads', auth, async (req, res) => {
     if (brand && brand !== 'All Brands') {
       params.push(`%${brand}%`);
       q += ` AND c.name ILIKE $${params.length}`;
+    }
+    if (source && source !== 'all') {
+      params.push(source);
+      q += ` AND l.source = $${params.length}`;
     }
     if (search) {
       params.push(`%${search}%`);
@@ -1213,11 +1221,50 @@ app.post('/webhook/meta-leads', async (req, res) => {
         const leadgenId = change.value.leadgen_id;
         const pageId = change.value.page_id;
 
-        // Fetch full lead from Meta
-        const metaLead = await axios.get(
-          `https://graph.facebook.com/v18.0/${leadgenId}`,
-          { params: { access_token: process.env.META_PAGE_ACCESS_TOKEN } }
+        // 1. Lookup dynamic access token and client mapping
+        const { rows: accountRows } = await pool.query(
+          `SELECT bsa.access_token, c.id as client_id 
+           FROM brand_social_accounts bsa 
+           JOIN clients c ON bsa.brand_name = c.name 
+           WHERE bsa.facebook_page_id = $1 OR bsa.account_id = $1 
+           LIMIT 1`,
+          [pageId]
         );
+
+        if (!accountRows.length || !accountRows[0].access_token) {
+          console.error(`[Meta Leads] No access token found for page_id: ${pageId}. Cannot fetch leadgen_id: ${leadgenId}`);
+          await pool.query(
+            `INSERT INTO failed_webhooks (page_id, leadgen_id, payload, error_message) VALUES ($1, $2, $3, $4)`,
+            [pageId, leadgenId, change.value, 'No access token found for this page in database.']
+          );
+          continue;
+        }
+
+        const { access_token, client_id } = accountRows[0];
+        
+        let decryptedToken;
+        try {
+          decryptedToken = cryptoHelper.decrypt(access_token);
+        } catch (e) {
+          console.error(`[Meta Leads] Failed to decrypt token for page ${pageId}:`, e.message);
+          continue;
+        }
+
+        // 2. Fetch full lead from Meta
+        let metaLead;
+        try {
+          metaLead = await axios.get(
+            `https://graph.facebook.com/v18.0/${leadgenId}`,
+            { params: { access_token: decryptedToken } }
+          );
+        } catch (apiErr) {
+          console.error(`[Meta Leads] Graph API Error for leadgen_id ${leadgenId}:`, apiErr.response?.data || apiErr.message);
+          await pool.query(
+            `INSERT INTO failed_webhooks (page_id, leadgen_id, payload, error_message) VALUES ($1, $2, $3, $4)`,
+            [pageId, leadgenId, change.value, apiErr.response?.data ? JSON.stringify(apiErr.response.data) : apiErr.message]
+          );
+          continue;
+        }
 
         const fields = {};
         for (const f of metaLead.data.field_data || []) {
@@ -1230,22 +1277,43 @@ app.post('/webhook/meta-leads', async (req, res) => {
 
         if (!phone) continue;
 
+        // 3. Deduplicate using leadgen_id
         const existing = await pool.query(
-          `SELECT id FROM leads WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT($1, 10)`,
-          [phone]
+          `SELECT id FROM leads WHERE leadgen_id = $1`,
+          [leadgenId]
         );
-        if (existing.rows.length) continue;
+        if (existing.rows.length) {
+          console.log(`[Meta Leads] Lead ${leadgenId} already exists. Skipping.`);
+          continue;
+        }
 
-        const newLeadRes = await pool.query(`
-          INSERT INTO leads (name, phone, email, source, status, score, created_at)
-          VALUES ($1, $2, $3, 'Meta Ads', 'new', 20, NOW())
-          RETURNING *
-        `, [name, phone, email]);
-        
-        const newLead = newLeadRes.rows[0];
+        // 4. Insert lead properly assigned to client
+        let newLead;
+        try {
+          const newLeadRes = await pool.query(`
+            INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, created_at)
+            VALUES ($1, $2, $3, 'Meta Ads', 'new', 20, $4, $5, NOW())
+            RETURNING *
+          `, [name, phone, email, client_id, leadgenId]);
+          newLead = newLeadRes.rows[0];
+        } catch (insertErr) {
+          console.error(`[Meta Leads] Error inserting lead: ${insertErr.message}. Attempting update on conflict.`);
+          // Fallback if there is a conflict on (phone, client_id)
+          const fallbackRes = await pool.query(`
+            UPDATE leads SET 
+              leadgen_id = $1, 
+              name = $2, 
+              email = $3, 
+              source = 'Meta Ads'
+            WHERE phone = $4 AND client_id = $5
+            RETURNING *
+          `, [leadgenId, name, email, phone, client_id]);
+          newLead = fallbackRes.rows[0];
+          if (!newLead) continue;
+        }
 
         // Trigger n8n webhook for Meta leads to send welcome template
-        if (process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
+        if (process.env.N8N_NEW_LEAD_WEBHOOK_URL && newLead) {
           axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
             lead_id: newLead.id,
             name: newLead.name,
@@ -1259,6 +1327,61 @@ app.post('/webhook/meta-leads', async (req, res) => {
     }
   } catch (err) {
     console.error('Meta leads webhook error:', err.message);
+  }
+});
+
+// ── META PAGE SUBSCRIPTION ──────────────────────────────────
+app.post('/api/meta/pages/:page_id/subscribe', auth, async (req, res) => {
+  try {
+    const { page_id } = req.params;
+    
+    // 1. Lookup dynamic access token
+    const { rows: accountRows } = await pool.query(
+      `SELECT access_token FROM brand_social_accounts 
+       WHERE (facebook_page_id = $1 OR account_id = $1) AND access_token IS NOT NULL 
+       LIMIT 1`,
+      [page_id]
+    );
+
+    if (!accountRows.length) {
+      return res.status(404).json({ error: 'Page access token not found in database. Please reconnect the page.' });
+    }
+
+    const { access_token } = accountRows[0];
+    
+    let decryptedToken;
+    try {
+      decryptedToken = cryptoHelper.decrypt(access_token);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to decrypt access token' });
+    }
+
+    // 2. Exchange system user token for Page Access Token
+    const pageTokenRes = await axios.get(
+      `https://graph.facebook.com/v18.0/${page_id}`,
+      { params: { fields: 'access_token', access_token: decryptedToken } }
+    );
+    
+    if (!pageTokenRes.data.access_token) {
+      throw new Error("Could not retrieve Page Access Token using the provided token.");
+    }
+    
+    const pageAccessToken = pageTokenRes.data.access_token;
+
+    // 3. Make subscription call to Meta using Page Access Token
+    const metaRes = await axios.post(
+      `https://graph.facebook.com/v18.0/${page_id}/subscribed_apps`,
+      { subscribed_fields: ['leadgen'] },
+      { params: { access_token: pageAccessToken } }
+    );
+
+    res.json({ success: true, message: 'Successfully subscribed to page webhooks.', meta_response: metaRes.data });
+  } catch (err) {
+    console.error('[Meta Webhook Subscription Error]:', err.response?.data || err.message);
+    res.status(500).json({ 
+      error: 'Failed to subscribe to page webhooks', 
+      details: err.response?.data || err.message 
+    });
   }
 });
 

@@ -178,7 +178,7 @@ router.post('/leads/createOrUpdate', async (req, res) => {
       );
     } else {
       const insert = await pool.query(
-        `INSERT INTO leads (name, phone, email, source, client_id, status, score) VALUES ($1, $2, $3, $4, $5, 'new', 10) RETURNING id`,
+        `INSERT INTO leads (name, phone, email, source, client_id, status, score, next_followup_due) VALUES ($1, $2, $3, $4, $5, 'new', 10, NOW() + INTERVAL '24 hours') RETURNING id`,
         [name, phone, email, source, brand_id]
       );
       lead_id = insert.rows[0].id;
@@ -264,9 +264,47 @@ router.post('/ai/response', async (req, res) => {
       historyText = "Chat History:\n" + chat_history.map(h => `${h.role}: ${h.text}`).join("\n") + "\n\n";
     }
 
-    const prompt = `System Prompt (ABM Groups Knowledge Base):\n${kb_snippets}\n\n${historyText}User Intent detected: ${intent}\n\nUser Message: "${message}"\n\nWrite a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.`;
+    const prompt = `System Prompt (ABM Groups Knowledge Base):\n${kb_snippets}\n\n${historyText}User Intent detected: ${intent}\n\nUser Message: "${message}"\n\n
+      CRITICAL BEHAVIOR SPECIFICATIONS:
+      1. Greeting: Mirror the user's opener (e.g. "hi" -> "Hi!", "hello" -> "Hello!"). Keep it to one short line. Do NOT open with "Vanakkam, this is ABM Groups" or list all brands on every message. Only fall back to full brand list if intent is genuinely unclear.
+      2. Brand detection: Only switch brands if the new message clearly contains a different brand keyword (BM Academy, BM TechX, CoreTalents, Namma Pondy Properties, TravellersNeed, Dada's Kitchen, EduConsultants, BM Foundation). Otherwise, stick to the locked brand.
+      3. Conversation memory: Never ask for something already provided (e.g., don't ask the time slot again after the user gave "4pm", or name if already given).
+      4. Fallbacks: If it's a voice note (audio), reply: "Got your voice note 🎧 — could you type it quickly so I can help right away?". If unclear, ask ONE short clarifying question.
+      5. Tone: Write a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.
+      6. Routing Numbers: Use these exact numbers if the user asks for contact info: Shared WABA (inbound) is ${process.env.SHARED_WABA_NUMBER || '919944509441'}, Outbound contact for ALL brands is ${process.env.OUTBOUND_CONTACT_NUMBER || '94038 92971'}, General / partnerships is ${process.env.GENERAL_PARTNERSHIPS_NUMBER || '99442 88271'}, BM Academy admissions is ${process.env.BM_ACADEMY_ADMISSIONS_NUMBER || '94038 92971'}.
+      
+      JSON OUTPUT REQUIREMENT:
+      You MUST return your response as a raw JSON object with the following keys exactly:
+      {
+        "reply": "your generated reply message following the behavior specs",
+        "extracted_name": "John Doe", (or null if the user has not provided their name)
+        "extracted_booking_time": "2026-07-25T16:00:00Z" (or null if the user has not provided a preferred date/time for a call)
+      }
+      Respond ONLY with the JSON object, no markdown formatting, no backticks.`;
 
-    const ai_reply = await generateGeminiContent(prompt);
+    const rawAiResponse = await generateGeminiContent(prompt);
+      
+    let ai_reply = "I'm sorry, I couldn't process that. Can you repeat?";
+    let extractedData = null;
+
+    try {
+      const cleanJsonStr = rawAiResponse.replace(/\s*```json\s*/gi, '').replace(/\s*```\s*/g, '').trim();
+      extractedData = JSON.parse(cleanJsonStr);
+      ai_reply = extractedData.reply || rawAiResponse;
+
+      if (lead_id) {
+         if (extractedData.extracted_name) {
+           await pool.query(`UPDATE leads SET name = $1 WHERE id = $2`, [extractedData.extracted_name, lead_id]);
+         }
+         if (extractedData.extracted_booking_time) {
+           await pool.query(`UPDATE leads SET call_booked_at = $1 WHERE id = $2`, [extractedData.extracted_booking_time, lead_id]);
+         }
+      }
+    } catch (parseErr) {
+      console.error("Failed to parse Gemini JSON:", parseErr.message, rawAiResponse);
+      ai_reply = rawAiResponse; 
+    }
+
     res.json({ ...req.body, ai_reply });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -522,14 +560,14 @@ router.get('/workflows/telemetry', async (req, res) => {
 
 router.get('/reports/revenue-today', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'won' AND updated_at >= CURRENT_DATE`);
+    const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'converted' AND updated_at >= CURRENT_DATE`);
     res.json({ revenue: parseInt(result.rows[0].revenue) || 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.get('/reports/revenue-month', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'won' AND date_trunc('month', updated_at) = date_trunc('month', CURRENT_DATE)`);
+    const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'converted' AND date_trunc('month', updated_at) = date_trunc('month', CURRENT_DATE)`);
     res.json({ revenue: parseInt(result.rows[0].revenue) || 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -540,7 +578,7 @@ router.get('/reports/brand-revenue', async (req, res) => {
       SELECT c.name as brand, (COUNT(l.id) * 500) as revenue 
       FROM leads l
       JOIN clients c ON l.client_id = c.id
-      WHERE l.status = 'won'
+      WHERE l.status = 'converted'
       GROUP BY c.name
     `);
     res.json({ data: result.rows });
@@ -563,14 +601,14 @@ router.get('/reports/conversion-rate', async (req, res) => {
 
 router.get('/reports/followups-pending', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT COUNT(*) as count FROM leads WHERE next_followup_due > NOW() AND status != 'WON'`);
+    const result = await pool.query(`SELECT COUNT(*) as count FROM leads WHERE next_followup_due > NOW() AND status != 'converted'`);
     res.json({ pending: parseInt(result.rows[0].count) || 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.get('/reports/sla-breaches', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT COUNT(*) as count FROM leads WHERE next_followup_due < NOW() AND status != 'WON'`);
+    const result = await pool.query(`SELECT COUNT(*) as count FROM leads WHERE next_followup_due < NOW() AND status != 'converted'`);
     res.json({ breaches: parseInt(result.rows[0].count) || 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -591,7 +629,7 @@ router.get('/followups/due', async (req, res) => {
       SELECT l.id as lead_id, COALESCE(c.name, 'ABM Groups') as brand, l.stage, COALESCE(l.touch_count, 0) as touch_count
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
-      WHERE l.next_followup_due <= NOW() AND l.status != 'WON'
+      WHERE l.next_followup_due <= NOW() AND l.status != 'converted'
     `);
     res.json({ followups: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -814,7 +852,7 @@ router.post('/leads/find-by-invoice', async (req, res) => {
       const fallback = await pool.query(
         `SELECT l.id as lead_id, l.name, l.phone, c.name as brand, l.client_id as brand_id
          FROM leads l LEFT JOIN clients c ON l.client_id = c.id
-         WHERE l.status = 'won' ORDER BY l.updated_at DESC LIMIT 1`
+         WHERE l.status = 'converted' ORDER BY l.updated_at DESC LIMIT 1`
       );
       lead = fallback.rows[0] || null;
     }
@@ -925,7 +963,7 @@ router.get('/campaigns/active', async (req, res) => {
 router.post('/campaigns/select-leads', async (req, res) => {
   const { campaign_id, status_filter } = req.body;
   try {
-    let query = `SELECT id, phone, name FROM leads WHERE status != 'won' AND phone IS NOT NULL LIMIT 500`;
+    let query = `SELECT id, phone, name FROM leads WHERE status != 'converted' AND phone IS NOT NULL LIMIT 500`;
     if (status_filter) {
       query = `SELECT id, phone, name FROM leads WHERE status = $1 AND phone IS NOT NULL LIMIT 500`;
       const result = await pool.query(query, [status_filter]);
@@ -1013,7 +1051,7 @@ router.post('/leads/update-followup', async (req, res) => {
 
 router.get('/reports/overdue-followups', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT id, name, next_followup_due FROM leads WHERE next_followup_due < NOW() AND status != 'won' LIMIT 50`);
+    const result = await pool.query(`SELECT id, name, next_followup_due FROM leads WHERE next_followup_due < NOW() AND status != 'converted' LIMIT 50`);
     res.json({ overdue: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1036,7 +1074,7 @@ router.get('/reports/reminder-bundle', async (req, res) => {
       pool.query(`SELECT id as lead_id, name, call_booked_at as time, owner FROM leads WHERE call_booked_at >= CURRENT_DATE AND call_booked_at < CURRENT_DATE + INTERVAL '1 day'`),
       pool.query(`SELECT id as lead_id, name, stage, owner FROM leads WHERE next_followup_due >= CURRENT_DATE AND next_followup_due < CURRENT_DATE + INTERVAL '1 day'`),
       Promise.resolve({ rows: [] }), // no invoice table yet - mirrors /reports/pending-payments
-      pool.query(`SELECT id, name, next_followup_due, owner FROM leads WHERE next_followup_due < NOW() AND status != 'won' LIMIT 50`),
+      pool.query(`SELECT id, name, next_followup_due, owner FROM leads WHERE next_followup_due < NOW() AND status != 'converted' LIMIT 50`),
       pool.query(`SELECT id, name, score, owner FROM leads WHERE status = 'hot' ORDER BY score DESC LIMIT 10`)
     ]);
 
@@ -1101,4 +1139,76 @@ router.post('/communication/notify-staff', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
+// ==========================================
+// Sales Person Tasks API
+// ==========================================
+router.get('/sales-tasks', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT st.*, l.name, l.phone, l.email, l.status as lead_status 
+      FROM sales_tasks st
+      JOIN leads l ON st.lead_id = l.id
+      WHERE DATE(st.created_at) = CURRENT_DATE
+      ORDER BY st.status DESC, st.created_at DESC
+    `);
+    res.json({ success: true, tasks: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/sales-tasks/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    let query = `UPDATE sales_tasks SET status = $1, updated_at = NOW()`;
+    if (status === 'completed') {
+      query += `, completed_at = NOW()`;
+    }
+    query += ` WHERE id = $2 RETURNING *`;
+    const result = await pool.query(query, [status, req.params.id]);
+    res.json({ success: true, task: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/sales-tasks/:id', async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM sales_tasks WHERE id = $1`, [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ==========================================
+// Bot Integration: Book a Call
+// ==========================================
+router.post('/leads/book-call', async (req, res) => {
+  try {
+    const { lead_id, booking_time } = req.body;
+    
+    if (!lead_id || !booking_time) {
+      return res.status(400).json({ success: false, error: "Missing lead_id or booking_time" });
+    }
+
+    const result = await pool.query(
+      `UPDATE leads SET call_booked_at = $1, updated_at = NOW() WHERE id = $2 RETURNING id, call_booked_at`,
+      [booking_time, lead_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: "Lead not found" });
+    }
+
+    res.json({ success: true, lead: result.rows[0], message: "Call successfully booked!" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;
+

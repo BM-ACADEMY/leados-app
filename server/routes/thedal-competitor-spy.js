@@ -116,7 +116,7 @@ router.post('/scan', async (req, res) => {
   }
 
   const safeCount = Math.min(Math.max(parseInt(resultCount) || 20, 5), 40);
-  const SERP_API_KEY = process.env.SERP_RADAR_API_KEY || process.env.SERP_API_KEY || process.env.SERPKEY;
+  const SERP_API_KEY = process.env.VALUESERP_API_KEY || process.env.SERP_RADAR_API_KEY || process.env.SERP_API_KEY || process.env.SERPKEY;
   const isDemoMode = req.headers['x-data-mode'] === 'demo' || !SERP_API_KEY;
 
   if (isDemoMode) {
@@ -141,7 +141,7 @@ router.post('/scan', async (req, res) => {
   }
 
   try {
-    const response = await axios.get('https://serpapi.com/search.json', {
+    const response = await axios.get('https://api.valueserp.com/search', {
       params: {
         engine:   'google_local',
         q:        keyword,
@@ -302,7 +302,7 @@ router.get('/place-details', async (req, res) => {
     return res.status(400).json({ error: 'placeId or name is required.' });
   }
 
-  const SERP_API_KEY = process.env.SERP_RADAR_API_KEY || process.env.SERP_API_KEY || process.env.SERPKEY;
+  const SERP_API_KEY = process.env.VALUESERP_API_KEY || process.env.SERP_RADAR_API_KEY || process.env.SERP_API_KEY || process.env.SERPKEY;
   const isDemoMode = req.headers['x-data-mode'] === 'demo' || !SERP_API_KEY;
 
   if (isDemoMode) {
@@ -338,7 +338,7 @@ router.get('/place-details', async (req, res) => {
     const [detailRes, imageRes] = await Promise.all([
       // Strategy A: google_maps type:place with data_cid (decimal CID)
       placeId
-        ? axios.get('https://serpapi.com/search.json', {
+        ? axios.get('https://api.valueserp.com/search', {
             params: {
               engine:   'google_maps',
               type:     'place',
@@ -351,7 +351,7 @@ router.get('/place-details', async (req, res) => {
         : Promise.resolve(null),
 
       // Strategy B: google_images for real business photos
-      axios.get('https://serpapi.com/search.json', {
+      axios.get('https://api.valueserp.com/search', {
         params: {
           engine:  'google_images',
           q:       photoQuery,
@@ -368,7 +368,7 @@ router.get('/place-details', async (req, res) => {
     // Fallback: if data_cid returned nothing, search by name
     if (!place && name) {
       const q = location ? `${name} ${location}` : name;
-      const fallback = await axios.get('https://serpapi.com/search.json', {
+      const fallback = await axios.get('https://api.valueserp.com/search', {
         params: { engine: 'google_maps', q, type: 'search', api_key: SERP_API_KEY, hl: 'en' },
         timeout: 30000,
       }).catch(() => null);

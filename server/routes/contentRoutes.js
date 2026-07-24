@@ -40,6 +40,7 @@ router.post("/batch", ctrl.createBatchContent);
 // Meta OAuth callback and account linking
 router.post("/meta/callback", ctrl.handleMetaCallback);
 router.post("/meta/link-account", ctrl.linkBrandAccount);
+router.delete("/meta/account/:id", ctrl.deleteBrandAccount);
 
 // YouTube OAuth routes
 router.get("/youtube/auth", ctrl.handleYoutubeAuth);

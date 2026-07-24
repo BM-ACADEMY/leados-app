@@ -166,7 +166,10 @@ export default function OnPageAudit() {
     if (auditData) {
       const offPageCheckedCount = Object.values(updated).filter(Boolean).length;
       const newOffPageScore = Math.round((offPageCheckedCount / 10) * 100);
-      const newOverallScore = Math.round((auditData.onPage.score + auditData.technical.score + newOffPageScore + auditData.local.score) / 4);
+      const onPageSc = auditData.onPage?.score || 0;
+      const techSc = auditData.technical?.score || 0;
+      const localSc = auditData.local?.score || 0;
+      const newOverallScore = Math.round((onPageSc + techSc + newOffPageScore + localSc) / 4);
       
       const newAuditData = {
         ...auditData,
@@ -237,7 +240,10 @@ export default function OnPageAudit() {
       const offPageScore = Math.round((offPageCheckedCount / 10) * 100);
 
       // Recompute overall health score including client-side checklist completion rate
-      const overallScore = Math.round((resData.onPage.score + resData.technical.score + offPageScore + resData.local.score) / 4);
+      const onPageSc = resData.onPage?.score || 0;
+      const techSc = resData.technical?.score || 0;
+      const localSc = resData.local?.score || 0;
+      const overallScore = Math.round((onPageSc + techSc + offPageScore + localSc) / 4);
 
       const finalResult = {
         ...resData,
@@ -281,16 +287,16 @@ Target Keyword: "${keyword}"
 
 ## Scores:
 - Overall SEO Score: ${auditData.overallScore}% (Grade ${getGrade(auditData.overallScore)})
-- On-Page SEO Score: ${auditData.onPage.score}/100
-- Technical SEO Score: ${auditData.technical.score}/100
-- Off-Page Checklist Score: ${auditData.offPage.score}%
-- Local SEO Score: ${auditData.local.score}/100
+- On-Page SEO Score: ${auditData.onPage?.score || 0}/100
+- Technical SEO Score: ${auditData.technical?.score || 0}/100
+- Off-Page Checklist Score: ${auditData.offPage?.score || 0}%
+- Local SEO Score: ${auditData.local?.score || 0}/100
 
 ## Quick Findings:
-- Total page words: ${auditData.onPage.checks.find(c => c.id === 'content-length-check')?.value || ''}
-- Target keyword density: ${auditData.densityInfo.percent.toFixed(2)}%
-- Broken links: ${auditData.linksCount.broken}
-- Schema types found: ${auditData.schemaInfo.types.join(', ') || 'None'}
+- Total page words: ${auditData.onPage?.checks?.find(c => c.id === 'content-length-check')?.value || ''}
+- Target keyword density: ${auditData.densityInfo?.percent ? auditData.densityInfo.percent.toFixed(2) : 0}%
+- Broken links: ${auditData.linksCount?.broken || 0}
+- Schema types found: ${auditData.schemaInfo?.types ? auditData.schemaInfo.types.join(', ') : 'None'}
     `.trim();
 
     navigator.clipboard.writeText(summary)
@@ -328,9 +334,9 @@ Target Keyword: "${keyword}"
 
   const activeChecks = () => {
     if (!auditData) return [];
-    if (activeTab === 'onPage') return auditData.onPage.checks;
-    if (activeTab === 'technical') return auditData.technical.checks;
-    if (activeTab === 'local') return auditData.local.checks;
+    if (activeTab === 'onPage') return auditData.onPage?.checks || [];
+    if (activeTab === 'technical') return auditData.technical?.checks || [];
+    if (activeTab === 'local') return auditData.local?.checks || [];
     return [];
   };
 
@@ -440,10 +446,10 @@ Target Keyword: "${keyword}"
                   <div style={{ height: 180, position: 'relative' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <RadarChart cx="50%" cy="50%" outerRadius="75%" data={[
-                        { subject: 'On-Page', A: auditData.onPage.score },
-                        { subject: 'Technical', A: auditData.technical.score },
-                        { subject: 'Off-Page', A: auditData.offPage.score },
-                        { subject: 'Local SEO', A: auditData.local.score }
+                        { subject: 'On-Page', A: auditData.onPage?.score || 0 },
+                        { subject: 'Technical', A: auditData.technical?.score || 0 },
+                        { subject: 'Off-Page', A: auditData.offPage?.score || 0 },
+                        { subject: 'Local SEO', A: auditData.local?.score || 0 }
                       ]}>
                         <PolarGrid stroke={C.border} />
                         <PolarAngleAxis dataKey="subject" tick={{ fill: C.muted, fontSize: 10, fontWeight: 600 }} />
@@ -455,10 +461,10 @@ Target Keyword: "${keyword}"
                   
                   {/* Donut Indicators */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-                    <ScoreDonut score={auditData.onPage.score} size={80} title="On-Page" color={getScoreColor(auditData.onPage.score)} />
-                    <ScoreDonut score={auditData.technical.score} size={80} title="Technical" color={getScoreColor(auditData.technical.score)} />
-                    <ScoreDonut score={auditData.offPage.score} size={80} title="Off-Page" color={getScoreColor(auditData.offPage.score)} />
-                    <ScoreDonut score={auditData.local.score} size={80} title="Local SEO" color={getScoreColor(auditData.local.score)} />
+                    <ScoreDonut score={auditData.onPage?.score || 0} size={80} title="On-Page" color={getScoreColor(auditData.onPage?.score || 0)} />
+                    <ScoreDonut score={auditData.technical?.score || 0} size={80} title="Technical" color={getScoreColor(auditData.technical?.score || 0)} />
+                    <ScoreDonut score={auditData.offPage?.score || 0} size={80} title="Off-Page" color={getScoreColor(auditData.offPage?.score || 0)} />
+                    <ScoreDonut score={auditData.local?.score || 0} size={80} title="Local SEO" color={getScoreColor(auditData.local?.score || 0)} />
                   </div>
 
                 </div>
@@ -477,10 +483,10 @@ Target Keyword: "${keyword}"
                 <div style={{ background: '#ffffff', padding: 18, borderRadius: 8, border: '1px solid #e2e8f0', fontFamily: 'Arial, sans-serif' }}>
                   <div style={{ fontSize: 14, color: '#202124', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{url}</div>
                   <div style={{ fontSize: 19, color: '#1a0dab', marginBottom: 4, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {auditData.serp.title || 'Placeholder Title'}
+                    {auditData.serp?.title || 'Placeholder Title'}
                   </div>
                   <div style={{ fontSize: 13, color: '#4d5156', lineHeight: '20px', wordBreak: 'break-word' }}>
-                    {auditData.serp.description ? (auditData.serp.description.length > 155 ? auditData.serp.description.substring(0, 152) + '...' : auditData.serp.description) : 'Please add a meta description tag to showcase your snippet description.'}
+                    {auditData.serp?.description ? (auditData.serp.description.length > 155 ? auditData.serp.description.substring(0, 152) + '...' : auditData.serp.description) : 'Please add a meta description tag to showcase your snippet description.'}
                   </div>
                 </div>
               </div>
@@ -495,9 +501,9 @@ Target Keyword: "${keyword}"
                     <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>Page Link Profile</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span style={{ color: C.muted }}>Internal Hrefs</span><span style={{ color: '#fff', fontWeight: 700 }}>{auditData.linksCount.internal}</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span style={{ color: C.muted }}>External Links</span><span style={{ color: '#fff', fontWeight: 700 }}>{auditData.linksCount.external}</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span style={{ color: C.muted }}>Broken Internal</span><span style={{ color: auditData.linksCount.broken > 0 ? C.red : C.green, fontWeight: 700 }}>{auditData.linksCount.broken}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span style={{ color: C.muted }}>Internal Hrefs</span><span style={{ color: '#fff', fontWeight: 700 }}>{auditData.linksCount?.internal || 0}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span style={{ color: C.muted }}>External Links</span><span style={{ color: '#fff', fontWeight: 700 }}>{auditData.linksCount?.external || 0}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span style={{ color: C.muted }}>Broken Internal</span><span style={{ color: (auditData.linksCount?.broken || 0) > 0 ? C.red : C.green, fontWeight: 700 }}>{auditData.linksCount?.broken || 0}</span></div>
                   </div>
                 </div>
 
@@ -508,12 +514,12 @@ Target Keyword: "${keyword}"
                     <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>Top Keyword Cloud</span>
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {auditData.wordCloud.map((w, idx) => (
+                    {(auditData.wordCloud || []).map((w, idx) => (
                       <span key={idx} style={{ color: '#93c5fd', background: 'rgba(59, 130, 246, 0.1)', padding: '3px 8px', borderRadius: 12, fontSize: '12px' }}>
                         {w.word} ({w.count})
                       </span>
                     ))}
-                    {auditData.wordCloud.length === 0 && <span style={{ color: C.muted, fontSize: 12 }}>No terms identified.</span>}
+                    {(!auditData.wordCloud || auditData.wordCloud.length === 0) && <span style={{ color: C.muted, fontSize: 12 }}>No terms identified.</span>}
                   </div>
                 </div>
               </div>
@@ -525,9 +531,9 @@ Target Keyword: "${keyword}"
               {/* Tab Navigation header */}
               <div style={{ display: 'flex', borderBottom: `1px solid ${C.border}`, background: '#0f141c' }}>
                 {[
-                  { id: 'onPage', label: 'On-Page SEO', count: auditData.onPage.checks.filter(c => c.status === 'failed').length },
-                  { id: 'technical', label: 'Technical SEO', count: auditData.technical.checks.filter(c => c.status === 'failed').length },
-                  { id: 'local', label: 'Local SEO', count: auditData.local.checks.filter(c => c.status === 'failed').length },
+                  { id: 'onPage', label: 'On-Page SEO', count: auditData.onPage?.checks?.filter(c => c.status === 'failed').length || 0 },
+                  { id: 'technical', label: 'Technical SEO', count: auditData.technical?.checks?.filter(c => c.status === 'failed').length || 0 },
+                  { id: 'local', label: 'Local SEO', count: auditData.local?.checks?.filter(c => c.status === 'failed').length || 0 },
                   { id: 'offPage', label: 'Off-Page SEO', count: 0 }
                 ].map(t => (
                   <button
@@ -607,9 +613,9 @@ Target Keyword: "${keyword}"
                       <div style={{ background: '#0d1117', border: `1px solid ${C.border}`, borderRadius: 8, padding: '16px' }}>
                         <h4 style={{ fontSize: 14, color: '#fff', marginBottom: 12 }}>Follow vs No-Follow Profile</h4>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: C.muted }}>Do-Follow Internal</span><span>{auditData.linksCount.doFollowInt}</span></div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: C.muted }}>Do-Follow External</span><span>{auditData.linksCount.doFollowExt}</span></div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: C.muted }}>No-Follow Links</span><span>{auditData.linksCount.noFollow}</span></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: C.muted }}>Do-Follow Internal</span><span>{auditData.linksCount?.doFollowInt || 0}</span></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: C.muted }}>Do-Follow External</span><span>{auditData.linksCount?.doFollowExt || 0}</span></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: C.muted }}>No-Follow Links</span><span>{auditData.linksCount?.noFollow || 0}</span></div>
                         </div>
                       </div>
 
@@ -688,14 +694,14 @@ Target Keyword: "${keyword}"
             <h2 style={{ fontSize: '22px', marginTop: '30px' }}>Summary Scores</h2>
             <ul style={{ fontSize: '16px', lineHeight: '1.6' }}>
               <li><strong>Overall SEO Score:</strong> {auditData.overallScore}%</li>
-              <li><strong>On-Page SEO Score:</strong> {auditData.onPage.score}/100</li>
-              <li><strong>Technical SEO Score:</strong> {auditData.technical.score}/100</li>
-              <li><strong>Off-Page Checklist Completion:</strong> {auditData.offPage.score}%</li>
-              <li><strong>Local SEO Score:</strong> {auditData.local.score}/100</li>
+              <li><strong>On-Page SEO Score:</strong> {auditData.onPage?.score || 0}/100</li>
+              <li><strong>Technical SEO Score:</strong> {auditData.technical?.score || 0}/100</li>
+              <li><strong>Off-Page Checklist Completion:</strong> {auditData.offPage?.score || 0}%</li>
+              <li><strong>Local SEO Score:</strong> {auditData.local?.score || 0}/100</li>
             </ul>
 
             <h2 style={{ fontSize: '22px', marginTop: '30px', borderBottom: '1px solid #ccc', paddingBottom: '5px' }}>On-Page SEO Checks</h2>
-            {auditData.onPage.checks.map((c, i) => (
+            {(auditData.onPage?.checks || []).map((c, i) => (
               <div key={i} style={{ marginBottom: '14px', pageBreakInside: 'avoid' }}>
                 <p><strong>[{c.status.toUpperCase()}] {c.name} ({c.points}/{c.maxPoints} pts)</strong></p>
                 <p style={{ margin: '4px 0', color: '#333' }}>Found: {c.value}</p>
@@ -704,7 +710,7 @@ Target Keyword: "${keyword}"
             ))}
 
             <h2 style={{ fontSize: '22px', marginTop: '30px', borderBottom: '1px solid #ccc', paddingBottom: '5px' }}>Technical SEO Checks</h2>
-            {auditData.technical.checks.map((c, i) => (
+            {(auditData.technical?.checks || []).map((c, i) => (
               <div key={i} style={{ marginBottom: '14px', pageBreakInside: 'avoid' }}>
                 <p><strong>[{c.status.toUpperCase()}] {c.name} ({c.points}/{c.maxPoints} pts)</strong></p>
                 <p style={{ margin: '4px 0', color: '#333' }}>Found: {c.value}</p>
@@ -713,7 +719,7 @@ Target Keyword: "${keyword}"
             ))}
 
             <h2 style={{ fontSize: '22px', marginTop: '30px', borderBottom: '1px solid #ccc', paddingBottom: '5px' }}>Local SEO Checks</h2>
-            {auditData.local.checks.map((c, i) => (
+            {(auditData.local?.checks || []).map((c, i) => (
               <div key={i} style={{ marginBottom: '14px', pageBreakInside: 'avoid' }}>
                 <p><strong>[{c.status.toUpperCase()}] {c.name} ({c.points}/{c.maxPoints} pts)</strong></p>
                 <p style={{ margin: '4px 0', color: '#333' }}>Found: {c.value}</p>

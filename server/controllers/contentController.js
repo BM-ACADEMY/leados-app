@@ -1324,7 +1324,7 @@ async function publishVideoStoryToFacebook(pageId, pageAccessToken, { videoUrl }
 }
 
 // Facebook Reel Publishing
-async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl }) {
+async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl, coverUrl = null }) {
   console.log(`[publishReelToFacebook] Starting 3-step Reels upload. Page ID: ${pageId}, Video URL: ${videoUrl}`);
   try {
     // Step (a) Initialize upload session
@@ -1361,6 +1361,7 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
       description: caption,
       access_token: pageAccessToken
     };
+    if (coverUrl) finishParams.thumb_url = coverUrl;
     console.log(`[publishReelToFacebook] Step (c) Payload:`, JSON.stringify({ ...finishParams, access_token: '***' }, null, 2));
 
     const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, finishParams);
@@ -1647,14 +1648,14 @@ async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { v
 }
 
 // Publish Facebook Reel with retry mechanism for transient errors
-async function publishReelToFacebookWithRetry(pageId, pageAccessToken, { caption, videoUrl }) {
+async function publishReelToFacebookWithRetry(pageId, pageAccessToken, { caption, videoUrl, coverUrl = null }) {
   const maxRetries = 3;
   let lastErr = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[publishReelToFacebookWithRetry] Attempt ${attempt}/${maxRetries} to publish Reel to Facebook. URL: ${videoUrl}`);
-      const res = await module.exports.publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl });
+      const res = await module.exports.publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl, coverUrl });
       return res;
     } catch (err) {
       lastErr = err;
@@ -2146,7 +2147,8 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         }
         publishRes = await publishReelToFacebookWithRetry(pageId, decryptedToken, {
           caption: finalCaption,
-          videoUrl: publicUrl
+          videoUrl: publicUrl,
+          coverUrl: post.thumbnail_url || null
         });
       } else if (channel === 'instagram' || channel === 'instagram_post') {
         if (!account.instagram_business_id) {
@@ -2258,7 +2260,8 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         console.log(`[BackgroundPublish] Publishing to LinkedIn for post ${post.id} — URN: ${authorUrn}`);
         publishRes = await publishToLinkedIn(authorUrn, decryptedToken, {
           caption: finalCaption,
-          videoUrl: publicUrl
+          videoUrl: publicUrl,
+          coverUrl: post.thumbnail_url || null
         });
       }
 
@@ -3215,7 +3218,7 @@ async function handleLinkedInCallback(req, res) {
   }
 }
 
-async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) {
+async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl, coverUrl = null }) {
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     'Content-Type': 'application/json',
@@ -3250,7 +3253,48 @@ async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) 
       timeout: 300000
     });
 
+    // Optionally upload thumbnail as a separate image asset
+    let thumbnailAssetUrn = null;
+    if (coverUrl) {
+      try {
+        console.log(`[LinkedIn] Registering thumbnail image upload...`);
+        const thumbRegRes = await axios.post(
+          'https://api.linkedin.com/v2/assets?action=registerUpload',
+          {
+            registerUploadRequest: {
+              recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+              owner: authorUrn,
+              serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }]
+            }
+          },
+          { headers }
+        );
+        const thumbUploadUrl = thumbRegRes.data.value.uploadMechanism['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'].uploadUrl;
+        thumbnailAssetUrn = thumbRegRes.data.value.asset;
+
+        console.log(`[LinkedIn] Downloading thumbnail from ${coverUrl}...`);
+        const thumbData = await axios.get(coverUrl, { responseType: 'arraybuffer', timeout: 30000 });
+        await axios.put(thumbUploadUrl, thumbData.data, {
+          headers: { 'Content-Type': 'image/jpeg' },
+          maxBodyLength: Infinity,
+          timeout: 60000
+        });
+        console.log(`[LinkedIn] Thumbnail uploaded. Asset URN: ${thumbnailAssetUrn}`);
+      } catch (thumbErr) {
+        console.warn(`[LinkedIn] Thumbnail upload failed (non-fatal): ${thumbErr.message}`);
+        thumbnailAssetUrn = null;
+      }
+    }
+
     console.log(`[LinkedIn] Creating video UGC post...`);
+    const videoMediaEntry = {
+      status: 'READY',
+      media: assetUrn,
+      description: { text: caption.substring(0, 200) },
+      title: { text: 'Video Post' }
+    };
+    if (thumbnailAssetUrn) videoMediaEntry.thumbnails = [{ url: thumbnailAssetUrn }];
+
     const postRes = await axios.post(
       'https://api.linkedin.com/v2/ugcPosts',
       {
@@ -3260,12 +3304,7 @@ async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) 
           'com.linkedin.ugc.ShareContent': {
             shareCommentary: { text: caption },
             shareMediaCategory: 'VIDEO',
-            media: [{
-              status: 'READY',
-              media: assetUrn,
-              description: { text: caption.substring(0, 200) },
-              title: { text: 'Video Post' }
-            }]
+            media: [videoMediaEntry]
           }
         },
         visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }

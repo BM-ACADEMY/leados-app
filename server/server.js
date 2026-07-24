@@ -165,11 +165,15 @@ const mafiyaTurfRoutes = require('./routes/mafiya-turf');
 const mafiyaReviewsRoutes = require('./routes/mafiya-reviews');
 const mafiyaInsightsRoutes = require('./routes/mafiya-insights');
 const mafiyaRivalsRoutes = require('./routes/mafiya-rivals');
+const mafiyaUsageRoutes = require('./routes/mafiya-usage');
+const citationRoutes = require('./routes/citation.routes');
 
 app.use('/api/mafiya/clients', auth, mafiyaClientsRoutes);
 app.use('/api/mafiya/gmb', mafiyaGmbRoutes); // No auth — email links are clicked by external clients
 app.use('/api/mafiya/turf', auth, mafiyaTurfRoutes);
 app.use('/api/mafiya/rivals', auth, mafiyaRivalsRoutes);
+app.use('/api/mafiya/usage', auth, mafiyaUsageRoutes);
+app.use('/api/citations', auth, citationRoutes);
 
 // Public route for Google to download GMB Post images (bypassing the 'auth' middleware on the main reviews router)
 app.get('/api/mafiya/reviews/image/:filename', (req, res) => {
@@ -2803,6 +2807,24 @@ cron.schedule('*/5 * * * *', async () => {
     }
   } catch (err) {
     console.error('Cron scheduled fallback publisher check error:', err);
+  }
+});
+
+// Run every Sunday at 2 AM automatically to refresh citations for all GMB clients
+cron.schedule('0 2 * * 0', async () => {
+  console.log('Cron: Starting weekly Mafiya citation check for all active clients...');
+  try {
+    const { rows: clients } = await pool.query("SELECT id FROM mafiya_gmb_clients WHERE status = 'active'");
+    const { runCheckForBusiness } = require('./services/citations/citation.service');
+    for (const client of clients) {
+      console.log(`Cron: Running citation check for GMB Client ID ${client.id}...`);
+      await runCheckForBusiness(client.id).catch(err => {
+        console.error(`Cron: Citation check failed for Client ID ${client.id}:`, err.message);
+      });
+    }
+    console.log('Cron: Weekly Mafiya citation check completed.');
+  } catch (err) {
+    console.error('Cron Weekly Citation Check error:', err);
   }
 });
 

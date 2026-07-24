@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { api } from '../src/services/api.js';
 
 
 
@@ -39,26 +40,103 @@ export function ApprovalRoom({
   const [seg, setSeg] = useState('pending'); // pending | published (live)
   const [firstGenContext, setFirstGenContext] = useState("");
   const [firstGenTone, setFirstGenTone] = useState("engaging");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteResults, setDeleteResults] = useState(null);
+  const [thumbOptions, setThumbOptions] = useState([]);
+  const [thumbBestIndex, setThumbBestIndex] = useState(0);
+  const [generatingThumbs, setGeneratingThumbs] = useState(false);
+  const [generatingPoster, setGeneratingPoster] = useState(false);
+  const [posterPreviewUrl, setPosterPreviewUrl] = useState('');
+  const [thumbError, setThumbError] = useState('');
+  const prevItemIdRef = useRef(null);
+
+  const handleDeleteFromPlatforms = async () => {
+    if (!selectedItem) return;
+    setIsDeleting(true);
+    try {
+      const res = await api.deletePostFromPlatforms(selectedItem.id);
+      setDeleteResults(res.results || []);
+      setDeleteConfirm(false);
+    } catch (err) {
+      setDeleteResults([{ channel: 'error', status: 'failed', reason: err.message }]);
+      setDeleteConfirm(false);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Sync edits if item changes
   useEffect(() => {
     if (selectedItem) {
-      setEditValues({
-        caption: selectedItem.caption || '',
-        instagram_caption: selectedItem.instagram_caption || selectedItem.caption || '',
-        facebook_caption: selectedItem.facebook_caption || selectedItem.caption || '',
-        x_caption: selectedItem.x_caption || '',
-        linkedin_caption: selectedItem.linkedin_caption || '',
-        youtube_title: selectedItem.youtube_title || selectedItem.thumbnail_title || '',
-        youtube_description: selectedItem.youtube_description || selectedItem.description || selectedItem.caption || '',
-        thumbnail_title: selectedItem.thumbnail_title || '',
-        scheduled_at: selectedItem.scheduled_at || '',
-        platforms: [...(selectedItem.platforms || [])],
-        selected_accounts: selectedItem.selected_accounts || {},
-        hashtags: selectedItem.hashtags || ''
+      setEditValues(prev => {
+        // If user is actively picking from generated frames, keep their selection
+        const preserveThumbUrl = thumbOptions.length > 0 && prev.thumbnail_url;
+        return {
+          caption: selectedItem.caption || '',
+          instagram_caption: selectedItem.instagram_caption || selectedItem.caption || '',
+          facebook_caption: selectedItem.facebook_caption || selectedItem.caption || '',
+          x_caption: selectedItem.x_caption || '',
+          linkedin_caption: selectedItem.linkedin_caption || '',
+          youtube_title: selectedItem.youtube_title || selectedItem.thumbnail_title || '',
+          youtube_description: selectedItem.youtube_description || selectedItem.description || selectedItem.caption || '',
+          thumbnail_title: selectedItem.thumbnail_title || '',
+          scheduled_at: selectedItem.scheduled_at || '',
+          platforms: [...(selectedItem.platforms || [])],
+          selected_accounts: selectedItem.selected_accounts || {},
+          hashtags: selectedItem.hashtags || '',
+          thumbnail_url: preserveThumbUrl ? prev.thumbnail_url : (selectedItem.thumbnail_url || '')
+        };
       });
     }
+    // Only reset thumbnail frame options when switching to a DIFFERENT item
+    // (not when the same item refreshes after a save)
+    if (selectedItem && selectedItem.id !== prevItemIdRef.current) {
+      prevItemIdRef.current = selectedItem.id;
+      setThumbOptions([]);
+      setThumbBestIndex(0);
+      setThumbError('');
+      setPosterPreviewUrl('');
+    }
   }, [selectedItem, setEditValues]);
+
+  const handleGenerateThumbnails = async () => {
+    if (!selectedItem) return;
+    setGeneratingThumbs(true);
+    setThumbError('');
+    try {
+      const context = firstGenContext || editValues.youtube_description || editValues.caption || '';
+      const res = await api.generateThumbnails(selectedItem.id, context);
+      if (res.success && res.thumbnails?.length) {
+        const best = res.bestIndex ?? 0;
+        setThumbOptions(res.thumbnails);
+        setThumbBestIndex(best);
+        setEditValues(prev => ({ ...prev, thumbnail_url: res.thumbnails[best] }));
+      }
+    } catch (err) {
+      console.error('Thumbnail generation failed:', err);
+      setThumbError(err.message || 'Frame extraction failed. The video may still be processing.');
+    } finally {
+      setGeneratingThumbs(false);
+    }
+  };
+
+  const handleGeneratePoster = async () => {
+    if (!selectedItem || !editValues.thumbnail_url) return;
+    setGeneratingPoster(true);
+    setThumbError('');
+    setPosterPreviewUrl('');
+    try {
+      const res = await api.generatePoster(selectedItem.id, editValues.thumbnail_url);
+      if (res.success && res.poster_url) {
+        setPosterPreviewUrl(res.poster_url);
+      }
+    } catch (err) {
+      setThumbError(err.message || 'Poster generation failed. Try again.');
+    } finally {
+      setGeneratingPoster(false);
+    }
+  };
 
   // Helper callbacks to auto-switch tabs
   const onApproveClick = async (id) => {
@@ -217,22 +295,26 @@ export function ApprovalRoom({
                     const driveId = extractDriveFileId(selectedItem.video_url);
                     const API_URL = import.meta.env.VITE_API_URL || '';
 
+                    const posterUrl = editValues.thumbnail_url || selectedItem.thumbnail_url;
                     if (pubUrl && !extractDriveFileId(pubUrl)) {
                       return (
-                        <video 
-                          src={pubUrl} 
-                          controls 
+                        <video
+                          key={posterUrl}
+                          src={pubUrl}
+                          controls
                           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                          poster={selectedItem.thumbnail_url}
+                          poster={posterUrl}
                         />
                       );
                     } else if (driveId) {
                       const proxyUrl = `${API_URL}/api/content/drive-proxy?id=${driveId}`;
                       return (
-                        <video 
-                          src={proxyUrl} 
-                          controls 
+                        <video
+                          key={posterUrl}
+                          src={proxyUrl}
+                          controls
                           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                          poster={posterUrl}
                         />
                       );
                     } else {
@@ -246,6 +328,142 @@ export function ApprovalRoom({
                 </div>
                 <div className="vwm">@LEARN WITH KAMAR · 1080×1920 · faststart ✓</div>
               </div>
+
+              {/* Thumbnail Generator — only show when captions already exist or have been generated */}
+              {(selectedItem.caption || editMode || thumbOptions.length > 0) && <div style={{ margin: '0 14px 0', borderTop: '1px solid var(--b1)' }}>
+                {/* Header row */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 2px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(139,114,240,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>🖼</div>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>Thumbnail</div>
+                      <div style={{ fontSize: 10, color: 'var(--t3)' }}>
+                        {editValues.thumbnail_url ? 'Thumbnail ready — save to apply' : 'Click "Pick Frame" to extract frames from the video'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleGenerateThumbnails}
+                    disabled={generatingThumbs}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5,
+                      padding: '6px 12px', fontSize: 11, fontWeight: 700, borderRadius: 7,
+                      background: generatingThumbs ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(139,114,240,0.2), rgba(0,196,160,0.15))',
+                      color: generatingThumbs ? 'var(--t3)' : 'var(--pur)',
+                      border: generatingThumbs ? '1px solid var(--b1)' : '1px solid rgba(139,114,240,0.35)',
+                      cursor: generatingThumbs ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {generatingThumbs ? (
+                      <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Extracting…</>
+                    ) : <>✦ AI Pick</>}
+                  </button>
+                </div>
+
+                {/* Error */}
+                {thumbError && (
+                  <div style={{ background: 'rgba(240,74,94,0.08)', border: '1px solid rgba(240,74,94,0.3)', borderRadius: 7, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--red)' }}>
+                    ✕ {thumbError}
+                  </div>
+                )}
+
+                {/* Frame grid — always visible once extracted */}
+                {thumbOptions.length > 0 && (
+                  <div style={{ paddingBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 8 }}>
+                      ⬡ Pick a frame from your video
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                      {thumbOptions.map((url, i) => {
+                        const isSelected = editValues.thumbnail_url === url;
+                        const isAiPick = i === thumbBestIndex;
+                        return (
+                          <div key={i} onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: url })); setPosterPreviewUrl(''); }}
+                            style={{
+                              position: 'relative', cursor: 'pointer', borderRadius: 7, overflow: 'hidden',
+                              aspectRatio: '16/9',
+                              border: isSelected ? '2px solid var(--teal)' : '2px solid var(--b1)',
+                              opacity: isSelected ? 1 : 0.65,
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            <img src={url} alt={`Frame ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                            {isAiPick && (
+                              <div style={{ position: 'absolute', top: 4, left: 4, background: 'var(--gold)', color: '#000', fontSize: 7, fontWeight: 800, padding: '2px 5px', borderRadius: 3, letterSpacing: '0.04em' }}>
+                                ✦ AI PICK
+                              </div>
+                            )}
+                            <div style={{ position: 'absolute', bottom: 3, left: 5, fontSize: 8, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.9)', background: 'rgba(0,0,0,0.5)', padding: '1px 5px', borderRadius: 3 }}>
+                              {isSelected ? '✓ Selected' : `Frame ${i + 1}`}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Selected frame large preview */}
+                {editValues.thumbnail_url && thumbOptions.some(u => u === editValues.thumbnail_url) && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', width: '100%', aspectRatio: '16/9', border: '2px solid var(--teal)', boxShadow: '0 0 0 3px rgba(0,196,160,0.15)' }}>
+                      <img
+                        src={editValues.thumbnail_url}
+                        alt="Selected thumbnail"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                      <div style={{ position: 'absolute', top: 8, left: 8, background: 'var(--teal)', color: 'var(--bg)', fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.05em' }}>
+                        ✓ SELECTED THUMBNAIL
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                      <div style={{ fontSize: 10, color: 'var(--teal)' }}>Thumbnail set — click Save Captions to apply</div>
+                      <button
+                        onClick={handleGeneratePoster}
+                        disabled={generatingPoster}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 5,
+                          padding: '5px 11px', fontSize: 10, fontWeight: 700, borderRadius: 6,
+                          background: generatingPoster ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(255,196,0,0.2), rgba(255,140,0,0.15))',
+                          color: generatingPoster ? 'var(--t3)' : 'var(--gold)',
+                          border: generatingPoster ? '1px solid var(--b1)' : '1px solid rgba(255,196,0,0.35)',
+                          cursor: generatingPoster ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {generatingPoster
+                          ? <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid rgba(255,196,0,0.3)', borderTopColor: 'var(--gold)', animation: 'spin 0.8s linear infinite' }} /> Generating…</>
+                          : '✦ Make AI Poster'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Poster preview — separate from selected frame */}
+                {posterPreviewUrl && (
+                  <div style={{ marginBottom: 10, borderRadius: 8, overflow: 'hidden', border: '2px solid rgba(255,196,0,0.4)', boxShadow: '0 0 0 3px rgba(255,196,0,0.1)' }}>
+                    <div style={{ background: 'rgba(255,196,0,0.08)', padding: '6px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--gold)', letterSpacing: '0.04em' }}>✦ AI POSTER PREVIEW</span>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: posterPreviewUrl })); setPosterPreviewUrl(''); }}
+                          style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 5, background: 'var(--gold)', color: '#000', border: 'none', cursor: 'pointer' }}
+                        >
+                          ✓ Use as Thumbnail
+                        </button>
+                        <button
+                          onClick={() => setPosterPreviewUrl('')}
+                          style={{ fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 5, background: 'var(--bg3)', color: 'var(--t3)', border: '1px solid var(--b1)', cursor: 'pointer' }}
+                        >
+                          Discard
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ aspectRatio: '16/9', position: 'relative' }}>
+                      <img src={posterPreviewUrl} alt="AI Poster" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    </div>
+                  </div>
+                )}
+              </div>}
 
               {/* Stacked captions list or First-Time Generation */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '10px 16px', borderTop: '1px solid var(--b1)' }}>
@@ -276,14 +494,18 @@ export function ApprovalRoom({
                         <option value="educational">Educational</option>
                         <option value="sales">Sales-Oriented</option>
                       </select>
-                      <button 
+                      <button
                         className="tb-btn"
                         onClick={async () => {
                           if (!firstGenContext || firstGenContext.trim() === '') {
                             alert("Please provide a short description first.");
                             return;
                           }
-                          const meta = await handleGenerateFirstTime(selectedItem.id, firstGenTone, firstGenContext);
+                          // Run captions and poster generation in parallel
+                          const [meta] = await Promise.all([
+                            handleGenerateFirstTime(selectedItem.id, firstGenTone, firstGenContext),
+                            handleGenerateThumbnails()
+                          ]);
                           if (meta) {
                             const linkedPlats = new Set();
                             (socialAccounts || []).forEach(s => {
@@ -291,13 +513,13 @@ export function ApprovalRoom({
                                 linkedPlats.add(s.platform);
                               }
                             });
-                            
+
                             const platformsToActivate = [];
                             if (linkedPlats.has('instagram')) {
-                              platformsToActivate.push('instagram_post', 'instagram_story');
+                              platformsToActivate.push('instagram_post');
                             }
                             if (linkedPlats.has('facebook')) {
-                              platformsToActivate.push('facebook_post', 'facebook_story');
+                              platformsToActivate.push('facebook_post');
                             }
                             if (linkedPlats.has('youtube')) platformsToActivate.push('youtube');
                             if (linkedPlats.has('x_twitter')) platformsToActivate.push('x_twitter');
@@ -320,15 +542,15 @@ export function ApprovalRoom({
                             setEditMode(true);
                           }
                         }}
-                        disabled={loadingSuggestions || !firstGenContext || firstGenContext.trim() === ''}
-                        style={{ 
-                          background: 'var(--gold)', color: '#000', padding: '10px 20px', 
-                          borderRadius: 8, fontWeight: 700, border: 'none', 
-                          cursor: (!firstGenContext || firstGenContext.trim() === '') ? 'not-allowed' : 'pointer', 
-                          opacity: (loadingSuggestions || !firstGenContext || firstGenContext.trim() === '') ? 0.5 : 1 
+                        disabled={loadingSuggestions || generatingThumbs || !firstGenContext || firstGenContext.trim() === ''}
+                        style={{
+                          background: 'var(--gold)', color: '#000', padding: '10px 20px',
+                          borderRadius: 8, fontWeight: 700, border: 'none',
+                          cursor: (!firstGenContext || firstGenContext.trim() === '') ? 'not-allowed' : 'pointer',
+                          opacity: (loadingSuggestions || generatingThumbs || !firstGenContext || firstGenContext.trim() === '') ? 0.5 : 1
                         }}
                       >
-                        {loadingSuggestions ? 'Generating...' : '🚀 Generate Captions'}
+                        {(loadingSuggestions || generatingThumbs) ? 'Generating...' : '🚀 Generate Captions & Thumbnail'}
                       </button>
                     </div>
                     {suggestionsError && <div style={{ color: 'var(--red)', marginTop: 10, fontSize: 12 }}>{suggestionsError}</div>}
@@ -351,8 +573,8 @@ export function ApprovalRoom({
                       const hasLinkedAccount = (plat) => (socialAccounts || []).some(s => isSameBrand(s.brand_name, selectedItem.brand_name) && s.platform === plat);
 
                       let isActive = false;
-                      if (field.key === 'instagram_caption') isActive = activePlatforms.includes('instagram') || activePlatforms.includes('instagram_story') || activePlatforms.includes('instagram_post');
-                      else if (field.key === 'facebook_caption') isActive = activePlatforms.includes('facebook') || activePlatforms.includes('facebook_story') || activePlatforms.includes('facebook_post');
+                      if (field.key === 'instagram_caption') isActive = activePlatforms.includes('instagram') || activePlatforms.includes('instagram_post');
+                      else if (field.key === 'facebook_caption') isActive = activePlatforms.includes('facebook') || activePlatforms.includes('facebook_post');
                       else if (field.key === 'youtube_title' || field.key === 'youtube_description') isActive = activePlatforms.includes('youtube');
                       else if (field.key === 'x_caption') isActive = activePlatforms.includes('x_twitter');
                       else if (field.key === 'linkedin_caption') isActive = activePlatforms.includes('linkedin');
@@ -370,36 +592,36 @@ export function ApprovalRoom({
                   const active = isPlatformActive();
                   if (!active) return null;
 
-                  const val = editMode ? (editValues[field.key] || '') : (selectedItem[field.key] || '');
+                  const val = editValues[field.key] || '';
 
                   return (
-                    <div 
-                      key={field.key} 
-                      style={{ 
-                        background: 'var(--bg3)', 
-                        border: '1px solid var(--b1)', 
-                        borderRadius: 8, 
+                    <div
+                      key={field.key}
+                      style={{
+                        background: 'var(--bg3)',
+                        border: '1px solid var(--b1)',
+                        borderRadius: 8,
                         padding: 12
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                         <span style={{ fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ 
-                            width: 20, 
-                            height: 20, 
-                            borderRadius: 4, 
-                            background: field.color, 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'center', 
-                            fontSize: 10, 
-                            color: '#fff' 
+                          <span style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 4,
+                            background: field.color,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 10,
+                            color: '#fff'
                           }}>
                             {field.icon}
                           </span>
                           {field.label}
                         </span>
-                        
+
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <span className="mono" style={{ fontSize: 10, color: 'var(--t3)' }}>
                             {val.length} chars
@@ -411,11 +633,11 @@ export function ApprovalRoom({
                               if (!editMode) setEditMode(true);
                               handleOpenAiSuggestions(field.key);
                             }}
-                            style={{ 
-                              padding: '2px 8px', 
-                              fontSize: 9, 
-                              background: 'rgba(0,196,160,0.12)', 
-                              color: 'var(--teal)', 
+                            style={{
+                              padding: '2px 8px',
+                              fontSize: 9,
+                              background: 'rgba(0,196,160,0.12)',
+                              color: 'var(--teal)',
                               borderColor: 'rgba(0,196,160,0.2)',
                               cursor: 'pointer'
                             }}
@@ -425,30 +647,24 @@ export function ApprovalRoom({
                         </div>
                       </div>
 
-                      {editMode ? (
-                        <textarea
-                          value={val}
-                          onChange={e => setEditValues(prev => ({ ...prev, [field.key]: e.target.value }))}
-                          style={{
-                            width: '100%',
-                            background: 'var(--bg)',
-                            color: 'var(--t1)',
-                            border: '1px solid var(--b2)',
-                            borderRadius: 6,
-                            padding: 8,
-                            fontSize: 12.5,
-                            lineHeight: 1.5,
-                            minHeight: 50,
-                            outline: 'none',
-                            resize: 'vertical',
-                            boxSizing: 'border-box'
-                          }}
-                        />
-                      ) : (
-                        <div style={{ fontSize: 12.5, color: 'var(--t1)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-                          {val || <span style={{ color: 'var(--t3)', fontStyle: 'italic' }}>Not set</span>}
-                        </div>
-                      )}
+                      <textarea
+                        value={val}
+                        onChange={e => setEditValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                        style={{
+                          width: '100%',
+                          background: 'var(--bg)',
+                          color: 'var(--t1)',
+                          border: '1px solid var(--b2)',
+                          borderRadius: 6,
+                          padding: 8,
+                          fontSize: 12.5,
+                          lineHeight: 1.5,
+                          minHeight: field.key === 'instagram_caption' || field.key === 'facebook_caption' || field.key === 'linkedin_caption' || field.key === 'youtube_description' ? 120 : 50,
+                          outline: 'none',
+                          resize: 'vertical',
+                          boxSizing: 'border-box'
+                        }}
+                      />
                     </div>
                   );
                 }))}
@@ -490,25 +706,21 @@ export function ApprovalRoom({
                       </button>
                     )}
                     
-                    {(statusUpper === 'PENDING' || statusUpper === 'PENDING_APPROVAL' || statusUpper === 'REJECTED' || statusUpper === 'FAILED') && (
-                      <button 
-                        className="tb-btn" 
-                        onClick={() => {
-                          if (editMode) {
-                            handleSaveEdit(selectedItem.id);
-                          } else {
-                            setEditMode(true);
-                          }
-                        }}
-                        style={{ background: editMode ? 'var(--teal)' : 'var(--bg4)', color: editMode ? 'var(--bg)' : 'var(--t1)', fontWeight: 600, padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer' }}
+                    <button
+                      className="tb-btn"
+                      onClick={() => handleSaveEdit(selectedItem.id)}
+                      style={{ background: 'var(--teal)', color: 'var(--bg)', fontWeight: 600, padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer' }}
+                    >
+                      ✓ Save Captions
+                    </button>
+
+                    {(statusUpper === 'PUBLISHED' || statusUpper === 'PARTIAL') && (
+                      <button
+                        className="tb-btn"
+                        onClick={() => { setDeleteConfirm(true); setDeleteResults(null); }}
+                        style={{ background: 'rgba(240,74,94,.12)', color: 'var(--red)', border: '1px solid rgba(240,74,94,.3)', padding: '10px 16px', borderRadius: 8, fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}
                       >
-                        {editMode ? '✓ Save Captions' : '✏️ Edit Captions'}
-                      </button>
-                    )}
-                    
-                    {editMode && (
-                      <button className="tb-btn" onClick={() => setEditMode(false)} style={{ background: 'transparent', border: '1px solid var(--b2)', padding: '10px 16px', borderRadius: 8, color: 'var(--t2)', cursor: 'pointer' }}>
-                        Cancel
+                        🗑 Delete from All Platforms
                       </button>
                     )}
                   </div>
@@ -518,6 +730,52 @@ export function ApprovalRoom({
           )}
         </div>
 
+        {/* Delete Confirmation Modal */}
+        {deleteConfirm && selectedItem && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--b1)', borderRadius: 12, padding: 28, maxWidth: 420, width: '90%' }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--red)', marginBottom: 10 }}>🗑 Delete from All Platforms?</div>
+              <div style={{ fontSize: 13, color: 'var(--t2)', marginBottom: 18, lineHeight: 1.6 }}>
+                This will permanently delete <b style={{ color: 'var(--t1)' }}>{selectedItem.file_name}</b> from every platform it was published to — including Instagram, Facebook, YouTube, LinkedIn and their stories. This cannot be undone.
+              </div>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button onClick={() => setDeleteConfirm(false)} style={{ background: 'transparent', border: '1px solid var(--b2)', color: 'var(--t2)', padding: '9px 18px', borderRadius: 8, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteFromPlatforms}
+                  disabled={isDeleting}
+                  style={{ background: 'var(--red)', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 700, cursor: isDeleting ? 'not-allowed' : 'pointer', opacity: isDeleting ? 0.6 : 1 }}
+                >
+                  {isDeleting ? 'Deleting...' : 'Yes, Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Results Modal */}
+        {deleteResults && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--b1)', borderRadius: 12, padding: 28, maxWidth: 420, width: '90%' }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--t1)', marginBottom: 14 }}>Deletion Results</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+                {deleteResults.map((r, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg3)', borderRadius: 8, padding: '8px 12px' }}>
+                    <span style={{ fontSize: 13, color: 'var(--t1)', textTransform: 'capitalize' }}>{r.channel}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: r.status === 'deleted' ? 'var(--grn)' : r.status === 'skipped' ? 'var(--amb)' : 'var(--red)' }}>
+                      {r.status === 'deleted' ? '✓ Deleted' : r.status === 'skipped' ? `⚠ Skipped${r.reason ? ` — ${r.reason}` : ''}` : `✕ Failed — ${r.reason}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setDeleteResults(null)} style={{ width: '100%', background: 'var(--bg4)', border: '1px solid var(--b2)', color: 'var(--t1)', padding: '9px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Column 3: Platform selection, Schedule window, Pipeline trace */}
         <div>
           {selectedItem && (
@@ -526,7 +784,7 @@ export function ApprovalRoom({
               <div className="panel">
                 <div className="panel-h">Platforms &amp; Formats</div>
                 <div className="panel-b">
-                  {['instagram', 'instagram_story', 'facebook', 'facebook_story', 'youtube', 'linkedin', 'x_twitter'].map(platformKey => {
+                  {['instagram_post', 'facebook_post', 'youtube', 'linkedin', 'x_twitter'].map(platformKey => {
                     const p = getPlatformConfig(platformKey);
                     const active = editMode 
                       ? editValues.platforms?.includes(platformKey)
@@ -635,23 +893,71 @@ export function ApprovalRoom({
               <div className="panel">
                 <div className="panel-h">Scheduled Window</div>
                 <div className="panel-b">
-                  <div className="sched-box">
-                    <div className="sched-ic">◷</div>
-                    <div>
-                      {editMode ? (
-                        <input
-                          type="datetime-local"
-                          value={editValues.scheduled_at?.slice(0, 16) || ''}
-                          onChange={e => setEditValues(prev => ({ ...prev, scheduled_at: e.target.value + ':00+05:30' }))}
-                          style={{ background: 'var(--bg3)', color: 'var(--t1)', border: '1px solid var(--b2)', borderRadius: 5, padding: '4px 6px', fontSize: 11, outline: 'none' }}
-                        />
-                      ) : (
-                        <>
-                          <div className="sched-t">{formatTime(selectedItem.scheduled_at)}</div>
-                          <div className="sched-s">peak window · auto-picked by LeadOS</div>
-                        </>
-                      )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {/* Date row */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <label style={{ fontSize: 10, color: 'var(--t3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Date</label>
+                      <input
+                        type="date"
+                        value={editValues.scheduled_at?.slice(0, 10) || ''}
+                        onChange={e => {
+                          const time = editValues.scheduled_at?.slice(11, 16) || '09:00';
+                          setEditValues(prev => ({ ...prev, scheduled_at: `${e.target.value}T${time}:00+05:30` }));
+                          if (!editMode) setEditMode(true);
+                        }}
+                        style={{
+                          width: '100%',
+                          background: 'var(--bg)',
+                          color: 'var(--t1)',
+                          border: '1px solid var(--b2)',
+                          borderRadius: 8,
+                          padding: '9px 12px',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          cursor: 'pointer',
+                          colorScheme: 'dark'
+                        }}
+                      />
                     </div>
+                    {/* Time row */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <label style={{ fontSize: 10, color: 'var(--t3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Time (IST)</label>
+                      <input
+                        type="time"
+                        value={editValues.scheduled_at?.slice(11, 16) || ''}
+                        onChange={e => {
+                          const date = editValues.scheduled_at?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+                          setEditValues(prev => ({ ...prev, scheduled_at: `${date}T${e.target.value}:00+05:30` }));
+                          if (!editMode) setEditMode(true);
+                        }}
+                        style={{
+                          width: '100%',
+                          background: 'var(--bg)',
+                          color: 'var(--t1)',
+                          border: '1px solid var(--b2)',
+                          borderRadius: 8,
+                          padding: '9px 12px',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          cursor: 'pointer',
+                          colorScheme: 'dark'
+                        }}
+                      />
+                    </div>
+                    {/* Summary row */}
+                    {editValues.scheduled_at && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,196,160,0.08)', border: '1px solid rgba(0,196,160,0.2)', borderRadius: 8, padding: '8px 12px' }}>
+                        <span style={{ fontSize: 14 }}>◷</span>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--teal)' }}>{formatTime(editValues.scheduled_at)}</div>
+                          <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 2 }}>scheduled · IST</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

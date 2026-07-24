@@ -17,6 +17,8 @@ const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
 ffmpeg.setFfmpegPath(ffmpegPath);
 const ffprobePath = require("@ffprobe-installer/ffprobe").path;
 ffmpeg.setFfprobePath(ffprobePath);
+const { GoogleGenAI } = require("@google/genai");
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 
 function extractDriveFileId(url) {
@@ -299,7 +301,7 @@ const CONTENT_COLUMNS = `
   story_1, story_2, story_3,
   platforms, selected_accounts, scheduled_at, status,
   approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
-  error_message, created_at, description, hashtags, thumbnail_options,
+  error_message, created_at, published_at, description, hashtags, thumbnail_options,
   key_moments, drive_file_id, brand_id, video_name, transcript
 `;
 
@@ -1281,44 +1283,48 @@ async function publishPhotoStoryToFacebook(pageId, pageAccessToken, { imageUrl }
 
 // Facebook Video Story Publishing
 async function publishVideoStoryToFacebook(pageId, pageAccessToken, { videoUrl }) {
+  // Approach 1: single-step URL-based upload (avoids resumable upload protocol issues)
+  try {
+    console.log(`[FB Story] Trying single-step video_url approach for page ${pageId}`);
+    const res = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, {
+      video_url: videoUrl,
+      published: true,
+      access_token: pageAccessToken
+    });
+    console.log(`[FB Story] Single-step success:`, res.data);
+    return { success: true, post_id: res.data.id || res.data.video_id };
+  } catch (err1) {
+    console.warn(`[FB Story] Single-step failed (${err1.response?.data?.error?.message || err1.message}), trying 3-step upload...`);
+  }
+
+  // Approach 2: 3-step resumable upload
   try {
     const initRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, {
       upload_phase: 'start',
       access_token: pageAccessToken
     });
     const { video_id, upload_url } = initRes.data;
-    if (!video_id || !upload_url) {
-      throw new Error("Failed to initialize Facebook video story session.");
-    }
-    console.log(`Facebook video story session initialized: video_id = ${video_id}`);
+    if (!video_id || !upload_url) throw new Error('No video_id or upload_url from init step');
 
     await axios.post(upload_url, null, {
-      headers: {
-        'file_url': videoUrl,
-        'Authorization': `OAuth ${pageAccessToken}`
-      }
-    });
-    console.log(`Facebook video story upload completed for video_id = ${video_id}`);
-
-    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, null, {
-      params: {
-        upload_phase: 'finish',
-        video_id: video_id,
-        access_token: pageAccessToken
-      }
+      headers: { 'file_url': videoUrl, 'Authorization': `OAuth ${pageAccessToken}` }
     });
 
+    const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_stories`, {
+      upload_phase: 'finish',
+      video_id,
+      access_token: pageAccessToken
+    });
     return { success: true, post_id: finishRes.data.id || video_id };
-  } catch (err) {
-    const fullError = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error('Facebook video story publishing failed. Full Meta error:', fullError);
-    const msg = err.response?.data?.error?.message || err.message;
-    throw new Error(`${msg} (Full Meta details: ${fullError})`);
+  } catch (err2) {
+    const fullError = err2.response?.data ? JSON.stringify(err2.response.data) : err2.message;
+    console.error('[FB Story] Both approaches failed. Full Meta error:', fullError);
+    throw new Error(`${err2.response?.data?.error?.message || err2.message} (Full Meta details: ${fullError})`);
   }
 }
 
 // Facebook Reel Publishing
-async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl }) {
+async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl, coverUrl = null }) {
   console.log(`[publishReelToFacebook] Starting 3-step Reels upload. Page ID: ${pageId}, Video URL: ${videoUrl}`);
   try {
     // Step (a) Initialize upload session
@@ -1355,6 +1361,7 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
       description: caption,
       access_token: pageAccessToken
     };
+    if (coverUrl) finishParams.thumb_url = coverUrl;
     console.log(`[publishReelToFacebook] Step (c) Payload:`, JSON.stringify({ ...finishParams, access_token: '***' }, null, 2));
 
     const finishRes = await axios.post(`https://graph.facebook.com/v19.0/${pageId}/video_reels`, finishParams);
@@ -1402,7 +1409,7 @@ async function publishToFacebookPage(pageId, pageAccessToken, { caption, videoUr
 }
 
 // Instagram Business Container Creation
-async function createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false }) {
+async function createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null, coverUrl = null }) {
   const containerUrl = `https://graph.facebook.com/v19.0/${instagramBusinessId}/media`;
 
   // Check if media is video or image
@@ -1418,11 +1425,16 @@ async function createInstagramContainer(instagramBusinessId, accessToken, { vide
     } else {
       params.image_url = videoUrl;
     }
+    if (linkStickerUrl) {
+      params.link_sticker_url = linkStickerUrl;
+      console.log(`[IG Story] Adding link sticker → ${linkStickerUrl}`);
+    }
   } else {
     params.caption = caption;
     if (isVideo) {
       params.media_type = 'REELS';
       params.video_url = videoUrl;
+      if (coverUrl) params.cover_url = coverUrl;
     } else {
       params.image_url = videoUrl;
     }
@@ -1594,9 +1606,9 @@ async function publishInstagramContainer(instagramBusinessId, accessToken, conta
 }
 
 // Publish to Instagram Coordinator
-async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false }) {
+async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null, coverUrl = null }) {
   try {
-    const containerId = await createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory });
+    const containerId = await createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl, coverUrl });
     await waitForInstagramContainer(containerId, accessToken);
     const mediaId = await publishInstagramContainer(instagramBusinessId, accessToken, containerId);
     return { success: true, post_id: mediaId };
@@ -1609,14 +1621,14 @@ async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, 
 }
 
 // Publish to Instagram Coordinator with retry mechanism for transient errors
-async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false }) {
+async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null, coverUrl = null }) {
   const maxRetries = 3;
   let lastErr = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[publishToInstagramWithRetry] Attempt ${attempt}/${maxRetries} to publish to Instagram. URL: ${videoUrl}`);
-      const res = await module.exports.publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory });
+      const res = await module.exports.publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl, coverUrl });
       return res;
     } catch (err) {
       lastErr = err;
@@ -1636,14 +1648,14 @@ async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { v
 }
 
 // Publish Facebook Reel with retry mechanism for transient errors
-async function publishReelToFacebookWithRetry(pageId, pageAccessToken, { caption, videoUrl }) {
+async function publishReelToFacebookWithRetry(pageId, pageAccessToken, { caption, videoUrl, coverUrl = null }) {
   const maxRetries = 3;
   let lastErr = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[publishReelToFacebookWithRetry] Attempt ${attempt}/${maxRetries} to publish Reel to Facebook. URL: ${videoUrl}`);
-      const res = await module.exports.publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl });
+      const res = await module.exports.publishReelToFacebook(pageId, pageAccessToken, { caption, videoUrl, coverUrl });
       return res;
     } catch (err) {
       lastErr = err;
@@ -2167,7 +2179,8 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         }
         publishRes = await publishReelToFacebookWithRetry(pageId, decryptedToken, {
           caption: finalCaption,
-          videoUrl: publicUrl
+          videoUrl: publicUrl,
+          coverUrl: post.thumbnail_url || null
         });
       } else if (channel === 'instagram' || channel === 'instagram_post') {
         if (!account.instagram_business_id) {
@@ -2176,7 +2189,8 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         publishRes = await publishToInstagramWithRetry(account.instagram_business_id, decryptedToken, {
           caption: finalCaption,
           videoUrl: publicUrl,
-          isStory: false
+          isStory: false,
+          coverUrl: post.thumbnail_url || null
         });
       } else if (channel === 'youtube') {
         let localVideoPath = null;
@@ -2198,11 +2212,33 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
 
         const ytTitle = post.youtube_title || post.thumbnail_title || post.video_name || 'Social Media Video';
         const ytDesc = post.youtube_description || post.caption || post.description || '';
-        
+
+        // Resolve thumbnail_url to a local file path
+        let localThumbnailPath = null;
+        if (post.thumbnail_url) {
+          const thumbUrlParts = post.thumbnail_url.split('/uploads/');
+          if (thumbUrlParts.length > 1) {
+            const thumbFilename = thumbUrlParts[1].split('?')[0];
+            const candidate = path.join(__dirname, '../uploads', thumbFilename);
+            if (fs.existsSync(candidate)) localThumbnailPath = candidate;
+          }
+          if (!localThumbnailPath) {
+            // Try downloading it
+            try {
+              const tempThumbPath = path.join(os.tmpdir(), `temp_yt_thumb_${post.id}_${Date.now()}.jpg`);
+              await downloadFile(post.thumbnail_url, tempThumbPath);
+              localThumbnailPath = tempThumbPath;
+            } catch (dlErr) {
+              console.warn(`[BackgroundPublish] Could not download thumbnail for YouTube: ${dlErr.message}`);
+            }
+          }
+        }
+
         publishRes = await publishVideoToYouTube(oauth2Client, {
           title: ytTitle,
           description: ytDesc,
-          localVideoPath: localVideoPath
+          localVideoPath: localVideoPath,
+          localThumbnailPath: localThumbnailPath
         });
 
         if (localVideoPath.includes('temp_youtube_source_') && fs.existsSync(localVideoPath)) {
@@ -2216,11 +2252,30 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         if (!account.instagram_business_id) {
           throw new Error(`Instagram Business ID is missing for account ${account.account_name}`);
         }
+        // Try to get the reel permalink so we can add a link sticker in the story
+        let linkStickerUrl = null;
+        try {
+          const reelJob = await pool.query(
+            `SELECT post_id FROM publish_queue WHERE content_id = $1 AND channel IN ('instagram', 'instagram_post') AND status = 'success' AND post_id IS NOT NULL LIMIT 1`,
+            [post.id]
+          );
+          if (reelJob.rows.length > 0) {
+            const reelMediaId = reelJob.rows[0].post_id;
+            const permalinkRes = await axios.get(`https://graph.facebook.com/v19.0/${reelMediaId}`, {
+              params: { fields: 'permalink', access_token: decryptedToken }
+            });
+            linkStickerUrl = permalinkRes.data.permalink || null;
+            console.log(`[BackgroundPublish] Found reel permalink for story link sticker: ${linkStickerUrl}`);
+          }
+        } catch (stickerErr) {
+          console.warn(`[BackgroundPublish] Could not fetch reel permalink for link sticker:`, stickerErr.message);
+        }
         console.log(`[BackgroundPublish] Publishing video story to Instagram for post ${post.id} — URL: ${publicUrl}`);
         publishRes = await publishToInstagramWithRetry(account.instagram_business_id, decryptedToken, {
           caption: '',
           videoUrl: publicUrl,
-          isStory: true
+          isStory: true,
+          linkStickerUrl
         });
       } else if (channel === 'facebook_story') {
         const pageId = account.facebook_page_id || account.account_id;
@@ -2237,7 +2292,8 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         console.log(`[BackgroundPublish] Publishing to LinkedIn for post ${post.id} — URN: ${authorUrn}`);
         publishRes = await publishToLinkedIn(authorUrn, decryptedToken, {
           caption: finalCaption,
-          videoUrl: publicUrl
+          videoUrl: publicUrl,
+          coverUrl: post.thumbnail_url || null
         });
       }
 
@@ -2403,27 +2459,61 @@ ${languageRule}
 
 Generate ALL of the following for this video post:
 - Platform-specific captions (Instagram, Facebook, LinkedIn, X, YouTube)
-- 20-25 professional hashtags
+- 5-7 professional hashtags
 - YouTube title (SEO-optimised, under 100 chars)
-- Short story slides (3 slides for Instagram Stories)
 
-RULES:
-- Base everything on the user's description above. Do NOT write generic filler.
-- Every caption must have a strong hook in the first line and end with a CTA (e.g. "WhatsApp 94038 02971 to know more!").
-- LinkedIn caption must be formal and B2B.
-- X caption must be under 240 characters.
-- Hashtags: 20-25 tags, mix of broad reach + niche + local (include #Pondicherry #TamilNadu if relevant).
+CAPTION FORMAT RULES (Instagram & Facebook):
+Every Instagram and Facebook caption MUST follow this exact structure with blank lines between each section:
+
+Line 1: [Emoji] Strong hook title related to the video topic [Emoji]
+
+[blank line]
+
+Short intro sentence or context paragraph about what's in the video.
+
+[blank line]
+
+[Emoji] Key point or highlight 1
+[Emoji] Key point or highlight 2
+[Emoji] Key point or highlight 3 (add more if relevant)
+
+[blank line]
+
+One emotional or motivational closing sentence.
+
+[blank line]
+
+[Emoji] CTA line — e.g. "WhatsApp 94038 02971 to know more!" [Emoji]
+
+ADDITIONAL RULES:
+- Base everything on the user's description. Do NOT write generic filler.
+- Use relevant emojis naturally throughout — not just at the start.
+- LinkedIn caption: follow this exact structure with blank lines between each section:
+  Line 1: Strong professional hook statement (no emoji)
+  [blank line]
+  Short context paragraph about the topic.
+  [blank line]
+  → Key insight or point 1
+  → Key insight or point 2
+  → Key insight or point 3
+  [blank line]
+  One closing thought or industry insight sentence.
+  [blank line]
+  CTA line — e.g. "Connect with us to learn more." or "WhatsApp 94038 02971"
+- X caption: under 240 characters, punchy hook + CTA only.
+- Hashtags: 5-7 tags only, mix of broad + niche + local (include #Pondicherry #TamilNadu if relevant).
+- YouTube title: must describe the specific action/event/content shown in the video — NOT a generic topic label.
 
 Respond ONLY with a valid JSON object:
 {
-  "caption": "Primary Instagram/Facebook caption with emojis and CTA",
-  "instagram_caption": "Instagram-specific caption with emojis and CTA",
-  "facebook_caption": "Facebook-specific caption with emojis and CTA",
+  "hashtags": "#tag1 #tag2 #tag3 #tag4 #tag5",
+  "caption": "Formatted Instagram/Facebook caption following the structure above (use \\n for line breaks)",
+  "instagram_caption": "Formatted Instagram caption following the structure above (use \\n for line breaks)",
+  "facebook_caption": "Formatted Facebook caption following the structure above (use \\n for line breaks)",
   "x_caption": "X (Twitter) caption under 240 chars",
-  "linkedin_caption": "Professional LinkedIn caption",
-  "youtube_title": "SEO YouTube title under 100 chars",
+  "linkedin_caption": "Structured LinkedIn caption following the format above (use \\n for line breaks)",
+  "youtube_title": "Specific descriptive YouTube title — describe what is actually happening in the video, not just the topic name. E.g. 'Digital Marketing Course Presentation by Our Students' not just 'Digital Marketing Course'. Under 100 chars.",
   "description": "Detailed paragraph for YouTube description or base description",
-  "hashtags": "#tag1 #tag2 #tag3 ... (20-25 tags)",
   "thumbnail_options": [
     { "title": "Thumbnail Title 1", "layout": "Visual layout description 1" },
     { "title": "Thumbnail Title 2", "layout": "Visual layout description 2" },
@@ -2433,15 +2523,12 @@ Respond ONLY with a valid JSON object:
     { "time": "00:05", "title": "Hook", "desc": "Opening hook description" },
     { "time": "00:20", "title": "Key Point", "desc": "Main value description" },
     { "time": "00:45", "title": "CTA", "desc": "Call to action description" }
-  ],
-  "story_1": "Instagram Story slide 1: Engaging hook text",
-  "story_2": "Instagram Story slide 2: Key value or highlight",
-  "story_3": "Instagram Story slide 3: Strong CTA"
+  ]
 }`;
 
       const allResponse = await groq.chat.completions.create({
         model: 'llama-3.3-70b-versatile',
-        max_tokens: 1500,
+        max_tokens: 2500,
         temperature: 0.7,
         response_format: { type: 'json_object' },
         messages: [{ role: 'user', content: allPrompt }]
@@ -2883,7 +2970,7 @@ async function getFreshYoutubeClient(encryptedTokens) {
   return oauth2Client;
 }
 
-async function publishVideoToYouTube(oauth2Client, { title, description, localVideoPath }) {
+async function publishVideoToYouTube(oauth2Client, { title, description, localVideoPath, localThumbnailPath }) {
   console.log(`[YouTube Publish] Starting YouTube video upload for file: ${localVideoPath}`);
   
   let isShort = false;
@@ -2931,10 +3018,29 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
       }
     });
 
-    console.log(`[YouTube Publish] Upload success. Video ID: ${response.data.id}`);
+    const videoId = response.data.id;
+    console.log(`[YouTube Publish] Upload success. Video ID: ${videoId}`);
+
+    // Set custom thumbnail if provided
+    if (localThumbnailPath && fs.existsSync(localThumbnailPath)) {
+      try {
+        await youtube.thumbnails.set({
+          videoId: videoId,
+          media: {
+            mimeType: 'image/jpeg',
+            body: fs.createReadStream(localThumbnailPath)
+          }
+        });
+        console.log(`[YouTube Publish] Custom thumbnail set for video ${videoId}`);
+      } catch (thumbErr) {
+        // Thumbnail upload can fail if channel is not verified — not fatal
+        console.warn(`[YouTube Publish] Failed to set thumbnail (channel may need verification): ${thumbErr.message}`);
+      }
+    }
+
     return {
       success: true,
-      post_id: response.data.id
+      post_id: videoId
     };
   } catch (err) {
     console.error(`[YouTube Publish] API insertion failed:`, err);
@@ -2946,6 +3052,102 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
       throw quotaErr;
     }
     throw err;
+  }
+}
+
+// ── Delete Post from All Platforms ──────────────────────────────────────────
+
+async function deletePost(req, res) {
+  const { id } = req.params;
+  try {
+    const postRes = await pool.query('SELECT * FROM content_queue WHERE id = $1', [id]);
+    if (!postRes.rows.length) return res.status(404).json({ success: false, error: 'Post not found' });
+    const post = postRes.rows[0];
+
+    // Get all successfully published jobs with their platform post IDs
+    const jobsRes = await pool.query(
+      `SELECT pq.channel, pq.post_id, bsa.access_token, bsa.instagram_business_id, bsa.facebook_page_id, bsa.account_id, bsa.platform
+       FROM publish_queue pq
+       LEFT JOIN brand_social_accounts bsa ON (
+         LOWER(REPLACE(REPLACE(bsa.brand_name,' ',''),'-','_')) = LOWER(REPLACE(REPLACE($2,' ',''),'-','_'))
+         AND (
+           (pq.channel IN ('instagram','instagram_post','instagram_story') AND bsa.platform = 'instagram') OR
+           (pq.channel IN ('facebook','facebook_post','facebook_story') AND bsa.platform = 'facebook') OR
+           (pq.channel = 'youtube' AND bsa.platform = 'youtube') OR
+           (pq.channel = 'linkedin' AND bsa.platform = 'linkedin')
+         )
+       )
+       WHERE pq.content_id = $1 AND pq.status IN ('success','partial') AND pq.post_id IS NOT NULL`,
+      [id, post.brand_name]
+    );
+
+    const results = [];
+
+    for (const job of jobsRes.rows) {
+      if (!job.post_id || !job.access_token) {
+        results.push({ channel: job.channel, status: 'skipped', reason: 'No post ID or token' });
+        continue;
+      }
+
+      let decryptedToken;
+      try {
+        decryptedToken = cryptoHelper.decrypt(job.access_token);
+      } catch {
+        results.push({ channel: job.channel, status: 'skipped', reason: 'Token decryption failed' });
+        continue;
+      }
+
+      try {
+        if (job.channel === 'instagram' || job.channel === 'instagram_post' || job.channel === 'instagram_story') {
+          await axios.delete(`https://graph.facebook.com/v19.0/${job.post_id}`, {
+            params: { access_token: decryptedToken }
+          });
+          results.push({ channel: job.channel, status: 'deleted' });
+
+        } else if (job.channel === 'facebook' || job.channel === 'facebook_post' || job.channel === 'facebook_story') {
+          await axios.delete(`https://graph.facebook.com/v19.0/${job.post_id}`, {
+            params: { access_token: decryptedToken }
+          });
+          results.push({ channel: job.channel, status: 'deleted' });
+
+        } else if (job.channel === 'youtube') {
+          const oauth2Client = await getFreshYoutubeClient(job.access_token); // passes encrypted tokens; getFreshYoutubeClient handles decryption internally
+          const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+          await youtube.videos.delete({ id: job.post_id });
+          results.push({ channel: job.channel, status: 'deleted' });
+
+        } else if (job.channel === 'linkedin') {
+          const encodedUrn = encodeURIComponent(job.post_id);
+          await axios.delete(`https://api.linkedin.com/v2/ugcPosts/${encodedUrn}`, {
+            headers: { Authorization: `Bearer ${decryptedToken}`, 'X-Restli-Protocol-Version': '2.0.0' }
+          });
+          results.push({ channel: job.channel, status: 'deleted' });
+
+        } else {
+          results.push({ channel: job.channel, status: 'skipped', reason: 'Platform not supported for deletion' });
+        }
+
+        await pool.query(
+          "UPDATE publish_queue SET status = 'deleted', updated_at = NOW() WHERE content_id = $1 AND channel = $2",
+          [id, job.channel]
+        );
+      } catch (platformErr) {
+        const errMsg = platformErr.response?.data?.error?.message || platformErr.message;
+        console.error(`[deletePost] Failed to delete from ${job.channel}:`, errMsg);
+        results.push({ channel: job.channel, status: 'failed', reason: errMsg });
+      }
+    }
+
+    // Mark post as DELETED in content_queue
+    await pool.query(
+      "UPDATE content_queue SET status = 'DELETED', updated_at = NOW() WHERE id = $1",
+      [id]
+    );
+
+    res.json({ success: true, results });
+  } catch (err) {
+    console.error('[deletePost] Error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 }
 
@@ -3038,8 +3240,9 @@ async function handleLinkedInCallback(req, res) {
       );
     }
 
+    const portalUrl = process.env.PORTAL_URL || 'https://leados-app.abmgroups.org';
     res.redirect(
-      `http://localhost:5173/admin/content-os/social-connection?linkedin_success=1&channel=${encodeURIComponent(accountName)}&brand=${encodeURIComponent(brand_name)}`
+      `${portalUrl}/admin/content-os/social-connection?linkedin_success=1&channel=${encodeURIComponent(accountName)}&brand=${encodeURIComponent(brand_name)}`
     );
   } catch (err) {
     console.error('[LinkedIn Callback Error]:', err.response?.data || err.message);
@@ -3047,7 +3250,7 @@ async function handleLinkedInCallback(req, res) {
   }
 }
 
-async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) {
+async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl, coverUrl = null }) {
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     'Content-Type': 'application/json',
@@ -3082,7 +3285,48 @@ async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) 
       timeout: 300000
     });
 
+    // Optionally upload thumbnail as a separate image asset
+    let thumbnailAssetUrn = null;
+    if (coverUrl) {
+      try {
+        console.log(`[LinkedIn] Registering thumbnail image upload...`);
+        const thumbRegRes = await axios.post(
+          'https://api.linkedin.com/v2/assets?action=registerUpload',
+          {
+            registerUploadRequest: {
+              recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+              owner: authorUrn,
+              serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }]
+            }
+          },
+          { headers }
+        );
+        const thumbUploadUrl = thumbRegRes.data.value.uploadMechanism['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'].uploadUrl;
+        thumbnailAssetUrn = thumbRegRes.data.value.asset;
+
+        console.log(`[LinkedIn] Downloading thumbnail from ${coverUrl}...`);
+        const thumbData = await axios.get(coverUrl, { responseType: 'arraybuffer', timeout: 30000 });
+        await axios.put(thumbUploadUrl, thumbData.data, {
+          headers: { 'Content-Type': 'image/jpeg' },
+          maxBodyLength: Infinity,
+          timeout: 60000
+        });
+        console.log(`[LinkedIn] Thumbnail uploaded. Asset URN: ${thumbnailAssetUrn}`);
+      } catch (thumbErr) {
+        console.warn(`[LinkedIn] Thumbnail upload failed (non-fatal): ${thumbErr.message}`);
+        thumbnailAssetUrn = null;
+      }
+    }
+
     console.log(`[LinkedIn] Creating video UGC post...`);
+    const videoMediaEntry = {
+      status: 'READY',
+      media: assetUrn,
+      description: { text: caption.substring(0, 200) },
+      title: { text: 'Video Post' }
+    };
+    if (thumbnailAssetUrn) videoMediaEntry.thumbnails = [{ url: thumbnailAssetUrn }];
+
     const postRes = await axios.post(
       'https://api.linkedin.com/v2/ugcPosts',
       {
@@ -3092,12 +3336,7 @@ async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) 
           'com.linkedin.ugc.ShareContent': {
             shareCommentary: { text: caption },
             shareMediaCategory: 'VIDEO',
-            media: [{
-              status: 'READY',
-              media: assetUrn,
-              description: { text: caption.substring(0, 200) },
-              title: { text: 'Video Post' }
-            }]
+            media: [videoMediaEntry]
           }
         },
         visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
@@ -3135,6 +3374,197 @@ async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl }) 
   }
 }
 
+async function generateThumbnails(req, res) {
+  const { id } = req.params;
+  const uploadsDir = path.join(__dirname, '../uploads');
+  const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT video_url, public_video_url FROM content_queue WHERE id = $1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Content not found' });
+
+    const item = rows[0];
+
+    // Find the local video file — try multiple strategies
+    let videoPath = null;
+
+    // Strategy 1: transcoded_<driveFileId>.mp4
+    const driveFileId = extractDriveFileId(item.video_url);
+    if (driveFileId) {
+      const p = path.join(uploadsDir, `transcoded_${driveFileId}.mp4`);
+      if (fs.existsSync(p)) videoPath = p;
+    }
+
+    // Strategy 2: derive filename from public_video_url (handles any naming scheme)
+    if (!videoPath && item.public_video_url) {
+      const match = item.public_video_url.match(/\/uploads\/([^?#]+)$/);
+      if (match) {
+        const p = path.join(uploadsDir, match[1]);
+        if (fs.existsSync(p)) videoPath = p;
+      }
+    }
+
+    // Strategy 3: scan uploads dir for any mp4 that contains the content id
+    if (!videoPath) {
+      const files = fs.readdirSync(uploadsDir);
+      const candidate = files.find(f => f.includes(String(id)) && f.endsWith('.mp4'));
+      if (candidate) videoPath = path.join(uploadsDir, candidate);
+    }
+
+    console.log(`[generateThumbnails] id=${id} video_url=${item.video_url} public_video_url=${item.public_video_url} resolved=${videoPath}`);
+
+    if (!videoPath) {
+      return res.status(400).json({ error: 'Video file not found on server. Please wait for transcoding to complete or re-upload the video.' });
+    }
+
+    // Get video duration via ffprobe
+    const duration = await new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(videoPath, (err, meta) => {
+        if (err) reject(err);
+        else resolve(meta.format.duration || 30);
+      });
+    });
+
+    // Extract 8 frames spread across the video for better variety
+    const pcts = [0.05, 0.15, 0.25, 0.4, 0.5, 0.65, 0.8, 0.92];
+    const timestamps = pcts.map(p => Math.max(0.5, Math.floor(duration * p)));
+
+    const framePaths = timestamps.map((_, i) => path.join(uploadsDir, `frame_${id}_${i}.jpg`));
+
+    const results = await Promise.all(
+      timestamps.map((ts, i) => new Promise((resolve) => {
+        ffmpeg(videoPath)
+          .seekInput(ts)
+          .frames(1)
+          .outputOptions([
+            '-q:v', '2',
+            '-y'
+          ])
+          .output(framePaths[i])
+          .on('end', () => resolve(`${baseUrl}/uploads/frame_${id}_${i}.jpg`))
+          .on('error', (e) => {
+            console.warn(`[generateThumbnails] Frame ${i} at ${ts}s failed:`, e.message);
+            resolve(null);
+          })
+          .run();
+      }))
+    );
+
+    const thumbnails = results.filter(Boolean);
+    if (!thumbnails.length) return res.status(500).json({ error: 'Frame extraction failed — FFmpeg could not read the video file.' });
+
+    // Ask Gemini to pick the best frame for a thumbnail
+    let bestIndex = 0;
+    if (genAI && thumbnails.length > 1) {
+      try {
+        // Build multimodal parts array for @google/genai SDK
+        const parts = [
+          { text: `I have ${thumbnails.length} frames extracted from a social media video. Which frame makes the BEST thumbnail for YouTube or Instagram? Look for: clear subject face visibility, good lighting, expressive emotion or action, sharp focus, and visual appeal. Reply with ONLY the frame number (1-${thumbnails.length}).` }
+        ];
+        for (let i = 0; i < framePaths.length; i++) {
+          if (fs.existsSync(framePaths[i])) {
+            parts.push({ text: `Frame ${i + 1}:` });
+            parts.push({
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: fs.readFileSync(framePaths[i]).toString('base64')
+              }
+            });
+          }
+        }
+        const response = await genAI.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: [{ role: 'user', parts }]
+        });
+        const text = (response.text || '').trim();
+        const pickedMatch = text.match(/\d+/);
+        const picked = pickedMatch ? parseInt(pickedMatch[0]) - 1 : -1;
+        if (picked >= 0 && picked < thumbnails.length) {
+          bestIndex = picked;
+        }
+        console.log(`[generateThumbnails] Gemini picked frame ${picked + 1} of ${thumbnails.length} (raw: "${text}")`);
+      } catch (geminiErr) {
+        console.warn('[generateThumbnails] Gemini selection failed, using first frame:', geminiErr.message);
+      }
+    }
+
+    res.json({ success: true, thumbnails, bestIndex });
+  } catch (err) {
+    console.error('[generateThumbnails] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function generatePoster(req, res) {
+  const { id } = req.params;
+  const { frame_url } = req.body;
+  const uploadsDir = path.join(__dirname, '../uploads');
+  const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+
+  if (!frame_url) return res.status(400).json({ error: 'frame_url is required' });
+
+  try {
+    const filename = frame_url.split('/uploads/').pop()?.split('?')[0];
+    if (!filename) return res.status(400).json({ error: 'Invalid frame_url' });
+
+    const framePath = path.join(uploadsDir, filename);
+    if (!fs.existsSync(framePath)) {
+      return res.status(400).json({ error: 'Frame file not found. Please extract frames again.' });
+    }
+
+    const frameBase64 = fs.readFileSync(framePath).toString('base64');
+
+    // Get video context
+    const { rows } = await pool.query(
+      `SELECT youtube_title, thumbnail_title, caption, instagram_caption FROM content_queue WHERE id = $1`,
+      [id]
+    );
+    const title = rows[0]?.youtube_title || rows[0]?.thumbnail_title || '';
+
+    // Step 1: Gemini Vision analyzes the selected frame for a rich scene description
+    let sceneDesc = title || 'professional video content';
+    if (genAI) {
+      try {
+        const descRes = await genAI.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
+                { text: 'Describe this video frame in 1-2 sentences to help generate a YouTube thumbnail poster. Include: the person\'s appearance and expression, background, mood, lighting, and color palette. Be specific and vivid. Output only the description.' }
+              ]
+            }
+          ]
+        });
+        const desc = descRes.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (desc) sceneDesc = desc;
+        console.log(`[generatePoster] Gemini scene description: ${sceneDesc}`);
+      } catch (visionErr) {
+        console.warn('[generatePoster] Gemini vision failed, using title:', visionErr.message);
+      }
+    }
+
+    // Step 2: Pollinations FLUX generates a cinematic poster from the description
+    const promptText = `Cinematic professional YouTube thumbnail poster. ${sceneDesc}${title ? `. Topic: ${title}` : ''}. Style: dramatic studio lighting, vivid bold colors, high contrast, photorealistic, 8K quality, modern thumbnail aesthetic, no text, no words, no letters, clean 16:9 composition`;
+    const encodedPrompt = encodeURIComponent(promptText);
+    const seed = Date.now() % 99999;
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=720&seed=${seed}&model=flux&nologo=true`;
+
+    const imgRes = await axios.get(pollinationsUrl, { responseType: 'arraybuffer', timeout: 90000 });
+    const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
+    fs.writeFileSync(posterPath, Buffer.from(imgRes.data));
+
+    res.json({ success: true, poster_url: `${baseUrl}/uploads/poster_${id}.jpg` });
+  } catch (err) {
+    console.error('[generatePoster] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getContent,
   getStats,
@@ -3168,6 +3598,9 @@ module.exports = {
   handleLinkedInAuth,
   handleLinkedInCallback,
   publishToLinkedIn,
+  deletePost,
   runBackgroundPublish,
-  updateOverallPostStatus
+  updateOverallPostStatus,
+  generateThumbnails,
+  generatePoster
 };

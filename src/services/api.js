@@ -567,6 +567,24 @@ class LeadOSAPI {
     });
   }
 
+  async deletePostFromPlatforms(id) {
+    return this.request(`/api/content/${id}`, { method: 'DELETE' });
+  }
+
+  async generatePoster(id, frameUrl) {
+    return this.request(`/api/content/${id}/generate-poster`, {
+      method: 'POST',
+      body: JSON.stringify({ frame_url: frameUrl }),
+    });
+  }
+
+  async generateThumbnails(id, context = '') {
+    return this.request(`/api/content/${id}/generate-thumbnails`, {
+      method: 'POST',
+      body: JSON.stringify({ context }),
+    });
+  }
+
   async generateCaptions(brandName, videoUrl, platforms) {
     return this.request('/api/content/generate-captions', {
       method: 'POST',

@@ -688,7 +688,7 @@ export default function GbpInsights() {
                 textOverflow: 'ellipsis',
                 display: 'block'
               }}>
-                {activeClient?.business_name || 'Select Client'}
+                {activeClient?.display_name || activeClient?.business_name || 'Select Client'}
               </span>
               <ChevronDown size={13} color={C.muted} style={{ flexShrink: 0 }} />
             </button>
@@ -708,7 +708,7 @@ export default function GbpInsights() {
                       ? <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
                       : <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#64748b', display: 'inline-block' }} />
                     }
-                    {c.business_name}
+                    {c.display_name || c.business_name}
                   </button>
                 ))}
               </div>
@@ -724,7 +724,7 @@ export default function GbpInsights() {
           <div>
             <div style={{ fontWeight: 700, color: '#fed7aa', marginBottom: 4 }}>GMB Not Connected</div>
             <div style={{ fontSize: 13, color: '#9a3412' }}>
-              {activeClient.business_name} GMB account is not connected. Go to <strong>GMB Clients</strong> page and send the connect link.
+              {activeClient.display_name || activeClient.business_name} GMB account is not connected. Go to <strong>GMB Clients</strong> page and send the connect link.
             </div>
           </div>
         </div>

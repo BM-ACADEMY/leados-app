@@ -51,8 +51,17 @@ router.get("/linkedin/auth", ctrl.handleLinkedInAuth);
 router.get("/linkedin/callback", ctrl.handleLinkedInCallback);
 
 
+// Generate thumbnail options from video
+router.post("/:id/generate-thumbnails", ctrl.generateThumbnails);
+
+// AI-enhance selected frame into a poster
+router.post("/:id/generate-poster", ctrl.generatePoster);
+
 // Trigger publishing
 router.post("/:id/publish", ctrl.publishPost);
+
+// Delete post from all platforms
+router.delete("/:id", ctrl.deletePost);
 
 // Called by n8n after successful publish
 router.post('/:id/publish-success', async (req, res) => {

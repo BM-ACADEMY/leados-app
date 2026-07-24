@@ -26,12 +26,34 @@ export default function RivalFamilies() {
 
   // Load Google Maps Script
   useEffect(() => {
-    if (window.google && window.google.maps && window.google.maps.places) {
-      setGoogleScriptLoaded(true);
+    const scriptId = 'google-maps-places-script';
+
+    const checkAndSetLoaded = () => {
+      if (window.google && window.google.maps && window.google.maps.places) {
+        setGoogleScriptLoaded(true);
+        return true;
+      }
+      return false;
+    };
+
+    if (checkAndSetLoaded()) {
       return;
     }
-    const scriptId = 'google-maps-places-script';
-    if (document.getElementById(scriptId)) return;
+
+    const existingScript = document.getElementById(scriptId);
+    if (existingScript) {
+      const handleLoad = () => setGoogleScriptLoaded(true);
+      existingScript.addEventListener('load', handleLoad);
+      const interval = setInterval(() => {
+        if (checkAndSetLoaded()) {
+          clearInterval(interval);
+        }
+      }, 500);
+      return () => {
+        existingScript.removeEventListener('load', handleLoad);
+        clearInterval(interval);
+      };
+    }
 
     const fetchAndLoadScript = async () => {
       try {
@@ -43,9 +65,15 @@ export default function RivalFamilies() {
         const data = await res.json();
         
         if (data.apiKey) {
+          if (document.getElementById(scriptId)) {
+            if (!checkAndSetLoaded()) {
+              document.getElementById(scriptId).addEventListener('load', () => setGoogleScriptLoaded(true));
+            }
+            return;
+          }
           const script = document.createElement('script');
           script.id = scriptId;
-          script.src = `https://maps.googleapis.com/maps/api/js?key=${data.apiKey}&libraries=places&loading=async`;
+          script.src = `https://maps.googleapis.com/maps/api/js?key=${data.apiKey}&libraries=places&v=weekly&loading=async`;
           script.async = true;
           script.defer = true;
           script.onload = () => setGoogleScriptLoaded(true);
@@ -85,8 +113,45 @@ export default function RivalFamilies() {
     fetchClients();
   }, []);
 
+  const performTextSearch = async (query) => {
+    // Try modern Place.searchByText first (v2)
+    if (window.google?.maps?.places?.Place?.searchByText) {
+      try {
+        const { Place } = window.google.maps.places;
+        const { places } = await Place.searchByText({
+          textQuery: query,
+          fields: ['id', 'displayName', 'formattedAddress', 'rating', 'userRatingCount'],
+        });
+        
+        if (places && places.length > 0) {
+          return places.map(p => ({
+            place_id: p.id,
+            name: p.displayName || '',
+            formatted_address: p.formattedAddress || '',
+            rating: p.rating || 0,
+            user_ratings_total: p.userRatingCount || 0
+          }));
+        }
+      } catch (err) {
+        console.warn('Modern Place.searchByText failed, falling back to legacy PlacesService:', err);
+      }
+    }
+
+    // Fallback to legacy PlacesService
+    return new Promise((resolve) => {
+      const service = new window.google.maps.places.PlacesService(document.createElement('div'));
+      service.textSearch({ query }, (results, status) => {
+        if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+          resolve(results);
+        } else {
+          resolve([]);
+        }
+      });
+    });
+  };
+
   // Detect and search competitors based on client details
-  const detectAndSearchCompetitors = (client) => {
+  const detectAndSearchCompetitors = async (client) => {
     if (!client) return;
     const category = client.custom_category || client.business_category || 'Business';
     setSearchCategory(category);
@@ -96,14 +161,14 @@ export default function RivalFamilies() {
     setIsDetectingLocation(true);
 
     if (window.google && window.google.maps && window.google.maps.places) {
-      const service = new window.google.maps.places.PlacesService(document.createElement('div'));
-      // Search for the client's own business to find its city/location
-      service.textSearch({ query: client.business_name }, (results, status) => {
+      try {
+        const results = await performTextSearch(client.business_name);
         setIsDetectingLocation(false);
         let detectedCity = '';
-        if (status === window.google.maps.places.PlacesServiceStatus.OK && results.length > 0) {
+        if (results && results.length > 0) {
           const place = results[0];
-          const parts = place.formatted_address ? place.formatted_address.split(',') : [];
+          const address = place.formatted_address || '';
+          const parts = address ? address.split(',') : [];
           if (parts.length > 2) {
             detectedCity = parts[parts.length - 2].trim().split(' ')[0];
           }
@@ -115,22 +180,25 @@ export default function RivalFamilies() {
         if (finalCity) {
           executeLiveSearch(category, finalCity);
         }
-      });
+      } catch (err) {
+        console.error(err);
+        setIsDetectingLocation(false);
+      }
     } else {
       setIsDetectingLocation(false);
     }
   };
 
-  const executeLiveSearch = (category, location) => {
+  const executeLiveSearch = async (category, location) => {
     if (!category || !location || !window.google || !window.google.maps || !window.google.maps.places) return;
     
     setIsSearching(true);
     const query = `${category} in ${location}`;
-    const service = new window.google.maps.places.PlacesService(document.createElement('div'));
     
-    service.textSearch({ query }, (results, status) => {
+    try {
+      const results = await performTextSearch(query);
       setIsSearching(false);
-      if (status === window.google.maps.places.PlacesServiceStatus.OK && results.length > 0) {
+      if (results && results.length > 0) {
         const client = clients.find(c => c.id === parseInt(selectedClient));
         let clientIndex = -1;
         
@@ -159,7 +227,11 @@ export default function RivalFamilies() {
         setLiveCompetitors([]);
         setOurRank('Not Found');
       }
-    });
+    } catch (err) {
+      console.error(err);
+      setIsSearching(false);
+      toast.error('Error searching competitors');
+    }
   };
 
   // Trigger search on client select
@@ -249,7 +321,7 @@ export default function RivalFamilies() {
   return (
     <div style={{ padding: 30, color: C.text, height: '100%', overflowY: 'auto', background: 'rgba(0,0,0,0.1)' }}>
       {/* ═══ Header ═══ */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+      <div className="rivals-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ width: 42, height: 42, background: 'linear-gradient(135deg, #ef4444, #b91c1c)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Target size={22} color="#fff" />
@@ -260,7 +332,7 @@ export default function RivalFamilies() {
           </div>
         </div>
 
-        <form onSubmit={handleManualSearch} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <form onSubmit={handleManualSearch} className="rivals-form">
           {isDetectingLocation && (
             <div style={{ color: '#3b82f6', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, marginRight: 8 }}>
               <Loader2 size={14} className="spin" /> Detecting location...
@@ -271,9 +343,10 @@ export default function RivalFamilies() {
             value={selectedClient}
             onChange={e => setSelectedClient(e.target.value)}
             style={{ ...inputStyle, width: 220, padding: '10px 14px', background: C.surface }}
+            className="rivals-input"
           >
             {clients.length === 0 && <option value="">No clients available</option>}
-            {clients.map(c => <option key={c.id} value={c.id}>{c.business_name}</option>)}
+            {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
           </select>
 
           <input
@@ -281,6 +354,7 @@ export default function RivalFamilies() {
             onChange={e => setSearchCategory(e.target.value)}
             placeholder="Category / Keyword"
             style={{ ...inputStyle, width: 180, padding: '10px 14px', background: C.surface }}
+            className="rivals-input"
           />
 
           <input
@@ -289,12 +363,14 @@ export default function RivalFamilies() {
             onChange={e => setSearchLocation(e.target.value)}
             placeholder="Location / City"
             style={{ ...inputStyle, width: 180, padding: '10px 14px', background: C.surface }}
+            className="rivals-input"
           />
 
           <button
             type="submit"
             disabled={isSearching || !searchCategory || !searchLocation}
             style={{ background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)', border: 'none', padding: '10px 20px', borderRadius: 10, color: '#fff', fontSize: 13, fontWeight: 700, cursor: (isSearching || !searchCategory || !searchLocation) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+            className="rivals-btn"
           >
             {isSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />} Search
           </button>
@@ -310,7 +386,7 @@ export default function RivalFamilies() {
       ) : (
         <>
           {/* ═══ Dashboard Summary ═══ */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 24 }}>
+          <div className="rivals-dashboard">
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 }}>
               <span style={{ fontSize: 12, color: C.muted, textTransform: 'uppercase', fontWeight: 700 }}>Competitors Found</span>
               <div style={{ fontSize: 28, fontWeight: 800, marginTop: 8, color: '#fff' }}>{total}</div>
@@ -465,6 +541,63 @@ export default function RivalFamilies() {
       <style>{`
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
+        
+        .rivals-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 24px;
+          gap: 16px;
+        }
+        .rivals-form {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+        .rivals-dashboard {
+          display: grid;
+          grid-template-columns: repeat(5, 1fr);
+          gap: 16px;
+          margin-bottom: 24px;
+        }
+        
+        @media (max-width: 1200px) {
+          .rivals-header {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+          .rivals-form {
+            width: 100%;
+          }
+          .rivals-dashboard {
+            grid-template-columns: repeat(3, 1fr);
+          }
+        }
+        
+        @media (max-width: 768px) {
+          .rivals-dashboard {
+            grid-template-columns: repeat(2, 1fr);
+          }
+          .rivals-form {
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .rivals-input {
+            width: 100% !important;
+          }
+          .rivals-btn {
+            width: 100% !important;
+            justify-content: center;
+          }
+        }
+        
+        @media (max-width: 480px) {
+          .rivals-dashboard {
+            grid-template-columns: 1fr;
+          }
+        }
+
         .pac-container {
           background-color: #0f172a;
           border: 1px solid #1e293b;

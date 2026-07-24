@@ -11,8 +11,14 @@ async function ensureTables() {
         "totalDirectories" INTEGER,
         matched INTEGER,
         mismatched INTEGER,
-        missing INTEGER
+        missing INTEGER,
+        "debugData" JSONB
       )
+    `);
+
+    // Backfill for tables created before this column existed.
+    await pool.query(`
+      ALTER TABLE citation_scans ADD COLUMN IF NOT EXISTS "debugData" JSONB
     `);
 
     await pool.query(`

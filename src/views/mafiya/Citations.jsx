@@ -29,11 +29,38 @@ export default function Citations() {
   const [directoryStatuses, setDirectoryStatuses] = useState([]);
   const [completedSummary, setCompletedSummary] = useState(null);
   const [debugData, setDebugData] = useState(null);
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
+  // Debug panel persists across refresh via localStorage
+  const [debugPanelClosed, setDebugPanelClosed] = useState(
+    () => localStorage.getItem('citation_debug_closed') === 'true'
+  );
+  const showDebugPanel = debugData && !debugPanelClosed;
+
+  const closeDebugPanel = () => {
+    setDebugPanelClosed(true);
+    localStorage.setItem('citation_debug_closed', 'true');
+  };
+  const openDebugPanel = () => {
+    setDebugPanelClosed(false);
+    localStorage.removeItem('citation_debug_closed');
+  };
 
   // Fix Panel state
   const [selectedResult, setSelectedResult] = useState(null);
   const [markingFixedId, setMarkingFixedId] = useState(null);
+  const [checklistState, setChecklistState] = useState({});
+
+  const toggleChecklistItem = (resultId, key) => {
+    setChecklistState(prev => {
+      const resState = prev[resultId] || {};
+      return {
+        ...prev,
+        [resultId]: {
+          ...resState,
+          [key]: !resState[key]
+        }
+      };
+    });
+  };
 
   // Socket.io Real-Time Progress & Debug Listener
   useEffect(() => {
@@ -88,15 +115,32 @@ export default function Citations() {
   const fetchCitationScan = async (clientId) => {
     if (!clientId) return;
     setLoadingScan(true);
+    // Reset previous client's states immediately so old profile data doesn't linger
+    setScanData(null);
+    setCompletedSummary(null);
+    setDebugData(null);
+    setDirectoryStatuses([]);
+    setSelectedResult(null);
+
     try {
       const token = localStorage.getItem('leados_token');
       const res = await axios.get(`${API_URL}/api/citations/${clientId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.data && res.data.scan) {
+        const scan = res.data.scan;
+        const results = res.data.results || [];
+        const summary = res.data.summary || {
+          totalDirs: scan.totalDirectories || results.length || 8,
+          verifiedCount: scan.matched || 0,
+          mismatchCount: scan.mismatched || 0,
+          missingCount: scan.missing || 0,
+          citationScore: scan.score || 0,
+          cacheUsed: true
+        };
         setScanData(res.data);
-        if (res.data.summary) setCompletedSummary(res.data.summary);
-        if (res.data.debugData) setDebugData(res.data.debugData);
+        setCompletedSummary(summary);
+        setDebugData(res.data.debugData || scan.debugData || null);
       } else {
         setScanData(null);
       }
@@ -117,6 +161,9 @@ export default function Citations() {
     setScanStep('Loading Client Details...');
     setProcessedCount(0);
     setCompletedSummary(null);
+    // Each new scan produces fresh debug data — re-open the panel even if the
+    // user closed it during a previous run, so the new results are visible.
+    openDebugPanel();
 
     try {
       const token = localStorage.getItem('leados_token');
@@ -174,10 +221,12 @@ export default function Citations() {
 
   useEffect(() => {
     if (activeClient) {
-      fetchCitationScan(activeClient.id);
+      fetchCitationScan(activeClient.id); // Load existing scan data on profile change / page refresh
       setSelectedResult(null);
     }
   }, [activeClient]);
+
+
 
   if (loadingClients) {
     return (
@@ -193,45 +242,136 @@ export default function Citations() {
   const clientName = activeClient?.display_name || activeClient?.business_name || 'GMB Profile';
   const masterAddress = activeClient?.business_address || (activeClient ? `${activeClient.address || 'Pondicherry'}, ${activeClient.city || 'Pondicherry'}` : '');
 
-  // Discrepant fields
-  const getDiscrepantFields = (resItem) => {
-    const list = [];
-    if (!resItem) return list;
+  // Detailed NAP comparison for Citation Correction Assistant
+  const getNapComparison = (resItem) => {
+    if (!resItem || !activeClient) return [];
 
     const normText = (t) => (t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const normPhone = (p) => (p || '').replace(/\D/g, '').slice(-10);
+    const normUrl = (u) => (u || '').toLowerCase().replace(/https?:\/\//g, '').replace(/www\./g, '').replace(/\/$/g, '').trim();
 
-    if (normText(resItem.businessName) !== normText(activeClient.business_name)) {
-      list.push({
+    const expectedName = activeClient.business_name || activeClient.display_name || activeClient.name || '—';
+    const expectedPhone = activeClient.phone_number || activeClient.phone || '—';
+    const expectedAddress = activeClient.business_address || activeClient.address || (activeClient.city ? `${activeClient.address || ''}, ${activeClient.city}` : '—');
+    const expectedWebsite = activeClient.website_url || activeClient.website || '—';
+
+    const dirName = resItem.businessName || '';
+    const dirPhone = resItem.phone || '';
+    const dirAddress = resItem.address || '';
+    const dirWebsite = resItem.website || '';
+
+    const isNameMatch = normText(dirName) && (normText(dirName) === normText(expectedName) || normText(dirName).includes(normText(expectedName)) || normText(expectedName).includes(normText(dirName)));
+    const isPhoneMatch = normPhone(dirPhone) && normPhone(dirPhone) === normPhone(expectedPhone);
+    const isAddressMatch = normText(dirAddress) && (normText(dirAddress) === normText(expectedAddress) || normText(dirAddress).includes(normText(expectedAddress)) || normText(expectedAddress).includes(normText(dirAddress)));
+    const isWebsiteMatch = normUrl(dirWebsite) && (normUrl(dirWebsite) === normUrl(expectedWebsite) || normUrl(dirWebsite).includes(normUrl(expectedWebsite)) || normUrl(expectedWebsite).includes(normUrl(dirWebsite)));
+
+    return [
+      {
         field: 'Business Name',
-        directoryVal: resItem.businessName || '—',
-        googleVal: activeClient.business_name,
-        steps: 'Access directory portal and update the listing title to match your GMB name.'
-      });
-    }
-
-    if (normPhone(resItem.phone) !== normPhone(activeClient.phone_number)) {
-      list.push({
-        field: 'Phone',
-        directoryVal: resItem.phone || '—',
-        googleVal: activeClient.phone_number,
-        steps: 'Update phone number on listing to align with your master GBP contact.'
-      });
-    }
-
-    if (normText(resItem.address) !== normText(masterAddress)) {
-      list.push({
+        key: 'name',
+        currentVal: dirName || 'Not Found / Missing',
+        expectedVal: expectedName,
+        isMatch: !!isNameMatch,
+        recommendation: isNameMatch
+          ? 'Business name matches master information.'
+          : 'Update the business name to exactly match the master business information.'
+      },
+      {
+        field: 'Phone Number',
+        key: 'phone',
+        currentVal: dirPhone || 'Not Found / Missing',
+        expectedVal: expectedPhone,
+        isMatch: !!isPhoneMatch,
+        recommendation: isPhoneMatch
+          ? 'Phone number matches master information.'
+          : 'Replace the old phone number with the latest business phone number.'
+      },
+      {
         field: 'Address',
-        directoryVal: resItem.address || '—',
-        googleVal: masterAddress,
-        steps: 'Align street name, postal code, and area formatting with master business address.'
-      });
-    }
-
-    return list;
+        key: 'address',
+        currentVal: dirAddress || 'Not Found / Missing',
+        expectedVal: expectedAddress,
+        isMatch: !!isAddressMatch,
+        recommendation: isAddressMatch
+          ? 'Address matches master information.'
+          : 'Update the complete address including building number, locality, city, and postal code.'
+      },
+      {
+        field: 'Website',
+        key: 'website',
+        currentVal: dirWebsite || 'Not Found / Missing',
+        expectedVal: expectedWebsite,
+        isMatch: !!isWebsiteMatch,
+        recommendation: isWebsiteMatch
+          ? 'Website URL matches master information.'
+          : 'Update the website URL to the official business website.'
+      }
+    ];
   };
 
-  const currentDiscrepancies = selectedResult ? getDiscrepantFields(selectedResult) : [];
+  const getDirectoryGuidance = (directoryName = '') => {
+    const nameLower = directoryName.toLowerCase();
+
+    if (nameLower.includes('justdial')) {
+      return [
+        'Open your Justdial business listing.',
+        'Edit the business information.',
+        'Update the incorrect fields.',
+        'Save the changes.'
+      ];
+    }
+    if (nameLower.includes('facebook')) {
+      return [
+        'Open your Facebook Business Page.',
+        'Edit Page Information.',
+        'Update the incorrect fields.',
+        'Save the changes.'
+      ];
+    }
+    if (nameLower.includes('sulekha')) {
+      return [
+        'Open your Sulekha business listing.',
+        'Edit the profile.',
+        'Update the incorrect information.',
+        'Save the changes.'
+      ];
+    }
+    if (nameLower.includes('bing')) {
+      return [
+        'Open your Bing Places listing.',
+        'Edit the business details.',
+        'Save the changes.'
+      ];
+    }
+    if (nameLower.includes('indiamart')) {
+      return [
+        'Open your IndiaMART business profile.',
+        'Update the incorrect fields.',
+        'Save the changes.'
+      ];
+    }
+    if (nameLower.includes('yelp')) {
+      return [
+        'Open your Yelp for Business listing.',
+        'Edit business information.',
+        'Save the changes.'
+      ];
+    }
+    if (nameLower.includes('yellow')) {
+      return [
+        'Open your Yellow Pages business profile.',
+        'Edit listing information.',
+        'Save the changes.'
+      ];
+    }
+
+    return [
+      `Open your ${directoryName || 'directory'} listing profile.`,
+      'Log in or claim your business account.',
+      'Update the incorrect information.',
+      'Save the changes.'
+    ];
+  };
 
   return (
     <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%', background: C.bg, position: 'relative' }}>
@@ -277,25 +417,7 @@ export default function Citations() {
               ))}
             </select>
 
-            <button
-              onClick={() => setShowDebugPanel(!showDebugPanel)}
-              style={{
-                background: showDebugPanel ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.05)',
-                border: `1px solid ${showDebugPanel ? '#ef4444' : C.border}`,
-                borderRadius: 10,
-                padding: '10px 14px',
-                color: showDebugPanel ? '#ef4444' : '#fff',
-                fontSize: 12,
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                cursor: 'pointer'
-              }}
-            >
-              <Bug size={14} />
-              {showDebugPanel ? 'Hide Debug' : 'Debug Mode'}
-            </button>
+
 
             <button
               onClick={() => handleRunFullCheck(false)}
@@ -344,8 +466,9 @@ export default function Citations() {
           </div>
         </div>
 
-        {/* ═══ TEMPORARY DEBUG PANEL ═══ */}
-        {(showDebugPanel || debugData) && (
+        {/* ═══ CITATION SCANNER DEBUG PANEL ═══ */}
+        {showDebugPanel && (
+
           <div style={{ background: '#090d16', border: '1px solid #ef444460', borderRadius: 16, padding: 22, marginBottom: 26, boxShadow: '0 10px 30px rgba(0,0,0,0.8)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -359,7 +482,7 @@ export default function Citations() {
                   <span style={{ fontSize: 11, color: '#fca5a5' }}>Inspecting query, raw ValueSERP organic results, and parser detection failures</span>
                 </div>
               </div>
-              <button onClick={() => setShowDebugPanel(false)} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer' }}>
+              <button onClick={closeDebugPanel} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer' }}>
                 <X size={18} />
               </button>
             </div>
@@ -522,6 +645,10 @@ export default function Citations() {
                     else if (item.type === 'Mismatch') { badgeColor = '#ef4444'; icon = '⚠'; }
                     else if (item.type === 'Missing Listing') { badgeColor = '#f97316'; icon = '✕'; }
                     else if (item.type === 'Unable to Extract') { badgeColor = '#94a3b8'; icon = '❓'; }
+                    else if (item.type === 'Partial Data') { badgeColor = '#3b82f6'; icon = '◐'; }
+                    else if (item.type === 'API Timeout') { badgeColor = '#eab308'; icon = '⏱'; }
+                    else if (item.type === 'API Error') { badgeColor = '#eab308'; icon = '⚠'; }
+                    else if (item.type === 'No Organic Results') { badgeColor = '#eab308'; icon = '○'; }
 
                     return (
                       <div key={idx} style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
@@ -599,16 +726,19 @@ export default function Citations() {
             </div>
             <h2 style={{ fontSize: 19, fontWeight: 800, color: '#fff', marginBottom: 10 }}>No Citation Scan Found</h2>
             <p style={{ color: C.muted, fontSize: 13.5, maxWidth: 460, margin: '0 auto 24px auto', lineHeight: 1.6 }}>
-              Run your first citation scan to discover business listings across web directories using single-search optimization.
+              Run a fresh citation scan to discover business listings across web directories for this profile.
             </p>
             <button
               onClick={() => handleRunFullCheck(true)}
-              style={{ background: C.accent, border: 'none', borderRadius: 10, padding: '12px 24px', color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}
+              disabled={runningScan}
+              style={{ background: C.accent, border: 'none', borderRadius: 10, padding: '12px 24px', color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: runningScan ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8, opacity: runningScan ? 0.7 : 1 }}
             >
-              Run Audit Now
+              <RefreshCw size={15} className={runningScan ? 'animate-spin' : ''} />
+              {runningScan ? 'Scanning...' : 'Refresh Scan'}
             </button>
           </div>
         )}
+
 
         {loadingScan && (
           <div style={{ display: 'flex', justifyContent: 'center', padding: '100px 0' }}>
@@ -715,6 +845,14 @@ export default function Citations() {
                         statusBg = 'rgba(148,163,184,0.08)';
                         statusColor = '#94a3b8';
                         displayStatus = 'Unable to Extract';
+                      } else if (resItem.status === 'Partial Data') {
+                        statusBg = 'rgba(59,130,246,0.08)';
+                        statusColor = '#3b82f6';
+                        displayStatus = 'Partial Data';
+                      } else if (resItem.status === 'API Timeout' || resItem.status === 'API Error' || resItem.status === 'No Organic Results') {
+                        statusBg = 'rgba(234,179,8,0.08)';
+                        statusColor = '#eab308';
+                        displayStatus = resItem.status;
                       }
 
                       const isSelected = selectedResult && selectedResult.id === resItem.id;
@@ -791,146 +929,354 @@ export default function Citations() {
                 </table>
               </div>
 
-              {/* Fix & Inspection Panel */}
-              {selectedResult && (
-                <div style={{ width: 360, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, position: 'relative', boxShadow: '0 20px 40px rgba(0,0,0,0.6)' }} className="w-full-mobile">
-                  <button
-                    onClick={() => setSelectedResult(null)}
-                    style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 4, cursor: 'pointer', color: C.muted }}
-                  >
-                    <X size={16} />
-                  </button>
+              {/* Citation Correction Assistant Panel */}
+              {selectedResult && (() => {
+                const isMissing = selectedResult.status === 'Missing Listing' || selectedResult.status === 'Missing';
+                const isUnable = selectedResult.status === 'Unable to Extract';
+                const isVerified = selectedResult.status === 'Verified' || selectedResult.status === 'Match';
+                const isMismatch = selectedResult.status === 'Mismatch' || selectedResult.status === 'Partial Data';
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <Wrench size={18} color={C.accent} />
-                    <h3 style={{ color: '#fff', fontSize: 16, fontWeight: 800, margin: 0, fontFamily: "'Syne', sans-serif" }}>
-                      {selectedResult.directory} Listing Guide
-                    </h3>
+                const napItems = getNapComparison(selectedResult);
+                const dirGuidance = getDirectoryGuidance(selectedResult.directory);
+
+                const totalFields = napItems.length;
+                const correctCount = napItems.filter(item => item.isMatch).length;
+                const incorrectCount = totalFields - correctCount;
+
+                const currentChecklist = checklistState[selectedResult.id] || {};
+
+                return (
+                  <div style={{ width: 420, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22, position: 'relative', boxShadow: '0 20px 40px rgba(0,0,0,0.6)' }} className="w-full-mobile">
+                    <button
+                      onClick={() => setSelectedResult(null)}
+                      style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 4, cursor: 'pointer', color: C.muted }}
+                    >
+                      <X size={16} />
+                    </button>
+
+                    {/* Header */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                      <div style={{ background: 'rgba(249,115,22,0.15)', padding: 8, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Wrench size={20} color={C.accent} />
+                      </div>
+                      <div>
+                        <h3 style={{ color: '#fff', fontSize: 16, fontWeight: 800, margin: 0, fontFamily: "'Syne', sans-serif" }}>
+                          Citation Correction Assistant
+                        </h3>
+                        <span style={{ fontSize: 11, color: C.muted }}>
+                          Target Directory: <strong style={{ color: C.accent }}>{selectedResult.directory}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 'calc(100vh - 260px)', overflowY: 'auto', paddingRight: 4 }}>
+
+                      {/* ═══ CASE 1: MISSING LISTING ═══ */}
+                      {isMissing && (
+                        <>
+                          <div style={{ background: 'rgba(249,115,22,0.06)', border: `1px solid ${C.accent}40`, borderRadius: 12, padding: 16 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.accent, fontWeight: 800, fontSize: 13, marginBottom: 8 }}>
+                              <AlertTriangle size={17} /> No Business Listing Found
+                            </div>
+                            <p style={{ fontSize: 12, color: C.text, lineHeight: 1.6, margin: '0 0 10px 0' }}>
+                              No business listing was found on <strong>{selectedResult.directory}</strong> during search engine analysis.
+                            </p>
+                            <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: 10, fontSize: 11.5, lineHeight: 1.5, color: C.muted }}>
+                              <strong style={{ color: C.accent, display: 'block', marginBottom: 2 }}>Required Action:</strong>
+                              Create or claim your business listing on <strong>{selectedResult.directory}</strong> using your official Master GBP details. After the listing becomes available, click <strong>Refresh Scan</strong>.
+                            </div>
+                          </div>
+
+                          {/* Directory Guidance */}
+                          <div style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 }}>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: C.accent, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <Database size={14} />
+                              {selectedResult.directory} Account Creation Guidance
+                            </div>
+                            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: C.text, lineHeight: 1.7 }}>
+                              {dirGuidance.map((step, sIdx) => (
+                                <li key={sIdx}>{step}</li>
+                              ))}
+                            </ol>
+                          </div>
+
+                          {/* Missing Listing Actions */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                            {selectedResult.listingUrl ? (
+                              <a
+                                href={selectedResult.listingUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)', padding: '11px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', width: '100%' }}
+                              >
+                                Open Directory <ExternalLink size={14} />
+                              </a>
+                            ) : (
+                              <a
+                                href={`https://www.google.com/search?q=${encodeURIComponent(selectedResult.directory + ' business listing creation')}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)', padding: '11px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', width: '100%' }}
+                              >
+                                Open Directory Portal <ExternalLink size={14} />
+                              </a>
+                            )}
+
+                            <button
+                              onClick={() => handleRunFullCheck(true)}
+                              disabled={runningScan}
+                              style={{ background: C.accent, border: 'none', borderRadius: 10, padding: '11px', color: '#fff', fontSize: 12.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: runningScan ? 'not-allowed' : 'pointer', opacity: runningScan ? 0.7 : 1 }}
+                            >
+                              <RefreshCw size={14} className={runningScan ? "animate-spin" : ""} />
+                              Refresh Scan
+                            </button>
+
+                            <button
+                              onClick={() => handleMarkFixed(selectedResult.id)}
+                              disabled={markingFixedId !== null}
+                              style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 10, padding: '10px', color: '#10b981', fontSize: 12.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: markingFixedId !== null ? 'not-allowed' : 'pointer', opacity: markingFixedId !== null ? 0.7 : 1 }}
+                            >
+                              {markingFixedId === selectedResult.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />}
+                              Mark Verified & Update Score
+                            </button>
+                          </div>
+                        </>
+                      )}
+
+                      {/* ═══ CASE 2: UNABLE TO EXTRACT ═══ */}
+                      {isUnable && (
+                        <>
+                          <div style={{ background: 'rgba(148,163,184,0.06)', border: '1px solid rgba(148,163,184,0.3)', borderRadius: 12, padding: 16 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#94a3b8', fontWeight: 800, fontSize: 13, marginBottom: 8 }}>
+                              <HelpCircle size={17} /> Listing Exists (Automated Extraction Warning)
+                            </div>
+                            <p style={{ fontSize: 12, color: C.text, lineHeight: 1.6, margin: '0 0 10px 0' }}>
+                              The listing page exists on <strong>{selectedResult.directory}</strong>, but automated extraction could not extract text due to anti-bot protection.
+                            </p>
+                            <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: 10, fontSize: 11.5, lineHeight: 1.5, color: C.muted }}>
+                              <strong style={{ color: '#60a5fa', display: 'block', marginBottom: 2 }}>Manual Verification Recommendation:</strong>
+                              Please open the listing page below and verify your business details manually. If correct, click <strong>Mark Verified</strong>.
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                            {selectedResult.listingUrl && (
+                              <a
+                                href={selectedResult.listingUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)', padding: '11px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', width: '100%' }}
+                              >
+                                Open Directory Page <ExternalLink size={14} />
+                              </a>
+                            )}
+
+                            <button
+                              onClick={() => handleMarkFixed(selectedResult.id)}
+                              disabled={markingFixedId !== null}
+                              style={{ background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none', borderRadius: 10, padding: '11px', color: '#fff', fontSize: 12.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: markingFixedId !== null ? 'not-allowed' : 'pointer', opacity: markingFixedId !== null ? 0.7 : 1 }}
+                            >
+                              {markingFixedId === selectedResult.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />}
+                              Mark Verified & Update Score
+                            </button>
+
+                            <button
+                              onClick={() => handleRunFullCheck(true)}
+                              disabled={runningScan}
+                              style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px', color: C.text, fontSize: 12.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: runningScan ? 'not-allowed' : 'pointer' }}
+                            >
+                              <RefreshCw size={14} className={runningScan ? "animate-spin" : ""} />
+                              Refresh Scan
+                            </button>
+                          </div>
+                        </>
+                      )}
+
+                      {/* ═══ CASE 3: VERIFIED / MATCH ═══ */}
+                      {isVerified && (
+                        <>
+                          <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 12, padding: 16 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#10b981', fontWeight: 800, fontSize: 13, marginBottom: 8 }}>
+                              <CheckCircle2 size={18} /> Verified & Matching Listing
+                            </div>
+                            <p style={{ margin: 0, fontSize: 12, color: '#a7f3d0', lineHeight: 1.6 }}>
+                              All business details on <strong>{selectedResult.directory}</strong> match your Master GBP record perfectly!
+                            </p>
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                            {selectedResult.listingUrl && (
+                              <a
+                                href={selectedResult.listingUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)', padding: '11px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', width: '100%' }}
+                              >
+                                Open Directory Page <ExternalLink size={14} />
+                              </a>
+                            )}
+
+                            <button
+                              onClick={() => handleRunFullCheck(true)}
+                              disabled={runningScan}
+                              style={{ background: C.accent, border: 'none', borderRadius: 10, padding: '11px', color: '#fff', fontSize: 12.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: runningScan ? 'not-allowed' : 'pointer', opacity: runningScan ? 0.7 : 1 }}
+                            >
+                              <RefreshCw size={14} className={runningScan ? "animate-spin" : ""} />
+                              Refresh Scan
+                            </button>
+                          </div>
+                        </>
+                      )}
+
+                      {/* ═══ CASE 4: MISMATCH ═══ */}
+                      {isMismatch && (
+                        <>
+                          {/* Impact Bar */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, background: 'rgba(0,0,0,0.3)', border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+                            <div style={{ textAlign: 'center' }}>
+                              <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', fontWeight: 700 }}>Total Checked</span>
+                              <div style={{ fontSize: 16, fontWeight: 800, color: '#fff', marginTop: 2 }}>{totalFields}</div>
+                            </div>
+                            <div style={{ textAlign: 'center' }}>
+                              <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', fontWeight: 700 }}>Correct</span>
+                              <div style={{ fontSize: 16, fontWeight: 800, color: C.green, marginTop: 2 }}>{correctCount}</div>
+                            </div>
+                            <div style={{ textAlign: 'center' }}>
+                              <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', fontWeight: 700 }}>Incorrect</span>
+                              <div style={{ fontSize: 16, fontWeight: 800, color: incorrectCount > 0 ? C.red : C.green, marginTop: 2 }}>{incorrectCount}</div>
+                            </div>
+                          </div>
+
+                          {/* NAP Comparison Section */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: '#fff', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                              NAP Field Comparisons
+                            </div>
+
+                            {napItems.map((item, idx) => (
+                              <div key={idx} style={{
+                                background: item.isMatch ? 'rgba(16,185,129,0.03)' : 'rgba(239,68,68,0.03)',
+                                border: `1px solid ${item.isMatch ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.25)'}`,
+                                borderRadius: 12,
+                                padding: 12
+                              }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                  <span style={{ fontSize: 12, fontWeight: 800, color: '#fff' }}>{item.field}</span>
+                                  <span style={{
+                                    fontSize: 10,
+                                    fontWeight: 800,
+                                    padding: '2px 8px',
+                                    borderRadius: 12,
+                                    background: item.isMatch ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                                    color: item.isMatch ? C.green : C.red
+                                  }}>
+                                    {item.isMatch ? '✔ Match' : '✖ Mismatch'}
+                                  </span>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 11, marginBottom: 8 }}>
+                                  <div>
+                                    <span style={{ color: C.muted, display: 'block', marginBottom: 2 }}>Current Directory:</span>
+                                    <div style={{ color: item.isMatch ? C.text : C.red, fontWeight: 600, wordBreak: 'break-word' }}>
+                                      {item.currentVal}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <span style={{ color: C.muted, display: 'block', marginBottom: 2 }}>Expected (Master):</span>
+                                    <div style={{ color: C.green, fontWeight: 600, wordBreak: 'break-word' }}>
+                                      {item.expectedVal}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div style={{ background: 'rgba(0,0,0,0.35)', borderRadius: 8, padding: 8, fontSize: 11, lineHeight: 1.4, color: C.text, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                                  <Zap size={13} color={C.accent} style={{ flexShrink: 0, marginTop: 2 }} />
+                                  <div>
+                                    <strong style={{ color: C.accent }}>Recommendation: </strong>
+                                    {item.recommendation}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Directory-Specific Guidance */}
+                          <div style={{ background: 'rgba(249,115,22,0.04)', border: `1px solid ${C.accent}30`, borderRadius: 12, padding: 14 }}>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: C.accent, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <Database size={14} />
+                              {selectedResult.directory} Directory Guidance
+                            </div>
+                            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: C.text, lineHeight: 1.7 }}>
+                              {dirGuidance.map((step, sIdx) => (
+                                <li key={sIdx}>{step}</li>
+                              ))}
+                            </ol>
+                          </div>
+
+                          {/* Completion Checklist */}
+                          <div style={{ background: 'rgba(0,0,0,0.25)', border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 }}>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: '#fff', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <CheckCircle2 size={14} color={C.green} />
+                              Completion Checklist
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }}>
+                              {[
+                                { key: 'name', label: 'Business Name Updated' },
+                                { key: 'address', label: 'Address Updated' },
+                                { key: 'phone', label: 'Phone Number Updated' },
+                                { key: 'website', label: 'Website Updated' },
+                                { key: 'saved', label: 'Save Changes on Directory Portal' }
+                              ].map((checkItem) => {
+                                const isChecked = !!currentChecklist[checkItem.key];
+                                return (
+                                  <label key={checkItem.key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: isChecked ? C.green : C.text }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={() => toggleChecklistItem(selectedResult.id, checkItem.key)}
+                                      style={{ accentColor: C.accent, width: 15, height: 15, cursor: 'pointer' }}
+                                    />
+                                    <span style={{ textDecoration: isChecked ? 'line-through' : 'none' }}>
+                                      {checkItem.label}
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                            {selectedResult.listingUrl && (
+                              <a
+                                href={selectedResult.listingUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)', padding: '11px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', width: '100%' }}
+                              >
+                                Open Directory Listing Page <ExternalLink size={14} />
+                              </a>
+                            )}
+
+                            <button
+                              onClick={() => handleRunFullCheck(true)}
+                              disabled={runningScan}
+                              style={{ background: C.accent, border: 'none', borderRadius: 10, padding: '11px', color: '#fff', fontSize: 12.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: runningScan ? 'not-allowed' : 'pointer', opacity: runningScan ? 0.7 : 1 }}
+                            >
+                              <RefreshCw size={14} className={runningScan ? "animate-spin" : ""} />
+                              Click "Refresh Scan" to Verify Data
+                            </button>
+
+
+                          </div>
+                        </>
+                      )}
+
+                    </div>
                   </div>
-
-                  <p style={{ fontSize: 11, color: C.muted, marginBottom: 16 }}>
-                    Actionable instructions & NAP verification for {selectedResult.directory}
-                  </p>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-                    {/* Verified Case */}
-                    {(selectedResult.status === 'Verified' || selectedResult.status === 'Match') && (
-                      <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 12, padding: 14 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#10b981', fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
-                          <CheckCircle size={16} /> Verified & Matching Listing
-                        </div>
-                        <p style={{ margin: 0, fontSize: 12, color: '#a7f3d0', lineHeight: 1.5 }}>
-                          All business details on {selectedResult.directory} match your GBP Master record perfectly!
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Mismatch Case */}
-                    {selectedResult.status === 'Mismatch' && currentDiscrepancies.map((disc, idx) => (
-                      <div key={idx} style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: C.red, background: 'rgba(239,68,68,0.1)', padding: '2px 8px', borderRadius: 4 }}>
-                            {disc.field} Discrepancy
-                          </span>
-                        </div>
-
-                        <div style={{ fontSize: 12, marginBottom: 6 }}>
-                          <span style={{ color: C.muted }}>Directory Found:</span>
-                          <div style={{ color: C.red, fontWeight: 600, marginTop: 2 }}>{disc.directoryVal}</div>
-                        </div>
-
-                        <div style={{ fontSize: 12, marginBottom: 10 }}>
-                          <span style={{ color: C.muted }}>GBP Master Expected:</span>
-                          <div style={{ color: C.green, fontWeight: 600, marginTop: 2 }}>{disc.googleVal}</div>
-                        </div>
-
-                        <div style={{ background: 'rgba(0,0,0,0.3)', borderTop: `1px dashed ${C.border}`, padding: '10px', borderRadius: 6, fontSize: 11.5, lineHeight: 1.5, color: C.text, marginTop: 6 }}>
-                          <strong style={{ color: C.accent, display: 'block', marginBottom: 2 }}>Action Step:</strong>
-                          {disc.steps}
-                        </div>
-                      </div>
-                    ))}
-
-                    {/* Unable to Extract Case */}
-                    {selectedResult.status === 'Unable to Extract' && (
-                      <div style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#94a3b8', fontWeight: 700, fontSize: 12, marginBottom: 8 }}>
-                          <HelpCircle size={15} /> Playwright Extraction Warning
-                        </div>
-                        <p style={{ fontSize: 12, color: C.text, lineHeight: 1.5, margin: '0 0 12px 0' }}>
-                          The listing URL was discovered on Google, but the directory page (e.g. Justdial anti-bot wall) prevented automated Playwright extraction.
-                        </p>
-
-                        {selectedResult.listingUrl && (
-                          <a
-                            href={selectedResult.listingUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(59,130,246,0.1)', color: '#60a5fa', padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: 'none', width: '100%', justifyContent: 'center', marginBottom: 10 }}
-                          >
-                            Open Directory Page <ExternalLink size={13} />
-                          </a>
-                        )}
-
-                        <div style={{ fontSize: 11.5, color: C.muted, background: 'rgba(0,0,0,0.3)', padding: 10, borderRadius: 8, lineHeight: 1.5 }}>
-                          <strong style={{ color: C.accent }}>Manual Verification Step:</strong><br />
-                          Click the link above to visually confirm your listing details, then click <strong>"Mark Verified"</strong> below to update your Citation Score!
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Missing Listing Case */}
-                    {(selectedResult.status === 'Missing Listing' || selectedResult.status === 'Missing') && (
-                      <div style={{ background: 'rgba(249,115,22,0.05)', border: `1px solid ${C.accent}30`, borderRadius: 12, padding: 14 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.accent, fontWeight: 700, fontSize: 12, marginBottom: 8 }}>
-                          <AlertTriangle size={15} /> Missing Listing Alert
-                        </div>
-                        <p style={{ fontSize: 12, color: C.text, lineHeight: 1.5, margin: '0 0 12px 0' }}>
-                          No listing profile was found on <strong>{selectedResult.directory}</strong> in top Google search results.
-                        </p>
-
-                        <div style={{ fontSize: 11.5, color: C.muted, background: 'rgba(0,0,0,0.3)', padding: 10, borderRadius: 8, lineHeight: 1.5 }}>
-                          <strong style={{ color: C.accent }}>How to Fix:</strong><br />
-                          Create a free business account on {selectedResult.directory} using your Master GBP Business Address, Phone & Website. Once created, click <strong>"Mark Verified"</strong> below!
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Mark Verified / Fixed Button */}
-                    {selectedResult.status !== 'Verified' && selectedResult.status !== 'Match' && (
-                      <button
-                        onClick={() => handleMarkFixed(selectedResult.id)}
-                        disabled={markingFixedId !== null}
-                        style={{
-                          background: 'linear-gradient(135deg, #10b981, #059669)',
-                          border: 'none',
-                          borderRadius: 10,
-                          padding: '12px',
-                          color: '#fff',
-                          fontSize: 13,
-                          fontWeight: 700,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 6,
-                          cursor: markingFixedId !== null ? 'not-allowed' : 'pointer',
-                          opacity: markingFixedId !== null ? 0.7 : 1,
-                          marginTop: 4
-                        }}
-                      >
-                        {markingFixedId === selectedResult.id ? (
-                          <Loader2 size={15} className="animate-spin" />
-                        ) : (
-                          <Check size={16} />
-                        )}
-                        Mark Verified & Update Score
-                      </button>
-                    )}
-
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
             </div>
           </>

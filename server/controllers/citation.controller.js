@@ -48,7 +48,8 @@ async function getScan(req, res) {
 
     res.json({
       scan,
-      results: resultsRes.rows
+      results: resultsRes.rows,
+      debugData: scan.debugData || null
     });
   } catch (err) {
     console.error('[Citation Controller] getScan error:', err);

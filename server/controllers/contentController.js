@@ -1408,7 +1408,7 @@ async function publishToFacebookPage(pageId, pageAccessToken, { caption, videoUr
 }
 
 // Instagram Business Container Creation
-async function createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null }) {
+async function createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null, coverUrl = null }) {
   const containerUrl = `https://graph.facebook.com/v19.0/${instagramBusinessId}/media`;
 
   // Check if media is video or image
@@ -1433,6 +1433,7 @@ async function createInstagramContainer(instagramBusinessId, accessToken, { vide
     if (isVideo) {
       params.media_type = 'REELS';
       params.video_url = videoUrl;
+      if (coverUrl) params.cover_url = coverUrl;
     } else {
       params.image_url = videoUrl;
     }
@@ -1604,9 +1605,9 @@ async function publishInstagramContainer(instagramBusinessId, accessToken, conta
 }
 
 // Publish to Instagram Coordinator
-async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null }) {
+async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null, coverUrl = null }) {
   try {
-    const containerId = await createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl });
+    const containerId = await createInstagramContainer(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl, coverUrl });
     await waitForInstagramContainer(containerId, accessToken);
     const mediaId = await publishInstagramContainer(instagramBusinessId, accessToken, containerId);
     return { success: true, post_id: mediaId };
@@ -1619,14 +1620,14 @@ async function publishToInstagram(instagramBusinessId, accessToken, { videoUrl, 
 }
 
 // Publish to Instagram Coordinator with retry mechanism for transient errors
-async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null }) {
+async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { videoUrl, caption, isStory = false, linkStickerUrl = null, coverUrl = null }) {
   const maxRetries = 3;
   let lastErr = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[publishToInstagramWithRetry] Attempt ${attempt}/${maxRetries} to publish to Instagram. URL: ${videoUrl}`);
-      const res = await module.exports.publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl });
+      const res = await module.exports.publishToInstagram(instagramBusinessId, accessToken, { videoUrl, caption, isStory, linkStickerUrl, coverUrl });
       return res;
     } catch (err) {
       lastErr = err;
@@ -2154,7 +2155,8 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         publishRes = await publishToInstagramWithRetry(account.instagram_business_id, decryptedToken, {
           caption: finalCaption,
           videoUrl: publicUrl,
-          isStory: false
+          isStory: false,
+          coverUrl: post.thumbnail_url || null
         });
       } else if (channel === 'youtube') {
         let localVideoPath = null;
@@ -2176,11 +2178,33 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
 
         const ytTitle = post.youtube_title || post.thumbnail_title || post.video_name || 'Social Media Video';
         const ytDesc = post.youtube_description || post.caption || post.description || '';
-        
+
+        // Resolve thumbnail_url to a local file path
+        let localThumbnailPath = null;
+        if (post.thumbnail_url) {
+          const thumbUrlParts = post.thumbnail_url.split('/uploads/');
+          if (thumbUrlParts.length > 1) {
+            const thumbFilename = thumbUrlParts[1].split('?')[0];
+            const candidate = path.join(__dirname, '../uploads', thumbFilename);
+            if (fs.existsSync(candidate)) localThumbnailPath = candidate;
+          }
+          if (!localThumbnailPath) {
+            // Try downloading it
+            try {
+              const tempThumbPath = path.join(os.tmpdir(), `temp_yt_thumb_${post.id}_${Date.now()}.jpg`);
+              await downloadFile(post.thumbnail_url, tempThumbPath);
+              localThumbnailPath = tempThumbPath;
+            } catch (dlErr) {
+              console.warn(`[BackgroundPublish] Could not download thumbnail for YouTube: ${dlErr.message}`);
+            }
+          }
+        }
+
         publishRes = await publishVideoToYouTube(oauth2Client, {
           title: ytTitle,
           description: ytDesc,
-          localVideoPath: localVideoPath
+          localVideoPath: localVideoPath,
+          localThumbnailPath: localThumbnailPath
         });
 
         if (localVideoPath.includes('temp_youtube_source_') && fs.existsSync(localVideoPath)) {
@@ -2911,7 +2935,7 @@ async function getFreshYoutubeClient(encryptedTokens) {
   return oauth2Client;
 }
 
-async function publishVideoToYouTube(oauth2Client, { title, description, localVideoPath }) {
+async function publishVideoToYouTube(oauth2Client, { title, description, localVideoPath, localThumbnailPath }) {
   console.log(`[YouTube Publish] Starting YouTube video upload for file: ${localVideoPath}`);
   
   let isShort = false;
@@ -2959,10 +2983,29 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
       }
     });
 
-    console.log(`[YouTube Publish] Upload success. Video ID: ${response.data.id}`);
+    const videoId = response.data.id;
+    console.log(`[YouTube Publish] Upload success. Video ID: ${videoId}`);
+
+    // Set custom thumbnail if provided
+    if (localThumbnailPath && fs.existsSync(localThumbnailPath)) {
+      try {
+        await youtube.thumbnails.set({
+          videoId: videoId,
+          media: {
+            mimeType: 'image/jpeg',
+            body: fs.createReadStream(localThumbnailPath)
+          }
+        });
+        console.log(`[YouTube Publish] Custom thumbnail set for video ${videoId}`);
+      } catch (thumbErr) {
+        // Thumbnail upload can fail if channel is not verified — not fatal
+        console.warn(`[YouTube Publish] Failed to set thumbnail (channel may need verification): ${thumbErr.message}`);
+      }
+    }
+
     return {
       success: true,
-      post_id: response.data.id
+      post_id: videoId
     };
   } catch (err) {
     console.error(`[YouTube Publish] API insertion failed:`, err);

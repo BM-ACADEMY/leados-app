@@ -45,6 +45,7 @@ export function ApprovalRoom({
   const [deleteResults, setDeleteResults] = useState(null);
   const [thumbOptions, setThumbOptions] = useState([]);
   const [generatingThumbs, setGeneratingThumbs] = useState(false);
+  const [thumbError, setThumbError] = useState('');
 
   const handleDeleteFromPlatforms = async () => {
     if (!selectedItem) return;
@@ -81,11 +82,13 @@ export function ApprovalRoom({
       });
     }
     setThumbOptions([]);
+    setThumbError('');
   }, [selectedItem, setEditValues]);
 
   const handleGenerateThumbnails = async () => {
     if (!selectedItem) return;
     setGeneratingThumbs(true);
+    setThumbError('');
     try {
       const context = firstGenContext || editValues.youtube_description || editValues.caption || '';
       const res = await api.generateThumbnails(selectedItem.id, context);
@@ -96,6 +99,7 @@ export function ApprovalRoom({
       }
     } catch (err) {
       console.error('Thumbnail generation failed:', err);
+      setThumbError(err.message || 'Frame extraction failed. The video may still be processing.');
     } finally {
       setGeneratingThumbs(false);
     }
@@ -334,7 +338,14 @@ export function ApprovalRoom({
                   </div>
                 )}
 
-                {/* AI Poster grid */}
+                {/* Error */}
+                {thumbError && (
+                  <div style={{ background: 'rgba(240,74,94,0.08)', border: '1px solid rgba(240,74,94,0.3)', borderRadius: 7, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--red)' }}>
+                    ✕ {thumbError}
+                  </div>
+                )}
+
+                {/* Frame grid */}
                 {thumbOptions.length > 0 && (
                   <div style={{ paddingBottom: 12 }}>
                     <div style={{ fontSize: 10, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 8 }}>

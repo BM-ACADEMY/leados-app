@@ -3271,16 +3271,42 @@ async function generateThumbnails(req, res) {
     if (!rows.length) return res.status(404).json({ error: 'Content not found' });
 
     const item = rows[0];
-    const driveFileId = extractDriveFileId(item.video_url);
-    const localPath = driveFileId ? path.join(uploadsDir, `transcoded_${driveFileId}.mp4`) : null;
 
-    if (!localPath || !fs.existsSync(localPath)) {
-      return res.status(400).json({ error: 'Transcoded video not found on server. Please wait for processing to complete.' });
+    // Find the local video file — try multiple strategies
+    let videoPath = null;
+
+    // Strategy 1: transcoded_<driveFileId>.mp4
+    const driveFileId = extractDriveFileId(item.video_url);
+    if (driveFileId) {
+      const p = path.join(uploadsDir, `transcoded_${driveFileId}.mp4`);
+      if (fs.existsSync(p)) videoPath = p;
+    }
+
+    // Strategy 2: derive filename from public_video_url (handles any naming scheme)
+    if (!videoPath && item.public_video_url) {
+      const match = item.public_video_url.match(/\/uploads\/([^?#]+)$/);
+      if (match) {
+        const p = path.join(uploadsDir, match[1]);
+        if (fs.existsSync(p)) videoPath = p;
+      }
+    }
+
+    // Strategy 3: scan uploads dir for any mp4 that contains the content id
+    if (!videoPath) {
+      const files = fs.readdirSync(uploadsDir);
+      const candidate = files.find(f => f.includes(String(id)) && f.endsWith('.mp4'));
+      if (candidate) videoPath = path.join(uploadsDir, candidate);
+    }
+
+    console.log(`[generateThumbnails] id=${id} video_url=${item.video_url} public_video_url=${item.public_video_url} resolved=${videoPath}`);
+
+    if (!videoPath) {
+      return res.status(400).json({ error: 'Video file not found on server. Please wait for transcoding to complete or re-upload the video.' });
     }
 
     // Get video duration via ffprobe
     const duration = await new Promise((resolve, reject) => {
-      ffmpeg.ffprobe(localPath, (err, meta) => {
+      ffmpeg.ffprobe(videoPath, (err, meta) => {
         if (err) reject(err);
         else resolve(meta.format.duration || 30);
       });
@@ -3293,16 +3319,17 @@ async function generateThumbnails(req, res) {
     const results = await Promise.all(
       timestamps.map((ts, i) => new Promise((resolve) => {
         const framePath = path.join(uploadsDir, `frame_${id}_${i}.jpg`);
-        ffmpeg(localPath)
+        ffmpeg(videoPath)
           .seekInput(ts)
           .frames(1)
-          .size('1280x720')
-          .aspect('16:9')
-          .autopad()
+          .outputOptions([
+            '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black',
+            '-q:v', '2'
+          ])
           .output(framePath)
           .on('end', () => resolve(`${baseUrl}/uploads/frame_${id}_${i}.jpg`))
-          .on('error', (err) => {
-            console.warn(`[generateThumbnails] Frame ${i} failed:`, err.message);
+          .on('error', (e) => {
+            console.warn(`[generateThumbnails] Frame ${i} at ${ts}s failed:`, e.message);
             resolve(null);
           })
           .run();
@@ -3310,7 +3337,7 @@ async function generateThumbnails(req, res) {
     );
 
     const thumbnails = results.filter(Boolean);
-    if (!thumbnails.length) return res.status(500).json({ error: 'Frame extraction failed — try again' });
+    if (!thumbnails.length) return res.status(500).json({ error: 'Frame extraction failed — FFmpeg could not read the video file.' });
 
     res.json({ success: true, thumbnails });
   } catch (err) {

@@ -44,6 +44,7 @@ export function ApprovalRoom({
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteResults, setDeleteResults] = useState(null);
   const [thumbOptions, setThumbOptions] = useState([]);
+  const [thumbBestIndex, setThumbBestIndex] = useState(0);
   const [generatingThumbs, setGeneratingThumbs] = useState(false);
   const [thumbError, setThumbError] = useState('');
 
@@ -82,6 +83,7 @@ export function ApprovalRoom({
       });
     }
     setThumbOptions([]);
+    setThumbBestIndex(0);
     setThumbError('');
   }, [selectedItem, setEditValues]);
 
@@ -93,9 +95,10 @@ export function ApprovalRoom({
       const context = firstGenContext || editValues.youtube_description || editValues.caption || '';
       const res = await api.generateThumbnails(selectedItem.id, context);
       if (res.success && res.thumbnails?.length) {
+        const best = res.bestIndex ?? 0;
         setThumbOptions(res.thumbnails);
-        // Auto-select the first frame as thumbnail immediately
-        setEditValues(prev => ({ ...prev, thumbnail_url: res.thumbnails[0] }));
+        setThumbBestIndex(best);
+        setEditValues(prev => ({ ...prev, thumbnail_url: res.thumbnails[best] }));
       }
     } catch (err) {
       console.error('Thumbnail generation failed:', err);
@@ -362,6 +365,7 @@ export function ApprovalRoom({
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
                       {thumbOptions.map((url, i) => {
                         const isSelected = editValues.thumbnail_url === url;
+                        const isAiPick = i === thumbBestIndex;
                         return (
                           <div key={i} onClick={() => setEditValues(prev => ({ ...prev, thumbnail_url: url }))}
                             style={{
@@ -373,6 +377,11 @@ export function ApprovalRoom({
                             }}
                           >
                             <img src={url} alt={`Frame ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                            {isAiPick && (
+                              <div style={{ position: 'absolute', top: 4, left: 4, background: 'var(--gold)', color: '#000', fontSize: 7, fontWeight: 800, padding: '2px 5px', borderRadius: 3, letterSpacing: '0.04em' }}>
+                                ✦ AI PICK
+                              </div>
+                            )}
                             <div style={{ position: 'absolute', bottom: 3, left: 5, fontSize: 8, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.9)', background: 'rgba(0,0,0,0.5)', padding: '1px 5px', borderRadius: 3 }}>
                               {isSelected ? '✓ Active' : `Frame ${i + 1}`}
                             </div>

@@ -17,6 +17,8 @@ const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
 ffmpeg.setFfmpegPath(ffmpegPath);
 const ffprobePath = require("@ffprobe-installer/ffprobe").path;
 ffmpeg.setFfprobePath(ffprobePath);
+const { GoogleGenAI } = require("@google/genai");
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 
 function extractDriveFileId(url) {
@@ -3316,18 +3318,18 @@ async function generateThumbnails(req, res) {
     const pcts = [0.1, 0.3, 0.6, 0.85];
     const timestamps = pcts.map(p => Math.max(1, Math.floor(duration * p)));
 
+    const framePaths = timestamps.map((_, i) => path.join(uploadsDir, `frame_${id}_${i}.jpg`));
+
     const results = await Promise.all(
       timestamps.map((ts, i) => new Promise((resolve) => {
-        const framePath = path.join(uploadsDir, `frame_${id}_${i}.jpg`);
         ffmpeg(videoPath)
           .seekInput(ts)
           .frames(1)
           .outputOptions([
-            // Scale to fill 1280×720 (zoom in, no black bars), then center-crop
             '-vf', 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720:(iw-1280)/2:(ih-720)/2',
             '-q:v', '2'
           ])
-          .output(framePath)
+          .output(framePaths[i])
           .on('end', () => resolve(`${baseUrl}/uploads/frame_${id}_${i}.jpg`))
           .on('error', (e) => {
             console.warn(`[generateThumbnails] Frame ${i} at ${ts}s failed:`, e.message);
@@ -3340,7 +3342,40 @@ async function generateThumbnails(req, res) {
     const thumbnails = results.filter(Boolean);
     if (!thumbnails.length) return res.status(500).json({ error: 'Frame extraction failed — FFmpeg could not read the video file.' });
 
-    res.json({ success: true, thumbnails });
+    // Ask Gemini 2.0 Flash to pick the best frame for a thumbnail
+    let bestIndex = 0;
+    if (genAI && thumbnails.length > 1) {
+      try {
+        const contents = [
+          'These are frames extracted from a video. Which frame number (1, 2, 3, or 4) makes the best YouTube or Instagram thumbnail? Look for: clear subject visibility, good lighting, expressive face or action, sharp focus. Reply with ONLY a single digit — 1, 2, 3, or 4.'
+        ];
+        for (let i = 0; i < framePaths.length; i++) {
+          if (fs.existsSync(framePaths[i])) {
+            contents.push(`Frame ${i + 1}:`);
+            contents.push({
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: fs.readFileSync(framePaths[i]).toString('base64')
+              }
+            });
+          }
+        }
+        const response = await genAI.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents
+        });
+        const text = (response.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+        const picked = parseInt(text.match(/[1-4]/)?.[0]) - 1;
+        if (!isNaN(picked) && picked >= 0 && picked < thumbnails.length) {
+          bestIndex = picked;
+        }
+        console.log(`[generateThumbnails] Gemini picked frame ${picked + 1} (raw: "${text}")`);
+      } catch (geminiErr) {
+        console.warn('[generateThumbnails] Gemini selection failed, using first frame:', geminiErr.message);
+      }
+    }
+
+    res.json({ success: true, thumbnails, bestIndex });
   } catch (err) {
     console.error('[generateThumbnails] Error:', err);
     res.status(500).json({ error: err.message });

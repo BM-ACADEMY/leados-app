@@ -2176,11 +2176,33 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
 
         const ytTitle = post.youtube_title || post.thumbnail_title || post.video_name || 'Social Media Video';
         const ytDesc = post.youtube_description || post.caption || post.description || '';
-        
+
+        // Resolve thumbnail_url to a local file path
+        let localThumbnailPath = null;
+        if (post.thumbnail_url) {
+          const thumbUrlParts = post.thumbnail_url.split('/uploads/');
+          if (thumbUrlParts.length > 1) {
+            const thumbFilename = thumbUrlParts[1].split('?')[0];
+            const candidate = path.join(__dirname, '../uploads', thumbFilename);
+            if (fs.existsSync(candidate)) localThumbnailPath = candidate;
+          }
+          if (!localThumbnailPath) {
+            // Try downloading it
+            try {
+              const tempThumbPath = path.join(os.tmpdir(), `temp_yt_thumb_${post.id}_${Date.now()}.jpg`);
+              await downloadFile(post.thumbnail_url, tempThumbPath);
+              localThumbnailPath = tempThumbPath;
+            } catch (dlErr) {
+              console.warn(`[BackgroundPublish] Could not download thumbnail for YouTube: ${dlErr.message}`);
+            }
+          }
+        }
+
         publishRes = await publishVideoToYouTube(oauth2Client, {
           title: ytTitle,
           description: ytDesc,
-          localVideoPath: localVideoPath
+          localVideoPath: localVideoPath,
+          localThumbnailPath: localThumbnailPath
         });
 
         if (localVideoPath.includes('temp_youtube_source_') && fs.existsSync(localVideoPath)) {
@@ -2911,7 +2933,7 @@ async function getFreshYoutubeClient(encryptedTokens) {
   return oauth2Client;
 }
 
-async function publishVideoToYouTube(oauth2Client, { title, description, localVideoPath }) {
+async function publishVideoToYouTube(oauth2Client, { title, description, localVideoPath, localThumbnailPath }) {
   console.log(`[YouTube Publish] Starting YouTube video upload for file: ${localVideoPath}`);
   
   let isShort = false;
@@ -2959,10 +2981,29 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
       }
     });
 
-    console.log(`[YouTube Publish] Upload success. Video ID: ${response.data.id}`);
+    const videoId = response.data.id;
+    console.log(`[YouTube Publish] Upload success. Video ID: ${videoId}`);
+
+    // Set custom thumbnail if provided
+    if (localThumbnailPath && fs.existsSync(localThumbnailPath)) {
+      try {
+        await youtube.thumbnails.set({
+          videoId: videoId,
+          media: {
+            mimeType: 'image/jpeg',
+            body: fs.createReadStream(localThumbnailPath)
+          }
+        });
+        console.log(`[YouTube Publish] Custom thumbnail set for video ${videoId}`);
+      } catch (thumbErr) {
+        // Thumbnail upload can fail if channel is not verified — not fatal
+        console.warn(`[YouTube Publish] Failed to set thumbnail (channel may need verification): ${thumbErr.message}`);
+      }
+    }
+
     return {
       success: true,
-      post_id: response.data.id
+      post_id: videoId
     };
   } catch (err) {
     console.error(`[YouTube Publish] API insertion failed:`, err);

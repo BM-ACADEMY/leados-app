@@ -47,6 +47,7 @@ export function ApprovalRoom({
   const [thumbBestIndex, setThumbBestIndex] = useState(0);
   const [generatingThumbs, setGeneratingThumbs] = useState(false);
   const [generatingPoster, setGeneratingPoster] = useState(false);
+  const [posterPreviewUrl, setPosterPreviewUrl] = useState('');
   const [thumbError, setThumbError] = useState('');
   const prevItemIdRef = useRef(null);
 
@@ -95,6 +96,7 @@ export function ApprovalRoom({
       setThumbOptions([]);
       setThumbBestIndex(0);
       setThumbError('');
+      setPosterPreviewUrl('');
     }
   }, [selectedItem, setEditValues]);
 
@@ -123,11 +125,11 @@ export function ApprovalRoom({
     if (!selectedItem || !editValues.thumbnail_url) return;
     setGeneratingPoster(true);
     setThumbError('');
+    setPosterPreviewUrl('');
     try {
       const res = await api.generatePoster(selectedItem.id, editValues.thumbnail_url);
       if (res.success && res.poster_url) {
-        setEditValues(prev => ({ ...prev, thumbnail_url: res.poster_url }));
-        setThumbOptions([]);
+        setPosterPreviewUrl(res.poster_url);
       }
     } catch (err) {
       setThumbError(err.message || 'Poster generation failed. Try again.');
@@ -365,57 +367,18 @@ export function ApprovalRoom({
                   </div>
                 )}
 
-                {/* Selected frame large preview */}
-                {editValues.thumbnail_url && (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', width: '100%', aspectRatio: '16/9', border: '2px solid var(--teal)', boxShadow: '0 0 0 3px rgba(0,196,160,0.15)' }}>
-                      <img
-                        src={editValues.thumbnail_url}
-                        alt="Selected thumbnail"
-                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                      />
-                      <div style={{ position: 'absolute', top: 8, left: 8, background: 'var(--teal)', color: 'var(--bg)', fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.05em' }}>
-                        ✓ SELECTED THUMBNAIL
-                      </div>
-                      {generatingPoster && (
-                        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                          <span style={{ display: 'inline-block', width: 28, height: 28, borderRadius: '50%', border: '3px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--gold)', animation: 'spin 0.8s linear infinite' }} />
-                          <span style={{ color: '#fff', fontSize: 11, fontWeight: 600 }}>Gemini is enhancing…</span>
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
-                      <div style={{ fontSize: 10, color: 'var(--teal)' }}>Thumbnail set — click Save Captions to apply</div>
-                      <button
-                        onClick={handleGeneratePoster}
-                        disabled={generatingPoster}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 5,
-                          padding: '5px 11px', fontSize: 10, fontWeight: 700, borderRadius: 6,
-                          background: generatingPoster ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(255,196,0,0.2), rgba(255,140,0,0.15))',
-                          color: generatingPoster ? 'var(--t3)' : 'var(--gold)',
-                          border: generatingPoster ? '1px solid var(--b1)' : '1px solid rgba(255,196,0,0.35)',
-                          cursor: generatingPoster ? 'not-allowed' : 'pointer'
-                        }}
-                      >
-                        {generatingPoster ? 'Enhancing…' : '✦ Make AI Poster'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Frame grid */}
+                {/* Frame grid — always visible once extracted */}
                 {thumbOptions.length > 0 && (
-                  <div style={{ paddingBottom: 12 }}>
+                  <div style={{ paddingBottom: 10 }}>
                     <div style={{ fontSize: 10, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 8 }}>
-                      ⬡ Pick a different frame
+                      ⬡ Pick a frame from your video
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
                       {thumbOptions.map((url, i) => {
                         const isSelected = editValues.thumbnail_url === url;
                         const isAiPick = i === thumbBestIndex;
                         return (
-                          <div key={i} onClick={() => setEditValues(prev => ({ ...prev, thumbnail_url: url }))}
+                          <div key={i} onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: url })); setPosterPreviewUrl(''); }}
                             style={{
                               position: 'relative', cursor: 'pointer', borderRadius: 7, overflow: 'hidden',
                               aspectRatio: '16/9',
@@ -431,11 +394,72 @@ export function ApprovalRoom({
                               </div>
                             )}
                             <div style={{ position: 'absolute', bottom: 3, left: 5, fontSize: 8, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.9)', background: 'rgba(0,0,0,0.5)', padding: '1px 5px', borderRadius: 3 }}>
-                              {isSelected ? '✓ Active' : `Frame ${i + 1}`}
+                              {isSelected ? '✓ Selected' : `Frame ${i + 1}`}
                             </div>
                           </div>
                         );
                       })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Selected frame large preview */}
+                {editValues.thumbnail_url && thumbOptions.some(u => u === editValues.thumbnail_url) && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', width: '100%', aspectRatio: '16/9', border: '2px solid var(--teal)', boxShadow: '0 0 0 3px rgba(0,196,160,0.15)' }}>
+                      <img
+                        src={editValues.thumbnail_url}
+                        alt="Selected thumbnail"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                      <div style={{ position: 'absolute', top: 8, left: 8, background: 'var(--teal)', color: 'var(--bg)', fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.05em' }}>
+                        ✓ SELECTED THUMBNAIL
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                      <div style={{ fontSize: 10, color: 'var(--teal)' }}>Thumbnail set — click Save Captions to apply</div>
+                      <button
+                        onClick={handleGeneratePoster}
+                        disabled={generatingPoster}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 5,
+                          padding: '5px 11px', fontSize: 10, fontWeight: 700, borderRadius: 6,
+                          background: generatingPoster ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(255,196,0,0.2), rgba(255,140,0,0.15))',
+                          color: generatingPoster ? 'var(--t3)' : 'var(--gold)',
+                          border: generatingPoster ? '1px solid var(--b1)' : '1px solid rgba(255,196,0,0.35)',
+                          cursor: generatingPoster ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {generatingPoster
+                          ? <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid rgba(255,196,0,0.3)', borderTopColor: 'var(--gold)', animation: 'spin 0.8s linear infinite' }} /> Generating…</>
+                          : '✦ Make AI Poster'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Poster preview — separate from selected frame */}
+                {posterPreviewUrl && (
+                  <div style={{ marginBottom: 10, borderRadius: 8, overflow: 'hidden', border: '2px solid rgba(255,196,0,0.4)', boxShadow: '0 0 0 3px rgba(255,196,0,0.1)' }}>
+                    <div style={{ background: 'rgba(255,196,0,0.08)', padding: '6px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--gold)', letterSpacing: '0.04em' }}>✦ AI POSTER PREVIEW</span>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: posterPreviewUrl })); setPosterPreviewUrl(''); }}
+                          style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 5, background: 'var(--gold)', color: '#000', border: 'none', cursor: 'pointer' }}
+                        >
+                          ✓ Use as Thumbnail
+                        </button>
+                        <button
+                          onClick={() => setPosterPreviewUrl('')}
+                          style={{ fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 5, background: 'var(--bg3)', color: 'var(--t3)', border: '1px solid var(--b1)', cursor: 'pointer' }}
+                        >
+                          Discard
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ aspectRatio: '16/9', position: 'relative' }}>
+                      <img src={posterPreviewUrl} alt="AI Poster" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                     </div>
                   </div>
                 )}

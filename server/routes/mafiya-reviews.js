@@ -1113,6 +1113,112 @@ Return ONLY a valid JSON object matching this structure (no markdown wrapper, no
   }
 });
 
+// POST /api/mafiya/reviews/brain/suggest-posts
+router.post('/brain/suggest-posts', async (req, res) => {
+  const { clientId, month } = req.body;
+  if (!clientId) return res.status(400).json({ error: 'clientId is required' });
+  const targetMonth = month || 'Month 1';
+
+  try {
+    // 1. Fetch business profile details
+    const clientRes = await pool.query(
+      'SELECT business_name, business_category, custom_category, phone_number, business_address FROM mafiya_gmb_clients WHERE id = $1',
+      [clientId]
+    );
+    if (clientRes.rowCount === 0) {
+      return res.status(404).json({ error: 'Client business profile not found.' });
+    }
+    const client = clientRes.rows[0];
+    const name = client.business_name;
+    const phone = client.phone_number || '';
+    const address = client.business_address || '';
+    const category = client.business_category || client.custom_category || '';
+
+    // 2. Fetch GMB Brain settings
+    const brainRes = await pool.query('SELECT entry_type, content FROM mafiya_gmb_brain WHERE client_id = $1', [clientId]);
+    
+    let tone = 'Friendly';
+    let keywords = [];
+    let offers = [];
+    let seasonal = [];
+
+    brainRes.rows.forEach(entry => {
+      try {
+        const parsed = JSON.parse(entry.content);
+        if (entry.entry_type === 'tone') {
+          tone = parsed.voice || 'Friendly';
+        } else if (entry.entry_type === 'keyword') {
+          keywords = Array.isArray(parsed) ? parsed : (parsed.keywords || []);
+        } else if (entry.entry_type === 'offer') {
+          offers = Array.isArray(parsed) ? parsed : [parsed];
+        } else if (entry.entry_type === 'seasonal') {
+          seasonal = Array.isArray(parsed) ? parsed : [parsed];
+        }
+      } catch (e) {}
+    });
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+    }
+
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const prompt = `You are an expert Local SEO & GMB Content Planner. Generate a 4-week calendar of GMB Posts specifically for **${targetMonth}** for:
+Business Name: "${name}"
+Category: "${category}"
+Location/Address: "${address}"
+Phone: "${phone}"
+Tone configuration: "${tone}"
+Keywords to target: ${JSON.stringify(keywords)}
+Active Offers: ${JSON.stringify(offers)}
+Seasonal Context: ${JSON.stringify(seasonal)}
+
+Generate exactly 4 posts (Week 1, Week 2, Week 3, Week 4).
+Ensure the ideas are customized for **${targetMonth}** (make them distinct, fresh, and engaging, fitting the progression of campaigns).
+Week 1 MUST be a Promotional/Offer Post (incorporate active offers if available).
+Week 2 MUST be an Educational/Keyword showcase post (use target keywords naturally).
+Week 3 MUST be a Seasonal/Event Post (incorporate seasonal context if available).
+Week 4 MUST be a Brand Core Values/Social proof post.
+
+Ensure the post copy (captions) matches the Tone rules.
+Return ONLY a valid JSON array of 4 items with exactly the following structure (no markdown wrapper, no extra text):
+[
+  {
+    "week": "Week 1",
+    "title": "Promotion & Service Offer",
+    "type": "Offer Post",
+    "caption": "Post caption here...",
+    "visual": "Description of recommended banner image to generate...",
+    "tone": "Friendly / Conversational compliance description",
+    "hashtags": "#Keyword1 #Keyword2"
+  },
+  ...
+]`;
+
+    let response;
+    try {
+      response = await genAI.models.generateContent({
+        model: 'gemini-3.5-flash-lite',
+        contents: prompt
+      });
+    } catch (apiErr) {
+      response = await genAI.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: prompt
+      });
+    }
+
+    let cleanedText = response.text?.trim() || '';
+    if (cleanedText.startsWith('```')) {
+      cleanedText = cleanedText.replace(/^```json\s*/, '').replace(/```$/, '').trim();
+    }
+    const parsedData = JSON.parse(cleanedText);
+    res.json(parsedData);
+  } catch (err) {
+    console.error('[Mafiya Reviews] GMB Brain suggest posts error:', err);
+    res.status(500).json({ error: 'Failed to suggest GMB posts: ' + err.message });
+  }
+});
+
 // POST save/update GMB Brain entry
 router.post('/brain', async (req, res) => {
   const { id, clientId, entryType, content } = req.body;

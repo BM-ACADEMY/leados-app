@@ -2671,32 +2671,75 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 // ── START ─────────────────────────────────────────────────
-httpServer.listen(PORT, () => {
-  console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);
+function startServer(retryCount = 0) {
+  httpServer.listen(PORT, () => {
+    console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);
 
-  // Reset any stuck publishing jobs on startup to prevent limbo states
-  pool.query(`
-    UPDATE publish_queue 
-    SET status = 'failed', 
-        error_message = 'Publishing interrupted by server restart', 
-        updated_at = NOW() 
-    WHERE status = 'publishing'
-  `).then(async (res) => {
-    if (res.rowCount > 0) {
-      console.log(`[Startup] Cleaned up ${res.rowCount} stuck publishing jobs.`);
-      const { rows } = await pool.query(`
-        SELECT DISTINCT content_id FROM publish_queue 
-        WHERE error_message = 'Publishing interrupted by server restart'
-      `);
-      const { updateOverallPostStatus } = require("./controllers/contentController");
-      for (const r of rows) {
-        await updateOverallPostStatus(r.content_id);
+    // Reset any stuck publishing jobs on startup to prevent limbo states
+    pool.query(`
+      UPDATE publish_queue 
+      SET status = 'failed', 
+          error_message = 'Publishing interrupted by server restart', 
+          updated_at = NOW() 
+      WHERE status = 'publishing'
+    `).then(async (res) => {
+      if (res.rowCount > 0) {
+        console.log(`[Startup] Cleaned up ${res.rowCount} stuck publishing jobs.`);
+        const { rows } = await pool.query(`
+          SELECT DISTINCT content_id FROM publish_queue 
+          WHERE error_message = 'Publishing interrupted by server restart'
+        `);
+        const { updateOverallPostStatus } = require("./controllers/contentController");
+        for (const r of rows) {
+          await updateOverallPostStatus(r.content_id);
+        }
       }
-    }
-  }).catch(err => {
-    console.error('[Startup] Failed to clean up stuck publishing jobs:', err.message);
+    }).catch(err => {
+      console.error('[Startup] Failed to clean up stuck publishing jobs:', err.message);
+    });
   });
+
+  httpServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && retryCount < 3) {
+      console.warn(`[Startup] Port ${PORT} in use, killing old process and retrying (attempt ${retryCount + 1}/3)...`);
+      const { execSync } = require('child_process');
+      try {
+        // Find and kill the process holding the port
+        const result = execSync(`netstat -ano | findstr :${PORT} | findstr LISTENING`, { encoding: 'utf8' });
+        const lines = result.trim().split('\n');
+        const pids = new Set();
+        for (const line of lines) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parts[parts.length - 1];
+          if (pid && pid !== '0' && pid !== String(process.pid)) pids.add(pid);
+        }
+        for (const pid of pids) {
+          try {
+            execSync(`taskkill /PID ${pid} /F`, { encoding: 'utf8' });
+            console.log(`[Startup] Killed old process PID ${pid}`);
+          } catch (e) { /* already dead */ }
+        }
+      } catch (e) { /* no process found */ }
+
+      // Wait a moment then retry
+      setTimeout(() => startServer(retryCount + 1), 1500);
+    } else {
+      console.error(`[Startup] Fatal server error:`, err);
+      process.exit(1);
+    }
+  });
+}
+
+// Graceful shutdown for nodemon restarts
+process.on('SIGTERM', () => {
+  console.log('[Shutdown] SIGTERM received, closing server...');
+  httpServer.close(() => process.exit(0));
+});
+process.on('SIGINT', () => {
+  console.log('[Shutdown] SIGINT received, closing server...');
+  httpServer.close(() => process.exit(0));
 });
 
-module.exports = { app, httpServer, io };
-  
+startServer();
+
+module.exports = { app, httpServer, io };

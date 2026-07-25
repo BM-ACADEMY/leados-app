@@ -431,8 +431,8 @@ export function ApprovalRoom({
                         }}
                       >
                         {generatingPoster
-                          ? <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid rgba(255,196,0,0.3)', borderTopColor: 'var(--gold)', animation: 'spin 0.8s linear infinite' }} /> Generating…</>
-                          : '✦ Make AI Poster'}
+                          ? <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid rgba(255,196,0,0.3)', borderTopColor: 'var(--gold)', animation: 'spin 0.8s linear infinite' }} /> Enhancing…</>
+                          : '✦ Enhance as Thumbnail'}
                       </button>
                     </div>
                   </div>
@@ -442,7 +442,7 @@ export function ApprovalRoom({
                 {posterPreviewUrl && (
                   <div style={{ marginBottom: 10, borderRadius: 8, overflow: 'hidden', border: '2px solid rgba(255,196,0,0.4)', boxShadow: '0 0 0 3px rgba(255,196,0,0.1)' }}>
                     <div style={{ background: 'rgba(255,196,0,0.08)', padding: '6px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--gold)', letterSpacing: '0.04em' }}>✦ AI POSTER PREVIEW</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--gold)', letterSpacing: '0.04em' }}>✦ ENHANCED THUMBNAIL</span>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button
                           onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: posterPreviewUrl })); setPosterPreviewUrl(''); }}

@@ -20,6 +20,60 @@ ffmpeg.setFfprobePath(ffprobePath);
 const { GoogleGenAI } = require("@google/genai");
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
+// Helper: multi-model fallback for text generation
+// Tries multiple models so rate limits on one don't block everything
+async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
+  const geminiModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+  
+  // Strategy 1: Try Gemini models in order
+  if (genAI) {
+    for (const model of geminiModels) {
+      try {
+        const response = await genAI.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            maxOutputTokens: maxTokens,
+            temperature,
+            responseMimeType: 'application/json'
+          }
+        });
+        const text = (response.candidates?.[0]?.content?.parts?.[0]?.text || response.text || '').trim();
+        if (text) {
+          console.log(`[geminiChat] Success with model: ${model}`);
+          return text;
+        }
+      } catch (err) {
+        const isRateLimit = err.status === 429 || err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED') || err.message?.includes('quota');
+        if (isRateLimit) {
+          console.warn(`[geminiChat] ${model} rate limited, trying next...`);
+          continue;
+        }
+        // Non-rate-limit error — still try next model
+        console.warn(`[geminiChat] ${model} failed: ${err.message}, trying next...`);
+        continue;
+      }
+    }
+  }
+
+  // Strategy 2: Fall back to Groq llama
+  try {
+    console.log('[geminiChat] All Gemini models exhausted, falling back to Groq...');
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: maxTokens,
+      temperature,
+      response_format: { type: 'json_object' },
+      messages: [{ role: 'user', content: prompt }]
+    });
+    return response.choices[0].message.content.trim();
+  } catch (groqErr) {
+    console.error('[geminiChat] Groq fallback also failed:', groqErr.message);
+  }
+
+  throw new Error('All AI models are currently rate limited. Please wait a few minutes and try again.');
+}
+
 
 function extractDriveFileId(url) {
   if (!url) return null;
@@ -649,15 +703,7 @@ Do NOT use markdown code blocks. Respond ONLY with a valid JSON array matching t
 ]`;
 
   try {
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 1500,
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    const content = response.choices[0].message.content.trim();
+    const content = await geminiChat({ prompt, maxTokens: 1500, temperature: 0.7 });
     const result = JSON.parse(content);
 
     const arrayResult = Array.isArray(result) ? result : (result.results || result.captions || Object.values(result)[0]);
@@ -2494,15 +2540,7 @@ Respond ONLY with a valid JSON object:
   ]
 }`;
 
-      const allResponse = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        max_tokens: 2500,
-        temperature: 0.7,
-        response_format: { type: 'json_object' },
-        messages: [{ role: 'user', content: allPrompt }]
-      });
-
-      const allContent = allResponse.choices[0].message.content.trim();
+      const allContent = await geminiChat({ prompt: allPrompt, maxTokens: 2500, temperature: 0.7 });
       const allResult = JSON.parse(allContent);
       return res.json({ success: true, meta: allResult });
     }
@@ -2536,14 +2574,8 @@ Respond ONLY as valid JSON:
   ]
 }`;
 
-      const hashRes = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        max_tokens: 800,
-        temperature: 0.6,
-        response_format: { type: 'json_object' },
-        messages: [{ role: 'user', content: hashtagPrompt }]
-      });
-      const hashResult = JSON.parse(hashRes.choices[0].message.content.trim());
+      const hashContent = await geminiChat({ prompt: hashtagPrompt, maxTokens: 800, temperature: 0.6 });
+      const hashResult = JSON.parse(hashContent);
       return res.json({ success: true, suggestions: hashResult.suggestions });
     }
 
@@ -2673,15 +2705,7 @@ For each caption, output its category style.
 }
 Do not write any introductory or explanatory text. Return ONLY the valid JSON object.`;
 
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 1500,
-      temperature: 0.8,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    const content = response.choices[0].message.content.trim();
+    const content = await geminiChat({ prompt, maxTokens: 1500, temperature: 0.8 });
     const result = JSON.parse(content);
 
     res.json({ success: true, suggestions: result.suggestions });
@@ -2770,15 +2794,7 @@ For each story set, output its category style.
 }
 Do not write any introductory or explanatory text. Return ONLY the valid JSON object.`;
 
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 1800,
-      temperature: 0.8,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    const content = response.choices[0].message.content.trim();
+    const content = await geminiChat({ prompt, maxTokens: 1800, temperature: 0.8 });
     const result = JSON.parse(content);
 
     res.json({ success: true, suggestions: result.suggestions });
@@ -3485,48 +3501,149 @@ async function generatePoster(req, res) {
 
     const frameBase64 = fs.readFileSync(framePath).toString('base64');
 
-    // Get video context
+    // Get video context (title, caption)
     const { rows } = await pool.query(
-      `SELECT youtube_title, thumbnail_title, caption, instagram_caption FROM content_queue WHERE id = $1`,
+      `SELECT youtube_title, thumbnail_title, caption, instagram_caption, brand_name FROM content_queue WHERE id = $1`,
       [id]
     );
     const title = rows[0]?.youtube_title || rows[0]?.thumbnail_title || '';
+    const caption = rows[0]?.caption || rows[0]?.instagram_caption || '';
+    const brandName = rows[0]?.brand_name || '';
 
-    // Step 1: Gemini Vision analyzes the selected frame for a rich scene description
-    let sceneDesc = title || 'professional video content';
+    const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
+    let posterGenerated = false;
+
+    // === Strategy 1: Gemini Image Editing (uses the actual frame) ===
     if (genAI) {
       try {
-        const descRes = await genAI.models.generateContent({
-          model: 'gemini-2.0-flash',
+        console.log(`[generatePoster] Attempting Gemini image editing for id=${id}`);
+        const editPrompt = `Transform this video frame into a professional YouTube thumbnail poster. Keep the SAME person and scene exactly as they are. Apply these enhancements:
+- Add dramatic cinematic lighting and contrast boost
+- Add a subtle dark gradient vignette around the edges
+- Make the colors more vivid and saturated
+- Add a subtle glow/rim light effect around the main subject
+- Make it look like a high-quality professional YouTube thumbnail
+${title ? `The video topic is: "${title}"` : ''}
+Do NOT change the person's face or body. Do NOT add any text, words, or letters. Keep the original composition. Output only the enhanced image.`;
+
+        const response = await genAI.models.generateContent({
+          model: 'gemini-2.0-flash-preview-image-generation',
           contents: [
             {
               role: 'user',
               parts: [
                 { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
-                { text: 'Describe this video frame in 1-2 sentences to help generate a YouTube thumbnail poster. Include: the person\'s appearance and expression, background, mood, lighting, and color palette. Be specific and vivid. Output only the description.' }
+                { text: editPrompt }
               ]
             }
-          ]
+          ],
+          config: {
+            responseModalities: ['TEXT', 'IMAGE']
+          }
         });
-        const desc = descRes.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (desc) sceneDesc = desc;
-        console.log(`[generatePoster] Gemini scene description: ${sceneDesc}`);
-      } catch (visionErr) {
-        console.warn('[generatePoster] Gemini vision failed, using title:', visionErr.message);
+
+        // Extract the generated image from the response
+        if (response.candidates && response.candidates[0]?.content?.parts) {
+          for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData && part.inlineData.data) {
+              const imgBuffer = Buffer.from(part.inlineData.data, 'base64');
+              fs.writeFileSync(posterPath, imgBuffer);
+              posterGenerated = true;
+              console.log(`[generatePoster] Gemini image editing succeeded for id=${id}`);
+              break;
+            }
+          }
+        }
+
+        if (!posterGenerated) {
+          console.warn('[generatePoster] Gemini returned no image data, falling back to Jimp');
+        }
+      } catch (geminiEditErr) {
+        console.warn('[generatePoster] Gemini image editing failed, falling back to Jimp:', geminiEditErr.message);
       }
     }
 
-    // Step 2: Pollinations FLUX generates a cinematic poster from the description
-    const promptText = `Cinematic professional YouTube thumbnail poster. ${sceneDesc}${title ? `. Topic: ${title}` : ''}. Style: dramatic studio lighting, vivid bold colors, high contrast, photorealistic, 8K quality, modern thumbnail aesthetic, no text, no words, no letters, clean 16:9 composition`;
-    const encodedPrompt = encodeURIComponent(promptText);
-    const seed = Date.now() % 99999;
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=720&seed=${seed}&model=flux&nologo=true`;
+    // === Strategy 2: Jimp-based enhancement (fallback) ===
+    // Adds contrast boost + gradient overlay + title text on the actual frame
+    if (!posterGenerated) {
+      try {
+        console.log(`[generatePoster] Using Jimp fallback for id=${id}`);
+        const image = await Jimp.read(framePath);
 
-    const imgRes = await axios.get(pollinationsUrl, { responseType: 'arraybuffer', timeout: 90000 });
-    const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
-    fs.writeFileSync(posterPath, Buffer.from(imgRes.data));
+        // Resize to 1280x720 (YouTube thumbnail standard)
+        image.cover(1280, 720);
 
-    res.json({ success: true, poster_url: `${baseUrl}/uploads/poster_${id}.jpg` });
+        // Boost contrast and saturation
+        image.contrast(0.15);
+        image.brightness(0.05);
+
+        // Add a dark gradient overlay at the bottom for text readability
+        const gradientHeight = Math.floor(720 * 0.45);
+        for (let y = 720 - gradientHeight; y < 720; y++) {
+          const progress = (y - (720 - gradientHeight)) / gradientHeight;
+          const alpha = Math.floor(progress * 180); // 0 to 180 opacity
+          for (let x = 0; x < 1280; x++) {
+            const currentColor = image.getPixelColor(x, y);
+            const rgba = Jimp.intToRGBA(currentColor);
+            const blendedR = Math.max(0, Math.floor(rgba.r * (1 - alpha / 255)));
+            const blendedG = Math.max(0, Math.floor(rgba.g * (1 - alpha / 255)));
+            const blendedB = Math.max(0, Math.floor(rgba.b * (1 - alpha / 255)));
+            image.setPixelColor(
+              Jimp.rgbaToInt(blendedR, blendedG, blendedB, rgba.a),
+              x, y
+            );
+          }
+        }
+
+        // Add a subtle top vignette too
+        const topGradientHeight = Math.floor(720 * 0.2);
+        for (let y = 0; y < topGradientHeight; y++) {
+          const progress = 1 - (y / topGradientHeight);
+          const alpha = Math.floor(progress * 100);
+          for (let x = 0; x < 1280; x++) {
+            const currentColor = image.getPixelColor(x, y);
+            const rgba = Jimp.intToRGBA(currentColor);
+            const blendedR = Math.max(0, Math.floor(rgba.r * (1 - alpha / 255)));
+            const blendedG = Math.max(0, Math.floor(rgba.g * (1 - alpha / 255)));
+            const blendedB = Math.max(0, Math.floor(rgba.b * (1 - alpha / 255)));
+            image.setPixelColor(
+              Jimp.rgbaToInt(blendedR, blendedG, blendedB, rgba.a),
+              x, y
+            );
+          }
+        }
+
+        // Add title text if available (using Jimp's built-in font)
+        if (title) {
+          const font = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
+          const maxWidth = 1200;
+          const textHeight = Jimp.measureTextHeight(font, title, maxWidth);
+          const textY = 720 - textHeight - 40;
+          image.print(font, 40, textY, {
+            text: title.toUpperCase(),
+            alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT,
+            alignmentY: Jimp.VERTICAL_ALIGN_BOTTOM
+          }, maxWidth, textHeight + 20);
+        }
+
+        // Add brand name as a small badge at top-left
+        if (brandName) {
+          const smallFont = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
+          image.print(smallFont, 30, 24, brandName.toUpperCase());
+        }
+
+        await image.writeAsync(posterPath);
+        posterGenerated = true;
+        console.log(`[generatePoster] Jimp fallback poster created for id=${id}`);
+      } catch (jimpErr) {
+        console.error('[generatePoster] Jimp fallback also failed:', jimpErr);
+        return res.status(500).json({ error: 'Poster generation failed. Please try again.' });
+      }
+    }
+
+    // Add cache-busting timestamp to URL so browser loads the fresh poster
+    const ts = Date.now();
+    res.json({ success: true, poster_url: `${baseUrl}/uploads/poster_${id}.jpg?t=${ts}` });
   } catch (err) {
     console.error('[generatePoster] Error:', err);
     res.status(500).json({ error: err.message });

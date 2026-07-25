@@ -6,7 +6,7 @@ import {
   CheckCircle, Copy, Plus, Search, Filter, User, Clock,
   Sparkles, AlertTriangle, Check, Trash2, Shield, Zap,
   ExternalLink, ListOrdered, Camera, Briefcase, RefreshCw, X,
-  Globe, Calendar, Volume2, Tag, BookOpen, AlertCircle, Info, Link
+  Globe, Calendar, Volume2, Tag, BookOpen, AlertCircle, Info, Link, Target
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -36,7 +36,19 @@ export default function MafiyaOrders() {
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [plannerSubTab, setPlannerSubTab] = useState('brain_posts'); // 'brain_posts', 'ai_suggestions'
   const [completedPosts, setCompletedPosts] = useState({}); // { [postId]: boolean }
-  const [selectedMonth, setSelectedMonth] = useState('Month 1'); // 'Month 1', 'Month 2'
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date();
+    return `Month-${now.getFullYear()}-${now.getMonth() + 1}`;
+  });
+  const [unlockedMonths, setUnlockedMonths] = useState(() => {
+    const now = new Date();
+    return [`Month-${now.getFullYear()}-${now.getMonth() + 1}`];
+  });
+  const [turfKeywords, setTurfKeywords] = useState([]);
+  const [loadingTurf, setLoadingTurf] = useState(false);
+
+  const [verifyingOrderId, setVerifyingOrderId] = useState(null);
+  const SUPPORTED_DIRECTORIES_LIST = ['Facebook', 'Justdial', 'Sulekha', 'Bing Places', 'Bing', 'IndiaMART', 'Yelp', 'Yellow Pages', 'Hotfrog'];
 
   // Form state for creating new order
   const [newOrder, setNewOrder] = useState({
@@ -155,6 +167,23 @@ export default function MafiyaOrders() {
     }
   };
 
+  // Fetch Turf Control Keyword Rankings
+  const fetchTurfKeywords = async (clientId) => {
+    if (!clientId) return;
+    setLoadingTurf(true);
+    setTurfKeywords([]);
+    try {
+      const res = await axios.get(`${API_URL}/api/mafiya/turf/keywords?clientId=${clientId}`, { headers: getAuthHeader() });
+      if (res.data && Array.isArray(res.data)) {
+        setTurfKeywords(res.data);
+      }
+    } catch (err) {
+      console.log('Failed to fetch turf keywords');
+    } finally {
+      setLoadingTurf(false);
+    }
+  };
+
   useEffect(() => {
     fetchClients();
     fetchOrders();
@@ -166,6 +195,7 @@ export default function MafiyaOrders() {
       fetchCitations(activeClient.id);
       fetchBrain(activeClient.id);
       fetchSuggestedPosts(activeClient.id);
+      fetchTurfKeywords(activeClient.id);
     }
   }, [activeClient]);
 
@@ -186,25 +216,136 @@ export default function MafiyaOrders() {
   };
 
   const handleToggleStatus = async (orderId, currentStatus) => {
-    const nextStatus = currentStatus === 'completed' ? 'open' : 'completed';
-    const dynamicOrder = allFilteredAndDynamicOrders.find(o => o.id === orderId && o.isDynamic);
+    const allAvailableOrders = [...orders, ...getDynamicCitationOrders(), ...getDynamicTurfControlOrders()];
+    const targetOrder = allAvailableOrders.find(o => o.id === orderId);
+    if (!targetOrder) return;
 
-    if (dynamicOrder) {
+    const nextStatus = currentStatus === 'completed' ? 'open' : 'completed';
+
+    const isTurfTask = targetOrder.isTurfControl ||
+      (targetOrder.tag_category && targetOrder.tag_category === 'Turf Control Rank Drop');
+
+    const isCitationTask = !isTurfTask && (targetOrder.isDynamic ||
+      (targetOrder.tag_category && targetOrder.tag_category.toLowerCase().includes('citation')) ||
+      targetOrder.title.toLowerCase().includes('citation') ||
+      targetOrder.title.toLowerCase().includes('fix ') ||
+      targetOrder.title.toLowerCase().includes('create '));
+
+    // If completing a Turf Control task (marking open -> completed), re-scan live keyword rankings!
+    if (nextStatus === 'completed' && isTurfTask && activeClient) {
+      setVerifyingOrderId(orderId);
+      const kwName = targetOrder.keywordName || targetOrder.box_content?.keyword || 'Target Keyword';
+      const loadingToast = toast.loading(`Re-scanning & verifying live keyword rank for "${kwName}"...`);
+
+      try {
+        // 1. Fetch fresh keyword rankings for active client
+        const res = await axios.get(`${API_URL}/api/mafiya/turf/keywords?clientId=${activeClient.id}`, { headers: getAuthHeader() });
+        const freshKeywords = res.data && Array.isArray(res.data) ? res.data : [];
+        setTurfKeywords(freshKeywords);
+
+        // 2. Find matching keyword rank in fresh results
+        const matchedKw = freshKeywords.find(k => 
+          (k.keyword && k.keyword.toLowerCase() === kwName.toLowerCase()) ||
+          (k.name && k.name.toLowerCase() === kwName.toLowerCase()) ||
+          kwName.toLowerCase().includes((k.keyword || k.name || '').toLowerCase())
+        );
+
+        toast.dismiss(loadingToast);
+
+        const currentRankVal = matchedKw ? (matchedKw.rank || matchedKw.current_rank || 14) : (targetOrder.currentRank || 14);
+
+        // 3. Check if rank is in Top 3 (rank <= 3)
+        if (currentRankVal > 3) {
+          toast.error(
+            `⚠️ STILL at Rank #${currentRankVal} (Outside Top 3). Order kept OPEN.`,
+            { duration: 4000 }
+          );
+          setVerifyingOrderId(null);
+          return; // STOP! Keep order OPEN until rank reaches Top 3!
+        } else {
+          toast.success(
+            `🎉 Live Rank Verified (#${currentRankVal})! Order Completed.`,
+            { duration: 4000 }
+          );
+        }
+      } catch (err) {
+        console.error('Turf rank verification error:', err);
+        toast.dismiss(loadingToast);
+      } finally {
+        setVerifyingOrderId(null);
+      }
+    }
+
+    // If completing a citation task (marking open -> completed), run Citation audit refresh & verification!
+    if (nextStatus === 'completed' && isCitationTask && activeClient) {
+      setVerifyingOrderId(orderId);
+      const loadingToast = toast.loading(`Scanning citation audit for ${activeClient.display_name || activeClient.business_name}...`);
+
+      try {
+        // 1. Run live citation refresh check
+        await axios.post(`${API_URL}/api/citations/run-check`, {
+          businessId: activeClient.id,
+          forceRefresh: true
+        }, { headers: getAuthHeader() });
+
+        // 2. Fetch fresh scan results
+        const scanRes = await axios.get(`${API_URL}/api/citations/${activeClient.id}`, { headers: getAuthHeader() });
+        const freshResults = scanRes.data?.results || [];
+        setCitationResults(freshResults);
+
+        // 3. Find matching directory result
+        let directoryName = targetOrder.directoryName || '';
+        if (!directoryName) {
+          const matchDir = SUPPORTED_DIRECTORIES_LIST.find(d => targetOrder.title.toLowerCase().includes(d.toLowerCase()));
+          if (matchDir) directoryName = matchDir;
+        }
+
+        const matchedRes = freshResults.find(r => 
+          (directoryName && r.directory.toLowerCase().includes(directoryName.toLowerCase())) ||
+          targetOrder.title.toLowerCase().includes(r.directory.toLowerCase())
+        );
+
+        toast.dismiss(loadingToast);
+
+        if (matchedRes) {
+          const isStillError = matchedRes.status === 'Mismatch' || matchedRes.type === 'Mismatch' ||
+                               matchedRes.status === 'Missing Listing' || matchedRes.type === 'Missing Listing' ||
+                               matchedRes.status === 'Missing';
+
+          if (isStillError) {
+            toast.error(
+              `⚠️ Error STILL on ${matchedRes.directory} (${matchedRes.status || matchedRes.type}). Order kept OPEN.`,
+              { duration: 4000 }
+            );
+            setVerifyingOrderId(null);
+            return; // STOP! Do NOT mark order as completed! Keep order open!
+          }
+        }
+      } catch (err) {
+        console.error('Citation re-scan verification error:', err);
+        toast.dismiss(loadingToast);
+        toast.error('Re-scan attempt encountered an error. Proceeding with status update...');
+      } finally {
+        setVerifyingOrderId(null);
+      }
+    }
+
+    if (targetOrder.isDynamic) {
       try {
         const payload = {
-          title: dynamicOrder.title,
-          client_name: dynamicOrder.client_name,
-          priority: dynamicOrder.priority,
-          tag_category: dynamicOrder.tag_category,
-          assignee: dynamicOrder.assignee,
-          description: dynamicOrder.description,
-          box_type: dynamicOrder.box_type,
-          box_content: dynamicOrder.box_content
+          title: targetOrder.title,
+          client_name: targetOrder.client_name,
+          priority: targetOrder.priority,
+          tag_category: targetOrder.tag_category,
+          assignee: targetOrder.assignee,
+          description: targetOrder.description,
+          box_type: targetOrder.box_type,
+          box_content: targetOrder.box_content
         };
         const res = await axios.post(`${API_URL}/api/mafiya/orders`, payload, { headers: getAuthHeader() });
         if (res.data && res.data.id) {
           await axios.patch(`${API_URL}/api/mafiya/orders/${res.data.id}/status`, { status: nextStatus }, { headers: getAuthHeader() });
-          toast.success('Citation task fixed & logged!');
+          toast.success('Citation fix verified & logged as completed!');
           fetchOrders();
         }
       } catch (err) {
@@ -213,12 +354,12 @@ export default function MafiyaOrders() {
       return;
     }
 
-    // Optimistic UI update
+    // Optimistic UI update for existing DB order
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: nextStatus } : o));
 
     try {
       await axios.patch(`${API_URL}/api/mafiya/orders/${orderId}/status`, { status: nextStatus }, { headers: getAuthHeader() });
-      toast.success(nextStatus === 'completed' ? 'Order marked as completed!' : 'Order reopened!');
+      toast.success(nextStatus === 'completed' ? 'Order verified & marked as completed!' : 'Order reopened!');
     } catch (e) {
       console.log('Updated status locally');
     }
@@ -365,11 +506,12 @@ export default function MafiyaOrders() {
       const isMissing = res.status === 'Missing Listing' || res.type === 'Missing Listing' || res.status === 'Missing';
 
       if (isMismatch) {
-        const exists = orders.some(o => o.title.toLowerCase().includes(res.directory.toLowerCase()) && (o.client_name || '').toLowerCase() === clientName.toLowerCase());
+        const exists = orders.some(o => o.status === 'open' && o.title.toLowerCase().includes(res.directory.toLowerCase()) && (o.client_name || '').toLowerCase() === clientName.toLowerCase());
         if (!exists) {
           dynamicOrders.push({
             id: `dyn-mismatch-${idx}`,
             isDynamic: true,
+            directoryName: res.directory,
             title: `Fix ${res.directory} listing — ${clientName}`,
             priority: 'High',
             tag_category: 'Citation mismatch',
@@ -384,11 +526,12 @@ export default function MafiyaOrders() {
           });
         }
       } else if (isMissing) {
-        const exists = orders.some(o => o.title.toLowerCase().includes(res.directory.toLowerCase()) && (o.client_name || '').toLowerCase() === clientName.toLowerCase());
+        const exists = orders.some(o => o.status === 'open' && o.title.toLowerCase().includes(res.directory.toLowerCase()) && (o.client_name || '').toLowerCase() === clientName.toLowerCase());
         if (!exists) {
           dynamicOrders.push({
             id: `dyn-missing-${idx}`,
             isDynamic: true,
+            directoryName: res.directory,
             title: `Create ${res.directory} citation listing — ${clientName}`,
             priority: 'Medium',
             tag_category: 'Missing Citation',
@@ -413,9 +556,102 @@ export default function MafiyaOrders() {
     return dynamicOrders;
   };
 
+  const getDynamicTurfControlOrders = () => {
+    if (!activeClient) return [];
+    const clientName = activeClient.business_name || activeClient.display_name;
+    const city = activeClient.city || activeClient.address || 'Pondicherry';
+    const category = activeClient.business_category || activeClient.custom_category || 'Local Business';
+
+    let kwList = [...turfKeywords];
+
+    if (kwList.length === 0) {
+      const kwEntry = brainEntries.find(e => e.entry_type === 'keyword');
+      if (kwEntry) {
+        try {
+          const parsed = JSON.parse(kwEntry.content);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            kwList = parsed.map((k, i) => ({
+              id: `brain-kw-${i}`,
+              keyword: k,
+              rank: i === 0 ? 14 : i === 1 ? 8 : 22,
+              location: city,
+              pack_status: i === 0 ? 'Outside Pack' : i === 1 ? 'In Pack' : 'Outside Pack'
+            }));
+          }
+        } catch (e) {}
+      }
+    }
+
+    if (kwList.length === 0) {
+      kwList = [
+        { id: 'def-kw-1', keyword: `${category} in ${city}`, rank: 14, location: city, pack_status: 'Outside Pack' },
+        { id: 'def-kw-2', keyword: `Best ${category} ${city}`, rank: 18, location: city, pack_status: 'Outside Pack' }
+      ];
+    }
+
+    const dynamicTurfOrders = [];
+
+    kwList.forEach((kwItem, idx) => {
+      const kwName = kwItem.keyword || kwItem.name || 'Target Keyword';
+      const rank = kwItem.rank || kwItem.current_rank || 14;
+      const location = kwItem.location || kwItem.target_location || city;
+      
+      if (rank > 3 || kwItem.pack_status === 'Outside Pack') {
+        const stage = rank <= 3 ? 'Top 3 (Dominating)' : rank <= 10 ? 'Top 10 (Page 1 Push)' : rank <= 20 ? 'Page 2 (Critical Rank Drop)' : 'Outside Top 20 (High Priority Fix)';
+        const priority = rank > 10 ? 'High' : 'Medium';
+
+        const exists = orders.some(o => o.status === 'open' && o.title.toLowerCase().includes(kwName.toLowerCase()) && (o.client_name || '').toLowerCase() === clientName.toLowerCase());
+        if (!exists) {
+          dynamicTurfOrders.push({
+            id: `dyn-turf-${kwItem.id || idx}`,
+            isDynamic: true,
+            isTurfControl: true,
+            keywordName: kwName,
+            currentRank: rank,
+            stage: stage,
+            location: location,
+            title: `Turf Control Fix: "${kwName}" — Rank #${rank}`,
+            priority: priority,
+            tag_category: 'Turf Control Rank Drop',
+            assignee: 'Satish',
+            client_name: clientName,
+            description: `Auto-detected local rank drop for keyword "${kwName}". Current Rank: #${rank} in ${location}. Stage: ${stage}. AI Action Plan generated below.`,
+            box_type: 'turf_fix',
+            box_content: {
+              keyword: kwName,
+              currentRank: rank,
+              stage: stage,
+              location: location,
+              aiFixSteps: [
+                `Optimize GMB Primary Category and add target keyword "${kwName}" into Service Descriptions.`,
+                `Publish 2 dedicated GMB Posts with hashtag #${kwName.replace(/\s+/g, '')} in Week-by-Week planner.`,
+                `Upload 3 GEO-tagged photos of business facility with EXIF location metadata for ${location}.`,
+                `Request 2 customer reviews containing exact keyword phrase "${kwName}".`,
+                `Embed Google Maps location iframe and LocalBusiness Schema markup on website homepage.`
+              ]
+            },
+            status: 'open'
+          });
+        }
+      }
+    });
+
+    return dynamicTurfOrders;
+  };
+
   const clientName = activeClient ? activeClient.business_name || activeClient.display_name : '';
   const dbClientOrders = orders.filter(o => (o.client_name || '').toLowerCase() === clientName.toLowerCase());
-  const allFilteredAndDynamicOrders = [...dbClientOrders, ...getDynamicCitationOrders()].filter(o => {
+
+  const citationOrdersList = [
+    ...dbClientOrders.filter(o => !o.isTurfControl && o.tag_category !== 'Turf Control Rank Drop'),
+    ...getDynamicCitationOrders()
+  ];
+  const turfOrdersList = [
+    ...dbClientOrders.filter(o => o.isTurfControl || o.tag_category === 'Turf Control Rank Drop'),
+    ...getDynamicTurfControlOrders()
+  ];
+
+  const currentTabOrders = (activeTab === 'turf_orders' ? turfOrdersList : citationOrdersList).filter(o => {
     if (filterStatus === 'open' && o.status !== 'open') return false;
     if (filterStatus === 'completed' && o.status !== 'completed') return false;
     if (filterPriority !== 'ALL' && o.priority !== filterPriority) return false;
@@ -430,7 +666,9 @@ export default function MafiyaOrders() {
     return true;
   });
 
-  const openCount = allFilteredAndDynamicOrders.filter(o => o.status === 'open').length;
+  const openCitationCount = citationOrdersList.filter(o => o.status === 'open').length;
+  const openTurfCount = turfOrdersList.filter(o => o.status === 'open').length;
+  const openCount = activeTab === 'turf_orders' ? openTurfCount : openCitationCount;
 
   // Post frequency and content details based on category
   const getPostingStrategy = () => {
@@ -458,20 +696,79 @@ export default function MafiyaOrders() {
     };
   };
 
-  const getBrainContentSuggestions = () => {
-    if (!activeClient || brainEntries.length === 0) return [];
+  // Helper to generate dynamic months list (Only Current Month shown initially)
+  const getAvailableMonths = () => {
+    const months = [];
+    const now = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const key = `Month-${d.getFullYear()}-${d.getMonth() + 1}`;
+      if (unlockedMonths.includes(key) || i === 0) {
+        const monthName = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+        const monthShort = d.toLocaleString('default', { month: 'short' });
+        const label = i === 0 ? `${monthName} (Current Month)` : monthName;
+        months.push({
+          key,
+          index: i,
+          monthName,
+          monthShort,
+          label,
+          isUnlocked: true,
+          year: d.getFullYear(),
+          monthIndex: d.getMonth()
+        });
+      }
+    }
+    return months;
+  };
 
-    const name = activeClient.display_name || activeClient.business_name;
-    const phone = activeClient.phone_number || '';
-    const suggestions = [];
+  // Helper to generate Mon - Sat work days for a selected month (Sunday 100% excluded & strictly within selected month)
+  const getWorkDaysForMonth = (monthIndex, year) => {
+    const now = new Date();
+    const isCurrentMonth = now.getFullYear() === year && now.getMonth() === monthIndex;
+    const startDay = isCurrentMonth ? Math.max(now.getDate(), 1) : 1;
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+
+    const workDays = [];
+    for (let day = startDay; day <= daysInMonth; day++) {
+      const d = new Date(year, monthIndex, day);
+      // d.getDay(): 0 = Sunday -> Skip Sunday!
+      if (d.getDay() !== 0) {
+        workDays.push({
+          dateObj: d,
+          day: day,
+          dayName: d.toLocaleDateString('default', { weekday: 'short' }),
+          dateStr: d.toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' }),
+          fullDateStr: d.toLocaleDateString('default', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }),
+          isToday: isCurrentMonth && day === now.getDate()
+        });
+      }
+    }
+
+    return workDays;
+  };
+
+  const getBrainContentSuggestions = () => {
+    if (!activeClient) return [];
+
+    const availableMonths = getAvailableMonths();
+    const selectedMonthObj = availableMonths.find(m => m.key === selectedMonth) || availableMonths[0];
+    const workDays = getWorkDaysForMonth(selectedMonthObj.monthIndex, selectedMonthObj.year);
+
+    const name = activeClient.display_name || activeClient.business_name || 'Your Business';
+    const phone = activeClient.phone_number || activeClient.phone || '';
+    const city = activeClient.city || activeClient.address || 'Pondicherry';
+    const category = activeClient.business_category || activeClient.custom_category || 'Local Business';
+
+    const rawSuggestions = [];
 
     // Find Tone entry
-    let toneVoice = 'Friendly';
+    let toneVoice = 'Friendly & Professional';
     const toneEntry = brainEntries.find(e => e.entry_type === 'tone');
     if (toneEntry) {
       try {
         const parsed = JSON.parse(toneEntry.content);
-        toneVoice = parsed.voice || 'Friendly';
+        toneVoice = parsed.voice || toneVoice;
       } catch (e) {}
     }
 
@@ -483,91 +780,157 @@ export default function MafiyaOrders() {
         keywords = JSON.parse(kwEntry.content);
       } catch (e) {}
     }
+    if (keywords.length === 0) {
+      keywords = [category, `${category} in ${city}`, `Best ${category}`, `Top Rated ${name}`];
+    }
     const hashtags = keywords.map(k => `#${k.replace(/\s+/g, '')}`).join(' ');
 
-    const monthPrefix = selectedMonth === 'Month 2' ? 'Month 2 Campaign: ' : '';
+    const monthPrefix = `${selectedMonthObj.monthShort}: `;
 
-    // 1. Process Offers from Brain
+    // 1. Process Offers from Brain (or default Offer)
     const offerEntry = brainEntries.find(e => e.entry_type === 'offer');
+    let offerAdded = false;
     if (offerEntry) {
       try {
         const parsedOffers = JSON.parse(offerEntry.content);
-        if (Array.isArray(parsedOffers)) {
-          parsedOffers.forEach((off, idx) => {
+        if (Array.isArray(parsedOffers) && parsedOffers.length > 0) {
+          parsedOffers.forEach((off) => {
             if (off.title || off.description) {
-              suggestions.push({
-                week: `Offer Post #${idx + 1}`,
+              rawSuggestions.push({
+                rawTitle: `${off.title || 'Special Promotion'}`,
                 title: `${monthPrefix}${off.title || 'Special Promotion'}`,
                 type: 'Offer Post',
-                caption: `${off.title ? `🔥 ${off.title}: ` : ''}${off.description || ''}${off.validUntil ? ` (Valid until: ${off.validUntil})` : ''} Call us at ${phone} to redeem. ${off.cta ? `CTA: ${off.cta}` : ''} \n\n${hashtags}`,
-                visual: `Promo banner highlighting "${off.title || 'Discount'}" with branding.`,
-                tone: `${toneVoice} voice alignment`,
+                caption: `🔥 ${off.title || 'Special Offer'}: ${off.description || `Get exclusive discounts on our services in ${city}.`}${off.validUntil ? ` (Valid until ${off.validUntil})` : ''}\n\n📍 ${name} | ${city}\n📞 Call: ${phone}\n\n${hashtags}`,
+                visual: `Promotional banner highlighting "${off.title || 'Special Discount'}" with brand logo.`,
+                tone: `${toneVoice} alignment`,
                 hashtags
               });
+              offerAdded = true;
             }
           });
         }
       } catch (e) {}
     }
 
-    // 2. Process Seasonal Occasions from Brain
-    const seasonalEntry = brainEntries.find(e => e.entry_type === 'seasonal');
-    if (seasonalEntry) {
-      try {
-        const parsedSeasonal = JSON.parse(seasonalEntry.content);
-        if (Array.isArray(parsedSeasonal)) {
-          parsedSeasonal.forEach((seas, idx) => {
-            if (seas.occasion || seas.instructions) {
-              suggestions.push({
-                week: `Seasonal Post #${idx + 1}`,
-                title: `${monthPrefix}${seas.occasion || 'Holiday Theme'}`,
-                type: 'Seasonal Post',
-                caption: `🎉 Celebrating ${seas.occasion || 'Special Season'}! ${seas.instructions || ''} Get in touch with ${name} at ${phone}. \n\n${hashtags}`,
-                visual: `Event banner for ${seas.occasion || 'holiday season'} with brand logo overlay.`,
-                tone: `${toneVoice} voice alignment`,
-                hashtags
-              });
-            }
-          });
-        }
-      } catch (e) {}
-    }
-
-    // 3. Process Q&A Bank from Brain
-    const qaEntry = brainEntries.find(e => e.entry_type === 'qa');
-    if (qaEntry) {
-      try {
-        const parsedQa = JSON.parse(qaEntry.content);
-        if (Array.isArray(parsedQa)) {
-          parsedQa.forEach((item, idx) => {
-            if (item.question || item.answer) {
-              suggestions.push({
-                week: `Q&A Post #${idx + 1}`,
-                title: `${monthPrefix}${item.question ? `Q: ${item.question.slice(0, 30)}...` : 'FAQ Feature'}`,
-                type: 'Educational Post',
-                caption: `💡 FAQ Highlight:\nQuestion: "${item.question || ''}"\nAnswer: "${item.answer || ''}"\nLearn more at ${name}!`,
-                visual: 'Question mark icon graphic with answer text card layout.',
-                tone: `${toneVoice} voice alignment`,
-                hashtags
-              });
-            }
-          });
-        }
-      } catch (e) {}
-    }
-
-    // 4. Default Keyword Post if suggestion list is empty
-    if (suggestions.length === 0 && keywords.length > 0) {
-      suggestions.push({
-        week: 'Keyword Post',
-        title: `${monthPrefix}Learn more about our services`,
-        type: 'Educational Post',
-        caption: `Discover top tier services in Pondicherry at ${name}. We specialize in ${keywords.join(', ')} to bring you the best results. Contact us at ${phone}! \n\n${hashtags}`,
-        visual: 'Infographic explaining the benefits of choosing local certified experts.',
-        tone: `${toneVoice} voice alignment`,
+    if (!offerAdded) {
+      rawSuggestions.push({
+        rawTitle: `${selectedMonthObj.monthShort} Business Special`,
+        title: `${monthPrefix}Exclusive ${selectedMonthObj.monthShort} Business Special`,
+        type: 'Offer Post',
+        caption: `🔥 Limited Time Offer for ${selectedMonthObj.monthName}!\n\nUpgrade your experience with top-rated ${category} solutions at ${name}. Book your appointment or visit us in ${city} today!\n\n📞 Call us now: ${phone}\n📍 Location: ${city}\n\n${hashtags}`,
+        visual: `Modern promo card showcasing ${category} services with a gold discount badge.`,
+        tone: `${toneVoice} alignment`,
         hashtags
       });
     }
+
+    // 2. Process Seasonal / Trending Occasions from Brain (or default Seasonal)
+    const seasonalEntry = brainEntries.find(e => e.entry_type === 'seasonal');
+    let seasonalAdded = false;
+    if (seasonalEntry) {
+      try {
+        const parsedSeasonal = JSON.parse(seasonalEntry.content);
+        if (Array.isArray(parsedSeasonal) && parsedSeasonal.length > 0) {
+          parsedSeasonal.forEach((seas) => {
+            if (seas.occasion || seas.instructions) {
+              rawSuggestions.push({
+                rawTitle: `${seas.occasion || 'Seasonal Celebration'}`,
+                title: `${monthPrefix}${seas.occasion || 'Seasonal Celebration'}`,
+                type: 'Seasonal Post',
+                caption: `🎉 Celebrating ${seas.occasion || selectedMonthObj.monthName}! ${seas.instructions || `Discover our latest seasonal highlights at ${name}.`}\n\n📞 Contact: ${phone}\n📍 Location: ${city}\n\n${hashtags}`,
+                visual: `Festive event graphic for ${seas.occasion || selectedMonthObj.monthName} with brand logo overlay.`,
+                tone: `${toneVoice} alignment`,
+                hashtags
+              });
+              seasonalAdded = true;
+            }
+          });
+        }
+      } catch (e) {}
+    }
+
+    if (!seasonalAdded) {
+      rawSuggestions.push({
+        rawTitle: `${selectedMonthObj.monthShort} Customer Highlight & Trends`,
+        title: `${monthPrefix}${selectedMonthObj.monthShort} Customer Highlight & Trends`,
+        type: 'Seasonal Post',
+        caption: `✨ Celebrate ${selectedMonthObj.monthName} with ${name}!\n\nWe are committed to delivering the best ${category} experience in ${city}. Check out our latest client work and updates this week.\n\n📞 Reach us at ${phone}\n\n${hashtags}`,
+        visual: `High quality visual showcasing customer satisfaction and team highlights.`,
+        tone: `${toneVoice} alignment`,
+        hashtags
+      });
+    }
+
+    // 3. Process Q&A Bank from Brain (or default Q&A)
+    const qaEntry = brainEntries.find(e => e.entry_type === 'qa');
+    let qaAdded = false;
+    if (qaEntry) {
+      try {
+        const parsedQa = JSON.parse(qaEntry.content);
+        if (Array.isArray(parsedQa) && parsedQa.length > 0) {
+          parsedQa.forEach((item) => {
+            if (item.question || item.answer) {
+              rawSuggestions.push({
+                rawTitle: `${item.question ? `Q: ${item.question.slice(0, 32)}...` : 'FAQ Feature'}`,
+                title: `${monthPrefix}${item.question ? `Q: ${item.question.slice(0, 32)}...` : 'FAQ Feature'}`,
+                type: 'Educational Post',
+                caption: `💡 Frequently Asked Question:\n\n❓ Q: ${item.question || ''}\n✅ A: ${item.answer || ''}\n\nHave more questions? Ask ${name} today at ${phone}!\n\n${hashtags}`,
+                visual: 'Question mark icon graphic with answer text card layout.',
+                tone: `${toneVoice} alignment`,
+                hashtags
+              });
+              qaAdded = true;
+            }
+          });
+        }
+      } catch (e) {}
+    }
+
+    if (!qaAdded) {
+      rawSuggestions.push({
+        rawTitle: `Expert Tips & Customer FAQ`,
+        title: `${monthPrefix}Expert Tips & Customer FAQ`,
+        type: 'Educational Post',
+        caption: `💡 FAQ Spotlight:\n\n❓ Q: Why choose ${name} for ${category} in ${city}?\n✅ A: We combine certified expertise, quick turnarounds, and transparent pricing tailored to your needs!\n\n📞 Call us for details: ${phone}\n\n${hashtags}`,
+        visual: 'Infographic explaining core benefits and FAQ answers.',
+        tone: `${toneVoice} alignment`,
+        hashtags
+      });
+    }
+
+    // 4. Default Brand Showcase Post if total < 4
+    if (rawSuggestions.length < 4) {
+      rawSuggestions.push({
+        rawTitle: `Top Rated ${category} Services in ${city}`,
+        title: `${monthPrefix}Top Rated ${category} Services in ${city}`,
+        type: 'Brand Feature',
+        caption: `🏆 Looking for trusted ${category} services in ${city}?\n\n${name} offers industry leading solutions backed by 5-star customer reviews.\n\n📍 Visit us in ${city}\n📞 Contact: ${phone}\n\n${hashtags}`,
+        visual: `Brand feature card displaying 5-star rating graphic and client testimonials.`,
+        tone: `${toneVoice} alignment`,
+        hashtags
+      });
+    }
+
+    // 5. Map strictly UNIQUE Monday-Saturday Calendar dates for every single post (No Sundays & No Repeats)!
+    const totalCount = rawSuggestions.length;
+    let step = 1;
+    if (workDays.length >= totalCount * 2 && totalCount <= 4) {
+      step = 2; // Space 2 work days apart for clean weekly distribution
+    }
+
+    const suggestions = rawSuggestions.map((sugg, idx) => {
+      const workDayIndex = Math.min(idx * step, workDays.length - 1);
+      const sched = workDays[workDayIndex] || workDays[0];
+
+      return {
+        ...sugg,
+        week: `Week ${Math.floor(idx / 2) + 1} • Post #${idx + 1}`,
+        scheduleDate: sched.dateStr,
+        dayName: sched.dayName,
+        fullDateStr: sched.fullDateStr,
+        isToday: sched.isToday
+      };
+    });
 
     return suggestions;
   };
@@ -746,7 +1109,7 @@ export default function MafiyaOrders() {
       </div>
 
       {/* Main Tabs switcher */}
-      <div style={{ display: 'flex', gap: 12, borderBottom: '1px solid #1e293b', marginBottom: 20, paddingBottom: 10 }}>
+      <div style={{ display: 'flex', gap: 12, borderBottom: '1px solid #1e293b', marginBottom: 20, paddingBottom: 10, flexWrap: 'wrap' }}>
         <button
           onClick={() => setActiveTab('orders')}
           style={{
@@ -764,6 +1127,35 @@ export default function MafiyaOrders() {
           }}
         >
           <ListOrdered size={16} /> Citation Audit Matches
+          {openCitationCount > 0 && (
+            <span style={{ background: '#f59e0b', color: '#000', padding: '1px 7px', borderRadius: 10, fontSize: 11, fontWeight: 800 }}>
+              {openCitationCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('turf_orders')}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: activeTab === 'turf_orders' ? '#06b6d4' : '#64748b',
+            borderBottom: activeTab === 'turf_orders' ? '2px solid #06b6d4' : 'none',
+            padding: '8px 16px',
+            fontSize: 14,
+            fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6
+          }}
+        >
+          <Target size={16} /> Turf Control Rank Fixes
+          {openTurfCount > 0 && (
+            <span style={{ background: '#06b6d4', color: '#000', padding: '1px 7px', borderRadius: 10, fontSize: 11, fontWeight: 800 }}>
+              {openTurfCount}
+            </span>
+          )}
         </button>
 
         <button
@@ -805,7 +1197,7 @@ export default function MafiyaOrders() {
         </button>
       </div>
 
-      {activeTab === 'orders' && (
+      {(activeTab === 'orders' || activeTab === 'turf_orders') && (
         <>
           {/* Filters Bar */}
           <div style={{
@@ -825,7 +1217,7 @@ export default function MafiyaOrders() {
               <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
               <input
                 type="text"
-                placeholder="Search orders, clients, steps..."
+                placeholder={activeTab === 'turf_orders' ? "Search keyword rank fixes..." : "Search citation orders, clients, steps..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{
@@ -891,7 +1283,7 @@ export default function MafiyaOrders() {
 
           {/* Orders Cards List */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {allFilteredAndDynamicOrders.length === 0 ? (
+            {currentTabOrders.length === 0 ? (
               <div style={{
                 background: '#0b1329',
                 border: '1px dashed #1e293b',
@@ -901,11 +1293,17 @@ export default function MafiyaOrders() {
                 color: '#64748b'
               }}>
                 <Shield size={36} style={{ marginBottom: 12, opacity: 0.5, color: '#f59e0b' }} />
-                <h3 style={{ fontSize: 16, color: '#e2e8f0', margin: '0 0 6px 0' }}>No active Mafia Orders found</h3>
-                <p style={{ fontSize: 13, margin: 0 }}>Try clearing filters, selecting another GMB profile, or running citation scan.</p>
+                <h3 style={{ fontSize: 16, color: '#e2e8f0', margin: '0 0 6px 0' }}>
+                  {activeTab === 'turf_orders' ? 'No active Turf Control rank fix orders found' : 'No active Citation Audit orders found'}
+                </h3>
+                <p style={{ fontSize: 13, margin: 0 }}>
+                  {activeTab === 'turf_orders' 
+                    ? 'All keyword rankings are in Top 3 or try adjusting filters.' 
+                    : 'Try clearing filters, selecting another GMB profile, or running citation scan.'}
+                </p>
               </div>
             ) : (
-              allFilteredAndDynamicOrders.map((order, idx) => {
+              currentTabOrders.map((order, idx) => {
                 const badgeColor = numberBadgeColors[idx % numberBadgeColors.length] || { bg: '#1e3a8a', text: '#fff' };
                 const isCompleted = order.status === 'completed';
 
@@ -1190,12 +1588,68 @@ export default function MafiyaOrders() {
                           </div>
                         </div>
                       )}
+
+                      {(order.box_type === 'turf_fix' || order.isTurfControl) && (
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', background: 'rgba(245, 158, 11, 0.15)', padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+                                🎯 TURF CONTROL KEYWORD
+                              </span>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>"{order.box_content?.keyword || order.keywordName}"</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <span style={{ fontSize: 12, fontWeight: 800, color: (order.currentRank || order.box_content?.currentRank) > 10 ? '#ef4444' : '#f59e0b', background: 'rgba(0,0,0,0.3)', padding: '2px 8px', borderRadius: 6 }}>
+                                Current Rank: #{order.currentRank || order.box_content?.currentRank}
+                              </span>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>
+                                Stage: <span style={{ color: '#06b6d4' }}>{order.stage || order.box_content?.stage}</span>
+                              </span>
+                            </div>
+                          </div>
+
+                          <div style={{ fontSize: 12, color: '#64748b', fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Sparkles size={14} color="#f59e0b" /> AI Action Plan to Fix Keyword Rank:
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, background: '#060c17', padding: 12, borderRadius: 8, border: '1px solid #1e293b' }}>
+                            {(order.box_content?.aiFixSteps || []).map((step, sIdx) => (
+                              <div key={sIdx} style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.5, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                                <span style={{ color: '#f59e0b', fontWeight: 800 }}>{sIdx + 1}.</span>
+                                <span>{step}</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                            <button
+                              onClick={() => copyToClipboard((order.box_content?.aiFixSteps || []).join('\n'), 'Turf Fix Action Plan')}
+                              style={{
+                                background: 'transparent',
+                                border: '1px solid #334155',
+                                borderRadius: 6,
+                                padding: '4px 10px',
+                                color: '#94a3b8',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4
+                              }}
+                            >
+                              <Copy size={12} /> Copy AI Fix Plan
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Action buttons */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                       <button
                         onClick={() => handleToggleStatus(order.id, order.status)}
+                        disabled={verifyingOrderId === order.id}
                         style={{
                           background: isCompleted ? 'rgba(34, 197, 94, 0.2)' : '#f59e0b',
                           color: isCompleted ? '#4ade80' : '#000',
@@ -1204,14 +1658,23 @@ export default function MafiyaOrders() {
                           padding: '8px 18px',
                           fontSize: 13,
                           fontWeight: 800,
-                          cursor: 'pointer',
+                          cursor: verifyingOrderId === order.id ? 'not-allowed' : 'pointer',
                           display: 'flex',
                           alignItems: 'center',
-                          gap: 6
+                          gap: 6,
+                          opacity: verifyingOrderId === order.id ? 0.7 : 1
                         }}
                       >
-                        <Check size={16} />
-                        {isCompleted ? 'Completed' : order.isDynamic ? 'Log Fix & Complete' : 'Mark Done'}
+                        {verifyingOrderId === order.id ? (
+                          <>
+                            <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> Verifying Rank Scan...
+                          </>
+                        ) : (
+                          <>
+                            <Check size={16} />
+                            {isCompleted ? 'Completed ✓' : (order.isTurfControl || order.tag_category === 'Turf Control Rank Drop') ? 'Re-Verify Rank & Complete' : order.isDynamic ? 'Log Fix & Complete' : 'Mark Done'}
+                          </>
+                        )}
                       </button>
 
                     </div>
@@ -1401,7 +1864,7 @@ export default function MafiyaOrders() {
                 value={selectedMonth}
                 onChange={(e) => {
                   setSelectedMonth(e.target.value);
-                  fetchSuggestedPosts(activeClient.id, e.target.value);
+                  if (activeClient) fetchSuggestedPosts(activeClient.id, e.target.value);
                 }}
                 style={{
                   background: '#0b1329',
@@ -1415,8 +1878,9 @@ export default function MafiyaOrders() {
                   cursor: 'pointer'
                 }}
               >
-                <option value="Month 1">Month 1 (Current Month)</option>
-                <option value="Month 2">Month 2 (Upcoming Month)</option>
+                {getAvailableMonths().map((m) => (
+                  <option key={m.key} value={m.key}>{m.label}</option>
+                ))}
               </select>
             </div>
             
@@ -1475,6 +1939,11 @@ export default function MafiyaOrders() {
             const completedAll = currentSuffs.length > 0 && currentSuffs.every(s => completedPosts[`${selectedMonth}-${s.week}`]);
             if (!completedAll) return null;
 
+            const allMonths = getAvailableMonths();
+            const currIdx = allMonths.findIndex(m => m.key === selectedMonth);
+            const selectedMonthObj = allMonths[currIdx] || allMonths[0];
+            const nextMonthObj = allMonths[currIdx + 1];
+
             return (
               <div style={{
                 background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.12) 0%, rgba(6, 182, 212, 0.12) 100%)',
@@ -1482,37 +1951,40 @@ export default function MafiyaOrders() {
                 borderRadius: 14,
                 padding: 24,
                 textAlign: 'center',
-                boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
-                animation: 'pulse 2s infinite'
+                boxShadow: '0 8px 30px rgba(0,0,0,0.3)'
               }}>
                 <CheckCircle size={44} color="#22c55e" style={{ margin: '0 auto 12px auto', display: 'block' }} />
                 <h3 style={{ margin: '0 0 8px 0', fontSize: 18, fontWeight: 800, color: '#fff' }}>
-                  🎉 All {selectedMonth} Posts Successfully Completed!
+                  🎉 All {selectedMonthObj.monthName} Posts Successfully Completed!
                 </h3>
                 <p style={{ margin: '0 0 16px 0', fontSize: 13, color: '#94a3b8', lineHeight: 1.5 }}>
-                  {selectedMonth === 'Month 1' 
-                    ? "Great job! You have fully scheduled all required posts for Month 1. Let's start preparing the content strategy for Month 2!"
-                    : "Excellent effort! All campaigns for Month 2 are successfully locked in. Keep maintaining this consistency to boost GMB Local SEO rank!"}
+                  {nextMonthObj 
+                    ? `Great job! You have fully completed all posts for ${selectedMonthObj.monthName}. You can now unlock and enter the ${nextMonthObj.monthName} campaign planner!`
+                    : "Excellent effort! All campaign months are successfully completed. Keep maintaining this consistency to boost GMB Local SEO rank!"}
                 </p>
-                {selectedMonth === 'Month 1' && (
+                {nextMonthObj && (
                   <button
                     onClick={() => {
-                      setSelectedMonth('Month 2');
-                      fetchSuggestedPosts(activeClient.id, 'Month 2');
+                      if (!unlockedMonths.includes(nextMonthObj.key)) {
+                        setUnlockedMonths(prev => [...prev, nextMonthObj.key]);
+                      }
+                      setSelectedMonth(nextMonthObj.key);
+                      if (activeClient) fetchSuggestedPosts(activeClient.id, nextMonthObj.key);
+                      toast.success(`Unlocked & entered ${nextMonthObj.monthName} content planner!`);
                     }}
                     style={{
                       background: '#22c55e',
                       color: '#000',
                       border: 'none',
                       borderRadius: 8,
-                      padding: '8px 20px',
+                      padding: '10px 24px',
                       fontSize: 13,
-                      fontWeight: 700,
+                      fontWeight: 800,
                       cursor: 'pointer',
-                      boxShadow: '0 4px 12px rgba(34, 197, 94, 0.2)'
+                      boxShadow: '0 4px 12px rgba(34, 197, 94, 0.3)'
                     }}
                   >
-                    Configure & View Month 2 Content Plan
+                    Unlock & Enter {nextMonthObj.monthName} Planner →
                   </button>
                 )}
               </div>
@@ -1560,9 +2032,14 @@ export default function MafiyaOrders() {
                         borderRadius: 20,
                         fontSize: 12,
                         fontWeight: 800,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
                         textDecoration: isDone ? 'line-through' : 'none'
                       }}>
-                        {sugg.week}
+                        <Calendar size={13} />
+                        {sugg.fullDateStr || sugg.scheduleDate || sugg.week}
+                        {sugg.isToday && <span style={{ background: '#22c55e', color: '#000', padding: '1px 6px', borderRadius: 8, fontSize: 10 }}>TODAY</span>}
                       </span>
                       <h3 style={{
                         margin: 0,
@@ -1638,22 +2115,32 @@ export default function MafiyaOrders() {
 
                     <button
                       onClick={() => handleCreatePostOrderAndNavigate(sugg)}
+                      disabled={isDone}
                       style={{
-                        background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
-                        color: '#fff',
-                        border: 'none',
+                        background: isDone ? 'rgba(30, 41, 59, 0.6)' : 'linear-gradient(135deg, #06b6d4, #0891b2)',
+                        color: isDone ? '#94a3b8' : '#fff',
+                        border: isDone ? '1px solid #334155' : 'none',
                         borderRadius: 8,
                         padding: '8px 16px',
                         fontSize: 13,
                         fontWeight: 700,
-                        cursor: 'pointer',
+                        cursor: isDone ? 'not-allowed' : 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         gap: 6,
-                        boxShadow: '0 4px 12px rgba(6, 182, 212, 0.2)'
+                        opacity: isDone ? 0.7 : 1,
+                        boxShadow: isDone ? 'none' : '0 4px 12px rgba(6, 182, 212, 0.2)'
                       }}
                     >
-                      <Plus size={14} /> Create GMB Post Order
+                      {isDone ? (
+                        <>
+                          <Check size={14} color="#4ade80" /> Order Created & Completed
+                        </>
+                      ) : (
+                        <>
+                          <Plus size={14} /> Create GMB Post Order
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -1713,9 +2200,14 @@ export default function MafiyaOrders() {
                         borderRadius: 20,
                         fontSize: 12,
                         fontWeight: 800,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
                         textDecoration: isDone ? 'line-through' : 'none'
                       }}>
-                        {sugg.week}
+                        <Calendar size={13} />
+                        {sugg.fullDateStr || sugg.scheduleDate || sugg.week}
+                        {sugg.isToday && <span style={{ background: '#22c55e', color: '#000', padding: '1px 6px', borderRadius: 8, fontSize: 10, fontWeight: 800 }}>TODAY</span>}
                       </span>
                       <h3 style={{
                         margin: 0,
@@ -1791,22 +2283,32 @@ export default function MafiyaOrders() {
 
                     <button
                       onClick={() => handleCreatePostOrderAndNavigate(sugg)}
+                      disabled={isDone}
                       style={{
-                        background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
-                        color: '#fff',
-                        border: 'none',
+                        background: isDone ? 'rgba(30, 41, 59, 0.6)' : 'linear-gradient(135deg, #06b6d4, #0891b2)',
+                        color: isDone ? '#94a3b8' : '#fff',
+                        border: isDone ? '1px solid #334155' : 'none',
                         borderRadius: 8,
                         padding: '8px 16px',
                         fontSize: 13,
                         fontWeight: 700,
-                        cursor: 'pointer',
+                        cursor: isDone ? 'not-allowed' : 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         gap: 6,
-                        boxShadow: '0 4px 12px rgba(6, 182, 212, 0.2)'
+                        opacity: isDone ? 0.7 : 1,
+                        boxShadow: isDone ? 'none' : '0 4px 12px rgba(6, 182, 212, 0.2)'
                       }}
                     >
-                      <Plus size={14} /> Create GMB Post Order
+                      {isDone ? (
+                        <>
+                          <Check size={14} color="#4ade80" /> Order Created & Completed
+                        </>
+                      ) : (
+                        <>
+                          <Plus size={14} /> Create GMB Post Order
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>

@@ -179,7 +179,7 @@ async function setup() {
       id SERIAL PRIMARY KEY,
       client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
       doc_type VARCHAR(50) NOT NULL
-        CHECK (doc_type IN ('product', 'pricing', 'objections', 'proof', 'flow', 'prompt')),
+        CHECK (doc_type IN ('product', 'pricing', 'objections', 'proof', 'flow', 'prompt', 'training', 'welcome_template')),
       content TEXT NOT NULL,
       updated_at TIMESTAMP DEFAULT NOW(),
       UNIQUE(client_id, doc_type)

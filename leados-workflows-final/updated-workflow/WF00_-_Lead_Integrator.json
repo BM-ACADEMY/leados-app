@@ -125,7 +125,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ source: $('Normalize Payload').item.json.source, phone_number_id: $('Normalize Payload').item.json.phone_number_id, campaign_id: $('Normalize Payload').item.json.campaign_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ source: $('Normalize Payload').item.json.source, phone: $('Normalize Payload').item.json.phone, message: $('Normalize Payload').item.json.message, phone_number_id: $('Normalize Payload').item.json.phone_number_id, campaign_id: $('Normalize Payload').item.json.campaign_id }) }}"
       },
       "id": "708fd162-f4f7-4f11-9f79-1ed13e8a6fb3",
       "name": "Hybrid Brand Detection",
@@ -179,7 +179,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, message: $('Normalize Payload').item.json.message, source: $json.source, campaign_id: $json.campaign_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, name: $json.name || $('Normalize Payload').item.json.name, phone: $json.phone || $('Normalize Payload').item.json.phone, brand: $json.brand, message: $('Normalize Payload').item.json.message, source: $json.source, campaign_id: $json.campaign_id }) }}"
       },
       "id": "5f43ba25-911f-4d0e-80f9-86cd7c142473",
       "name": "Push To Sales Engine",

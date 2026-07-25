@@ -65,6 +65,36 @@ const sendAiError = (res, err) => {
   });
 };
 
+const BRAND_KEYWORDS = [
+  { name: 'BM Academy', pattern: /\b(course|class|syllabus|placement|job[- ]?ready|batch|fees?|academy|training)\b/i },
+  { name: 'BM TechX', pattern: /\b(ads?|marketing|grow business|website|branding|leads?|techx)\b/i },
+  { name: 'CoreTalents', pattern: /\b(hiring|recruit|candidate|staff|vacancy|resume|coretalents?)\b/i },
+  { name: 'Namma Pondy Properties', pattern: /\b(property|plot|villa|land|patta|ec|real estate|jipmer)\b/i },
+  { name: 'TravellersNeed', pattern: /\b(trip|tour|package|travel|holiday|pondy tour|travellers?need)\b/i },
+  { name: "Dada's Kitchen", pattern: /\b(food|catering|kitchen|order|dada'?s kitchen)\b/i },
+  { name: 'EduConsultants', pattern: /\b(study abroad|education abroad|overseas admission|educonsultants?)\b/i },
+  { name: 'BM Foundation', pattern: /\b(donation|ngo|charity|volunteer|foundation)\b/i },
+];
+
+const detectExplicitBrand = (message = '') =>
+  BRAND_KEYWORDS.find(({ pattern }) => pattern.test(message))?.name || null;
+
+const getLeadFirstName = (name) => {
+  const cleanName = String(name || '').trim();
+  if (!cleanName || /^\+?\d+$/.test(cleanName)) return '';
+  return cleanName.split(/\s+/)[0];
+};
+
+const DEFAULT_BOT_BEHAVIOR = `You are the ABM Groups shared WhatsApp assistant.
+Use the current contact's first name naturally. For a greeting, reply only:
+"Hey {first_name}! 👋 How can I help you today?"
+Never recite the ABM Groups brand list as a default greeting.
+Keep the detected brand sticky until the user clearly mentions another brand.
+Remember information already supplied and never ask for it again.
+For bookings, collect missing topic, date, time, name and number. Never claim a
+booking, calendar write, reminder or handoff succeeded unless its tool succeeded.
+For a voice note, ask the contact to type it. Send exactly one concise reply.`;
+
 // Gemini-only fallback chain (paid key — higher rate limits).
 // Tries 4 models in order: if one is busy/overloaded the next kicks in automatically.
 async function generateGeminiContent(prompt) {
@@ -242,12 +272,47 @@ router.post('/leads/deduplicate', async (req, res) => {
 
 // 2. Hybrid Brand Detection
 router.post('/brand/detect', async (req, res) => {
-  const { phone_number_id } = req.body;
+  const { phone_number_id, phone, message } = req.body;
   try {
     let brandId = null;
     let brandName = 'ABM Groups';
+    const explicitBrand = detectExplicitBrand(message);
 
-    if (phone_number_id) {
+    // An explicit keyword is the only reason to switch an existing session.
+    if (explicitBrand) {
+      const explicitRes = await pool.query(
+        `SELECT id, name
+         FROM clients
+         WHERE LOWER(name) = LOWER($1)
+         LIMIT 1`,
+        [explicitBrand]
+      );
+      if (explicitRes.rows.length > 0) {
+        brandId = explicitRes.rows[0].id;
+        brandName = explicitRes.rows[0].name;
+      }
+    }
+
+    // Sticky brand: when the message has no switch keyword, retain the brand
+    // already assigned to this WhatsApp number.
+    if (!brandId && phone) {
+      const digits = String(phone).replace(/\D/g, '');
+      const existingRes = await pool.query(
+        `SELECT c.id, c.name
+         FROM leads l
+         JOIN clients c ON c.id = l.client_id
+         WHERE RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = RIGHT($1, 10)
+         ORDER BY l.updated_at DESC
+         LIMIT 1`,
+        [digits]
+      );
+      if (existingRes.rows.length > 0) {
+        brandId = existingRes.rows[0].id;
+        brandName = existingRes.rows[0].name;
+      }
+    }
+
+    if (!brandId && phone_number_id) {
       const clientRes = await pool.query(`SELECT id, name FROM clients WHERE phone_number_id = $1 LIMIT 1`, [phone_number_id]);
       if (clientRes.rows.length > 0) {
         brandId = clientRes.rows[0].id;
@@ -262,7 +327,14 @@ router.post('/brand/detect', async (req, res) => {
       }
     }
 
-    res.json({ ...req.body, brand_id: brandId, brand_name: brandName, brand: brandName });
+    res.json({
+      ...req.body,
+      brand_id: brandId,
+      brand_name: brandName,
+      brand: brandName,
+      brand_locked: Boolean(brandId),
+      brand_switched: Boolean(explicitBrand),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -369,9 +441,16 @@ router.post('/ai/objections', async (req, res) => {
 router.post('/kb/search', async (req, res) => {
   const { brand, query, lead_id } = req.body;
   try {
-    const kbRes = await pool.query(`SELECT content FROM brain_docs WHERE client_id = (SELECT id FROM clients WHERE name = 'ABM Groups' LIMIT 1) AND doc_type = 'prompt' LIMIT 1`);
-    const kb_snippets = kbRes.rows.length > 0 ? kbRes.rows[0].content : "No knowledge base found.";
-    res.json({ ...req.body, kb_snippets });
+    const docsRes = await pool.query(
+      `SELECT doc_type, content
+       FROM brain_docs
+       WHERE client_id = (SELECT id FROM clients WHERE name = 'ABM Groups' LIMIT 1)
+         AND doc_type IN ('prompt', 'training')`
+    );
+    const docsByType = Object.fromEntries(docsRes.rows.map((doc) => [doc.doc_type, doc.content]));
+    const kb_snippets = docsByType.prompt || 'No knowledge base found.';
+    const system_instructions = docsByType.training || '';
+    res.json({ ...req.body, kb_snippets, system_instructions });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -379,14 +458,57 @@ router.post('/kb/search', async (req, res) => {
 
 // 4. Generate AI Response
 router.post('/ai/response', async (req, res) => {
-  const { brand, intent, message, kb_snippets, lead_id, chat_history } = req.body;
+  const { brand, intent, message, kb_snippets, system_instructions, lead_id, chat_history, name } = req.body;
   try {
+    let leadName = name || '';
+    let persistedBrand = brand || 'ABM Groups';
+    if (lead_id) {
+      const leadContext = await pool.query(
+        `SELECT l.name, c.name AS brand_name
+         FROM leads l
+         LEFT JOIN clients c ON c.id = l.client_id
+         WHERE l.id = $1
+         LIMIT 1`,
+        [lead_id]
+      );
+      leadName = leadContext.rows[0]?.name || leadName;
+      persistedBrand = leadContext.rows[0]?.brand_name || persistedBrand;
+    }
+
+    const firstName = getLeadFirstName(leadName);
+    const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(String(message || '').trim());
+
+    // Greetings are deterministic so the model can never fall back to the old
+    // all-brand recital. This also saves one paid Gemini request.
+    if (isSimpleGreeting) {
+      const ai_reply = firstName
+        ? `Hey ${firstName}! 👋 How can I help you today?`
+        : 'Hey! 👋 How can I help you today?';
+      return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
+    }
+
     let historyText = "";
     if (chat_history && Array.isArray(chat_history)) {
       historyText = "Chat History:\n" + chat_history.map(h => `${h.role}: ${h.text}`).join("\n") + "\n\n";
     }
 
-    const prompt = `System Prompt (ABM Groups Knowledge Base):\n${kb_snippets}\n\n${historyText}User Intent detected: ${intent}\n\nUser Message: "${message}"\n\n
+    const prompt = `AI BRAIN SYSTEM INSTRUCTIONS (editable in LeadOS):\n${system_instructions || DEFAULT_BOT_BEHAVIOR}\n\n
+      NON-NEGOTIABLE ORCHESTRATION RULES:
+      - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${persistedBrand}".
+      - Address the contact naturally by first name ("${firstName || 'there'}") when useful, but do not repeat their name in every sentence.
+      - The brand is sticky. Stay with "${persistedBrand}" unless the current message explicitly names or clearly keywords another ABM brand.
+      - For a greeting, reply only: "${firstName ? `Hey ${firstName}! 👋 How can I help you today?` : 'Hey! 👋 How can I help you today?'}"
+      - Never recite ABM Groups and its brand list as a default greeting.
+      - Never reset the conversation or ask again for information already present in chat history.
+      - Send exactly one concise WhatsApp reply for this user message.
+      - Never claim a booking, calendar entry, reminder, or handoff succeeded unless the corresponding workflow result confirms it.
+
+      KNOWLEDGE BASE REFERENCE:
+      ${kb_snippets}
+
+      ${historyText}User Intent detected: ${intent}
+      User Message: "${message}"
+
       CRITICAL BEHAVIOR SPECIFICATIONS:
       1. Greeting: Mirror the user's opener (e.g. "hi" -> "Hi!", "hello" -> "Hello!"). Keep it to one short line. Do NOT open with "Vanakkam, this is ABM Groups" or list all brands on every message. Only fall back to full brand list if intent is genuinely unclear.
       2. Brand detection: Only switch brands if the new message clearly contains a different brand keyword (BM Academy, BM TechX, CoreTalents, Namma Pondy Properties, TravellersNeed, Dada's Kitchen, EduConsultants, BM Foundation). Otherwise, stick to the locked brand.

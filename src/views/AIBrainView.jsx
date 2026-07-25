@@ -3,6 +3,39 @@ import { Brain } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
 
+const DEFAULT_BOT_BEHAVIOR = `ABM Groups — Master Bot Behaviour Spec
+
+You are the WhatsApp assistant for the shared number 919944509441.
+
+GREETING
+- For a greeting, reply only: "Hey {first_name}! 👋 How can I help you today?"
+- If the name is unavailable: "Hey! 👋 How can I help you today?"
+- Never introduce ABM Groups by reciting all brands.
+
+BRAND ROUTING
+- BM Academy: course, class, syllabus, placement, job-ready, batch, fees.
+- BM TechX: ads, marketing, grow business, website, branding, leads.
+- CoreTalents: hiring, recruit, candidate, staff, vacancy, resume.
+- Namma Pondy Properties: property, plot, villa, land, patta, EC, real estate.
+- TravellersNeed: trip, tour, package, travel, holiday, Pondy tour.
+- Dada's Kitchen: food, catering, kitchen, order.
+- EduConsultants: study abroad, admission, consultancy, education abroad.
+- BM Foundation: donation, NGO, charity, volunteer, foundation.
+- Lock the detected brand for the session. Switch only when the user clearly mentions another brand.
+
+MEMORY
+- Remember the locked brand, intent, name, course, preferred date and preferred time.
+- Never ask for information already provided.
+
+BOOKING
+- Confirm brand/topic, collect missing date, time, name and number, then confirm the full booking.
+- Never claim a booking, calendar write, reminder or handoff succeeded unless its workflow/tool actually succeeded.
+
+FALLBACKS
+- Voice note: "Got your voice note 🎧 — could you type it quickly so I can help right away?"
+- Unclear message: ask one short clarifying question.
+- Send exactly one reply for each inbound WhatsApp message.`;
+
 export const AIBrainView = () => {
   const [clients, setClients] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState(null);
@@ -12,6 +45,7 @@ export const AIBrainView = () => {
   const [docs, setDocs] = useState({});
 
   const [promptText, setPromptText] = useState('');
+  const [behaviorText, setBehaviorText] = useState(DEFAULT_BOT_BEHAVIOR);
   const [welcomeTemplate, setWelcomeTemplate] = useState('');
   const [migrating, setMigrating] = useState(false);
   const [dupCheckResult, setDupCheckResult] = useState(null);
@@ -58,6 +92,9 @@ export const AIBrainView = () => {
         // Global ABM docs (prompt)
         abmDocsRes.docs?.forEach(d => {
           if (d.doc_type === 'prompt') {
+            docMap[d.doc_type] = d.content;
+          }
+          if (d.doc_type === 'training') {
             docMap[d.doc_type] = d.content;
           }
         });
@@ -957,9 +994,11 @@ tags: internal, todo
 `;
 
     const promptVal = docs.prompt || defaultTemplate;
+    const behaviorVal = docs.training || DEFAULT_BOT_BEHAVIOR;
     const welcomeTemplateVal = docs.welcome_template || '';
 
     setPromptText(promptVal);
+    setBehaviorText(behaviorVal);
     setWelcomeTemplate(welcomeTemplateVal);
   }, [docs, selectedClientId, selectedBrandName]);
 
@@ -969,9 +1008,10 @@ tags: internal, todo
     try {
       await Promise.all([
         api.saveBrainDoc(abmGroupId, 'prompt', promptText),
+        api.saveBrainDoc(abmGroupId, 'training', behaviorText),
         api.saveBrainDoc(selectedClientId, 'welcome_template', welcomeTemplate),
       ]);
-      alert('AI Brain saved! Global ABM Groups Prompt updated, and Welcome Template activated for ' + selectedBrandName);
+      alert('AI Brain saved! Bot behaviour, knowledge prompt, and welcome template are active for ' + selectedBrandName);
     } catch (err) {
       alert('Failed to save AI Brain config: ' + err.message);
     } finally {
@@ -1099,10 +1139,18 @@ tags: internal, todo
 
             {tab === 'prompt' && (
               <div>
-                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Global System Prompt — <span style={{ color: C.accent }}>ABM Groups Parent Feed</span></h3>
+                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 14 }}>Agent Behaviour — <span style={{ color: C.accent }}>ABM Groups Shared WhatsApp</span></h3>
                 <div style={{ background: C.accent + '08', border: '1px solid ' + C.accentDim, borderRadius: 7, padding: 11, marginBottom: 13 }}>
-                  <p style={{ fontSize: 11, color: C.accent }}>This is the exact instruction manual sent to the Gemini AI. <strong>It acts as a unified parent feed for all brands.</strong> Edit it to organize content by brand (e.g. [BM Academy]...). Changing the brand dropdown above will not change this prompt.</p>
+                  <p style={{ fontSize: 11, color: C.accent }}>This text is sent as the bot’s behaviour/system layer. Put greeting, routing, memory, booking and fallback rules here—not course prices or property inventory.</p>
                 </div>
+                <textarea
+                  value={behaviorText}
+                  onChange={(e) => setBehaviorText(e.target.value)}
+                  style={{ width: '100%', height: 320, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#60a5fa', padding: 16, fontSize: 13, outline: 'none', fontFamily: 'monospace', lineHeight: 1.7, resize: 'vertical', marginBottom: 22 }}
+                />
+
+                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Knowledge Base — <span style={{ color: C.accent }}>Products, Prices and Content</span></h3>
+                <p style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>Course modules, pricing, property details and brand knowledge remain separate and are supplied as reference content.</p>
                 <textarea
                   value={promptText}
                   onChange={(e) => setPromptText(e.target.value)}

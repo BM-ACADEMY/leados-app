@@ -11,37 +11,133 @@ const { GoogleGenAI } = require('@google/genai');
 
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
+const GEMINI_MODELS = (process.env.GEMINI_MODELS || 'gemini-3.5-flash,gemini-3.1-flash-lite')
+  .split(',')
+  .map((model) => model.trim())
+  .filter(Boolean);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getGeminiStatus = (err) => {
+  const value = err?.status ?? err?.code ?? err?.response?.status;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const getGeminiCategory = (status) => {
+  if (status === 429) return 'quota_exceeded';
+  if (status === 503) return 'temporarily_unavailable';
+  if (status === 504) return 'deadline_exceeded';
+  if (status === 401 || status === 403) return 'authentication_or_permission';
+  if (status === 404) return 'model_not_found';
+  if (status === 400) return 'invalid_request';
+  if (status && status >= 500) return 'provider_error';
+  return 'network_or_unknown';
+};
+
+class GeminiServiceError extends Error {
+  constructor({ message, status = 502, category, retryable = false, model = null, cause = null }) {
+    super(message);
+    this.name = 'GeminiServiceError';
+    this.httpStatus = status;
+    this.category = category;
+    this.retryable = retryable;
+    this.model = model;
+    this.cause = cause;
+  }
+}
+
+const sendAiError = (res, err) => {
+  if (!(err instanceof GeminiServiceError)) {
+    console.error('[AI] Unexpected error:', err);
+    return res.status(500).json({
+      error: 'AI request failed due to an internal server error.',
+      code: 'internal_error',
+      retryable: false,
+    });
+  }
+
+  return res.status(err.httpStatus).json({
+    error: err.message,
+    code: err.category,
+    retryable: err.retryable,
+    model: err.model,
+  });
+};
+
 // Gemini-only fallback chain (paid key — higher rate limits).
 // Tries 4 models in order: if one is busy/overloaded the next kicks in automatically.
 async function generateGeminiContent(prompt) {
-  if (!ai) throw new Error('Gemini API key not configured.');
+  if (!ai) {
+    throw new GeminiServiceError({
+      message: 'GEMINI_API_KEY is not configured on the API server.',
+      status: 500,
+      category: 'configuration_error',
+    });
+  }
 
-  const geminiModels = [
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-  ];
-
+  let lastFailure = null;
   const errors = [];
-  for (const model of geminiModels) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
+  for (const model of GEMINI_MODELS) {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
         const aiRes = await ai.models.generateContent({ model, contents: prompt });
+        const text = aiRes?.text?.trim();
+        if (!text) {
+          throw new GeminiServiceError({
+            message: `Gemini returned an empty response from ${model}.`,
+            status: 502,
+            category: 'empty_response',
+            retryable: true,
+            model,
+          });
+        }
         console.log(`[AI] ✅ Gemini (${model})`);
-        return aiRes.text.trim();
+        return text;
       } catch (err) {
-        const msg = err.message || '';
+        const upstreamStatus = getGeminiStatus(err);
+        const category = err instanceof GeminiServiceError
+          ? err.category
+          : getGeminiCategory(upstreamStatus);
+        const retryable = err instanceof GeminiServiceError
+          ? err.retryable
+          : upstreamStatus === 429 || upstreamStatus === 503 ||
+            upstreamStatus === 504 || (upstreamStatus !== null && upstreamStatus >= 500) ||
+            upstreamStatus === null;
+        const msg = err?.message || category;
+        errors.push(`${model}#${attempt}: ${category} (${upstreamStatus || 'unknown'})`);
+
+        lastFailure = err instanceof GeminiServiceError
+          ? err
+          : new GeminiServiceError({
+              message: `Gemini request failed: ${category}.`,
+              status: upstreamStatus === 429 ? 429 : (retryable ? 503 : 502),
+              category,
+              retryable,
+              model,
+              cause: err,
+            });
         console.warn(`[AI] Gemini (${model}) attempt ${attempt} failed: ${msg}`);
-        errors.push(`${model}#${attempt}: ${msg}`);
-        // Short back-off before retry
-        if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+        console.error('[AI] Gemini failure details', { model, attempt, upstreamStatus, category, message: msg });
+
+        // Bad credentials and malformed requests affect every configured model.
+        if ([400, 401, 403].includes(upstreamStatus)) throw lastFailure;
+        // Do not retry a retired/unknown model; try the next configured model.
+        if (upstreamStatus === 404) break;
+        if (!retryable || attempt === 3) break;
+
+        const delayMs = (1000 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 400);
+        await sleep(delayMs);
       }
     }
   }
 
   console.error('[AI] ❌ All Gemini models exhausted:', errors.join(' | '));
-  throw new Error('AI temporarily overloaded across all Gemini models. Please try again shortly.');
+  throw lastFailure || new GeminiServiceError({
+    message: 'No Gemini models are configured.',
+    status: 500,
+    category: 'configuration_error',
+  });
 }
 
 async function getOrUpsertConversation(lead_id) {
@@ -217,19 +313,31 @@ router.post('/ai/intent', async (req, res) => {
     // FIX: Ensure conversation exists safely without constraint errors and log inbound message for bidirectional UI
     if (lead_id && message) {
       const conversation_id = await getOrUpsertConversation(lead_id);
-      // Only insert if this message hasn't been logged recently to prevent dupes
+      // The WhatsApp webhook normally persists this message before n8n runs.
+      // Insert only when no matching inbound event was saved in the last minute.
       const savedMsg = await pool.query(
-        `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai, sent_at) VALUES ($1, 'inbound', 'text', $2, 'delivered', false, NOW()) RETURNING id, direction, content, msg_type as type, status, sent_at as timestamp`,
+        `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai, sent_at)
+         SELECT $1, 'inbound', 'text', $2, 'delivered', false, NOW()
+         WHERE NOT EXISTS (
+           SELECT 1
+           FROM messages
+           WHERE conversation_id = $1
+             AND direction = 'inbound'
+             AND content = $2
+             AND sent_at >= NOW() - INTERVAL '1 minute'
+         )
+         RETURNING id, direction, content, msg_type as type, status, sent_at as timestamp`,
         [conversation_id, message]
       );
-      await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW(), unread_count = COALESCE(unread_count, 0) + 1 WHERE id = $2`, [message, conversation_id]);
+      if (savedMsg.rows[0]) {
+        await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW(), unread_count = COALESCE(unread_count, 0) + 1 WHERE id = $2`, [message, conversation_id]);
+      }
       const io = req.app.get('io');
       if (io && savedMsg.rows[0]) {
         io.emit('incoming_message', { lead_id: Number(lead_id), message: savedMsg.rows[0] });
       }
     }
 
-    if (!ai) return res.json({ intent: "GENERAL", confidence: 50 });
     const prompt = `Analyze this message sent to the brand '${brand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
     const output = await generateGeminiContent(prompt);
     const parts = output.split(',');
@@ -241,7 +349,7 @@ router.post('/ai/intent', async (req, res) => {
     }
     res.json({ ...req.body, intent, confidence });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendAiError(res, err);
   }
 });
 
@@ -249,12 +357,11 @@ router.post('/ai/intent', async (req, res) => {
 router.post('/ai/objections', async (req, res) => {
   const { message, brand, lead_id } = req.body;
   try {
-    if (!ai) return res.json({ objections: "none" });
     const prompt = `Analyze this message. Does the user have any objections? Choose one: [TOO_EXPENSIVE, NO_TIME, NOT_SURE, USING_COMPETITOR, NONE]. Message: "${message}". Reply ONLY with the objection type.`;
     const objections = await generateGeminiContent(prompt);
     res.json({ ...req.body, objections });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendAiError(res, err);
   }
 });
 
@@ -274,8 +381,6 @@ router.post('/kb/search', async (req, res) => {
 router.post('/ai/response', async (req, res) => {
   const { brand, intent, message, kb_snippets, lead_id, chat_history } = req.body;
   try {
-    if (!ai) return res.json({ ...req.body, ai_reply: "AI is currently offline. We will get back to you shortly!" });
-
     let historyText = "";
     if (chat_history && Array.isArray(chat_history)) {
       historyText = "Chat History:\n" + chat_history.map(h => `${h.role}: ${h.text}`).join("\n") + "\n\n";
@@ -324,7 +429,7 @@ router.post('/ai/response', async (req, res) => {
 
     res.json({ ...req.body, ai_reply });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendAiError(res, err);
   }
 });
 

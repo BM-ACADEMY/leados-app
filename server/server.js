@@ -1163,8 +1163,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
             ON CONFLICT (phone, tenant_id) DO UPDATE
               SET lead_id = EXCLUDED.lead_id,
                   last_message = EXCLUDED.last_message,
-                  last_message_at = NOW(),
-                  unread_count = COALESCE(conversations.unread_count, 0) + 1
+                  last_message_at = NOW()
             RETURNING id
           `, [lead.id, tenantId, normalizedPhone, text]);
           const conversationId = convRes.rows[0].id;
@@ -1182,6 +1181,13 @@ app.post('/webhook/whatsapp', async (req, res) => {
             `, [conversationId, text, msgType, mediaUrl, waMessageId, isForwarded]);
 
             // ── REAL-TIME: push to CRM Inbox immediately ─────────
+            // Count only messages that passed the duplicate webhook check.
+            await pool.query(`
+              UPDATE conversations
+              SET unread_count = COALESCE(unread_count, 0) + 1
+              WHERE id = $1
+            `, [conversationId]);
+
             io.emit('incoming_message', { lead_id: String(lead.id), message: savedRows[0] });
             console.log(`[Webhook] ✅ Saved inbound ${msgType} from ${phone} → lead ${lead.id}, msg_id ${savedRows[0].id}`);
 

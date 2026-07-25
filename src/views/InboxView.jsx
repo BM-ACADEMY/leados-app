@@ -34,6 +34,90 @@ const formatBytes = (bytes) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
+const getNameColor = (name) => {
+  if (!name) return '#e91e63';
+  const colors = [
+    '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', 
+    '#2196f3', '#03a9f4', '#00bcd4', '#009688', 
+    '#4caf50', '#8bc34a', '#ff9800', '#ff5722'
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % colors.length;
+  return colors[index];
+};
+
+// A message can arrive through both the REST response and Socket.IO. Prefer the
+// database id, then WhatsApp's id, so those two delivery paths cannot render twice.
+const getMessageIdentity = (message) => {
+  if (message?.id !== null && message?.id !== undefined) return `id:${String(message.id)}`;
+  if (message?.wa_msg_id) return `wa:${message.wa_msg_id}`;
+  return null;
+};
+
+const getMessageTimestamp = (message) => {
+  const value = message?.timestamp || message?.sent_at || message?.time;
+  const timestamp = value ? new Date(value).getTime() : NaN;
+  return Number.isNaN(timestamp) ? null : timestamp;
+};
+
+const getInboundDuplicateKey = (message) => {
+  const isInbound = message?.direction === 'inbound' || message?.from === 'lead';
+  if (!isInbound) return null;
+
+  return JSON.stringify([
+    message?.type || message?.msg_type || 'text',
+    (message?.content || message?.message || message?.text || '').trim(),
+    message?.media_url || '',
+  ]);
+};
+
+const mergeMessages = (current, incoming) => {
+  const merged = [];
+  const positions = new Map();
+  const recentInboundPositions = new Map();
+
+  [...(current || []), ...(incoming || [])].forEach((message) => {
+    const identity = getMessageIdentity(message);
+    const whatsappIdentity = message?.wa_msg_id ? `wa:${message.wa_msg_id}` : null;
+    let existingIndex = identity !== null
+      ? positions.get(identity) ?? (whatsappIdentity ? positions.get(whatsappIdentity) : undefined)
+      : undefined;
+
+    // Some old webhook retries were stored as separate rows with distinct DB ids
+    // and no reliable wa_msg_id. Treat an identical inbound payload received within
+    // ten seconds as the same webhook event.
+    const inboundDuplicateKey = getInboundDuplicateKey(message);
+    const timestamp = getMessageTimestamp(message);
+    if (existingIndex === undefined && inboundDuplicateKey && timestamp !== null) {
+      const candidateIndex = recentInboundPositions.get(inboundDuplicateKey);
+      const candidateTimestamp = candidateIndex !== undefined
+        ? getMessageTimestamp(merged[candidateIndex])
+        : null;
+      if (candidateTimestamp !== null && Math.abs(timestamp - candidateTimestamp) <= 10000) {
+        existingIndex = candidateIndex;
+      }
+    }
+
+    if (existingIndex !== undefined) {
+      merged[existingIndex] = { ...merged[existingIndex], ...message };
+      if (identity) positions.set(identity, existingIndex);
+      if (whatsappIdentity) positions.set(whatsappIdentity, existingIndex);
+      if (inboundDuplicateKey) recentInboundPositions.set(inboundDuplicateKey, existingIndex);
+      return;
+    }
+
+    const nextIndex = merged.length;
+    merged.push(message);
+    if (identity) positions.set(identity, nextIndex);
+    if (whatsappIdentity) positions.set(whatsappIdentity, nextIndex);
+    if (inboundDuplicateKey) recentInboundPositions.set(inboundDuplicateKey, nextIndex);
+  });
+
+  return merged;
+};
 
 export const InboxView = () => {
   const location = useLocation();
@@ -185,10 +269,16 @@ export const InboxView = () => {
     }
   }, [leads, activeLeadId]);
 
-  // Sync server-fetched conversations into localMessages
+  // Merge paginated server messages with realtime messages. Replacing this array
+  // used to discard socket messages whenever an older page finished loading.
   useEffect(() => {
-    setLocalMessages(conversations || []);
+    setLocalMessages((prev) => mergeMessages(conversations || [], prev));
   }, [conversations]);
+
+  // Never carry messages from the previously selected lead into the next chat.
+  useEffect(() => {
+    setLocalMessages([]);
+  }, [activeLeadId]);
 
   // Removed old auto-scroll as Virtuoso handles it natively
 
@@ -238,8 +328,7 @@ export const InboxView = () => {
       // If the active conversation is for this lead, append the message
       if (activeLeadIdRef.current !== null && activeLeadIdRef.current !== undefined && String(lead_id) === String(activeLeadIdRef.current)) {
         setLocalMessages((prev) => {
-          const exists = prev.some((m) => String(m.id) === String(message.id));
-          return exists ? prev : [...prev, message];
+          return mergeMessages(prev, [message]);
         });
       }
     });
@@ -249,8 +338,7 @@ export const InboxView = () => {
       refetchLeadsListRef.current();
       if (activeLeadIdRef.current !== null && activeLeadIdRef.current !== undefined && String(lead_id) === String(activeLeadIdRef.current)) {
         setLocalMessages((prev) => {
-          const exists = prev.some((m) => String(m.id) === String(message.id));
-          return exists ? prev : [...prev, message];
+          return mergeMessages(prev, [message]);
         });
       }
     });
@@ -356,8 +444,12 @@ export const InboxView = () => {
         return;
       }
 
-      // Replace optimistic message directly with the confirmed database message
-      setLocalMessages((prev) => prev.map(m => m.id === optimisticId ? { ...sentMsg.message, reply_to: replyingTo } : m));
+      // Socket.IO may have already inserted this confirmed message. Remove the
+      // optimistic row and merge the confirmation instead of creating a duplicate.
+      setLocalMessages((prev) => mergeMessages(
+        prev.filter((m) => m.id !== optimisticId),
+        [{ ...sentMsg.message, reply_to: replyingTo }]
+      ));
     } catch (err) {
       // On error, remove the optimistic message
       setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
@@ -622,6 +714,28 @@ export const InboxView = () => {
     if (!raw) return '';
     return new Date(raw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
+  const filteredMessages = localMessages.filter(m => !deletedForMeIds.includes(m.id));
+  const messageFirstItemIndex = Math.max(0, 10000 - filteredMessages.length);
+
+  const getGroupDateLabel = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return '';
+
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    if (date.toDateString() === today.toDateString()) {
+      return 'Today';
+    }
+
+    if (date.toDateString() === yesterday.toDateString()) {
+      return 'Yesterday';
+    }
+
+    return date.toLocaleDateString([], { weekday: 'long' });
+  };
 
   return (
     <div style={{ height: '100%', display: 'flex' }}>
@@ -813,12 +927,12 @@ export const InboxView = () => {
           {!loadingLead && localMessages.length === 0 && (
             <p style={{ textAlign: 'center', color: C.muted, fontSize: 11, marginTop: 60 }}>No messages yet. Start the conversation!</p>
           )}
-          {localMessages.length > 0 && (
+          {filteredMessages.length > 0 && (
             <Virtuoso
               style={{ flex: 1 }}
-              data={localMessages.filter(m => !deletedForMeIds.includes(m.id))}
-              firstItemIndex={Math.max(0, 10000 - localMessages.length)}
-              initialTopMostItemIndex={localMessages.length - 1}
+              data={filteredMessages}
+              firstItemIndex={messageFirstItemIndex}
+              initialTopMostItemIndex={filteredMessages.length - 1}
               startReached={() => {
                 if (hasMore && !loadingMore) {
                   loadMoreMessages();
@@ -829,11 +943,53 @@ export const InboxView = () => {
                 Footer: () => <div style={{ height: 18 }} />
               }}
               itemContent={(i, m) => {
+                const messageIndex = i - messageFirstItemIndex;
                 const isLead = m.direction === 'inbound' || m.from === 'lead';
                 const isAI = m.sender === 'ai' || m.from === 'ai';
                 const isSending = m.id?.toString().startsWith('optimistic-');
+
+                // Determine if we should show date header
+                let showDateHeader = false;
+                let dateHeaderLabel = '';
+                const mDateStr = m.timestamp || m.sent_at || m.time;
+                if (messageIndex === 0 && mDateStr) {
+                  showDateHeader = true;
+                  dateHeaderLabel = getGroupDateLabel(mDateStr);
+                } else if (mDateStr) {
+                  const prevMsg = filteredMessages[messageIndex - 1];
+                  if (prevMsg) {
+                    const prevDateStr = prevMsg.timestamp || prevMsg.sent_at || prevMsg.time;
+                    if (prevDateStr) {
+                      const prevDate = new Date(prevDateStr).toDateString();
+                      const currDate = new Date(mDateStr).toDateString();
+                      if (prevDate !== currDate) {
+                        showDateHeader = true;
+                        dateHeaderLabel = getGroupDateLabel(mDateStr);
+                      }
+                    }
+                  }
+                }
+
                 return (
                   <div style={{ padding: '0 18px', marginBottom: 11 }}>
+                    {showDateHeader && (
+                      <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0 14px 0' }}>
+                        <span style={{
+                          background: C.card,
+                          border: '1px solid ' + C.border,
+                          color: C.muted,
+                          fontSize: '11px',
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          fontWeight: '600',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.5px'
+                        }}>
+                          {dateHeaderLabel}
+                        </span>
+                      </div>
+                    )}
                     
               <div
                 id={`msg-${m.id}`}
@@ -954,6 +1110,17 @@ export const InboxView = () => {
                     </div>
                   ) : (
                     <>
+                      {isLead && (
+                        <p style={{
+                          fontSize: 11,
+                          color: getNameColor(activeObj?.name || 'Contact'),
+                          fontWeight: 600,
+                          marginBottom: 4,
+                          marginTop: 0
+                        }}>
+                          {activeObj?.name || 'Contact'}
+                        </p>
+                      )}
                       {isAI && <p style={{ fontSize: 8, color: C.accent, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>AI AGENT</p>}
                       {!isLead && !isAI && <p style={{ fontSize: 8, color: C.blue, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>HUMAN AGENT</p>}
 

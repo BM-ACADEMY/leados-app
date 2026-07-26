@@ -713,7 +713,24 @@ router.post('/generate-ai-reply', async (req, res) => {
     return res.status(400).json({ error: 'clientId is required' });
   }
 
+  const { checkLimit } = require('../utils/limit-checker');
+
   try {
+    const limitCheck = await checkLimit(clientId, 'mafiya_ai_replies', async () => {
+      const countRes = await pool.query(
+        "SELECT COUNT(*) FROM mafiya_review_replies WHERE client_id = $1 AND created_at >= NOW() - INTERVAL '30 days'",
+        [clientId]
+      );
+      return parseInt(countRes.rows[0].count, 10);
+    });
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({
+        error: 'Limit reached',
+        message: `Your current plan allows up to ${limitCheck.limit} AI Review Replies per month. Please upgrade your plan to get more replies.`
+      });
+    }
+
     const clientRes = await pool.query(
       'SELECT business_name FROM mafiya_gmb_clients WHERE id = $1',
       [clientId]
@@ -864,7 +881,7 @@ router.get('/brain', async (req, res) => {
 
 // POST /api/mafiya/reviews/brain/polish
 router.post('/brain/polish', async (req, res) => {
-  const { content, entryType } = req.body;
+  const { content, entryType, clientId } = req.body;
   if (!content || !entryType) {
     return res.status(400).json({ error: 'content and entryType are required' });
   }
@@ -873,7 +890,28 @@ router.post('/brain/polish', async (req, res) => {
     return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
   }
 
+  const { checkLimit } = require('../utils/limit-checker');
+
   try {
+    if (clientId) {
+      const limitCheck = await checkLimit(clientId, 'mafiya_brain_ai', async () => {
+        const countRes = await pool.query(
+          "SELECT COUNT(*) FROM mafiya_brain_ai_log WHERE client_id = $1 AND used_at >= NOW() - INTERVAL '30 days'",
+          [clientId]
+        );
+        return parseInt(countRes.rows[0].count, 10);
+      });
+
+      if (!limitCheck.allowed) {
+        return res.status(403).json({
+          error: 'Limit reached',
+          message: `Your current plan allows up to ${limitCheck.limit} GMB Brain AI actions per month. Please upgrade your plan to unlock more AI Brain power.`
+        });
+      }
+
+      await pool.query('INSERT INTO mafiya_brain_ai_log (client_id) VALUES ($1)', [clientId]);
+    }
+
     const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `You are an expert prompt engineer for Google My Business settings optimization.
 Optimize and refine the following user instruction under the category "${entryType}".
@@ -917,7 +955,26 @@ router.post('/brain/suggest-config', async (req, res) => {
     return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
   }
 
+  const { checkLimit } = require('../utils/limit-checker');
+
   try {
+    const limitCheck = await checkLimit(clientId, 'mafiya_brain_ai', async () => {
+      const countRes = await pool.query(
+        "SELECT COUNT(*) FROM mafiya_brain_ai_log WHERE client_id = $1 AND used_at >= NOW() - INTERVAL '30 days'",
+        [clientId]
+      );
+      return parseInt(countRes.rows[0].count, 10);
+    });
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({
+        error: 'Limit reached',
+        message: `Your current plan allows up to ${limitCheck.limit} GMB Brain AI actions per month. Please upgrade your plan to unlock more AI Brain power.`
+      });
+    }
+
+    await pool.query('INSERT INTO mafiya_brain_ai_log (client_id) VALUES ($1)', [clientId]);
+
     // Fetch business profile details
     const clientRes = await pool.query(
       'SELECT business_name FROM mafiya_gmb_clients WHERE id = $1',
@@ -1119,7 +1176,27 @@ router.post('/brain/suggest-posts', async (req, res) => {
   if (!clientId) return res.status(400).json({ error: 'clientId is required' });
   const targetMonth = month || 'Month 1';
 
+  const { checkLimit } = require('../utils/limit-checker');
+
   try {
+    const limitCheck = await checkLimit(clientId, 'mafiya_ai_suggestions', async () => {
+      const countRes = await pool.query(
+        "SELECT COUNT(*) FROM mafiya_ai_suggestions_log WHERE client_id = $1 AND generated_at >= NOW() - INTERVAL '30 days'",
+        [clientId]
+      );
+      return parseInt(countRes.rows[0].count, 10);
+    });
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({
+        error: 'Limit reached',
+        message: `Plan limit reached. Up to ${limitCheck.limit} AI suggestions/month. Please upgrade.`
+      });
+    }
+
+    // Log the suggestion generation
+    await pool.query('INSERT INTO mafiya_ai_suggestions_log (client_id) VALUES ($1)', [clientId]);
+
     // 1. Fetch business profile details
     const clientRes = await pool.query(
       'SELECT business_name, business_category, custom_category, phone_number, business_address FROM mafiya_gmb_clients WHERE id = $1',
@@ -1990,7 +2067,7 @@ router.delete('/posts/:id', async (req, res) => {
 });
 
 const parseAIJson = (text) => {
-  let cleaned = text.trim();
+  let cleaned = (text || '').trim();
   if (cleaned.startsWith('```json')) {
     cleaned = cleaned.substring(7);
   } else if (cleaned.startsWith('```')) {
@@ -1999,7 +2076,11 @@ const parseAIJson = (text) => {
   if (cleaned.endsWith('```')) {
     cleaned = cleaned.substring(0, cleaned.length - 3);
   }
-  return JSON.parse(cleaned.trim());
+  try {
+    return JSON.parse(cleaned.trim());
+  } catch (e) {
+    return { title: 'New GMB Post', description: cleaned };
+  }
 };
 
 // POST /api/mafiya/reviews/posts/generate-from-image
@@ -2014,6 +2095,25 @@ router.post('/posts/generate-from-image', async (req, res) => {
   }
 
   try {
+    const { checkLimit } = require('../utils/limit-checker');
+    const limitCheck = await checkLimit(clientId, 'mafiya_ai_suggestions', async () => {
+      const countRes = await pool.query(
+        "SELECT COUNT(*) FROM mafiya_ai_suggestions_log WHERE client_id = $1 AND generated_at >= NOW() - INTERVAL '30 days'",
+        [clientId]
+      );
+      return parseInt(countRes.rows[0].count, 10);
+    });
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({
+        error: 'Limit reached',
+        message: `Plan limit reached. Up to ${limitCheck.limit} AI suggestions/month. Please upgrade.`
+      });
+    }
+
+    // Log the suggestion generation
+    await pool.query('INSERT INTO mafiya_ai_suggestions_log (client_id) VALUES ($1)', [clientId]);
+
     const matches = imageBase64.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.*)$/);
     if (!matches || matches.length !== 3) {
       return res.status(400).json({ error: 'Invalid image format' });

@@ -157,7 +157,8 @@ export default function GmbBrain() {
       const token = localStorage.getItem('leados_token');
       const { data } = await axios.post(`${API_URL}/api/mafiya/reviews/brain/polish`, {
         content: content.trim(),
-        entryType
+        entryType,
+        clientId: activeClient?.id
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -167,7 +168,8 @@ export default function GmbBrain() {
       }
     } catch (err) {
       console.error('AI Polish error:', err);
-      toast.error('Failed to polish text');
+      const msg = err.response?.data?.message || 'Failed to polish text';
+      toast.error(msg);
     } finally {
       setPolishing(false);
     }
@@ -258,7 +260,8 @@ export default function GmbBrain() {
       toast.success(`Generated suggestions based on ${activeClient.display_name || activeClient.business_name || 'profile'}!`);
     } catch (err) {
       console.error('Suggest config error:', err);
-      toast.error('Failed to generate suggestions. Please try again.');
+      const msg = err.response?.data?.message || 'Failed to generate suggestions. Please try again.';
+      toast.error(msg);
     } finally {
       setSuggesting(false);
     }

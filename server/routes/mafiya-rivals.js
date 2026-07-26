@@ -29,6 +29,45 @@ router.get('/:business_id', async (req, res) => {
   }
 });
 
+// POST register/check a live geogrid scan
+router.post('/scan', async (req, res) => {
+  const { client_id } = req.body;
+  if (!client_id) {
+    return res.status(400).json({ error: 'client_id is required' });
+  }
+
+  const { checkLimit } = require('../utils/limit-checker');
+
+  try {
+    const limitCheck = await checkLimit(client_id, 'mafiya_geogrid_scans', async () => {
+      const countRes = await pool.query(
+        `SELECT COUNT(*) FROM mafiya_geogrid_scans_log 
+         WHERE client_id = $1 AND scanned_at >= NOW() - INTERVAL '30 days'`,
+        [client_id]
+      );
+      return parseInt(countRes.rows[0].count, 10);
+    });
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({
+        error: 'Limit reached',
+        message: `Your current plan allows up to ${limitCheck.limit} Rivals map scans per month. Please upgrade your plan to run more scans.`
+      });
+    }
+
+    // Log the scan
+    await pool.query(
+      'INSERT INTO mafiya_geogrid_scans_log (client_id) VALUES ($1)',
+      [client_id]
+    );
+
+    res.json({ success: true, allowed: true });
+  } catch (err) {
+    console.error('[Mafiya] POST /rivals/scan error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST new rival
 router.post('/', async (req, res) => {
   const { business_id, competitor_name, gbp_url, city, keyword, place_id } = req.body;
@@ -37,7 +76,32 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'business_id and competitor_name are required' });
   }
 
+  const { checkLimit } = require('../utils/limit-checker');
+
   try {
+    // Check Rivals map scan limit
+    const limitCheck = await checkLimit(business_id, 'mafiya_geogrid_scans', async () => {
+      const countRes = await pool.query(
+        `SELECT COUNT(*) FROM mafiya_geogrid_scans_log 
+         WHERE client_id = $1 AND scanned_at >= NOW() - INTERVAL '30 days'`,
+        [business_id]
+      );
+      return parseInt(countRes.rows[0].count, 10);
+    });
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({ 
+        error: 'Limit reached', 
+        message: `Your current plan allows up to ${limitCheck.limit} Rivals map scans per month. Please upgrade your plan to run more scans.` 
+      });
+    }
+
+    // Log the scan
+    await pool.query(
+      'INSERT INTO mafiya_geogrid_scans_log (client_id) VALUES ($1)',
+      [business_id]
+    );
+
     const result = await pool.query(
       `INSERT INTO mafiya_rivals (business_id, competitor_name, gbp_url, city, keyword, place_id)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -89,7 +153,32 @@ router.delete('/:id', async (req, res) => {
 router.post('/refresh/:business_id', async (req, res) => {
   const { business_id } = req.params;
   
+  const { checkLimit } = require('../utils/limit-checker');
+  
   try {
+    // Check Rivals map scan limit
+    const limitCheck = await checkLimit(business_id, 'mafiya_geogrid_scans', async () => {
+      const countRes = await pool.query(
+        `SELECT COUNT(*) FROM mafiya_geogrid_scans_log 
+         WHERE client_id = $1 AND scanned_at >= NOW() - INTERVAL '30 days'`,
+        [business_id]
+      );
+      return parseInt(countRes.rows[0].count, 10);
+    });
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({ 
+        error: 'Limit reached', 
+        message: `Your current plan allows up to ${limitCheck.limit} Rivals map scans per month. Please upgrade your plan to run more scans.` 
+      });
+    }
+
+    // Log the scan
+    await pool.query(
+      'INSERT INTO mafiya_geogrid_scans_log (client_id) VALUES ($1)',
+      [business_id]
+    );
+
     // 1. Fetch rivals for this business
     const rivalsResult = await pool.query('SELECT * FROM mafiya_rivals WHERE business_id = $1', [business_id]);
     const rivals = rivalsResult.rows;

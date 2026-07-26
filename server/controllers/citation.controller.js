@@ -7,7 +7,32 @@ async function runCheck(req, res) {
     return res.status(400).json({ error: 'businessId is required' });
   }
 
+  const { checkLimit } = require('../utils/limit-checker');
+
   try {
+    const limitCheck = await checkLimit(businessId, 'mafiya_citations_scans', async () => {
+      const countRes = await pool.query(
+        'SELECT COUNT(*) FROM mafiya_citations_scans_log WHERE client_id = $1 AND scanned_at >= NOW() - INTERVAL \'30 days\'',
+        [businessId]
+      );
+      return parseInt(countRes.rows[0].count, 10);
+    });
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({ 
+        error: 'Limit reached', 
+        message: `Plan limit reached. Up to ${limitCheck.limit} Citations Audits/month. Please upgrade.`,
+        limit: limitCheck.limit,
+        current: limitCheck.current
+      });
+    }
+
+    // Log the manual check
+    await pool.query(
+      'INSERT INTO mafiya_citations_scans_log (client_id) VALUES ($1)',
+      [businessId]
+    );
+
     const io = req.app ? req.app.get('io') : null;
     const result = await runCheckForBusiness(businessId, forceRefresh, io);
     res.json(result);

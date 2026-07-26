@@ -114,7 +114,8 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
       toast.success('AI suggestions loaded successfully!', { id: aiToast });
     } catch (err) {
       console.error('[AI Generation error]:', err);
-      toast.error('AI failed to parse image details.', { id: aiToast });
+      const errMsg = err.response?.data?.message || err.response?.data?.error || 'AI failed to parse image details.';
+      toast.error(errMsg, { id: aiToast });
     } finally {
       setGeneratingAi(false);
     }

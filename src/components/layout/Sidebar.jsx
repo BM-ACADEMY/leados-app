@@ -487,8 +487,16 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
 
               
 
+                <NavLink to="/mafiya/family" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'The Family')}>
+                  <Users size={14} style={{ marginRight: 8 }} /> The Family
+                </NavLink>
+
                 <NavLink to="/mafiya/add-client" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GMB Clients')}>
                   <UserPlus size={14} style={{ marginRight: 8 }} /> GMB Clients
+                </NavLink>
+
+                <NavLink to="/mafiya/plans" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Mafiya Plans')}>
+                  <Layers size={14} style={{ marginRight: 8 }} /> Mafiya Plans
                 </NavLink>
 
                 <NavLink to="/thedal/keyword-tracking" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Turf Control')}>

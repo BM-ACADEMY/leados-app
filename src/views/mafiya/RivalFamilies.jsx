@@ -196,6 +196,21 @@ export default function RivalFamilies() {
     const query = `${category} in ${location}`;
     
     try {
+      const token = localStorage.getItem('leados_token');
+      const scanRes = await fetch(`${API_URL}/api/mafiya/rivals/scan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ client_id: parseInt(selectedClient) })
+      });
+
+      if (!scanRes.ok) {
+        const errData = await scanRes.json();
+        throw new Error(errData.message || errData.error || 'Failed to check scan limits');
+      }
+
       const results = await performTextSearch(query);
       setIsSearching(false);
       if (results && results.length > 0) {
@@ -230,7 +245,7 @@ export default function RivalFamilies() {
     } catch (err) {
       console.error(err);
       setIsSearching(false);
-      toast.error('Error searching competitors');
+      toast.error(err.message || 'Error searching competitors');
     }
   };
 

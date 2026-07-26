@@ -56,6 +56,8 @@ import RivalFamilies from './views/mafiya/RivalFamilies.jsx';
 import Citations from './views/mafiya/Citations.jsx';
 import UsageMafiya from './views/mafiya/Usage.jsx';
 import MafiyaOrders from './views/mafiya/Orders.jsx';
+import PlanManagementMafiya from './views/mafiya/PlanManagement.jsx';
+import Family from './views/mafiya/Family.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -133,7 +135,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
   return (
     <>
       <style>{STYLE}</style>
-      <Toaster position="top-right" toastOptions={{ style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' } }} />
+      <Toaster position="top-right" containerStyle={{ zIndex: 999999 }} toastOptions={{ style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' } }} />
       <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
         <Sidebar onLogout={logout} mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', width: '100%' }}>
@@ -192,7 +194,9 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/thedal/local-seo-bridge" element={<LocalSeoBridge />} />
 
               <Route path="/mafiya/orders" element={<MafiyaOrders />} />
+              <Route path="/mafiya/plans" element={<PlanManagementMafiya />} />
               <Route path="/mafiya/add-client" element={<AddClientMafiya />} />
+              <Route path="/mafiya/family" element={<Family />} />
               <Route path="/mafiya/loyalty" element={<LoyaltyMafiya />} />
               <Route path="/mafiya/brain" element={<GmbBrain />} />
               <Route path="/mafiya/street-posts" element={<StreetPosts />} />

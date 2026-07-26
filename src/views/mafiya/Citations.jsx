@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import { io as socketIO } from 'socket.io-client';
 import { C } from '../../constants/theme.js';
 import {
@@ -12,6 +13,7 @@ import toast from 'react-hot-toast';
 const API_URL = import.meta.env.VITE_API_URL || '';
 
 export default function Citations() {
+  const navigate = useNavigate();
   const [clients, setClients] = useState([]);
   const [activeClient, setActiveClient] = useState(null);
   const [loadingClients, setLoadingClients] = useState(true);
@@ -20,6 +22,8 @@ export default function Citations() {
   const [scanData, setScanData] = useState(null);
   const [loadingScan, setLoadingScan] = useState(false);
   const [runningScan, setRunningScan] = useState(false);
+  const [showLimitModal, setShowLimitModal] = useState(false);
+  const [limitDetails, setLimitDetails] = useState({ limit: 0, current: 0, message: '' });
 
   // Real-Time Progress & Debug States
   const [scanProgress, setScanProgress] = useState(0);
@@ -185,7 +189,16 @@ export default function Citations() {
       await fetchCitationScan(activeClient.id);
     } catch (err) {
       console.error('[Citations] Run check error:', err);
-      toast.error(err.response?.data?.error || 'Failed to complete citation scan');
+      if (err.response?.status === 403 && err.response?.data?.error === 'Limit reached') {
+        setLimitDetails({
+          limit: err.response.data.limit || 0,
+          current: err.response.data.current || 0,
+          message: err.response.data.message || 'Plan limit reached.'
+        });
+        setShowLimitModal(true);
+      } else {
+        toast.error(err.response?.data?.error || 'Failed to complete citation scan');
+      }
     } finally {
       setRunningScan(false);
     }
@@ -1268,6 +1281,169 @@ export default function Citations() {
         )}
 
       </div>
+
+      {/* Plan Limit Reached Modal */}
+      {showLimitModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(5, 8, 16, 0.85)',
+          backdropFilter: 'blur(10px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999
+        }}>
+          <div style={{
+            background: 'linear-gradient(145deg, #111827 0%, #030712 100%)',
+            border: '1px solid rgba(249, 115, 22, 0.3)',
+            borderRadius: 24,
+            padding: '32px',
+            maxWidth: 480,
+            width: '90%',
+            textAlign: 'center',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.6), 0 0 40px rgba(249, 115, 22, 0.1)',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            {/* Decorative top gradient bar */}
+            <div style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 4,
+              background: 'linear-gradient(90deg, #f97316 0%, #ef4444 100%)'
+            }} />
+
+            {/* Close Button */}
+            <button 
+              onClick={() => setShowLimitModal(false)}
+              style={{
+                position: 'absolute',
+                top: 16,
+                right: 16,
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '50%',
+                width: 32,
+                height: 32,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: C.muted,
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+              onMouseOver={e => e.currentTarget.style.color = '#fff'}
+              onMouseOut={e => e.currentTarget.style.color = C.muted}
+            >
+              <X size={16} />
+            </button>
+
+            {/* Glowing Icon Container */}
+            <div style={{
+              width: 72,
+              height: 72,
+              background: 'radial-gradient(circle, rgba(249,115,22,0.2) 0%, transparent 70%)',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 24px auto',
+              border: '1px solid rgba(249, 115, 22, 0.2)'
+            }}>
+              <Zap size={32} color="#f97316" style={{ filter: 'drop-shadow(0 0 8px rgba(249,115,22,0.5))' }} />
+            </div>
+
+            {/* Content */}
+            <h2 style={{
+              fontFamily: "'Syne', sans-serif",
+              fontSize: 22,
+              fontWeight: 800,
+              color: '#fff',
+              margin: '0 0 10px 0'
+            }}>
+              Citation Plan Limit Reached
+            </h2>
+            
+            <p style={{
+              color: C.muted,
+              fontSize: 14,
+              lineHeight: 1.5,
+              margin: '0 0 24px 0'
+            }}>
+              {limitDetails.message}
+            </p>
+
+            {/* Usage Visual Meter */}
+            {limitDetails.limit > 0 && (
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid rgba(255, 255, 255, 0.05)',
+                borderRadius: 16,
+                padding: 16,
+                marginBottom: 28,
+                textAlign: 'left'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13 }}>
+                  <span style={{ color: C.muted }}>Monthly Scan Usage</span>
+                  <span style={{ color: '#fff', fontWeight: 700 }}>
+                    {limitDetails.current} / {limitDetails.limit}
+                  </span>
+                </div>
+                {/* Progress bar wrapper */}
+                <div style={{
+                  height: 8,
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  borderRadius: 4,
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${Math.min(100, (limitDetails.current / limitDetails.limit) * 100)}%`,
+                    background: 'linear-gradient(90deg, #f97316 0%, #ef4444 100%)',
+                    borderRadius: 4
+                  }} />
+                </div>
+                <div style={{ marginTop: 8, fontSize: 11, color: '#fca5a5', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <AlertTriangle size={12} />
+                  You've fully consumed your allocated scans for the current billing cycle.
+                </div>
+              </div>
+            )}
+
+            {/* Buttons */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 12 }}>
+              <button
+                onClick={() => setShowLimitModal(false)}
+                style={{
+                  width: '100%',
+                  background: 'linear-gradient(90deg, #f97316 0%, #ea580c 100%)',
+                  border: 'none',
+                  borderRadius: 12,
+                  padding: '12px',
+                  color: '#fff',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  boxShadow: '0 4px 15px rgba(249, 115, 22, 0.2)'
+                }}
+                onMouseOver={e => e.currentTarget.style.boxShadow = '0 6px 20px rgba(249, 115, 22, 0.4)'}
+                onMouseOut={e => e.currentTarget.style.boxShadow = '0 4px 15px rgba(249, 115, 22, 0.2)'}
+              >
+                Close
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

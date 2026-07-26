@@ -168,8 +168,10 @@ const mafiyaRivalsRoutes = require('./routes/mafiya-rivals');
 const mafiyaUsageRoutes = require('./routes/mafiya-usage');
 const citationRoutes = require('./routes/citation.routes');
 
+const mafiyaPlansRoutes = require('./routes/mafiya-plans');
 const mafiyaOrdersRoutes = require('./routes/mafiya-orders');
 
+app.use('/api/mafiya/plans', auth, mafiyaPlansRoutes);
 app.use('/api/mafiya/clients', auth, mafiyaClientsRoutes);
 app.use('/api/mafiya/gmb', mafiyaGmbRoutes); // No auth — email links are clicked by external clients
 app.use('/api/mafiya/turf', auth, mafiyaTurfRoutes);

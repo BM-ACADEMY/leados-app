@@ -286,6 +286,10 @@ export default function GbpInsights() {
   const [customRangeActive, setCustomRangeActive] = useState(false);
   const [showKeywordsModal, setShowKeywordsModal] = useState(false);
   const [activeBreakdownMetric, setActiveBreakdownMetric] = useState(null);
+  const [plans, setPlans] = useState([]);
+
+  const activePlan = activeClient && plans.find(p => p.id === activeClient.plan_id);
+  const isStarter = activeClient?.client_type === 'paid' && activePlan?.name?.toLowerCase().includes('starter');
 
   const setActiveClient = (client) => {
     setActiveClientState(client);
@@ -315,7 +319,21 @@ export default function GbpInsights() {
         console.error('[GbpInsights] Clients fetch error:', e);
       }
     };
+
+    const fetchPlans = async () => {
+      try {
+        const token = localStorage.getItem('leados_token');
+        const { data } = await axios.get(`${API_URL}/api/mafiya/plans`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setPlans(data);
+      } catch (err) {
+        console.error('Fetch plans error:', err);
+      }
+    };
+
     fetchClients();
+    fetchPlans();
   }, []);
 
   // Helper to convert YYYY-MM or YYYY-MM-DD to Google's range limit
@@ -352,8 +370,9 @@ export default function GbpInsights() {
       });
       setData(json);
     } catch (e) {
-      setError(e.message);
-      if (isRefresh) toast.error(e.message);
+      const errMsg = e.response?.data?.message || e.response?.data?.error || e.message;
+      setError(errMsg);
+      if (isRefresh) toast.error(errMsg);
     } finally {
       isRefresh ? setRefreshing(false) : setLoading(false);
     }
@@ -565,80 +584,95 @@ export default function GbpInsights() {
 
                 <div style={{ height: 1, background: '#2d3748', margin: '4px 0' }} />
 
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Custom Range
-                  </div>
-                  <div style={{ display: 'flex', gap: 4, background: '#0c1525', borderRadius: 4, padding: 2 }}>
-                    {['month', 'date'].map(mode => (
-                      <button key={mode} onClick={() => {
-                        // Reset defaults when changing mode to avoid parsing errors
-                        if (mode === 'date') {
-                          setTempStart('2026-07-01');
-                          setTempEnd('2026-07-09');
-                        } else {
-                          setTempStart('2026-02');
-                          setTempEnd('2026-07');
-                        }
-                      }} style={{
-                        padding: '2px 8px', fontSize: 9, border: 'none', borderRadius: 3, cursor: 'pointer',
-                        background: (tempStart.length === 7) === (mode === 'month') ? '#f97316' : 'transparent',
-                        color: (tempStart.length === 7) === (mode === 'month') ? '#fff' : C.muted,
-                        fontWeight: 600,
-                      }}>
-                        {mode === 'month' ? 'Month' : 'Date'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {isStarter && (
+                    <div style={{
+                      position: 'absolute', inset: '-6px -6px -6px -6px', background: 'rgba(30, 37, 48, 0.95)',
+                      borderRadius: 8, display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center', zIndex: 10,
+                      gap: 6, border: '1px dashed rgba(249, 115, 22, 0.3)', textAlign: 'center'
+                    }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: '#f97316', textTransform: 'uppercase', letterSpacing: 0.5 }}>Growth Plan Feature</span>
+                      <span style={{ fontSize: 9, color: '#cbd5e0' }}>Upgrade plan to unlock custom range</span>
+                    </div>
+                  )}
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 4 }}>From</label>
-                    <input 
-                      type={tempStart.length === 7 ? 'month' : 'date'}
-                      value={tempStart} 
-                      onChange={(e) => setTempStart(e.target.value)}
-                      style={{
-                        width: '100%', background: '#0c1525', border: '1px solid #2d3748',
-                        borderRadius: 6, padding: '8px 10px', color: '#e2e8f0', fontSize: 12, outline: 'none',
-                        colorScheme: 'dark', boxSizing: 'border-box'
-                      }}
-                    />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Custom Range
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, background: '#0c1525', borderRadius: 4, padding: 2 }}>
+                      {['month', 'date'].map(mode => (
+                        <button key={mode} onClick={() => {
+                          // Reset defaults when changing mode to avoid parsing errors
+                          if (mode === 'date') {
+                            setTempStart('2026-07-01');
+                            setTempEnd('2026-07-09');
+                          } else {
+                            setTempStart('2026-02');
+                            setTempEnd('2026-07');
+                          }
+                        }} style={{
+                          padding: '2px 8px', fontSize: 9, border: 'none', borderRadius: 3, cursor: 'pointer',
+                          background: (tempStart.length === 7) === (mode === 'month') ? '#f97316' : 'transparent',
+                          color: (tempStart.length === 7) === (mode === 'month') ? '#fff' : C.muted,
+                          fontWeight: 600,
+                        }}>
+                          {mode === 'month' ? 'Month' : 'Date'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 4 }}>To</label>
-                    <input 
-                      type={tempEnd.length === 7 ? 'month' : 'date'}
-                      value={tempEnd} 
-                      onChange={(e) => setTempEnd(e.target.value)}
-                      style={{
-                        width: '100%', background: '#0c1525', border: '1px solid #2d3748',
-                        borderRadius: 6, padding: '8px 10px', color: '#e2e8f0', fontSize: 12, outline: 'none',
-                        colorScheme: 'dark', boxSizing: 'border-box'
-                      }}
-                    />
-                  </div>
-                </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-                  <button onClick={() => setIsRangeOpen(false)} style={{
-                    padding: '6px 12px', borderRadius: 6, border: '1px solid #4a5568',
-                    background: 'transparent', color: '#cbd5e0', fontSize: 11, cursor: 'pointer'
-                  }}>
-                    Cancel
-                  </button>
-                  <button onClick={() => {
-                    setStartMonth(tempStart);
-                    setEndMonth(tempEnd);
-                    setCustomRangeActive(true);
-                    setIsRangeOpen(false);
-                  }} style={{
-                    padding: '6px 12px', borderRadius: 6, border: 'none',
-                    background: '#f97316', color: '#fff', fontSize: 11, cursor: 'pointer', fontWeight: 600
-                  }}>
-                    Apply Range
-                  </button>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 4 }}>From</label>
+                      <input 
+                        type={tempStart.length === 7 ? 'month' : 'date'}
+                        value={tempStart} 
+                        onChange={(e) => setTempStart(e.target.value)}
+                        style={{
+                          width: '100%', background: '#0c1525', border: '1px solid #2d3748',
+                          borderRadius: 6, padding: '8px 10px', color: '#e2e8f0', fontSize: 12, outline: 'none',
+                          colorScheme: 'dark', boxSizing: 'border-box'
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 4 }}>To</label>
+                      <input 
+                        type={tempEnd.length === 7 ? 'month' : 'date'}
+                        value={tempEnd} 
+                        onChange={(e) => setTempEnd(e.target.value)}
+                        style={{
+                          width: '100%', background: '#0c1525', border: '1px solid #2d3748',
+                          borderRadius: 6, padding: '8px 10px', color: '#e2e8f0', fontSize: 12, outline: 'none',
+                          colorScheme: 'dark', boxSizing: 'border-box'
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                    <button onClick={() => setIsRangeOpen(false)} style={{
+                      padding: '6px 12px', borderRadius: 6, border: '1px solid #4a5568',
+                      background: 'transparent', color: '#cbd5e0', fontSize: 11, cursor: 'pointer'
+                    }}>
+                      Cancel
+                    </button>
+                    <button onClick={() => {
+                      setStartMonth(tempStart);
+                      setEndMonth(tempEnd);
+                      setCustomRangeActive(true);
+                      setIsRangeOpen(false);
+                    }} style={{
+                      padding: '6px 12px', borderRadius: 6, border: 'none',
+                      background: '#f97316', color: '#fff', fontSize: 11, cursor: 'pointer', fontWeight: 600
+                    }}>
+                      Apply Range
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

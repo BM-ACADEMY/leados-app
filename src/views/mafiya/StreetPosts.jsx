@@ -98,6 +98,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
       toast.error('Please upload an image first');
       return;
     }
+    
     setGeneratingAi(true);
     const aiToast = toast.loading('AI analyzing poster to generate title & description...');
     try {
@@ -423,7 +424,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
           background-size: 200% 100%;
           animation: shimmer 1.5s infinite linear;
         }
-          
+
       `}</style>
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(9, 9, 11, 0.8)', backdropFilter: 'blur(8px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: 20 }}>

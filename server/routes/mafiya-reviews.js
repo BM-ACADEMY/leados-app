@@ -633,7 +633,7 @@ function formatBrainContent(type, content) {
     if (typeof data !== 'object' || data === null) {
       return content;
     }
-    
+
     switch (type) {
       case 'tone': {
         const parts = [];
@@ -855,9 +855,9 @@ router.get('/brain', async (req, res) => {
   if (!clientId) return res.status(400).json({ error: 'clientId is required' });
   try {
     const result = await pool.query(
-      `SELECT * FROM mafiya_gmb_brain 
-       WHERE client_id = $1 
-       ORDER BY 
+      `SELECT * FROM mafiya_gmb_brain
+       WHERE client_id = $1
+       ORDER BY
          CASE entry_type
            WHEN 'tone' THEN 1
            WHEN 'review_rules' THEN 2
@@ -885,6 +885,7 @@ router.post('/brain/polish', async (req, res) => {
   if (!content || !entryType) {
     return res.status(400).json({ error: 'content and entryType are required' });
   }
+  
 
   if (!process.env.GEMINI_API_KEY) {
     return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
@@ -993,7 +994,7 @@ router.post('/brain/suggest-config', async (req, res) => {
     );
 
     if (entryType === 'tone') {
-      prompt = hasCurrent 
+      prompt = hasCurrent
         ? `You are an AI expert. Optimize, refine, and improve the following Tone config for "${businessName}". Correct any slang, improve professional alignment, and fill in missing fields:
 Current Tone config: ${JSON.stringify(currentConfig)}
 Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
@@ -1014,7 +1015,7 @@ Return ONLY a valid JSON object matching this structure (no markdown wrapper, no
   "avoid": ["Robotic", "Defensive"]
 }`;
     } else if (entryType === 'review_rules') {
-      prompt = hasCurrent 
+      prompt = hasCurrent
         ? `You are an AI expert. Optimize, refine, and improve the following Review Reply Guidelines rules for "${businessName}". Correct grammar, structure it beautifully, and improve rule detail:
 Current rules: ${JSON.stringify(currentConfig)}
 Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
@@ -1033,7 +1034,7 @@ Return ONLY a valid JSON object matching this structure (no markdown wrapper, no
   "additional": ["Rule 1", "Rule 2"]
 }`;
     } else if (entryType === 'keyword') {
-      prompt = hasCurrent 
+      prompt = hasCurrent
         ? `You are an AI expert. Optimize, refine, and expand the following local SEO keywords for "${businessName}". Clean up typos, and suggest relevant high-performance search terms:
 Current keywords: ${JSON.stringify(currentConfig)}
 Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
@@ -1042,7 +1043,7 @@ Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
 Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
 ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]`;
     } else if (entryType === 'blacklist') {
-      prompt = hasCurrent 
+      prompt = hasCurrent
         ? `You are an AI expert. Optimize and add relevant words to avoid for the business "${businessName}":
 Current blacklist: ${JSON.stringify(currentConfig)}
 Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
@@ -1051,7 +1052,7 @@ Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
 Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
 ["word1", "word2", "word3", "word4"]`;
     } else if (entryType === 'offer') {
-      prompt = hasCurrent 
+      prompt = hasCurrent
         ? `You are an AI expert. Optimize and improve the copywriting of these promotions/offers for "${businessName}":
 Current offers: ${JSON.stringify(currentConfig)}
 Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
@@ -1074,7 +1075,7 @@ Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
   }
 ]`;
     } else if (entryType === 'qa') {
-      prompt = hasCurrent 
+      prompt = hasCurrent
         ? `You are an AI expert. Optimize, correct, and professionalize these Q&As for "${businessName}":
 Current Q&As: ${JSON.stringify(currentConfig)}
 Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
@@ -1098,7 +1099,7 @@ Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
 ]`;
     } else if (entryType === 'seasonal') {
       const currentDateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-      prompt = hasCurrent 
+      prompt = hasCurrent
         ? `You are an AI expert. The current date is ${currentDateStr}. Optimize and improve this seasonal campaign for "${businessName}", correcting dates and aligning options:
 Current seasonal config: ${JSON.stringify(currentConfig)}
 Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
@@ -1121,7 +1122,7 @@ Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
   }
 ]`;
     } else if (entryType === 'creative_brief') {
-      prompt = hasCurrent 
+      prompt = hasCurrent
         ? `You are an AI expert. Optimize and refine this creative brief brand style instructions for "${businessName}":
 Current brief: ${JSON.stringify(currentConfig)}
 Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
@@ -1161,7 +1162,7 @@ Return ONLY a valid JSON object matching this structure (no markdown wrapper, no
     if (cleanedText.startsWith('```')) {
       cleanedText = cleanedText.replace(/^```json\s*/, '').replace(/```$/, '').trim();
     }
-    
+
     const parsedData = JSON.parse(cleanedText);
     res.json({ suggestedConfig: parsedData });
   } catch (err) {
@@ -1213,7 +1214,7 @@ router.post('/brain/suggest-posts', async (req, res) => {
 
     // 2. Fetch GMB Brain settings
     const brainRes = await pool.query('SELECT entry_type, content FROM mafiya_gmb_brain WHERE client_id = $1', [clientId]);
-    
+
     let tone = 'Friendly';
     let keywords = [];
     let offers = [];

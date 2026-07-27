@@ -89,6 +89,24 @@ const GEMINI_MODELS = (process.env.GEMINI_MODELS || 'gemini-3.5-flash,gemini-3.1
   .filter(Boolean);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const GEMINI_REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || 12000);
+
+const withTimeout = (promise, timeoutMs, label) => {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new GeminiServiceError({
+          message: `${label} timed out after ${timeoutMs}ms.`,
+          status: 504,
+          category: 'deadline_exceeded',
+          retryable: true,
+        }));
+      }, timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+};
 
 const getGeminiStatus = (err) => {
   const value = err?.status ?? err?.code ?? err?.response?.status;
@@ -194,9 +212,15 @@ async function generateGeminiContent(prompt) {
   let lastFailure = null;
   const errors = [];
   for (const model of GEMINI_MODELS) {
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    // One bounded attempt per model keeps the entire API request below the
+    // reverse-proxy timeout. The next configured model is the retry/fallback.
+    for (let attempt = 1; attempt <= 1; attempt += 1) {
       try {
-        const aiRes = await ai.models.generateContent({ model, contents: prompt });
+        const aiRes = await withTimeout(
+          ai.models.generateContent({ model, contents: prompt }),
+          GEMINI_REQUEST_TIMEOUT_MS,
+          `Gemini ${model}`
+        );
         const text = aiRes?.text?.trim();
         if (!text) {
           throw new GeminiServiceError({
@@ -239,7 +263,7 @@ async function generateGeminiContent(prompt) {
         if ([400, 401, 403].includes(upstreamStatus)) throw lastFailure;
         // Do not retry a retired/unknown model; try the next configured model.
         if (upstreamStatus === 404) break;
-        if (!retryable || attempt === 3) break;
+        if (!retryable || attempt === 1) break;
 
         const delayMs = (1000 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 400);
         await sleep(delayMs);
@@ -555,6 +579,52 @@ router.post('/ai/objections', async (req, res) => {
   }
 });
 
+const KB_MAX_CHARS = Number(process.env.AI_KB_MAX_CHARS || 18000);
+const KB_STOP_WORDS = new Set([
+  'a', 'all', 'and', 'are', 'available', 'can', 'course', 'courses', 'do',
+  'for', 'have', 'i', 'in', 'is', 'list', 'me', 'of', 'please', 'show',
+  'tell', 'the', 'to', 'what', 'you', 'your',
+]);
+
+const getRelevantKnowledge = (documents, query = '') => {
+  const normalizedQuery = String(query).toLowerCase();
+  const wantsCourseList = /\b(all|available|offer|show|what|which)\b.*\b(course|courses|program|programs)\b|\bcourse list\b/i.test(normalizedQuery);
+  const queryTerms = [...new Set(
+    normalizedQuery
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter((term) => term.length > 1 && !KB_STOP_WORDS.has(term))
+  )];
+
+  const chunks = documents
+    .flatMap((document) => String(document || '').split(/(?=^#{2,3}\s)/gm))
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+
+  const ranked = chunks.map((chunk, index) => {
+    const lower = chunk.toLowerCase();
+    let score = queryTerms.reduce((total, term) => total + (lower.includes(term) ? 5 : 0), 0);
+    if (/^## brand_router/im.test(chunk)) score += 2;
+    if (wantsCourseList && /complete course catalogue/i.test(chunk)) score += 100;
+    if (wantsCourseList && /^### program_/im.test(chunk)) score += 1;
+    return { chunk, index, score };
+  }).sort((a, b) => b.score - a.score || a.index - b.index);
+
+  const selected = [];
+  let length = 0;
+  for (const item of ranked) {
+    if (item.score <= 0 && selected.length > 0) continue;
+    const remaining = KB_MAX_CHARS - length;
+    if (remaining <= 0) break;
+    const value = item.chunk.slice(0, remaining);
+    selected.push(value);
+    length += value.length;
+    if (selected.length >= 8) break;
+  }
+
+  return selected.join('\n\n');
+};
+
 // 3. Knowledge Retrieval
 router.post('/kb/search', async (req, res) => {
   const { brand, query, lead_id } = req.body;
@@ -581,12 +651,12 @@ router.post('/kb/search', async (req, res) => {
 
     const knowledgeDocs = docsRes.rows
       .filter((doc) => ['prompt', 'product', 'pricing'].includes(doc.doc_type) && doc.content)
-      .map((doc) => `## ${doc.client_name} / ${doc.doc_type}\n${doc.content}`);
+      .map((doc) => doc.content);
     const trainingDocs = docsRes.rows
       .filter((doc) => doc.doc_type === 'training' && doc.content)
       .map((doc) => doc.content);
 
-    const kb_snippets = knowledgeDocs.join('\n\n') || 'No knowledge base found.';
+    const kb_snippets = getRelevantKnowledge(knowledgeDocs, query) || 'No relevant knowledge found.';
     const isBmAcademy = ['bm academy', 'bm-academy', 'bmacademy'].includes(
       String(targetBrand).trim().toLowerCase()
     );
@@ -594,7 +664,10 @@ router.post('/kb/search', async (req, res) => {
       ? `BM ACADEMY COURSE LIST RULE:
 When asked for available courses or the full course list, include every PROGRAM entry in the knowledge base, not only the first four. The catalogue has 23 courses. Group the names under Flagship & Placement, Digital Marketing, Creator & Video, Design & Web, AI Tools, and Kids & Teens. Show names first, then ask which course needs details.`
       : '';
-    const system_instructions = [...trainingDocs, bmAcademyCourseRule].filter(Boolean).join('\n\n');
+    const system_instructions = [...trainingDocs, bmAcademyCourseRule]
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 8000);
     res.json({ ...req.body, kb_snippets, system_instructions });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -714,6 +787,17 @@ router.post('/ai/response', async (req, res) => {
 
     res.json({ ...req.body, ai_reply });
   } catch (err) {
+    // Keep the WhatsApp workflow moving when every AI model is temporarily
+    // slow/unavailable. HTTP 200 prevents an nginx/n8n 504 failure.
+    if (err instanceof GeminiServiceError && err.retryable) {
+      console.error('[AI] Returning safe fallback after provider timeout:', err.message);
+      return res.json({
+        ...req.body,
+        ai_reply: "I'm taking a little longer than usual. Please send that once more, and I'll help you right away.",
+        ai_fallback: true,
+        ai_error_code: err.category,
+      });
+    }
     sendAiError(res, err);
   }
 });

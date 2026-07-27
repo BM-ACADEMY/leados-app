@@ -63,7 +63,12 @@ export const CampaignsView = () => {
   }, []);
 
   const handleDownloadTemplate = () => {
-    window.open(`${api.baseUrl}/api/leads/template`, '_blank');
+    const link = document.createElement('a');
+    link.href = `${api.baseUrl}/api/leads/template`;
+    link.download = 'leados_campaign_template.xlsx';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   };
 
   const handleCreateCampaign = async (e) => {

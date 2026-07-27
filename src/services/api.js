@@ -3,11 +3,15 @@
  * Base URL from environment: VITE_API_URL
  */
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3600';
+const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3600').replace(/\/+$/, '');
 
 class LeadOSAPI {
   constructor() {
     this.token = localStorage.getItem('leados_token');
+  }
+
+  get baseUrl() {
+    return API_URL;
   }
 
   setToken(token) {

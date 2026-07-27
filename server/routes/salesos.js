@@ -527,6 +527,18 @@ router.post('/ai/response', async (req, res) => {
     const firstName = getLeadFirstName(leadName);
     const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(String(message || '').trim());
 
+    // Detect voice/audio messages - respond immediately without AI
+    const msgContent = String(message || '').toLowerCase();
+    const isVoiceMessage = msgContent.includes('[voice_message]') ||
+                         msgContent.includes('[audio]') ||
+                         msgContent.includes('voice note') ||
+                         msgContent.includes('🎧');
+
+    if (isVoiceMessage) {
+      const voiceReply = "Got your voice note 🎧 — could you type it quickly so I can help right away?";
+      return res.json({ ...req.body, ai_reply: voiceReply });
+    }
+
     // Greetings are deterministic so the model can never fall back to the old
     // all-brand recital. This also saves one paid Gemini request.
     if (isSimpleGreeting) {

@@ -1,0 +1,122 @@
+{
+  "name": "WF02 - Follow-up Engine (TEST - 10s interval)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "interval", "seconds": 10 }
+          ]
+        }
+      },
+      "id": "test-trigger-10s",
+      "name": "Test Trigger (Every 10s)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/followups/due",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "find-due",
+      "name": "1. Find Due Followups",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 0]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "followups",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "id": "split-loop",
+      "name": "2. Loop Over Leads",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "batch-loop",
+      "name": "3. Process One By One",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [750, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/followups/rule",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ touch_count: $('3. Process One By One').item.json.touch_count || 0 }) }}"
+      },
+      "id": "rule-node",
+      "name": "4. Get Followup Rule",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/ai/followup",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $('3. Process One By One').item.json.lead_id }) }}"
+      },
+      "id": "followup-node",
+      "name": "5. Send AI Followup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/update-followup",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $('3. Process One By One').item.json.lead_id, touch_count_increment: 1, delay_hours: 24 }) }}"
+      },
+      "id": "update-node",
+      "name": "6. Update Followup Count",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('Followup Test - Lead:', $input.first().item.json.lead_id, 'Status:', $input.first().json.success);\nreturn $input.all();",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "test-logger",
+      "name": "Log Test Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 0]
+    }
+  ],
+  "connections": {
+    "Test Trigger (Every 10s)": { "main": [[{ "node": "1. Find Due Followups", "type": "main", "index": 0 }]] },
+    "1. Find Due Followups": { "main": [[{ "node": "2. Loop Over Leads", "type": "main", "index": 0 }]] },
+    "2. Loop Over Leads": { "main": [[{ "node": "3. Process One By One", "type": "main", "index": 0 }]] },
+    "3. Process One By One": { "main": [[{ "node": "4. Get Followup Rule", "type": "main", "index": 0 }]] },
+    "4. Get Followup Rule": { "main": [[{ "node": "5. Send AI Followup", "type": "main", "index": 0 }]] },
+    "5. Send AI Followup": { "main": [[{ "node": "6. Update Followup Count", "type": "main", "index": 0 }]] },
+    "6. Update Followup Count": { "main": [[{ "node": "Log Test Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": true,
+  "versionId": "test-002"
+}

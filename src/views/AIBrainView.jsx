@@ -14,7 +14,7 @@ GREETING
 
 BRAND ROUTING
 - BM Academy: course, class, syllabus, placement, job-ready, batch, fees.
-- BM TechX: ads, marketing, grow business, website, branding, leads.
+- BM TechX: marketing service/agency, run ads, grow my business, website, branding service, lead generation.
 - CoreTalents: hiring, recruit, candidate, staff, vacancy, resume.
 - Namma Pondy Properties: property, plot, villa, land, patta, EC, real estate.
 - TravellersNeed: trip, tour, package, travel, holiday, Pondy tour.
@@ -22,6 +22,9 @@ BRAND ROUTING
 - EduConsultants: study abroad, admission, consultancy, education abroad.
 - BM Foundation: donation, NGO, charity, volunteer, foundation.
 - Lock the detected brand for the session. Switch only when the user clearly mentions another brand.
+- "Digital marketing" by itself is ambiguous. If BM Academy is locked, it means the Digital Marketing course. Do not switch to BM TechX.
+- Switch from BM Academy to BM TechX only with explicit service/business intent such as "digital marketing service", "run ads for my business", "generate leads", "website", or "BM TechX".
+- Switch from BM TechX to BM Academy only with learning intent such as course, class, syllabus, batch, fees, training, placement, certification, or "BM Academy".
 
 MEMORY
 - Remember the locked brand, intent, name, course, preferred date and preferred time.
@@ -47,6 +50,8 @@ export const AIBrainView = () => {
   const [promptText, setPromptText] = useState('');
   const [behaviorText, setBehaviorText] = useState(DEFAULT_BOT_BEHAVIOR);
   const [welcomeTemplate, setWelcomeTemplate] = useState('');
+  const [productText, setProductText] = useState('');
+  const [pricingText, setPricingText] = useState('');
   const [migrating, setMigrating] = useState(false);
   const [dupCheckResult, setDupCheckResult] = useState(null);
   const [dupChecking, setDupChecking] = useState(false);
@@ -89,12 +94,18 @@ export const AIBrainView = () => {
           }
         });
         
-        // Global ABM docs (prompt)
+        // Global ABM docs (prompt, training)
         abmDocsRes.docs?.forEach(d => {
           if (d.doc_type === 'prompt') {
             docMap[d.doc_type] = d.content;
           }
           if (d.doc_type === 'training') {
+            docMap[d.doc_type] = d.content;
+          }
+          if (d.doc_type === 'product') {
+            docMap[d.doc_type] = d.content;
+          }
+          if (d.doc_type === 'pricing') {
             docMap[d.doc_type] = d.content;
           }
         });
@@ -996,10 +1007,14 @@ tags: internal, todo
     const promptVal = docs.prompt || defaultTemplate;
     const behaviorVal = docs.training || DEFAULT_BOT_BEHAVIOR;
     const welcomeTemplateVal = docs.welcome_template || '';
+    const productVal = docs.product || '';
+    const pricingVal = docs.pricing || '';
 
     setPromptText(promptVal);
     setBehaviorText(behaviorVal);
     setWelcomeTemplate(welcomeTemplateVal);
+    setProductText(productVal);
+    setPricingText(pricingVal);
   }, [docs, selectedClientId, selectedBrandName]);
 
   const handleSave = async () => {
@@ -1009,9 +1024,11 @@ tags: internal, todo
       await Promise.all([
         api.saveBrainDoc(abmGroupId, 'prompt', promptText),
         api.saveBrainDoc(abmGroupId, 'training', behaviorText),
+        api.saveBrainDoc(abmGroupId, 'product', productText),
+        api.saveBrainDoc(abmGroupId, 'pricing', pricingText),
         api.saveBrainDoc(selectedClientId, 'welcome_template', welcomeTemplate),
       ]);
-      alert('AI Brain saved! Bot behaviour, knowledge prompt, and welcome template are active for ' + selectedBrandName);
+      alert('AI Brain saved! All brain docs (prompt, training, product, pricing) are active for ' + selectedBrandName);
     } catch (err) {
       alert('Failed to save AI Brain config: ' + err.message);
     } finally {
@@ -1154,7 +1171,25 @@ tags: internal, todo
                 <textarea
                   value={promptText}
                   onChange={(e) => setPromptText(e.target.value)}
-                  style={{ width: '100%', height: 420, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#10b981', padding: 16, fontSize: 13, outline: 'none', fontFamily: 'monospace', lineHeight: 1.8, resize: 'vertical' }}
+                  style={{ width: '100%', height: 280, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#10b981', padding: 16, fontSize: 13, outline: 'none', fontFamily: 'monospace', lineHeight: 1.8, resize: 'vertical', marginBottom: 18 }}
+                />
+
+                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Product Knowledge — <span style={{ color: C.accent }}>Detailed Program/Service Info</span></h3>
+                <p style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>Detailed descriptions, syllabus, features, and benefits of each product or service offering.</p>
+                <textarea
+                  value={productText}
+                  onChange={(e) => setProductText(e.target.value)}
+                  placeholder="Enter detailed product information, course syllabus, service features..."
+                  style={{ width: '100%', height: 200, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#a855f7', padding: 16, fontSize: 13, outline: 'none', fontFamily: 'monospace', lineHeight: 1.8, resize: 'vertical', marginBottom: 18 }}
+                />
+
+                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Pricing Knowledge — <span style={{ color: C.accent }}>Fees, EMI, Discounts</span></h3>
+                <p style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>Exact pricing, EMI options, discount policies, and payment terms for each product/service.</p>
+                <textarea
+                  value={pricingText}
+                  onChange={(e) => setPricingText(e.target.value)}
+                  placeholder="Enter pricing details, fee structure, EMI options, discount policies..."
+                  style={{ width: '100%', height: 200, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#f59e0b', padding: 16, fontSize: 13, outline: 'none', fontFamily: 'monospace', lineHeight: 1.8, resize: 'vertical' }}
                 />
               </div>
             )}

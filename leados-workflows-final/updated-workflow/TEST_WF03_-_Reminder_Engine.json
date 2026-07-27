@@ -1,0 +1,57 @@
+{
+  "name": "WF03 - Reminder Engine (TEST - 15s interval)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "interval", "seconds": 15 }] }
+      },
+      "id": "test-trigger-15s",
+      "name": "Test Trigger (Every 15s)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/reports/reminder-bundle",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "reminder-bundle",
+      "name": "1. Get Reminder Bundle",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Return test notification data\nreturn [{ json: {\n  type: 'reminder_test',\n  calls: $('1. Get Reminder Bundle').item.json.metrics?.calls || [],\n  followups: $('1. Get Reminder Bundle').item.json.metrics?.followups || [],\n  hot: $('1. Get Reminder Bundle').item.json.metrics?.hot_leads || [],\n  summary: 'Test Reminder: ' + ($('1. Get Reminder Bundle').item.json.founder_summary || 'No data')\n}}];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "test-processor",
+      "name": "2. Process Reminder Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('Reminder Engine Test - Summary:', $input.first().json.summary);\nreturn $input.all();",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "test-logger",
+      "name": "Log Test Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 0]
+    }
+  ],
+  "connections": {
+    "Test Trigger (Every 15s)": { "main": [[{ "node": "1. Get Reminder Bundle", "type": "main", "index": 0 }]] },
+    "1. Get Reminder Bundle": { "main": [[{ "node": "2. Process Reminder Data", "type": "main", "index": 0 }]] },
+    "2. Process Reminder Data": { "main": [[{ "node": "Log Test Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": true,
+  "versionId": "test-003"
+}

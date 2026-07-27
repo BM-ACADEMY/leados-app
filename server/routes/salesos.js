@@ -66,8 +66,10 @@ const sendAiError = (res, err) => {
 };
 
 const BRAND_KEYWORDS = [
-  { name: 'BM Academy', pattern: /\b(course|class|syllabus|placement|job[- ]?ready|batch|fees?|academy|training)\b/i },
-  { name: 'BM TechX', pattern: /\b(ads?|marketing|grow business|website|branding|leads?|techx)\b/i },
+  { name: 'BM Academy', pattern: /\b(course|class|syllabus|placement|job[- ]?ready|batch|fees?|academy|training|learn|learning|certification)\b/i },
+  // "Digital marketing" alone is intentionally not a TechX switch signal: it is
+  // also an Academy course. TechX requires explicit service/business context.
+  { name: 'BM TechX', pattern: /\b(bm\s*techx|techx|marketing (service|agency)|digital marketing (service|agency)|run (meta |google )?ads?|grow (my |our )?business|business marketing|website|branding service|generate leads?|lead generation|gmb|seo service|social media service)\b/i },
   { name: 'CoreTalents', pattern: /\b(hiring|recruit|candidate|staff|vacancy|resume|coretalents?)\b/i },
   { name: 'Namma Pondy Properties', pattern: /\b(property|plot|villa|land|patta|ec|real estate|jipmer)\b/i },
   { name: 'TravellersNeed', pattern: /\b(trip|tour|package|travel|holiday|pondy tour|travellers?need)\b/i },
@@ -81,8 +83,16 @@ const detectExplicitBrand = (message = '') =>
 
 const getLeadFirstName = (name) => {
   const cleanName = String(name || '').trim();
-  if (!cleanName || /^\+?\d+$/.test(cleanName)) return '';
-  return cleanName.split(/\s+/)[0];
+  // Empty, numbers only, or too short names return empty to avoid broken greetings
+  if (!cleanName || /^\+?\d+$/.test(cleanName) || cleanName.length < 2) return '';
+  // Remove special characters and get first valid word
+  const sanitized = cleanName.replace(/[^a-zA-Z0-9\s]/g, '').trim();
+  const firstWord = sanitized.split(/\s+/)[0] || '';
+  // Only return if it's a valid name (at least 2 chars, letters only)
+  if (firstWord.length >= 2 && /^[a-zA-Z]+$/.test(firstWord)) {
+    return firstWord;
+  }
+  return '';
 };
 
 const DEFAULT_BOT_BEHAVIOR = `You are the ABM Groups shared WhatsApp assistant.
@@ -90,6 +100,9 @@ Use the current contact's first name naturally. For a greeting, reply only:
 "Hey {first_name}! 👋 How can I help you today?"
 Never recite the ABM Groups brand list as a default greeting.
 Keep the detected brand sticky until the user clearly mentions another brand.
+"Digital marketing" alone inherits the locked brand: it is an Academy course when
+BM Academy is locked. Switch to BM TechX only for explicit service/business intent
+such as marketing service, run ads, grow my business, website or lead generation.
 Remember information already supplied and never ask for it again.
 For bookings, collect missing topic, date, time, name and number. Never claim a
 booking, calendar write, reminder or handoff succeeded unless its tool succeeded.
@@ -382,6 +395,39 @@ router.post('/leads/createOrUpdate', async (req, res) => {
 router.post('/ai/intent', async (req, res) => {
   const { message, brand, lead_id } = req.body;
   try {
+    let effectiveBrand = brand || 'ABM Groups';
+    const explicitBrand = detectExplicitBrand(message);
+
+    if (lead_id) {
+      const currentBrandRes = await pool.query(
+        `SELECT c.name
+         FROM leads l
+         LEFT JOIN clients c ON c.id = l.client_id
+         WHERE l.id = $1
+         LIMIT 1`,
+        [lead_id]
+      );
+      const currentBrand = currentBrandRes.rows[0]?.name;
+      effectiveBrand = currentBrand || effectiveBrand;
+
+      // Persist a switch only for an unambiguous keyword. Phrases such as
+      // "digital marketing" have no explicit target and therefore remain in the
+      // current locked brand (e.g. the BM Academy course conversation).
+      if (explicitBrand && explicitBrand !== currentBrand) {
+        const targetBrandRes = await pool.query(
+          `SELECT id, name FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+          [explicitBrand]
+        );
+        if (targetBrandRes.rows[0]) {
+          await pool.query(
+            `UPDATE leads SET client_id = $1, updated_at = NOW() WHERE id = $2`,
+            [targetBrandRes.rows[0].id, lead_id]
+          );
+          effectiveBrand = targetBrandRes.rows[0].name;
+        }
+      }
+    }
+
     // FIX: Ensure conversation exists safely without constraint errors and log inbound message for bidirectional UI
     if (lead_id && message) {
       const conversation_id = await getOrUpsertConversation(lead_id);
@@ -410,7 +456,7 @@ router.post('/ai/intent', async (req, res) => {
       }
     }
 
-    const prompt = `Analyze this message sent to the brand '${brand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
+    const prompt = `Analyze this message in the locked brand '${effectiveBrand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
     const output = await generateGeminiContent(prompt);
     const parts = output.split(',');
     const intent = parts[0] ? parts[0].trim() : 'GENERAL';
@@ -419,7 +465,7 @@ router.post('/ai/intent', async (req, res) => {
     if (lead_id) {
       await pool.query(`INSERT INTO ai_decisions (lead_id, module, input, output, confidence) VALUES ($1, $2, $3, $4, $5)`, [lead_id, 'intent_detection', message, intent, confidence]);
     }
-    res.json({ ...req.body, intent, confidence });
+    res.json({ ...req.body, brand: effectiveBrand, brand_locked: true, intent, confidence });
   } catch (err) {
     sendAiError(res, err);
   }
@@ -441,14 +487,17 @@ router.post('/ai/objections', async (req, res) => {
 router.post('/kb/search', async (req, res) => {
   const { brand, query, lead_id } = req.body;
   try {
+    // Use the brand from request if provided, otherwise fall back to 'ABM Groups'
+    const targetBrand = brand || 'ABM Groups';
     const docsRes = await pool.query(
       `SELECT doc_type, content
        FROM brain_docs
-       WHERE client_id = (SELECT id FROM clients WHERE name = 'ABM Groups' LIMIT 1)
-         AND doc_type IN ('prompt', 'training')`
+       WHERE client_id = (SELECT id FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1)
+         AND doc_type IN ('prompt', 'training', 'product', 'pricing')`,
+      [targetBrand]
     );
     const docsByType = Object.fromEntries(docsRes.rows.map((doc) => [doc.doc_type, doc.content]));
-    const kb_snippets = docsByType.prompt || 'No knowledge base found.';
+    const kb_snippets = docsByType.prompt || docsByType.product || docsByType.pricing || 'No knowledge base found.';
     const system_instructions = docsByType.training || '';
     res.json({ ...req.body, kb_snippets, system_instructions });
   } catch (err) {
@@ -497,9 +546,13 @@ router.post('/ai/response', async (req, res) => {
       - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${persistedBrand}".
       - Address the contact naturally by first name ("${firstName || 'there'}") when useful, but do not repeat their name in every sentence.
       - The brand is sticky. Stay with "${persistedBrand}" unless the current message explicitly names or clearly keywords another ABM brand.
+      - "Digital marketing" alone never switches brands. Under BM Academy it means the course; under BM TechX it means the service.
+      - Academy learning signals: course, class, syllabus, batch, fees, training, placement, certification.
+      - TechX service signals: marketing service/agency, run ads, business growth, website, branding service, lead generation, GMB or SEO service.
       - For a greeting, reply only: "${firstName ? `Hey ${firstName}! 👋 How can I help you today?` : 'Hey! 👋 How can I help you today?'}"
       - Never recite ABM Groups and its brand list as a default greeting.
       - Never reset the conversation or ask again for information already present in chat history.
+      - If the user asks a FAQ (like contact number, timings, or fees) mid-booking, provide the answer inline and immediately resume the booking flow. Do not reset the conversation or ask for information again.
       - Send exactly one concise WhatsApp reply for this user message.
       - Never claim a booking, calendar entry, reminder, or handoff succeeded unless the corresponding workflow result confirms it.
 
@@ -541,7 +594,9 @@ router.post('/ai/response', async (req, res) => {
            await pool.query(`UPDATE leads SET name = $1 WHERE id = $2`, [extractedData.extracted_name, lead_id]);
          }
          if (extractedData.extracted_booking_time) {
-           await pool.query(`UPDATE leads SET call_booked_at = $1 WHERE id = $2`, [extractedData.extracted_booking_time, lead_id]);
+           // When a booking time is extracted, set status to 'booked' to STOP follow-ups
+           await pool.query(`UPDATE leads SET call_booked_at = $1, status = 'booked', updated_at = NOW() WHERE id = $2`, [extractedData.extracted_booking_time, lead_id]);
+           console.log(`[AI Booking] Lead ${lead_id} booked for ${extractedData.extracted_booking_time} - follow-ups STOPPED`);
          }
       }
     } catch (parseErr) {
@@ -555,19 +610,33 @@ router.post('/ai/response', async (req, res) => {
   }
 });
 
-// 5. Qualify And Score
+// 5. Qualify And Score - DETERMINISTIC FORMULA (no LLM involvement)
 router.post('/leads/score', async (req, res) => {
   const { lead_id, message, intent, objections } = req.body;
   try {
     let scoreBoost = 0;
+
+    // Intent-based scoring (deterministic)
     if (intent === 'BOOK_CALL' || intent === 'PRICING') scoreBoost = 20;
     else if (intent === 'NOT_INTERESTED') scoreBoost = -20;
-    else scoreBoost = 5;
+    else if (intent === 'MORE_INFO' || intent === 'GENERAL_CHAT') scoreBoost = 5;
+    else if (intent === 'COMPLAINT') scoreBoost = -15;
+    else scoreBoost = 5; // Default
+
+    // Objection-based scoring (deterministic)
+    if (objections) {
+      const obj = String(objections).toLowerCase();
+      if (obj.includes('too_expensive') || obj.includes('no_time')) scoreBoost -= 10;
+      if (obj.includes('not_sure')) scoreBoost -= 5;
+      if (obj.includes('using_competitor')) scoreBoost -= 10;
+    }
 
     const result = await pool.query(
       `UPDATE leads SET score = LEAST(GREATEST(score + $1, 0), 100), updated_at = NOW() WHERE id = $2 RETURNING score`,
       [scoreBoost, lead_id]
     );
+
+    console.log(`[Lead Scoring] Lead ${lead_id}: intent=${intent}, objections=${objections}, boost=${scoreBoost}, new_score=${result.rows[0]?.score}`);
     res.json({ ...req.body, lead_score: result.rows[0]?.score || 10 });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -578,8 +647,18 @@ router.post('/leads/score', async (req, res) => {
 router.post('/leads/assign-owner', async (req, res) => {
   const { lead_id, brand, lead_score, intent } = req.body;
   try {
-    let owner = 'ai_bot';
-    if (lead_score >= 75) owner = 'human_sales';
+    let owner = 'System (AI)';
+    if (lead_score >= 75) {
+      // For hot leads, try to find a real human user; fallback to 'Sales Team' group
+      const userRes = await pool.query(
+        `SELECT id FROM users WHERE role IN ('admin', 'agent', 'sales') AND status = 'active' ORDER BY created_at ASC LIMIT 1`
+      );
+      if (userRes.rows.length > 0) {
+        owner = String(userRes.rows[0].id);
+      } else {
+        owner = 'Sales Team';
+      }
+    }
 
     await pool.query(`UPDATE leads SET owner = $1 WHERE id = $2`, [owner, lead_id]);
     res.json({ ...req.body, owner });
@@ -869,12 +948,18 @@ router.get('/reports/ai-performance', async (req, res) => {
 // ==========================================
 router.get('/followups/due', async (req, res) => {
   try {
+    const MAX_FOLLOWUP_ATTEMPTS = 5; // Stop after 5 attempts
+
     const result = await pool.query(`
       SELECT l.id as lead_id, COALESCE(c.name, 'ABM Groups') as brand, l.stage, COALESCE(l.touch_count, 0) as touch_count
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
-      WHERE l.next_followup_due <= NOW() AND l.status != 'converted'
-    `);
+      WHERE l.next_followup_due <= NOW()
+        AND l.status NOT IN ('converted', 'booked')
+        AND (l.status != 'opt-out' OR l.status IS NULL)
+        AND l.call_booked_at IS NULL
+        AND (l.touch_count IS NULL OR l.touch_count < $1)
+    `, [MAX_FOLLOWUP_ATTEMPTS]);
     res.json({ followups: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -900,6 +985,26 @@ router.post('/followups/rule', async (req, res) => {
 
     res.json({ ...req.body, delay_hours: 24, base_channel, template_id, payload_template, ai_prompt_template });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Opt-out: Stop follow-ups when lead says "not interested"
+router.post('/leads/opt-out', async (req, res) => {
+  const { lead_id, reason } = req.body;
+  try {
+    if (!lead_id) {
+      return res.status(400).json({ success: false, error: "Missing lead_id" });
+    }
+
+    await pool.query(
+      `UPDATE leads SET status = 'opt-out', updated_at = NOW() WHERE id = $1`,
+      [lead_id]
+    );
+
+    console.log(`[Opt-Out] Lead ${lead_id} opted out - follow-ups STOPPED`);
+    res.json({ success: true, message: "Lead has been opted out. No more follow-ups will be sent." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 3. Check 24h Window
@@ -1011,8 +1116,28 @@ router.post('/ai/report-generator', async (req, res) => {
   const data = req.body.data || req.body.metrics || req.body;
   try {
     if (!ai) return res.json({ summary: "Daily Summary generated." });
-    const prompt = `Summarize these daily metrics for a Founder Dashboard:\n${JSON.stringify(data)}\nWrite 3 bullet points.`;
-    const summary = await generateGeminiContent(prompt);
+
+    // STRICT rules to prevent hallucination and force INR
+    const prompt = `You are a financial reporter for an Indian business. CRITICAL RULES:
+1. ALL currency amounts MUST use Indian Rupees (₹) symbol - NEVER use $ or USD
+2. Do NOT invent any numbers, scores, or percentages not present in the data
+3. Use ONLY the exact metrics provided below
+4. If a metric is missing, state "Not available" - never make it up
+5. Output ONLY bullet points, no extra commentary
+
+Data to summarize:
+${JSON.stringify(data, null, 2)}
+
+Write exactly 3 bullet points. Use format: "• ₹X,XXX" for all currency values.`;
+
+    let summary = await generateGeminiContent(prompt);
+    console.log('[report-generator] Raw LLM response:', summary);
+
+    // Post-process: Force INR currency - split on $ and rejoin with ₹
+    summary = summary.split('$').join('₹');
+
+    console.log('[report-generator] After replace:', summary);
+
     res.json({ summary });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1438,18 +1563,19 @@ router.delete('/sales-tasks/:id', async (req, res) => {
 
 
 // ==========================================
-// Bot Integration: Book a Call
+// Bot Integration: Book a Call - STOPS FOLLOW-UPS
 // ==========================================
 router.post('/leads/book-call', async (req, res) => {
   try {
     const { lead_id, booking_time } = req.body;
-    
+
     if (!lead_id || !booking_time) {
       return res.status(400).json({ success: false, error: "Missing lead_id or booking_time" });
     }
 
+    // Update call_booked_at AND status to indicate booked - this stops follow-ups
     const result = await pool.query(
-      `UPDATE leads SET call_booked_at = $1, updated_at = NOW() WHERE id = $2 RETURNING id, call_booked_at`,
+      `UPDATE leads SET call_booked_at = $1, status = 'booked', updated_at = NOW() WHERE id = $2 RETURNING id, call_booked_at, status`,
       [booking_time, lead_id]
     );
 
@@ -1457,7 +1583,8 @@ router.post('/leads/book-call', async (req, res) => {
       return res.status(404).json({ success: false, error: "Lead not found" });
     }
 
-    res.json({ success: true, lead: result.rows[0], message: "Call successfully booked!" });
+    console.log(`[Book Call] Lead ${lead_id} booked for ${booking_time} - follow-ups will STOP`);
+    res.json({ success: true, lead: result.rows[0], message: "Call booked! Follow-ups have been stopped for this lead." });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

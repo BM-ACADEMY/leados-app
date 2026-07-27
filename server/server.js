@@ -20,12 +20,16 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { GoogleGenAI } = require('@google/genai');
 const cryptoHelper = require('./utils/crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 
 const app = express();
 const httpServer = http.createServer(app);
 const PORT = process.env.PORT || 3600;
+const gemini = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  : null;
 
 // ── SOCKET.IO ─────────────────────────────────────────────
 const io = new SocketIOServer(httpServer, {
@@ -1102,7 +1106,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
           // ── AUDIO TRANSCRIPTION ──────────────────────────────
           console.log(`[DEBUG] Audio check: msg.type=${msg.type}, msg.audio?.id=${msg.audio?.id}, GEMINI_KEY=${!!process.env.GEMINI_API_KEY}`);
-          if (msg.type === 'audio' && msg.audio?.id && process.env.GEMINI_API_KEY) {
+          if (msg.type === 'audio' && msg.audio?.id && gemini) {
             try {
               const waToken = lead.client_wa_token || client?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
               if (waToken) {
@@ -1118,40 +1122,35 @@ app.post('/webhook/whatsapp', async (req, res) => {
                     responseType: 'arraybuffer'
                   });
                   
-                  // Use a perfectly safe filename without waMessageId special characters
-                  const safeName = `audio_${Date.now()}_${Math.floor(Math.random()*1000)}.ogg`;
-                  const tempAudioPath = path.join(__dirname, 'uploads', safeName);
-                  fs.writeFileSync(tempAudioPath, Buffer.from(audioRes.data));
-                  
-                  console.log(`[Audio] Transcribing with Gemini API...`);
-                  
-                  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-                  const base64Audio = Buffer.from(audioRes.data).toString('base64');
-                  
-                  const payload = {
-                    contents: [{
-                      parts: [
-                        { text: "Transcribe this audio precisely in its original language. Output ONLY the transcription, nothing else." },
-                        { inline_data: { mime_type: "audio/ogg", data: base64Audio } }
-                      ]
-                    }]
-                  };
-                  
-                  const aiRes = await axios.post(geminiUrl, payload);
-                  const transcriptionText = aiRes.data.candidates?.[0]?.content?.parts?.[0]?.text;
+                  const mimeType = mediaRes.data.mime_type || msg.audio?.mime_type || 'audio/ogg';
+                  console.log('[Audio] Transcribing with Gemini...');
+                  const transcription = await gemini.models.generateContent({
+                    model: process.env.GEMINI_AUDIO_MODEL || 'gemini-3.6-flash',
+                    contents: [
+                      {
+                        text: 'Transcribe this WhatsApp voice note precisely in its original language. Return only the spoken words, without commentary or formatting.',
+                      },
+                      {
+                        inlineData: {
+                          mimeType,
+                          data: Buffer.from(audioRes.data).toString('base64'),
+                        },
+                      },
+                    ],
+                  });
+                  const transcriptionText = transcription?.text;
                   
                   if (transcriptionText) {
                     console.log(`[Audio] Transcription success: ${transcriptionText}`);
-                    text = `[Voice Message] ${transcriptionText.trim()}`;
+                    // Send only the spoken words to the sales AI. Keeping the
+                    // voice marker here would trigger the old "please type it"
+                    // fallback in /api/ai/response.
+                    text = transcriptionText.trim();
                   }
-                  
-                  // Cleanup
-                  if (fs.existsSync(tempAudioPath)) fs.unlinkSync(tempAudioPath);
                 }
               }
             } catch (err) {
               console.error('[Audio Transcription Error]', err.response?.data || err.message);
-              const fs = require('fs');
               fs.appendFileSync(path.join(__dirname, 'uploads', 'audio_error.txt'), `[${new Date().toISOString()}] ${err.message}\n${err.stack}\n`);
             }
           }
@@ -1198,7 +1197,9 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
             // ── Forward to n8n for AI auto-reply (only for text/button/interactive/audio) ──
             const shouldTriggerAI = ['text', 'button', 'interactive', 'audio'].includes(msg.type);
-            if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL) {
+            // WF00 continues through its synchronous transcription request.
+            // Do not call it again and create a duplicate AI response.
+            if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL && req.query.source !== 'n8n') {
               axios.post(process.env.N8N_WEBHOOK_URL, {
                 lead_id: lead.id,
                 phone,

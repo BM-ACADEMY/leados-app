@@ -11,6 +11,78 @@ const { GoogleGenAI } = require('@google/genai');
 
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
+// Resolve a raw Meta WhatsApp payload synchronously so n8n can continue the
+// same execution with the spoken text instead of ending on an audio placeholder.
+router.post('/whatsapp/transcribe', async (req, res) => {
+  try {
+    const payload = req.body?.payload || req.body;
+    const value = payload?.entry?.[0]?.changes?.[0]?.value;
+    const audio = value?.messages?.[0]?.audio;
+
+    if (!audio?.id) {
+      return res.json(payload);
+    }
+    if (!ai) {
+      return res.status(503).json({
+        error: 'Voice transcription is not configured. Set GEMINI_API_KEY on the API server.',
+      });
+    }
+
+    const phoneNumberId = value?.metadata?.phone_number_id;
+    const clientResult = phoneNumberId
+      ? await pool.query('SELECT wa_access_token FROM clients WHERE phone_number_id = $1 LIMIT 1', [phoneNumberId])
+      : { rows: [] };
+    const waToken = clientResult.rows[0]?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+    if (!waToken) {
+      return res.status(503).json({ error: 'No WhatsApp access token is configured for this phone number.' });
+    }
+
+    const mediaResponse = await axios.get(`https://graph.facebook.com/v18.0/${audio.id}`, {
+      headers: { Authorization: `Bearer ${waToken}` },
+    });
+    const mediaUrl = mediaResponse.data?.url;
+    if (!mediaUrl) {
+      return res.status(502).json({ error: 'Meta did not return a URL for the voice note.' });
+    }
+
+    const audioResponse = await axios.get(mediaUrl, {
+      headers: { Authorization: `Bearer ${waToken}` },
+      responseType: 'arraybuffer',
+    });
+    const mimeType = mediaResponse.data?.mime_type || audio.mime_type || 'audio/ogg';
+    const result = await ai.models.generateContent({
+      model: process.env.GEMINI_AUDIO_MODEL || 'gemini-3.6-flash',
+      contents: [
+        {
+          text: 'Transcribe this WhatsApp voice note precisely in its original language. Return only the spoken words, without commentary or formatting.',
+        },
+        {
+          inlineData: {
+            mimeType,
+            data: Buffer.from(audioResponse.data).toString('base64'),
+          },
+        },
+      ],
+    });
+    const transcription = String(result?.text || '').trim();
+    if (!transcription) {
+      return res.status(502).json({ error: 'The transcription provider returned an empty transcript.' });
+    }
+
+    // Present the transcript to WF00 exactly like a normal text message so the
+    // existing normalization, lead detection and sales-engine nodes continue.
+    const message = value.messages[0];
+    message.type = 'text';
+    message.text = { body: transcription };
+    message.original_type = 'audio';
+    delete message.audio;
+    return res.json(payload);
+  } catch (err) {
+    console.error('[WhatsApp Transcription Error]', err.response?.data || err.message);
+    return res.status(502).json({ error: 'Voice-note transcription failed.', detail: err.message });
+  }
+});
+
 const GEMINI_MODELS = (process.env.GEMINI_MODELS || 'gemini-3.5-flash,gemini-3.1-flash-lite')
   .split(',')
   .map((model) => model.trim())
@@ -1603,4 +1675,3 @@ router.post('/leads/book-call', async (req, res) => {
 });
 
 module.exports = router;
-

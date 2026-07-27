@@ -735,7 +735,7 @@ router.post('/leads/assign-owner', async (req, res) => {
     if (lead_score >= 75) {
       // For hot leads, try to find a real human user; fallback to 'Sales Team' group
       const userRes = await pool.query(
-        `SELECT id FROM users WHERE role IN ('admin', 'agent', 'sales') AND status = 'active' ORDER BY created_at ASC LIMIT 1`
+        `SELECT id FROM users WHERE role IN ('admin', 'agent', 'sales') AND is_active = true ORDER BY created_at ASC LIMIT 1`
       );
       if (userRes.rows.length > 0) {
         owner = String(userRes.rows[0].id);

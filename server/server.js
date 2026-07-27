@@ -540,6 +540,24 @@ app.post('/api/messages/upload', auth, mediaUpload.single('file'), (req, res) =>
 // ══════════════════════════════════════════════════════════
 
 // GET /api/leads/sources — distinct source values
+// Public campaign import template. Keep this static route before
+// `/api/leads/:id`, otherwise Express treats "template" as a lead ID.
+app.get('/api/leads/template', (req, res) => {
+  const ws = xlsx.utils.json_to_sheet([
+    { Name: 'John Doe', Phone: '919876543210' },
+    { Name: 'Jane Smith', Phone: '919876543211' }
+  ]);
+  ws['!cols'] = [{ wch: 20 }, { wch: 20 }];
+
+  const wb = xlsx.utils.book_new();
+  xlsx.utils.book_append_sheet(wb, ws, 'Template');
+  const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+  res.setHeader('Content-Disposition', 'attachment; filename="leados_campaign_template.xlsx"');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buffer);
+});
+
 app.get('/api/leads/sources', auth, async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -2044,23 +2062,6 @@ app.post('/api/brain', auth, async (req, res) => {
 
 // ── LEADS IMPORT ──────────────────────────────────────────
 const upload = multer({ dest: 'uploads/' });
-
-// GET /api/leads/template
-app.get('/api/leads/template', (req, res) => {
-  const xlsx = require('xlsx');
-  const ws = xlsx.utils.json_to_sheet([
-    { Name: 'John Doe', Phone: '919876543210' },
-    { Name: 'Jane Smith', Phone: '919876543211' }
-  ]);
-  // Set column widths
-  ws['!cols'] = [{ wch: 20 }, { wch: 20 }];
-  const wb = xlsx.utils.book_new();
-  xlsx.utils.book_append_sheet(wb, ws, "Template");
-  const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
-  res.setHeader('Content-Disposition', 'attachment; filename="leados_campaign_template.xlsx"');
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.send(buffer);
-});
 
 app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
   try {

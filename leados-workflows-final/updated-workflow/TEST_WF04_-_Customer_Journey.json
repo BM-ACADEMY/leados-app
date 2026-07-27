@@ -1,0 +1,156 @@
+{
+  "name": "WF04 - Customer Journey (TEST - 20s interval)",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "interval", "seconds": 20 }] } },
+      "id": "test-trigger-20s",
+      "name": "Test Trigger (Every 20s)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/find-by-invoice",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ invoice_id: 'test_payment_001' }) }}"
+      },
+      "id": "find-lead",
+      "name": "1. Find Lead by Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/journey/steps",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ brand: $('1. Find Lead by Invoice').item.json.brand, brand_id: $('1. Find Lead by Invoice').item.json.brand_id, lead_id: $('1. Find Lead by Invoice').item.json.lead_id, name: $('1. Find Lead by Invoice').item.json.name }) }}"
+      },
+      "id": "journey-steps",
+      "name": "2. Get Journey Steps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": { "fieldToSplitOut": "steps", "include": "allOtherFields", "options": {} },
+      "id": "split-steps",
+      "name": "3. Split Steps",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [750, 0]
+    },
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "batch-loop",
+      "name": "4. Process Each Step",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1000, 0]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            { "outputKey": "send_invoice", "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "id": "action", "value1": "={{ $('4. Process Each Step').item.json.action }}", "operation": "equals", "value2": "send_invoice" }] } },
+            { "outputKey": "send_welcome", "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "id": "action", "value1": "={{ $('4. Process Each Step').item.json.action }}", "operation": "equals", "value2": "send_welcome" }] } },
+            { "outputKey": "add_to_whatsapp_group", "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "id": "action", "value1": "={{ $('4. Process Each Step').item.json.action }}", "operation": "equals", "value2": "add_to_whatsapp_group" }] } },
+            { "outputKey": "grant_access", "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "id": "action", "value1": "={{ $('4. Process Each Step').item.json.action }}", "operation": "equals", "value2": "grant_access" }] } }
+          ]
+        }
+      },
+      "id": "route-action",
+      "name": "5. Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1250, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/invoices/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $('1. Find Lead by Invoice').item.json.lead_id }) }}"
+      },
+      "id": "send-invoice",
+      "name": "6a. Send Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, -200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Send welcome message\nconsole.log('Customer Journey - Welcome step for lead:', $('1. Find Lead by Invoice').item.json.lead_id);\nreturn [{ json: { success: true, action: 'welcome_sent' } }];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "send-welcome",
+      "name": "6b. Send Welcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/whatsapp/add-to-group",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $('1. Find Lead by Invoice').item.json.lead_id }) }}"
+      },
+      "id": "add-group",
+      "name": "6c. Add to WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/access/grant",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $('1. Find Lead by Invoice').item.json.lead_id }) }}"
+      },
+      "id": "grant-access",
+      "name": "6d. Grant Access",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 400]
+    },
+    {
+      "parameters": { "jsCode": "console.log('Customer Journey Test - All steps completed'); return $input.all();", "mode": "runOnceForAllItems" },
+      "id": "test-logger",
+      "name": "Log Test Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 0]
+    }
+  ],
+  "connections": {
+    "Test Trigger (Every 20s)": { "main": [[{ "node": "1. Find Lead by Invoice", "type": "main", "index": 0 }]] },
+    "1. Find Lead by Invoice": { "main": [[{ "node": "2. Get Journey Steps", "type": "main", "index": 0 }]] },
+    "2. Get Journey Steps": { "main": [[{ "node": "3. Split Steps", "type": "main", "index": 0 }]] },
+    "3. Split Steps": { "main": [[{ "node": "4. Process Each Step", "type": "main", "index": 0 }]] },
+    "4. Process Each Step": { "main": [[{ "node": "5. Route by Action", "type": "main", "index": 0 }]] },
+    "5. Route by Action": { "main": [[{ "node": "6a. Send Invoice", "type": "main", "index": 0 }], [{ "node": "6b. Send Welcome", "type": "main", "index": 0 }], [{ "node": "6c. Add to WhatsApp", "type": "main", "index": 0 }], [{ "node": "6d. Grant Access", "type": "main", "index": 0 }]] },
+    "6a. Send Invoice": { "main": [[{ "node": "Log Test Result", "type": "main", "index": 0 }]] },
+    "6b. Send Welcome": { "main": [[{ "node": "Log Test Result", "type": "main", "index": 0 }]] },
+    "6c. Add to WhatsApp": { "main": [[{ "node": "Log Test Result", "type": "main", "index": 0 }]] },
+    "6d. Grant Access": { "main": [[{ "node": "Log Test Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": true,
+  "versionId": "test-004"
+}

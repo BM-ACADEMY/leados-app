@@ -1,0 +1,163 @@
+{
+  "name": "WF01 - Sales Engine (TEST - 10s interval)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "interval",
+              "seconds": 10
+            }
+          ]
+        }
+      },
+      "id": "test-trigger-10s",
+      "name": "Test Trigger (Every 10s)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// TEST MODE: Simulate new inbound message from hot lead\nconst testLead = {\n  lead_id: 2, -- Use lead ID from test data\n  name: 'Test Hot Lead',\n  phone: '919999999992',\n  brand: 'BM Academy',\n  message: 'Hi, I want to know about the digital marketing course fees',\n  source: 'whatsapp'\n};\n\nreturn [{ json: testLead }];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "test-data-generator",
+      "name": "Generate Test Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [250, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/ai/intent",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ brand: $('Generate Test Lead').item.json.brand, message: $('Generate Test Lead').item.json.message, lead_id: $('Generate Test Lead').item.json.lead_id }) }}"
+      },
+      "id": "intent-node",
+      "name": "1. Intent Detection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/ai/objections",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ brand: $('Generate Test Lead').item.json.brand, message: $('Generate Test Lead').item.json.message, lead_id: $('Generate Test Lead').item.json.lead_id }) }}"
+      },
+      "id": "objection-node",
+      "name": "2. Objection Detection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/kb/search",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ brand: $('Generate Test Lead').item.json.brand, query: $('Generate Test Lead').item.json.message, lead_id: $('Generate Test Lead').item.json.lead_id, intent: $('1. Intent Detection').item.json.intent }) }}"
+      },
+      "id": "kb-node",
+      "name": "3. Knowledge Retrieval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/ai/response",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ brand: $('1. Intent Detection').item.json.brand, intent: $('1. Intent Detection').item.json.intent, message: $('Generate Test Lead').item.json.message, kb_snippets: $('3. Knowledge Retrieval').item.json.kb_snippets, system_instructions: $('3. Knowledge Retrieval').item.json.system_instructions, lead_id: $('Generate Test Lead').item.json.lead_id, name: $('Generate Test Lead').item.json.name }) }}"
+      },
+      "id": "ai-response-node",
+      "name": "4. Generate AI Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/score",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $('Generate Test Lead').item.json.lead_id, message: $('Generate Test Lead').item.json.message, intent: $('1. Intent Detection').item.json.intent, objections: $('2. Objection Detection').item.json.objections }) }}"
+      },
+      "id": "score-node",
+      "name": "5. Qualify And Score",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/leads/assign-owner",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $('Generate Test Lead').item.json.lead_id, brand: $('1. Intent Detection').item.json.brand, lead_score: $('5. Qualify And Score').item.json.lead_score, intent: $('1. Intent Detection').item.json.intent }) }}"
+      },
+      "id": "assign-owner-node",
+      "name": "6. Assign Owner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('Sales Engine Test - Final Result:', $input.first().json);\nreturn $input.all();",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "test-logger",
+      "name": "Log Test Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 0]
+    }
+  ],
+  "connections": {
+    "Test Trigger (Every 10s)": {
+      "main": [[{ "node": "Generate Test Lead", "type": "main", "index": 0 }]]
+    },
+    "Generate Test Lead": {
+      "main": [[{ "node": "1. Intent Detection", "type": "main", "index": 0 }]]
+    },
+    "1. Intent Detection": {
+      "main": [[{ "node": "3. Knowledge Retrieval", "type": "main", "index": 0 }]]
+    },
+    "2. Objection Detection": {
+      "main": [[{ "node": "3. Knowledge Retrieval", "type": "main", "index": 0 }]]
+    },
+    "3. Knowledge Retrieval": {
+      "main": [[{ "node": "4. Generate AI Response", "type": "main", "index": 0 }]]
+    },
+    "4. Generate AI Response": {
+      "main": [[{ "node": "5. Qualify And Score", "type": "main", "index": 0 }]]
+    },
+    "5. Qualify And Score": {
+      "main": [[{ "node": "6. Assign Owner", "type": "main", "index": 0 }]]
+    },
+    "6. Assign Owner": {
+      "main": [[{ "node": "Log Test Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": true,
+  "versionId": "test-001"
+}

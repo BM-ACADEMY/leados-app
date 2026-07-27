@@ -24,7 +24,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 2 * * *"
+              "expression": "*/10 * * * *"
             }
           ]
         }

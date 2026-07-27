@@ -148,7 +148,9 @@ export default function KeywordTracking() {
       // Auto-trigger live rank check
       handleRefresh(saved.id);
     } catch (err) {
-      setFormError('Failed to save keyword');
+      const errMsg = err.response?.data?.message || err.response?.data?.error || 'Failed to save keyword';
+      setFormError(errMsg);
+      toast.error(errMsg);
     } finally {
       setAdding(false);
     }

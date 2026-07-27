@@ -168,11 +168,16 @@ const mafiyaRivalsRoutes = require('./routes/mafiya-rivals');
 const mafiyaUsageRoutes = require('./routes/mafiya-usage');
 const citationRoutes = require('./routes/citation.routes');
 
+const mafiyaPlansRoutes = require('./routes/mafiya-plans');
+const mafiyaOrdersRoutes = require('./routes/mafiya-orders');
+
+app.use('/api/mafiya/plans', auth, mafiyaPlansRoutes);
 app.use('/api/mafiya/clients', auth, mafiyaClientsRoutes);
 app.use('/api/mafiya/gmb', mafiyaGmbRoutes); // No auth — email links are clicked by external clients
 app.use('/api/mafiya/turf', auth, mafiyaTurfRoutes);
 app.use('/api/mafiya/rivals', auth, mafiyaRivalsRoutes);
 app.use('/api/mafiya/usage', auth, mafiyaUsageRoutes);
+app.use('/api/mafiya/orders', auth, mafiyaOrdersRoutes);
 app.use('/api/citations', auth, citationRoutes);
 
 // Public route for Google to download GMB Post images (bypassing the 'auth' middleware on the main reviews router)

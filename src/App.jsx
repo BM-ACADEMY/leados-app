@@ -10,6 +10,7 @@ import { InboxView } from './views/InboxView.jsx';
 import { CampaignsView } from './views/CampaignsView.jsx';
 import { TemplatesView } from './views/TemplatesView.jsx';
 import { AIBrainView } from './views/AIBrainView.jsx';
+import { AIImageGeneratorView } from './views/AIImageGeneratorView.jsx';
 import { ReportsView } from './views/ReportsView.jsx';
 import { FounderReportsView } from './views/FounderReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
@@ -142,6 +143,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/campaigns" element={<CampaignsView />} />
               <Route path="/templates" element={<TemplatesView />} />
               <Route path="/brain" element={<AIBrainView />} />
+              <Route path="/ai-image" element={<AIImageGeneratorView />} />
               <Route path="/reports" element={<ReportsView />} />
               <Route path="/founder-reports" element={<FounderReportsView />} />
               <Route path="/clients" element={<ClientsView />} />
@@ -165,6 +167,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/admin/content-os/logs" element={<ContentOSDashboard defaultPage="logs" />} />
               <Route path="/admin/content-os/reach" element={<ContentOSDashboard defaultPage="reach" />} />
               <Route path="/admin/content-os/failed" element={<ContentOSDashboard defaultPage="failed" />} />
+              <Route path="/admin/content-os/thumbnail-brain" element={<ContentOSDashboard defaultPage="thumbnail-brain" />} />
 
               <Route path="/thedal/clients" element={<ClientOnboard />} />
               <Route path="/thedal/plan-subscription" element={<PlanSubscription />} />

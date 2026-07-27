@@ -12,6 +12,7 @@ import { TokenHealth } from './TokenHealth.jsx';
 import { PublishLogs } from './PublishLogs.jsx';
 import { ReachReport } from './ReachReport.jsx';
 import { FailedJobs } from './FailedJobs.jsx';
+import { ThumbnailBrainStudio } from './ThumbnailBrainStudio.jsx';
 
 // Color matching
 const COLORS = [
@@ -555,7 +556,8 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
       tokens: { title: "Token Health", subtitle: "All tokens encrypted · monitored every 6 hours" },
       logs: { title: "Publish Logs", subtitle: `${items.filter(i => i.status === 'PUBLISHED').length} publishing records · every post traced` },
       reach: { title: "Reach Report", subtitle: "312K reach in 7 days · WhatsApp clicks tracked" },
-      failed: { title: "Failed Jobs", subtitle: "Self-healing retries · 3× with 30s delay" }
+      failed: { title: "Failed Jobs", subtitle: "Self-healing retries · 3× with 30s delay" },
+      'thumbnail-brain': { title: "Thumbnail Brain", subtitle: "Central AI prompt and settings for all thumbnail generation" }
     };
     return pages[view] || { title: "Content OS Console", subtitle: "ABM Groups Publishing command center" };
   };
@@ -721,6 +723,8 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
               isPublishing={isPublishing}
             />
           )}
+
+          {view === 'thumbnail-brain' && <ThumbnailBrainStudio />}
         </div>
       </main>
 

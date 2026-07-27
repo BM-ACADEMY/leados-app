@@ -19,6 +19,10 @@ const ffprobePath = require("@ffprobe-installer/ffprobe").path;
 ffmpeg.setFfprobePath(ffprobePath);
 const { GoogleGenAI } = require("@google/genai");
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+// Separate client targeting v1alpha — required for image-generation models (gemini-2.0-flash-preview-image-generation)
+const genAIImage = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { apiVersion: 'v1alpha' } })
+  : null;
 
 // Helper: multi-model fallback for text generation
 // Tries multiple models so rate limits on one don't block everything
@@ -131,8 +135,18 @@ async function downloadDriveFileServiceAccount(fileId, destPath) {
   response.data.pipe(writer);
 
   return new Promise((resolve, reject) => {
-    writer.on('finish', resolve);
-    writer.on('error', reject);
+    writer.on('finish', () => {
+      if (fs.existsSync(destPath) && fs.statSync(destPath).size > 100) {
+        resolve();
+      } else {
+        if (fs.existsSync(destPath)) try { fs.unlinkSync(destPath); } catch (_) {}
+        reject(new Error(`Downloaded video from Drive (ID ${fileId}) is empty or invalid.`));
+      }
+    });
+    writer.on('error', (err) => {
+      if (fs.existsSync(destPath)) try { fs.unlinkSync(destPath); } catch (_) {}
+      reject(err);
+    });
   });
 }
 
@@ -158,6 +172,9 @@ function transcodeVideo(inputPath, outputPath) {
         resolve();
       })
       .on('error', (err) => {
+        if (fs.existsSync(outputPath)) {
+          try { fs.unlinkSync(outputPath); } catch (_) {}
+        }
         reject(err);
       })
       .run();
@@ -1170,8 +1187,22 @@ async function healMissingMedia(driveFileId) {
     const transcodedPath = path.join(uploadsDir, `transcoded_${driveFileId}.mp4`);
     const thumbnailPath = path.join(uploadsDir, `thumbnail_${driveFileId}.jpg`);
 
-    const transcodeExists = fs.existsSync(transcodedPath);
-    const thumbnailExists = fs.existsSync(thumbnailPath);
+    let transcodeExists = fs.existsSync(transcodedPath);
+    let thumbnailExists = fs.existsSync(thumbnailPath);
+
+    // If transcoded file is corrupted or 0-byte, remove it to force re-transcoding
+    if (transcodeExists) {
+      try {
+        const stats = fs.statSync(transcodedPath);
+        if (stats.size < 10000) { // under 10KB is corrupted/incomplete
+          console.warn(`[SelfHealing] transcoded_${driveFileId}.mp4 is incomplete or corrupt (${stats.size} bytes). Removing file to force recovery.`);
+          fs.unlinkSync(transcodedPath);
+          transcodeExists = false;
+        }
+      } catch (_) {
+        transcodeExists = false;
+      }
+    }
 
     if (transcodeExists && thumbnailExists) {
       console.log(`[SelfHealing] Both transcoded video and thumbnail already exist on disk for ${driveFileId}.`);
@@ -3404,16 +3435,32 @@ async function generateThumbnails(req, res) {
       return res.status(400).json({ error: 'Video file not found on server. Please wait for transcoding to complete or re-upload the video.' });
     }
 
-    // Get video duration via ffprobe
-    const duration = await new Promise((resolve, reject) => {
-      ffmpeg.ffprobe(videoPath, (err, meta) => {
-        if (err) reject(err);
-        else resolve(meta.format.duration || 30);
+    // Get video duration via ffprobe with self-healing on corruption
+    let duration = 30;
+    try {
+      duration = await new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(videoPath, (err, meta) => {
+          if (err) reject(err);
+          else resolve(meta?.format?.duration || 30);
+        });
       });
-    });
+    } catch (ffErr) {
+      console.error(`[generateThumbnails] ffprobe failed for videoPath=${videoPath}:`, ffErr.message);
+      // Clean up corrupted file so self-healing can re-download clean media from Google Drive
+      if (fs.existsSync(videoPath)) {
+        try { fs.unlinkSync(videoPath); } catch (_) {}
+      }
+      if (driveFileId) {
+        healMissingMedia(driveFileId);
+      }
+      return res.status(422).json({
+        error: `Video file was corrupted or incomplete (${ffErr.message}). The file has been cleared and auto-recovery initiated. Please try again in 10-15 seconds.`
+      });
+    }
 
-    // Extract 8 frames spread across the video for better variety
-    const pcts = [0.05, 0.15, 0.25, 0.4, 0.5, 0.65, 0.8, 0.92];
+    // Extract 20 frames spread evenly across the video
+    const NUM_FRAMES = 20;
+    const pcts = Array.from({ length: NUM_FRAMES }, (_, i) => 0.03 + (i / (NUM_FRAMES - 1)) * 0.94);
     const timestamps = pcts.map(p => Math.max(0.5, Math.floor(duration * p)));
 
     const framePaths = timestamps.map((_, i) => path.join(uploadsDir, `frame_${id}_${i}.jpg`));
@@ -3484,7 +3531,7 @@ async function generateThumbnails(req, res) {
 
 async function generatePoster(req, res) {
   const { id } = req.params;
-  const { frame_url } = req.body;
+  const { frame_url, prompt: clientPrompt, model: clientModel, config: clientConfig } = req.body;
   const uploadsDir = path.join(__dirname, '../uploads');
   const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
 
@@ -3512,22 +3559,62 @@ async function generatePoster(req, res) {
 
     const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
     let posterGenerated = false;
+    let geminiErrorDetails = null;
+    let engineUsed = 'none';
+
+    // Parse Thumbnail Brain configuration
+    const aspectRatio = clientConfig?.aspectRatio || '16:9';
+    const styleName = clientConfig?.style || 'Cinematic';
+    const titleSafeArea = Number(clientConfig?.titleSafeArea ?? 35);
+
+    // Calculate dimensions based on requested Aspect Ratio
+    let targetWidth = 1280;
+    let targetHeight = 720;
+    if (aspectRatio === '1:1') {
+      targetWidth = 1080;
+      targetHeight = 1080;
+    } else if (aspectRatio === '9:16') {
+      targetWidth = 720;
+      targetHeight = 1280;
+    } else if (aspectRatio === '4:3') {
+      targetWidth = 1024;
+      targetHeight = 768;
+    } else if (aspectRatio === '16:9') {
+      targetWidth = 1280;
+      targetHeight = 720;
+    }
+
+    const fallbackPrompt = `Transform this video frame into a professional YouTube thumbnail poster. Keep the SAME person and scene exactly as they are. Apply ${styleName} enhancements. Output only the enhanced image.`;
+    const editPrompt = clientPrompt || fallbackPrompt;
 
     // === Strategy 1: Gemini Image Editing (uses the actual frame) ===
-    if (genAI) {
+    if (genAIImage) {
       try {
         console.log(`[generatePoster] Attempting Gemini image editing for id=${id}`);
-        const editPrompt = `Transform this video frame into a professional YouTube thumbnail poster. Keep the SAME person and scene exactly as they are. Apply these enhancements:
-- Add dramatic cinematic lighting and contrast boost
-- Add a subtle dark gradient vignette around the edges
-- Make the colors more vivid and saturated
-- Add a subtle glow/rim light effect around the main subject
-- Make it look like a high-quality professional YouTube thumbnail
-${title ? `The video topic is: "${title}"` : ''}
-Do NOT change the person's face or body. Do NOT add any text, words, or letters. Keep the original composition. Output only the enhanced image.`;
+        console.log('────────────────────────────────────────────────────');
+        console.log('[generatePoster] Thumbnail Brain Config Received:');
+        console.log('  Client Prompt:', clientPrompt ? `YES (${clientPrompt.length} chars)` : 'NO');
+        console.log('  Client Model: ', clientModel || '(none)');
+        console.log('  Aspect Ratio: ', aspectRatio, `(${targetWidth}x${targetHeight})`);
+        console.log('  Style:        ', styleName);
+        console.log('  Title Safe Area:', titleSafeArea + '%');
+        console.log('────────────────────────────────────────────────────');
 
-        const response = await genAI.models.generateContent({
-          model: 'gemini-2.0-flash-preview-image-generation',
+        // Map Thumbnail Brain UI model names to valid Google GenAI v1alpha model IDs.
+        const MODEL_MAP = {
+          'gemini-2.5-flash-image': 'gemini-2.5-flash-image',
+          'gemini-2.5-pro-image':   'gemini-3-pro-image',
+          'imagen':                 'gemini-3.1-flash-image',
+          'openai-image':           'gemini-3.1-flash-image',
+          'flux':                   'gemini-3.1-flash-image',
+        };
+        const geminiModel = MODEL_MAP[clientModel] || 'gemini-3.1-flash-image';
+
+        console.log('[generatePoster] Final Prompt (first 200 chars):', editPrompt.substring(0, 200));
+        console.log('[generatePoster] Target Gemini Model:', geminiModel);
+
+        const response = await genAIImage.models.generateContent({
+          model: geminiModel,
           contents: [
             {
               role: 'user',
@@ -3549,7 +3636,8 @@ Do NOT change the person's face or body. Do NOT add any text, words, or letters.
               const imgBuffer = Buffer.from(part.inlineData.data, 'base64');
               fs.writeFileSync(posterPath, imgBuffer);
               posterGenerated = true;
-              console.log(`[generatePoster] Gemini image editing succeeded for id=${id}`);
+              engineUsed = 'gemini';
+              console.log(`[generatePoster] ✅ Gemini image editing succeeded for id=${id} with model=${geminiModel}`);
               break;
             }
           }
@@ -3559,35 +3647,77 @@ Do NOT change the person's face or body. Do NOT add any text, words, or letters.
           console.warn('[generatePoster] Gemini returned no image data, falling back to Jimp');
         }
       } catch (geminiEditErr) {
-        console.warn('[generatePoster] Gemini image editing failed, falling back to Jimp:', geminiEditErr.message);
+        geminiErrorDetails = geminiEditErr.message;
+        console.warn('[generatePoster] ⚠️ Gemini image editing failed, falling back to Jimp:', geminiEditErr.message);
       }
     }
 
-    // === Strategy 2: Jimp-based enhancement (fallback) ===
-    // Adds contrast boost + gradient overlay + title text on the actual frame
+    // === Strategy 2: Jimp-based enhancement (fallback when Gemini is unavailable) ===
+    // Reads the actual selected video frame from disk and applies style-based color grading.
+    // The user's real frame is ALWAYS preserved — no AI-generated replacement faces.
     if (!posterGenerated) {
       try {
-        console.log(`[generatePoster] Using Jimp fallback for id=${id}`);
+        console.log(`[generatePoster] Using Jimp engine with Thumbnail Brain settings for id=${id}`);
+        console.log(`  Target dimensions: ${targetWidth}x${targetHeight} (${aspectRatio})`);
+        console.log(`  Style applied: ${styleName}`);
+        console.log(`  Title Safe Area: ${titleSafeArea}%`);
+
         const image = await Jimp.read(framePath);
 
-        // Resize to 1280x720 (YouTube thumbnail standard)
-        image.cover(1280, 720);
+        // Crop & cover to exact Aspect Ratio and Target Resolution
+        image.cover(targetWidth, targetHeight);
 
-        // Boost contrast and saturation
-        image.contrast(0.15);
-        image.brightness(0.05);
+        // Style presets for color grading & contrast
+        if (styleName === 'Business') {
+          image.contrast(0.20);
+          image.brightness(0.02);
+        } else if (styleName === 'Cinematic') {
+          image.contrast(0.25);
+          image.brightness(0.04);
+        } else if (styleName === 'Technology' || styleName === 'AI') {
+          image.contrast(0.30);
+          image.brightness(0.05);
+        } else if (styleName === 'Gaming') {
+          image.contrast(0.35);
+          image.brightness(0.06);
+        } else if (styleName === 'Minimal') {
+          image.contrast(0.12);
+          image.brightness(0.02);
+        } else {
+          image.contrast(0.18);
+          image.brightness(0.03);
+        }
 
-        // Add a dark gradient overlay at the bottom for text readability
-        const gradientHeight = Math.floor(720 * 0.45);
-        for (let y = 720 - gradientHeight; y < 720; y++) {
-          const progress = (y - (720 - gradientHeight)) / gradientHeight;
-          const alpha = Math.floor(progress * 180); // 0 to 180 opacity
-          for (let x = 0; x < 1280; x++) {
+        // Apply dark title-safe overlay based on configured Title Safe Area %
+        const safeAreaFraction = Math.min(Math.max(titleSafeArea, 20), 60) / 100;
+        const gradientHeight = Math.floor(targetHeight * safeAreaFraction);
+        const startY = targetHeight - gradientHeight;
+
+        for (let y = startY; y < targetHeight; y++) {
+          const progress = (y - startY) / gradientHeight;
+          const alpha = Math.floor(progress * 190); // 0 to 190 opacity
+
+          for (let x = 0; x < targetWidth; x++) {
             const currentColor = image.getPixelColor(x, y);
             const rgba = Jimp.intToRGBA(currentColor);
-            const blendedR = Math.max(0, Math.floor(rgba.r * (1 - alpha / 255)));
-            const blendedG = Math.max(0, Math.floor(rgba.g * (1 - alpha / 255)));
-            const blendedB = Math.max(0, Math.floor(rgba.b * (1 - alpha / 255)));
+
+            let blendedR = Math.max(0, Math.floor(rgba.r * (1 - alpha / 255)));
+            let blendedG = Math.max(0, Math.floor(rgba.g * (1 - alpha / 255)));
+            let blendedB = Math.max(0, Math.floor(rgba.b * (1 - alpha / 255)));
+
+            // Style color tinting
+            if (styleName === 'Business') {
+              blendedB = Math.min(255, Math.floor(blendedB * 1.15)); // Cool corporate blue tint
+            } else if (styleName === 'Cinematic') {
+              blendedR = Math.min(255, Math.floor(blendedR * 1.12)); // Warm amber/golden grade
+            } else if (styleName === 'Technology' || styleName === 'AI') {
+              blendedG = Math.min(255, Math.floor(blendedG * 1.12)); // Cyan/teal tint
+              blendedB = Math.min(255, Math.floor(blendedB * 1.15));
+            } else if (styleName === 'Gaming') {
+              blendedR = Math.min(255, Math.floor(blendedR * 1.15)); // Vibrant purple tint
+              blendedB = Math.min(255, Math.floor(blendedB * 1.20));
+            }
+
             image.setPixelColor(
               Jimp.rgbaToInt(blendedR, blendedG, blendedB, rgba.a),
               x, y
@@ -3595,12 +3725,12 @@ Do NOT change the person's face or body. Do NOT add any text, words, or letters.
           }
         }
 
-        // Add a subtle top vignette too
-        const topGradientHeight = Math.floor(720 * 0.2);
+        // Top vignette gradient
+        const topGradientHeight = Math.floor(targetHeight * 0.18);
         for (let y = 0; y < topGradientHeight; y++) {
           const progress = 1 - (y / topGradientHeight);
-          const alpha = Math.floor(progress * 100);
-          for (let x = 0; x < 1280; x++) {
+          const alpha = Math.floor(progress * 110);
+          for (let x = 0; x < targetWidth; x++) {
             const currentColor = image.getPixelColor(x, y);
             const rgba = Jimp.intToRGBA(currentColor);
             const blendedR = Math.max(0, Math.floor(rgba.r * (1 - alpha / 255)));
@@ -3613,12 +3743,12 @@ Do NOT change the person's face or body. Do NOT add any text, words, or letters.
           }
         }
 
-        // Add title text if available (using Jimp's built-in font)
+        // Add title text if available
         if (title) {
           const font = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
-          const maxWidth = 1200;
+          const maxWidth = targetWidth - 80;
           const textHeight = Jimp.measureTextHeight(font, title, maxWidth);
-          const textY = 720 - textHeight - 40;
+          const textY = targetHeight - textHeight - 40;
           image.print(font, 40, textY, {
             text: title.toUpperCase(),
             alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT,
@@ -3626,7 +3756,7 @@ Do NOT change the person's face or body. Do NOT add any text, words, or letters.
           }, maxWidth, textHeight + 20);
         }
 
-        // Add brand name as a small badge at top-left
+        // Add brand name badge at top-left
         if (brandName) {
           const smallFont = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
           image.print(smallFont, 30, 24, brandName.toUpperCase());
@@ -3634,16 +3764,28 @@ Do NOT change the person's face or body. Do NOT add any text, words, or letters.
 
         await image.writeAsync(posterPath);
         posterGenerated = true;
-        console.log(`[generatePoster] Jimp fallback poster created for id=${id}`);
+        engineUsed = 'jimp';
+        console.log(`[generatePoster] ✅ Poster created using Jimp engine with ${aspectRatio} (${targetWidth}x${targetHeight}) & ${styleName} style`);
       } catch (jimpErr) {
-        console.error('[generatePoster] Jimp fallback also failed:', jimpErr);
+        console.error('[generatePoster] Jimp processing failed:', jimpErr);
         return res.status(500).json({ error: 'Poster generation failed. Please try again.' });
       }
     }
 
-    // Add cache-busting timestamp to URL so browser loads the fresh poster
+    // Add cache-busting timestamp to URL
     const ts = Date.now();
-    res.json({ success: true, poster_url: `${baseUrl}/uploads/poster_${id}.jpg?t=${ts}` });
+    res.json({
+      success: true,
+      poster_url: `${baseUrl}/uploads/poster_${id}.jpg?t=${ts}`,
+      engine: engineUsed,
+      config_applied: {
+        style: styleName,
+        aspect_ratio: aspectRatio,
+        dimensions: `${targetWidth}x${targetHeight}`,
+        title_safe_area: `${titleSafeArea}%`
+      },
+      gemini_warning: geminiErrorDetails ? `Gemini API: ${geminiErrorDetails}` : null
+    });
   } catch (err) {
     console.error('[generatePoster] Error:', err);
     res.status(500).json({ error: err.message });
@@ -3686,5 +3828,76 @@ module.exports = {
   runBackgroundPublish,
   updateOverallPostStatus,
   generateThumbnails,
-  generatePoster
+  generatePoster,
+  generateAIImage
 };
+
+async function generateAIImage(req, res) {
+  const { prompt, aspectRatio = '1:1', style = 'Photorealistic', model = 'gemini-3.1-flash-image' } = req.body;
+
+  if (!prompt || !prompt.trim()) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  if (!genAIImage) {
+    return res.status(503).json({ error: 'AI service is not configured. GEMINI_API_KEY is missing.' });
+  }
+
+  try {
+    const styleGuide = {
+      'Photorealistic': 'ultra-realistic photography, 8k resolution, sharp details, professional lighting',
+      'Cinematic': 'cinematic film still, anamorphic lens, dramatic lighting, movie color grade',
+      'Digital Art': 'digital illustration, vibrant colors, concept art, trending on ArtStation',
+      'Anime': 'anime style, studio quality, cel shading, detailed backgrounds',
+      'Oil Painting': 'oil painting style, textured brushstrokes, classical art, museum quality',
+      'Watercolor': 'delicate watercolor painting, soft washes, artistic, flowing colors',
+      'Sketch': 'pencil sketch, detailed line art, graphite, professional illustration',
+      '3D Render': 'octane render, 3D CGI, photorealistic materials, ray tracing, studio lighting',
+    };
+
+    const styleHint = styleGuide[style] || style;
+    const fullPrompt = `${prompt.trim()}. ${styleHint}. High quality, masterpiece, best quality.`;
+
+    const VALID_MODELS = ['gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image', 'gemini-3-pro-image', 'gemini-2.5-flash-image'];
+    const selectedModel = VALID_MODELS.includes(model) ? model : 'gemini-3.1-flash-image';
+
+    console.log(`[generateAIImage] Model: ${selectedModel}, Aspect: ${aspectRatio}, Style: ${style}`);
+    console.log(`[generateAIImage] Prompt (${fullPrompt.length} chars):`, fullPrompt.substring(0, 120));
+
+    const response = await genAIImage.models.generateContent({
+      model: selectedModel,
+      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+      config: { responseModalities: ['IMAGE'] }
+    });
+
+    let imageData = null;
+    let mimeType = 'image/jpeg';
+
+    if (response.candidates && response.candidates[0]?.content?.parts) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData && part.inlineData.data) {
+          imageData = part.inlineData.data;
+          mimeType = part.inlineData.mimeType || 'image/jpeg';
+          break;
+        }
+      }
+    }
+
+    if (!imageData) {
+      return res.status(500).json({ error: 'No image in response. Try a more descriptive prompt.' });
+    }
+
+    const ext = mimeType.includes('png') ? 'png' : 'jpg';
+    const filename = `ai_gen_${Date.now()}.${ext}`;
+    const uploadsDir = path.join(__dirname, '../uploads');
+    fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(imageData, 'base64'));
+
+    const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+    console.log(`[generateAIImage] ✅ Image saved: ${filename} (gemini-2.0-flash-exp)`);
+
+    res.json({ success: true, image_url: `${baseUrl}/uploads/${filename}?t=${Date.now()}`, filename });
+  } catch (err) {
+    console.error('[generateAIImage] Error:', err.message);
+    res.status(500).json({ error: err.message || 'Image generation failed. Please try again.' });
+  }
+}

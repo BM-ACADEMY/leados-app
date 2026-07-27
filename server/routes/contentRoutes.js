@@ -56,6 +56,9 @@ router.post("/:id/generate-thumbnails", ctrl.generateThumbnails);
 // AI-enhance selected frame into a poster
 router.post("/:id/generate-poster", ctrl.generatePoster);
 
+// Standalone AI image generation from text prompt
+router.post("/generate-ai-image", ctrl.generateAIImage);
+
 // Trigger publishing
 router.post("/:id/publish", ctrl.publishPost);
 

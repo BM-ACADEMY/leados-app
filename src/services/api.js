@@ -570,10 +570,40 @@ class LeadOSAPI {
     return this.request(`/api/content/${id}`, { method: 'DELETE' });
   }
 
-  async generatePoster(id, frameUrl) {
+  // ── Thumbnail Brain Studio ───────────────────────────────────────────────
+  getThumbnailBrainConfig()            { return this.get('/content-os/thumb-brain/config'); }
+  saveThumbnailBrainConfig(config, versionName) { return this.post('/content-os/thumb-brain/config', { config, version_name: versionName }); }
+  getThumbnailBrainVersions()          { return this.get('/content-os/thumb-brain/versions'); }
+  activateThumbnailBrainVersion(id)    { return this.post(`/content-os/thumb-brain/versions/${id}/activate`, {}); }
+  deleteThumbnailBrainVersion(id)      { return this.request(`/api/content-os/thumb-brain/versions/${id}`, { method: 'DELETE' }); }
+  getThumbnailBrainSocialPlatforms()              { return this.get('/content-os/thumb-brain/social-platforms'); }
+  saveThumbnailBrainPlatformOverride(slug, data)  { return this.put(`/content-os/thumb-brain/social-platforms/${slug}`, data); }
+  getThumbnailBrainPlatforms()         { return this.get('/content-os/thumb-brain/platforms'); }
+  createThumbnailBrainPlatform(data)   { return this.post('/content-os/thumb-brain/platforms', data); }
+  updateThumbnailBrainPlatform(id, d)  { return this.put(`/content-os/thumb-brain/platforms/${id}`, d); }
+  deleteThumbnailBrainPlatform(id)     { return this.request(`/api/content-os/thumb-brain/platforms/${id}`, { method: 'DELETE' }); }
+  getThumbnailBrainSocialBrandStyles()              { return this.get('/content-os/thumb-brain/social-brand-styles'); }
+  saveThumbnailBrainBrandStyleOverride(slug, data)  { return this.put(`/content-os/thumb-brain/social-brand-styles/${slug}`, data); }
+  getThumbnailBrainBrandStyles()       { return this.get('/content-os/thumb-brain/brand-styles'); }
+  createThumbnailBrainBrandStyle(data) { return this.post('/content-os/thumb-brain/brand-styles', data); }
+  updateThumbnailBrainBrandStyle(id,d) { return this.put(`/content-os/thumb-brain/brand-styles/${id}`, d); }
+  deleteThumbnailBrainBrandStyle(id)   { return this.request(`/api/content-os/thumb-brain/brand-styles/${id}`, { method: 'DELETE' }); }
+  getThumbnailBrainAnalytics()         { return this.get('/content-os/thumb-brain/analytics'); }
+  recordThumbnailBrainAnalytics(data)  { return this.post('/content-os/thumb-brain/analytics', data); }
+
+  async generateAIImage(prompt, aspectRatio = '1:1', style = 'Photorealistic', model = 'gemini-3.1-flash-image') {
+    return this.post('/content/generate-ai-image', { prompt, aspectRatio, style, model });
+  }
+
+  async generatePoster(id, frameUrl, prompt = null, model = null, config = null) {
     return this.request(`/api/content/${id}/generate-poster`, {
       method: 'POST',
-      body: JSON.stringify({ frame_url: frameUrl }),
+      body: JSON.stringify({
+        frame_url: frameUrl,
+        ...(prompt ? { prompt } : {}),
+        ...(model ? { model } : {}),
+        ...(config ? { config } : {}),
+      }),
     });
   }
 

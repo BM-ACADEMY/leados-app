@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../src/services/api.js';
+import { generateThumbnail } from './thumbnailBrain/index.js';
 
 
 
@@ -45,7 +46,7 @@ export function ApprovalRoom({
   const [deleteResults, setDeleteResults] = useState(null);
   const [thumbOptions, setThumbOptions] = useState([]);
   const [thumbBestIndex, setThumbBestIndex] = useState(0);
-  const [generatingThumbs, setGeneratingThumbs] = useState(false);
+  const [extractingFrames, setExtractingFrames] = useState(false);
   const [generatingPoster, setGeneratingPoster] = useState(false);
   const [posterPreviewUrl, setPosterPreviewUrl] = useState('');
   const [thumbError, setThumbError] = useState('');
@@ -100,13 +101,16 @@ export function ApprovalRoom({
     }
   }, [selectedItem, setEditValues]);
 
-  const handleGenerateThumbnails = async () => {
+  // Step: Extract frames from the video. No AI processing here — just frame extraction.
+  // User selects a frame, then calls Thumbnail Brain to generate the AI poster.
+  const handleExtractFrames = async () => {
     if (!selectedItem) return;
-    setGeneratingThumbs(true);
+    setExtractingFrames(true);
     setThumbError('');
     try {
-      const context = firstGenContext || editValues.youtube_description || editValues.caption || '';
-      const res = await api.generateThumbnails(selectedItem.id, context);
+      console.log('[ApprovalRoom] Extracting frames from video — no AI processing at this stage');
+      console.log('[ApprovalRoom] Content ID:', selectedItem.id);
+      const res = await api.generateThumbnails(selectedItem.id, '');
       if (res.success && res.thumbnails?.length) {
         const best = res.bestIndex ?? 0;
         setThumbOptions(res.thumbnails);
@@ -114,25 +118,33 @@ export function ApprovalRoom({
         setEditValues(prev => ({ ...prev, thumbnail_url: res.thumbnails[best] }));
       }
     } catch (err) {
-      console.error('Thumbnail generation failed:', err);
+      console.error('Frame extraction failed:', err);
       setThumbError(err.message || 'Frame extraction failed. The video may still be processing.');
     } finally {
-      setGeneratingThumbs(false);
+      setExtractingFrames(false);
     }
   };
 
-  const handleGeneratePoster = async () => {
+  // Step: Send selected frame + content context to Thumbnail Brain.
+  // Approval Room never builds the prompt, selects a model, or applies styles.
+  // All of that is handled entirely inside Thumbnail Brain.
+  const handleGenerateThumbnailBrainPoster = async () => {
     if (!selectedItem || !editValues.thumbnail_url) return;
     setGeneratingPoster(true);
     setThumbError('');
     setPosterPreviewUrl('');
     try {
-      const res = await api.generatePoster(selectedItem.id, editValues.thumbnail_url);
+      const res = await generateThumbnail({
+        contentId: selectedItem.id,
+        frameUrl: editValues.thumbnail_url,
+        videoTitle: editValues.youtube_title || editValues.thumbnail_title || '',
+        description: editValues.youtube_description || editValues.caption || '',
+      });
       if (res.success && res.poster_url) {
         setPosterPreviewUrl(res.poster_url);
       }
     } catch (err) {
-      setThumbError(err.message || 'Poster generation failed. Try again.');
+      setThumbError(err.message || 'Thumbnail Brain poster generation failed. Try again.');
     } finally {
       setGeneratingPoster(false);
     }
@@ -162,9 +174,9 @@ export function ApprovalRoom({
       } else if (seg === 'live') {
         statusMatches = (s === 'PUBLISHED' || s.startsWith('PUBLISHED') || s === 'LIVE' || s.startsWith('LIVE') || s === 'PARTIAL' || s.startsWith('PARTIAL'));
       }
-      
+
       if (!statusMatches) return false;
-      
+
       // Filter brand
       if (selectedBrand !== 'all') {
         return isSameBrand(item.brand_name, selectedBrand);
@@ -208,7 +220,7 @@ export function ApprovalRoom({
 
       {/* Review Grid (Queue list, Detail viewer, Details sidebar) */}
       <div className="rev-grid">
-        
+
         {/* Column 1: Queue list */}
         <div className="panel" style={{ margin: 0, display: 'flex', flexDirection: 'column', height: 'fit-content' }}>
           <div className="panel-h">
@@ -241,8 +253,8 @@ export function ApprovalRoom({
                   >
                     <div className="qcard-top">
                       <span className={`qbadge ${
-                        (item.status || '').toUpperCase() === 'PUBLISHED' ? 'qb-published' : 
-                        (item.status || '').toUpperCase() === 'APPROVED' ? 'qb-approved' : 
+                        (item.status || '').toUpperCase() === 'PUBLISHED' ? 'qb-published' :
+                        (item.status || '').toUpperCase() === 'APPROVED' ? 'qb-approved' :
                         'qb-pending'
                       }`}>
                         ● {item.status}
@@ -329,143 +341,9 @@ export function ApprovalRoom({
                 <div className="vwm">@LEARN WITH KAMAR · 1080×1920 · faststart ✓</div>
               </div>
 
-              {/* Thumbnail Generator — only show when captions already exist or have been generated */}
-              {(selectedItem.caption || editMode || thumbOptions.length > 0) && <div style={{ margin: '0 14px 0', borderTop: '1px solid var(--b1)' }}>
-                {/* Header row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 2px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(139,114,240,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>🖼</div>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>Thumbnail</div>
-                      <div style={{ fontSize: 10, color: 'var(--t3)' }}>
-                        {editValues.thumbnail_url ? 'Thumbnail ready — save to apply' : 'Click "Pick Frame" to extract frames from the video'}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleGenerateThumbnails}
-                    disabled={generatingThumbs}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      padding: '6px 12px', fontSize: 11, fontWeight: 700, borderRadius: 7,
-                      background: generatingThumbs ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(139,114,240,0.2), rgba(0,196,160,0.15))',
-                      color: generatingThumbs ? 'var(--t3)' : 'var(--pur)',
-                      border: generatingThumbs ? '1px solid var(--b1)' : '1px solid rgba(139,114,240,0.35)',
-                      cursor: generatingThumbs ? 'not-allowed' : 'pointer'
-                    }}
-                  >
-                    {generatingThumbs ? (
-                      <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Extracting…</>
-                    ) : <>✦ AI Pick</>}
-                  </button>
-                </div>
-
-                {/* Error */}
-                {thumbError && (
-                  <div style={{ background: 'rgba(240,74,94,0.08)', border: '1px solid rgba(240,74,94,0.3)', borderRadius: 7, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--red)' }}>
-                    ✕ {thumbError}
-                  </div>
-                )}
-
-                {/* Frame grid — always visible once extracted */}
-                {thumbOptions.length > 0 && (
-                  <div style={{ paddingBottom: 10 }}>
-                    <div style={{ fontSize: 10, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 8 }}>
-                      ⬡ Pick a frame from your video
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                      {thumbOptions.map((url, i) => {
-                        const isSelected = editValues.thumbnail_url === url;
-                        const isAiPick = i === thumbBestIndex;
-                        return (
-                          <div key={i} onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: url })); setPosterPreviewUrl(''); }}
-                            style={{
-                              position: 'relative', cursor: 'pointer', borderRadius: 7, overflow: 'hidden',
-                              aspectRatio: '16/9',
-                              border: isSelected ? '2px solid var(--teal)' : '2px solid var(--b1)',
-                              opacity: isSelected ? 1 : 0.65,
-                              transition: 'all 0.15s'
-                            }}
-                          >
-                            <img src={url} alt={`Frame ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                            {isAiPick && (
-                              <div style={{ position: 'absolute', top: 4, left: 4, background: 'var(--gold)', color: '#000', fontSize: 7, fontWeight: 800, padding: '2px 5px', borderRadius: 3, letterSpacing: '0.04em' }}>
-                                ✦ AI PICK
-                              </div>
-                            )}
-                            <div style={{ position: 'absolute', bottom: 3, left: 5, fontSize: 8, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.9)', background: 'rgba(0,0,0,0.5)', padding: '1px 5px', borderRadius: 3 }}>
-                              {isSelected ? '✓ Selected' : `Frame ${i + 1}`}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Selected frame large preview */}
-                {editValues.thumbnail_url && thumbOptions.some(u => u === editValues.thumbnail_url) && (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', width: '100%', aspectRatio: '16/9', border: '2px solid var(--teal)', boxShadow: '0 0 0 3px rgba(0,196,160,0.15)' }}>
-                      <img
-                        src={editValues.thumbnail_url}
-                        alt="Selected thumbnail"
-                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                      />
-                      <div style={{ position: 'absolute', top: 8, left: 8, background: 'var(--teal)', color: 'var(--bg)', fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.05em' }}>
-                        ✓ SELECTED THUMBNAIL
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
-                      <div style={{ fontSize: 10, color: 'var(--teal)' }}>Thumbnail set — click Save Captions to apply</div>
-                      <button
-                        onClick={handleGeneratePoster}
-                        disabled={generatingPoster}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 5,
-                          padding: '5px 11px', fontSize: 10, fontWeight: 700, borderRadius: 6,
-                          background: generatingPoster ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(255,196,0,0.2), rgba(255,140,0,0.15))',
-                          color: generatingPoster ? 'var(--t3)' : 'var(--gold)',
-                          border: generatingPoster ? '1px solid var(--b1)' : '1px solid rgba(255,196,0,0.35)',
-                          cursor: generatingPoster ? 'not-allowed' : 'pointer'
-                        }}
-                      >
-                        {generatingPoster
-                          ? <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid rgba(255,196,0,0.3)', borderTopColor: 'var(--gold)', animation: 'spin 0.8s linear infinite' }} /> Enhancing…</>
-                          : '✦ Enhance as Thumbnail'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* AI Poster preview — separate from selected frame */}
-                {posterPreviewUrl && (
-                  <div style={{ marginBottom: 10, borderRadius: 8, overflow: 'hidden', border: '2px solid rgba(255,196,0,0.4)', boxShadow: '0 0 0 3px rgba(255,196,0,0.1)' }}>
-                    <div style={{ background: 'rgba(255,196,0,0.08)', padding: '6px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--gold)', letterSpacing: '0.04em' }}>✦ ENHANCED THUMBNAIL</span>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button
-                          onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: posterPreviewUrl })); setPosterPreviewUrl(''); }}
-                          style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 5, background: 'var(--gold)', color: '#000', border: 'none', cursor: 'pointer' }}
-                        >
-                          ✓ Use as Thumbnail
-                        </button>
-                        <button
-                          onClick={() => setPosterPreviewUrl('')}
-                          style={{ fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 5, background: 'var(--bg3)', color: 'var(--t3)', border: '1px solid var(--b1)', cursor: 'pointer' }}
-                        >
-                          Discard
-                        </button>
-                      </div>
-                    </div>
-                    <div style={{ aspectRatio: '16/9', position: 'relative' }}>
-                      <img src={posterPreviewUrl} alt="AI Poster" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                    </div>
-                  </div>
-                )}
-              </div>}
-
-              {/* Stacked captions list or First-Time Generation */}
+              {/* ─── STEP 1: Caption Generation ─────────────────────────────────── */}
+              {/* AI generates title, description, platform metadata, and hashtags. */}
+              {/* User reviews and edits before moving to thumbnail generation.      */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '10px 16px', borderTop: '1px solid var(--b1)' }}>
                 {(!selectedItem.caption && !editMode) ? (
                   <div style={{ background: 'var(--bg3)', border: '1px solid var(--gold)', borderRadius: 8, padding: 20 }}>
@@ -473,7 +351,7 @@ export function ApprovalRoom({
                     <p style={{ margin: '0 0 15px 0', fontSize: 13, color: 'var(--t2)' }}>
                       This video doesn't have any captions yet. Provide a short description to generate captions, hashtags, and metadata for all platforms at once.
                     </p>
-                    <textarea 
+                    <textarea
                       placeholder="e.g. A short promotional video about our new digital marketing batch starting next week..."
                       value={firstGenContext}
                       onChange={(e) => setFirstGenContext(e.target.value)}
@@ -482,9 +360,9 @@ export function ApprovalRoom({
                         borderRadius: 6, padding: 12, fontSize: 13, minHeight: 80, outline: 'none', marginBottom: 15, boxSizing: 'border-box'
                       }}
                     />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <select 
-                        value={firstGenTone} 
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <select
+                        value={firstGenTone}
                         onChange={(e) => setFirstGenTone(e.target.value)}
                         style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--b2)', color: 'var(--t1)', outline: 'none' }}
                       >
@@ -494,38 +372,33 @@ export function ApprovalRoom({
                         <option value="educational">Educational</option>
                         <option value="sales">Sales-Oriented</option>
                       </select>
-                      <button
-                        className="tb-btn"
-                        onClick={async () => {
-                          if (!firstGenContext || firstGenContext.trim() === '') {
-                            alert("Please provide a short description first.");
-                            return;
-                          }
-                          // Run captions and poster generation in parallel
-                          const [meta] = await Promise.all([
-                            handleGenerateFirstTime(selectedItem.id, firstGenTone, firstGenContext),
-                            handleGenerateThumbnails()
-                          ]);
-                          if (meta) {
-                            const linkedPlats = new Set();
-                            (socialAccounts || []).forEach(s => {
-                              if (isSameBrand(s.brand_name, selectedItem.brand_name)) {
-                                linkedPlats.add(s.platform);
-                              }
-                            });
 
-                            const platformsToActivate = [];
-                            if (linkedPlats.has('instagram')) {
-                              platformsToActivate.push('instagram_post');
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        {/* Primary: caption generation — no thumbnail side-effect */}
+                        <button
+                          className="tb-btn"
+                          onClick={async () => {
+                            if (!firstGenContext || firstGenContext.trim() === '') {
+                              alert("Please provide a short description first.");
+                              return;
                             }
-                            if (linkedPlats.has('facebook')) {
-                              platformsToActivate.push('facebook_post');
-                            }
-                            if (linkedPlats.has('youtube')) platformsToActivate.push('youtube');
-                            if (linkedPlats.has('x_twitter')) platformsToActivate.push('x_twitter');
-                            if (linkedPlats.has('linkedin')) platformsToActivate.push('linkedin');
+                            const meta = await handleGenerateFirstTime(selectedItem.id, firstGenTone, firstGenContext);
+                            if (meta) {
+                              const linkedPlats = new Set();
+                              (socialAccounts || []).forEach(s => {
+                                if (isSameBrand(s.brand_name, selectedItem.brand_name)) {
+                                  linkedPlats.add(s.platform);
+                                }
+                              });
 
-                            setEditValues({
+                              const platformsToActivate = [];
+                              if (linkedPlats.has('instagram')) platformsToActivate.push('instagram_post');
+                              if (linkedPlats.has('facebook')) platformsToActivate.push('facebook_post');
+                              if (linkedPlats.has('youtube')) platformsToActivate.push('youtube');
+                              if (linkedPlats.has('x_twitter')) platformsToActivate.push('x_twitter');
+                              if (linkedPlats.has('linkedin')) platformsToActivate.push('linkedin');
+
+                              setEditValues({
                                 caption: meta.caption || '',
                                 instagram_caption: meta.instagram_caption || meta.caption || '',
                                 facebook_caption: meta.facebook_caption || meta.caption || '',
@@ -538,20 +411,21 @@ export function ApprovalRoom({
                                 platforms: platformsToActivate,
                                 selected_accounts: selectedItem.selected_accounts || {},
                                 hashtags: meta.hashtags || selectedItem.hashtags || ''
-                            });
-                            setEditMode(true);
-                          }
-                        }}
-                        disabled={loadingSuggestions || generatingThumbs || !firstGenContext || firstGenContext.trim() === ''}
-                        style={{
-                          background: 'var(--gold)', color: '#000', padding: '10px 20px',
-                          borderRadius: 8, fontWeight: 700, border: 'none',
-                          cursor: (!firstGenContext || firstGenContext.trim() === '') ? 'not-allowed' : 'pointer',
-                          opacity: (loadingSuggestions || generatingThumbs || !firstGenContext || firstGenContext.trim() === '') ? 0.5 : 1
-                        }}
-                      >
-                        {(loadingSuggestions || generatingThumbs) ? 'Generating...' : '🚀 Generate Captions & Thumbnail'}
-                      </button>
+                              });
+                              setEditMode(true);
+                            }
+                          }}
+                          disabled={loadingSuggestions || !firstGenContext || firstGenContext.trim() === ''}
+                          style={{
+                            background: 'var(--gold)', color: '#000', padding: '10px 20px',
+                            borderRadius: 8, fontWeight: 700, border: 'none',
+                            cursor: (!firstGenContext || firstGenContext.trim() === '') ? 'not-allowed' : 'pointer',
+                            opacity: (loadingSuggestions || !firstGenContext || firstGenContext.trim() === '') ? 0.5 : 1
+                          }}
+                        >
+                          {loadingSuggestions ? 'Generating…' : '✨ Generate Captions'}
+                        </button>
+                      </div>
                     </div>
                     {suggestionsError && <div style={{ color: 'var(--red)', marginTop: 10, fontSize: 12 }}>{suggestionsError}</div>}
                   </div>
@@ -670,6 +544,144 @@ export function ApprovalRoom({
                 }))}
               </div>
 
+              {/* ─── STEP 2: Thumbnail — Extract Frames & Generate AI Poster ──────── */}
+              {/* Approval Room only: extracts frames + lets user pick one.            */}
+              {/* All AI generation is delegated to Thumbnail Brain via generateThumbnail(). */}
+              <div style={{ margin: '0 14px 0', borderTop: '1px solid var(--b1)' }}>
+                {/* Header row */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 2px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(139,114,240,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>🖼</div>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>Thumbnail</div>
+                      <div style={{ fontSize: 10, color: 'var(--t3)' }}>
+                        {editValues.thumbnail_url ? 'Frame selected — click "Generate with Thumbnail Brain" to create poster' : 'Click "Extract Frames" to pull frames from the video'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleExtractFrames}
+                    disabled={extractingFrames}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5,
+                      padding: '6px 12px', fontSize: 11, fontWeight: 700, borderRadius: 7,
+                      background: extractingFrames ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(139,114,240,0.2), rgba(0,196,160,0.15))',
+                      color: extractingFrames ? 'var(--t3)' : 'var(--pur)',
+                      border: extractingFrames ? '1px solid var(--b1)' : '1px solid rgba(139,114,240,0.35)',
+                      cursor: extractingFrames ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {extractingFrames ? (
+                      <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Extracting…</>
+                    ) : <>⬡ Extract Frames</>}
+                  </button>
+                </div>
+
+                {/* Error */}
+                {thumbError && (
+                  <div style={{ background: 'rgba(240,74,94,0.08)', border: '1px solid rgba(240,74,94,0.3)', borderRadius: 7, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--red)' }}>
+                    ✕ {thumbError}
+                  </div>
+                )}
+
+                {/* Frame grid — visible once frames are extracted */}
+                {thumbOptions.length > 0 && (
+                  <div style={{ paddingBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 8 }}>
+                      ⬡ Select a frame to use as thumbnail seed
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                      {thumbOptions.map((url, i) => {
+                        const isSelected = editValues.thumbnail_url === url;
+                        const isAiPick = i === thumbBestIndex;
+                        return (
+                          <div key={i} onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: url })); setPosterPreviewUrl(''); }}
+                            style={{
+                              position: 'relative', cursor: 'pointer', borderRadius: 7, overflow: 'hidden',
+                              aspectRatio: '16/9',
+                              border: isSelected ? '2px solid var(--teal)' : '2px solid var(--b1)',
+                              opacity: isSelected ? 1 : 0.65,
+                              transition: 'all 0.15s'
+                            }}
+                          >
+                            <img src={url} alt={`Frame ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                            {isAiPick && (
+                              <div style={{ position: 'absolute', top: 4, left: 4, background: 'var(--gold)', color: '#000', fontSize: 7, fontWeight: 800, padding: '2px 5px', borderRadius: 3, letterSpacing: '0.04em' }}>
+                                ✦ AI PICK
+                              </div>
+                            )}
+                            <div style={{ position: 'absolute', bottom: 3, left: 5, fontSize: 8, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.9)', background: 'rgba(0,0,0,0.5)', padding: '1px 5px', borderRadius: 3 }}>
+                              {isSelected ? '✓ Selected' : `Frame ${i + 1}`}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Selected frame large preview + Thumbnail Brain trigger */}
+                {editValues.thumbnail_url && thumbOptions.some(u => u === editValues.thumbnail_url) && (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', width: '100%', border: '2px solid var(--teal)', boxShadow: '0 0 0 3px rgba(0,196,160,0.15)', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <img
+                        src={editValues.thumbnail_url}
+                        alt="Selected thumbnail"
+                        style={{ width: '100%', height: 'auto', display: 'block', maxHeight: 420, objectFit: 'contain' }}
+                      />
+                      <div style={{ position: 'absolute', top: 8, left: 8, background: 'var(--teal)', color: 'var(--bg)', fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.05em' }}>
+                        ✓ SELECTED FRAME
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                      <div style={{ fontSize: 10, color: 'var(--teal)' }}>Frame selected — Thumbnail Brain will apply style, prompt, and AI model</div>
+                      <button
+                        onClick={handleGenerateThumbnailBrainPoster}
+                        disabled={generatingPoster}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          padding: '6px 14px', fontSize: 11, fontWeight: 700, borderRadius: 7,
+                          background: generatingPoster ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(139,114,240,0.35), rgba(0,196,160,0.25))',
+                          color: generatingPoster ? 'var(--t3)' : '#fff',
+                          border: generatingPoster ? '1px solid var(--b1)' : '1px solid rgba(139,114,240,0.4)',
+                          cursor: generatingPoster ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {generatingPoster
+                          ? <><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', animation: 'spin 0.8s linear infinite' }} /> 🧠 Generating Poster…</>
+                          : '🧠 Generate with Thumbnail Brain'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Thumbnail Brain Poster Preview — separate from the selected source frame */}
+                {posterPreviewUrl && (
+                  <div style={{ marginBottom: 10, borderRadius: 8, overflow: 'hidden', border: '2px solid rgba(139,114,240,0.45)', boxShadow: '0 0 0 3px rgba(139,114,240,0.15)' }}>
+                    <div style={{ background: 'rgba(139,114,240,0.12)', padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: '#8B72F0', letterSpacing: '0.05em' }}>🧠 THUMBNAIL BRAIN GENERATED POSTER</span>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: posterPreviewUrl })); setPosterPreviewUrl(''); }}
+                          style={{ fontSize: 10, fontWeight: 700, padding: '4px 12px', borderRadius: 5, background: 'linear-gradient(135deg, #8B72F0, #00C4A0)', color: '#fff', border: 'none', cursor: 'pointer' }}
+                        >
+                          ✓ Use as Thumbnail
+                        </button>
+                        <button
+                          onClick={() => setPosterPreviewUrl('')}
+                          style={{ fontSize: 10, fontWeight: 600, padding: '4px 8px', borderRadius: 5, background: 'var(--bg3)', color: 'var(--t3)', border: '1px solid var(--b1)', cursor: 'pointer' }}
+                        >
+                          Discard
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ width: '100%', display: 'flex', justifyContent: 'center', background: '#090A0F', padding: 8 }}>
+                      <img src={posterPreviewUrl} alt="Thumbnail Brain AI Poster" style={{ maxWidth: '100%', maxHeight: 450, height: 'auto', objectFit: 'contain', display: 'block', borderRadius: 6 }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Status and reject notices */}
               {selectedItem.rejection_reason && selectedItem.status === 'REJECTED' && (
                 <div style={{ background: '#f04a5e15', border: '1px solid #f04a5e33', borderRadius: 8, padding: 12, margin: '10px 16px 0' }}>
@@ -696,16 +708,16 @@ export function ApprovalRoom({
                       </>
                     )}
                     {canApprove && (statusUpper === 'APPROVED' || statusUpper === 'APPROVED_SCHEDULED') && (
-                      <button 
-                        className="act act-approve" 
-                        disabled={isPublishing || (!editMode ? !(selectedItem.platforms && selectedItem.platforms.length > 0) : !(editValues.platforms && editValues.platforms.length > 0))} 
+                      <button
+                        className="act act-approve"
+                        disabled={isPublishing || (!editMode ? !(selectedItem.platforms && selectedItem.platforms.length > 0) : !(editValues.platforms && editValues.platforms.length > 0))}
                         title={(!editMode ? !(selectedItem.platforms && selectedItem.platforms.length > 0) : !(editValues.platforms && editValues.platforms.length > 0)) ? "Please select at least one publishing channel." : ""}
                         onClick={() => onPublishClick(selectedItem.id)}
                       >
                         {isPublishing ? 'Publishing...' : '🚀 Publish Now'}
                       </button>
                     )}
-                    
+
                     <button
                       className="tb-btn"
                       onClick={() => handleSaveEdit(selectedItem.id)}
@@ -786,12 +798,12 @@ export function ApprovalRoom({
                 <div className="panel-b">
                   {['instagram_post', 'facebook_post', 'youtube', 'linkedin', 'x_twitter'].map(platformKey => {
                     const p = getPlatformConfig(platformKey);
-                    const active = editMode 
+                    const active = editMode
                       ? editValues.platforms?.includes(platformKey)
                       : selectedItem.platforms?.includes(platformKey);
-                    
+
                     const brandAccounts = socialAccounts.filter(s => isSameBrand(s.brand_name, selectedItem.brand_name) && s.platform === (platformKey.includes('instagram') ? 'instagram' : platformKey.includes('facebook') ? 'facebook' : platformKey));
-                    
+
                     if (brandAccounts.length === 0 && !active) {
                       return null;
                     }
@@ -818,12 +830,12 @@ export function ApprovalRoom({
                                 hashtags: selectedItem.hashtags || ''
                               });
                               setEditMode(true);
-                              
+
                               const exists = selectedItem.platforms?.includes(platformKey);
                               const nextPlatforms = exists
                                 ? (selectedItem.platforms || []).filter(x => x !== platformKey)
                                 : [...(selectedItem.platforms || []), platformKey];
-                              
+
                               setEditValues(prev => ({
                                 ...prev,
                                 platforms: nextPlatforms,
@@ -841,19 +853,19 @@ export function ApprovalRoom({
                           </div>
                           <div className="chk"></div>
                         </button>
-                        
+
                         {active && brandAccounts.length > 0 && (
                           <div className="acct" style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 28 }}>
                             {brandAccounts.map(acc => {
                               const checkSelected = (accsObj) => {
                                 if (!accsObj) return false;
-                                return (accsObj[platformKey] || []).includes(acc.account_id) || 
+                                return (accsObj[platformKey] || []).includes(acc.account_id) ||
                                        (accsObj[platformKey.includes('instagram') ? 'instagram' : platformKey.includes('facebook') ? 'facebook' : platformKey] || []).includes(acc.account_id);
                               };
                               const isSelected = editMode ? checkSelected(editValues.selected_accounts) : checkSelected(selectedItem.selected_accounts);
                               return (
-                                <label 
-                                  key={acc.account_id} 
+                                <label
+                                  key={acc.account_id}
                                   style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, cursor: 'pointer', opacity: isSelected ? 1 : 0.5 }}
                                   onClick={(e) => {
                                     e.preventDefault();
@@ -992,8 +1004,8 @@ export function ApprovalRoom({
           <div className="content-os-dashboard-dialog">
             <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8, fontFamily: "'Syne', sans-serif" }}>Reject this content?</div>
             <div style={{ fontSize: 13, color: 'var(--t2)', marginBottom: 16 }}>Please provide a reason for the content team.</div>
-            
-            <textarea 
+
+            <textarea
               placeholder="Reason for rejection..."
               value={rejectionReason}
               onChange={e => setRejectionReason(e.target.value)}
@@ -1004,9 +1016,9 @@ export function ApprovalRoom({
               <button onClick={() => { setConfirmAction(null); setRejectionReason(''); }} className="act" style={{ background: 'transparent', border: '1px solid var(--b2)', color: 'var(--t1)' }}>
                 Cancel
               </button>
-              <button 
-                onClick={() => handleReject(confirmAction.id, rejectionReason)} 
-                disabled={!rejectionReason.trim()} 
+              <button
+                onClick={() => handleReject(confirmAction.id, rejectionReason)}
+                disabled={!rejectionReason.trim()}
                 className="act"
                 style={{ background: rejectionReason.trim() ? 'var(--red)' : 'var(--bg5)', color: '#fff', cursor: rejectionReason.trim() ? 'pointer' : 'not-allowed' }}
               >

@@ -2,6 +2,34 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/connection');
 const ctrl = require('../controllers/contentController');
+const tb = require('../controllers/thumbnailBrainController');
+
+// ── Thumbnail Brain Studio API ─────────────────────────────────────────────
+// Config versions
+router.get('/thumb-brain/config',              tb.getConfig);
+router.post('/thumb-brain/config',             tb.saveConfig);
+router.get('/thumb-brain/versions',            tb.getVersions);
+router.post('/thumb-brain/versions/:id/activate', tb.activateVersion);
+router.delete('/thumb-brain/versions/:id',     tb.deleteVersion);
+// Platform profiles — dynamic from social accounts
+router.get('/thumb-brain/social-platforms',          tb.getPlatformsFromAccounts);
+router.put('/thumb-brain/social-platforms/:slug',    tb.savePlatformOverride);
+// Platform profiles — manual CRUD (legacy)
+router.get('/thumb-brain/platforms',           tb.getPlatforms);
+router.post('/thumb-brain/platforms',          tb.createPlatform);
+router.put('/thumb-brain/platforms/:id',       tb.updatePlatform);
+router.delete('/thumb-brain/platforms/:id',    tb.deletePlatform);
+// Brand styles — dynamic from social accounts
+router.get('/thumb-brain/social-brand-styles',          tb.getBrandStylesFromAccounts);
+router.put('/thumb-brain/social-brand-styles/:slug',    tb.saveBrandStyleOverride);
+// Brand style library — manual CRUD (legacy)
+router.get('/thumb-brain/brand-styles',        tb.getBrandStyles);
+router.post('/thumb-brain/brand-styles',       tb.createBrandStyle);
+router.put('/thumb-brain/brand-styles/:id',    tb.updateBrandStyle);
+router.delete('/thumb-brain/brand-styles/:id', tb.deleteBrandStyle);
+// Analytics
+router.get('/thumb-brain/analytics',           tb.getAnalytics);
+router.post('/thumb-brain/analytics',          tb.recordAnalytics);
 
 function safeJsonValue(val) {
   if (typeof val === 'string') {

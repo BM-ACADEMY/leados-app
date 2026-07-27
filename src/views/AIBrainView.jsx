@@ -26,6 +26,13 @@ BRAND ROUTING
 - Switch from BM Academy to BM TechX only with explicit service/business intent such as "digital marketing service", "run ads for my business", "generate leads", "website", or "BM TechX".
 - Switch from BM TechX to BM Academy only with learning intent such as course, class, syllabus, batch, fees, training, placement, certification, or "BM Academy".
 
+BM ACADEMY COURSE LIST RULE
+- The BM Academy knowledge base contains 23 programs beginning with PROGRAM_DIGITAL_MARKETING_PRO.
+- When someone asks for the course list, available courses, all courses, or "what courses do you have", list ALL programs from the BM Academy course catalogue. Never stop after only four courses.
+- Keep the list readable by grouping programs under: Flagship & Placement, Digital Marketing, Creator & Video, Design & Web, AI Tools, and Kids & Teens.
+- For a general course-list request, show course names only and ask which course they want details about. Give duration, fees, syllabus and policy after they choose a course.
+- Do not invent a course. Every \`### PROGRAM_...\` entry in the BM Academy knowledge base is a course source of truth.
+
 MEMORY
 - Remember the locked brand, intent, name, course, preferred date and preferred time.
 - Never ask for information already provided.
@@ -195,6 +202,46 @@ tags: brand:bm-academy, module-header
 > A student asking "can I get my money back" could mean either — clarify which before answering, or state both if genuinely unsure which applies.
 
 ### FLAGSHIP PLACEMENT PROGRAMS
+
+### COMPLETE COURSE CATALOGUE
+When a lead asks for the BM Academy course list, include all 23 courses below (grouped for readability), not only the first four:
+
+**Flagship & Placement**
+1. Digital Marketing Pro
+2. Data Analytics
+3. Data Analytics Bootcamp
+4. Full Stack Developer
+5. UI/UX Design Professional
+6. Agency Accelerator
+
+**Digital Marketing**
+7. Digital Marketing Starter Program
+8. AI-Powered Digital Marketing Professional
+9. Performance Marketing Accelerator
+10. Full Stack Digital Marketing Bundle
+
+**Creator & Video**
+11. Social Media Creator Bootcamp
+12. Digital Content Creator Program
+13. Video Editing Bootcamp
+14. Video Editing Professional
+
+**Design & Web**
+15. Design Basics Bootcamp
+16. Graphic Design Professional
+17. Web Design Basics
+18. WordPress Web Design Professional
+
+**AI Tools**
+19. AI Starter Bootcamp
+20. AI Tools Mastery Program
+
+**Kids & Teens**
+21. AI Fun Lab for Kids
+22. AI Skills for Teens
+23. Pre-College AI + Digital
+
+After listing them, ask which course the lead wants to explore. Use the matching \`PROGRAM_...\` section below for the detailed response.
 
 ### PROGRAM_DIGITAL_MARKETING_PRO
 tags: brand:bm-academy, program, dm-pro, placement, student-facing
@@ -1004,7 +1051,10 @@ tags: internal, todo
 
 `;
 
-    const promptVal = docs.prompt || defaultTemplate;
+    // Upgrade an older saved BM Academy brain that only contained the original
+    // four flagship courses. The updated master contains all 23 PROGRAM entries.
+    const savedProgramCount = (docs.prompt?.match(/^### PROGRAM_/gm) || []).length;
+    const promptVal = savedProgramCount >= 23 ? docs.prompt : defaultTemplate;
     const behaviorVal = docs.training || DEFAULT_BOT_BEHAVIOR;
     const welcomeTemplateVal = docs.welcome_template || '';
     const productVal = docs.product || '';

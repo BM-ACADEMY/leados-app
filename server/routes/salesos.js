@@ -559,18 +559,42 @@ router.post('/ai/objections', async (req, res) => {
 router.post('/kb/search', async (req, res) => {
   const { brand, query, lead_id } = req.body;
   try {
-    // Use the brand from request if provided, otherwise fall back to 'ABM Groups'
+    // AIBrainView stores the master multi-brand knowledge under ABM Groups.
+    // Load it as a fallback and combine it with any brand-specific documents.
     const targetBrand = brand || 'ABM Groups';
     const docsRes = await pool.query(
-      `SELECT doc_type, content
-       FROM brain_docs
-       WHERE client_id = (SELECT id FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1)
-         AND doc_type IN ('prompt', 'training', 'product', 'pricing')`,
+      `SELECT c.name AS client_name, bd.doc_type, bd.content
+       FROM brain_docs bd
+       JOIN clients c ON c.id = bd.client_id
+       WHERE (LOWER(c.name) = LOWER($1) OR LOWER(c.name) = LOWER('ABM Groups'))
+         AND bd.doc_type IN ('prompt', 'training', 'product', 'pricing')
+       ORDER BY
+         CASE WHEN LOWER(c.name) = LOWER($1) THEN 1 ELSE 0 END,
+         CASE bd.doc_type
+           WHEN 'prompt' THEN 1
+           WHEN 'product' THEN 2
+           WHEN 'pricing' THEN 3
+           WHEN 'training' THEN 4
+         END`,
       [targetBrand]
     );
-    const docsByType = Object.fromEntries(docsRes.rows.map((doc) => [doc.doc_type, doc.content]));
-    const kb_snippets = docsByType.prompt || docsByType.product || docsByType.pricing || 'No knowledge base found.';
-    const system_instructions = docsByType.training || '';
+
+    const knowledgeDocs = docsRes.rows
+      .filter((doc) => ['prompt', 'product', 'pricing'].includes(doc.doc_type) && doc.content)
+      .map((doc) => `## ${doc.client_name} / ${doc.doc_type}\n${doc.content}`);
+    const trainingDocs = docsRes.rows
+      .filter((doc) => doc.doc_type === 'training' && doc.content)
+      .map((doc) => doc.content);
+
+    const kb_snippets = knowledgeDocs.join('\n\n') || 'No knowledge base found.';
+    const isBmAcademy = ['bm academy', 'bm-academy', 'bmacademy'].includes(
+      String(targetBrand).trim().toLowerCase()
+    );
+    const bmAcademyCourseRule = isBmAcademy
+      ? `BM ACADEMY COURSE LIST RULE:
+When asked for available courses or the full course list, include every PROGRAM entry in the knowledge base, not only the first four. The catalogue has 23 courses. Group the names under Flagship & Placement, Digital Marketing, Creator & Video, Design & Web, AI Tools, and Kids & Teens. Show names first, then ask which course needs details.`
+      : '';
+    const system_instructions = [...trainingDocs, bmAcademyCourseRule].filter(Boolean).join('\n\n');
     res.json({ ...req.body, kb_snippets, system_instructions });
   } catch (err) {
     res.status(500).json({ error: err.message });

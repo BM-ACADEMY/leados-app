@@ -994,6 +994,7 @@ router.post('/communication/send', async (req, res) => {
         io.emit('outgoing_message', { lead_id: Number(lead_id), message: savedRows[0] });
         io.emit('message_sent', { lead_id: Number(lead_id), message: savedRows[0] });
         io.emit('incoming_message', { lead_id: Number(lead_id), message: savedRows[0] });
+        io.emit('ai_typing', { lead_id: String(lead_id), typing: false });
       }
     } catch (ioErr) {
       console.warn('Socket emit warning:', ioErr.message);

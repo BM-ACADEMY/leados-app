@@ -1218,6 +1218,9 @@ app.post('/webhook/whatsapp', async (req, res) => {
             // WF00 continues through its synchronous transcription request.
             // Do not call it again and create a duplicate AI response.
             if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL && req.query.source !== 'n8n') {
+              // Let the Inbox show a typing indicator while n8n/Gemini composes
+              // the reply. /communication/send clears it once the reply is sent.
+              io.emit('ai_typing', { lead_id: String(lead.id), typing: true });
               axios.post(process.env.N8N_WEBHOOK_URL, {
                 lead_id: lead.id,
                 phone,

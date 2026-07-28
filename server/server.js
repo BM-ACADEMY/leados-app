@@ -2378,6 +2378,13 @@ app.delete('/api/campaigns/:id', auth, async (req, res) => {
 // Background Campaign Execution Function
 async function executeCampaign(campaign_id) {
   try {
+    // Failure details must be recordable even on databases created before the
+    // error_message column was introduced.
+    await pool.query(`
+      ALTER TABLE campaign_logs
+      ADD COLUMN IF NOT EXISTS error_message TEXT
+    `);
+
     const campRes = await pool.query(`
       SELECT c.*, t.body as template_body, t.name as template_name, cl.wa_access_token, cl.phone_number_id
       FROM campaigns c
@@ -2522,8 +2529,9 @@ async function executeCampaign(campaign_id) {
       }
     }
 
-    await pool.query("UPDATE campaigns SET status = 'completed' WHERE id = $1", [campaign_id]);
-    console.log(`Campaign ${campaign_id} completed. Sent ${sentCount} messages.`);
+    const finalStatus = sentCount > 0 ? 'completed' : 'failed';
+    await pool.query("UPDATE campaigns SET status = $1 WHERE id = $2", [finalStatus, campaign_id]);
+    console.log(`Campaign ${campaign_id} ${finalStatus}. Sent ${sentCount} messages.`);
   } catch (err) {
     console.error('Campaign execution error:', err);
     await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);

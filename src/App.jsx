@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, Link } from 'react-router-dom';
 import { STYLE } from './constants/theme.js';
+import { PrivacyPolicy } from './views/PrivacyPolicy.jsx';
+import { TermsAndConditions } from './views/TermsAndConditions.jsx';
 import { Sidebar } from './components/layout/Sidebar.jsx';
 import { Header } from './components/layout/Header.jsx';
 import { useAuth } from './hooks/useAuth.js';
@@ -61,7 +63,7 @@ import PlanManagementMafiya from './views/mafiya/PlanManagement.jsx';
 import Family from './views/mafiya/Family.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
-  const [email, setEmail] = useState('kamar@abmgroups.org');
+  const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
   const [loginError, setLoginError] = useState('');
 
@@ -92,6 +94,7 @@ function LoginPage({ login, authLoading, authError }) {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 type="email"
+                placeholder="Enter email"
                 style={{ width: '100%', background: '#060c17', border: '1px solid #1a2e4a', borderRadius: 9, padding: '11px 14px', color: '#e2e8f0', fontSize: 13, outline: 'none' }}
               />
             </div>
@@ -117,7 +120,15 @@ function LoginPage({ login, authLoading, authError }) {
               {authLoading ? 'Signing in...' : 'Sign In to LeadOS'}
             </button>
           </form>
-          <p style={{ textAlign: 'center', color: '#64748b', fontSize: 10, marginTop: 18 }}>API Connected - https://leados-api.abmgroups.org/</p>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 14, marginTop: 24, paddingTop: 18, borderTop: '1px solid #1a2e4a', fontSize: 11 }}>
+            <Link to="/terms-and-conditions" style={{ color: '#94a3b8', textDecoration: 'none', fontWeight: 500 }}>
+              Terms & Conditions
+            </Link>
+            <span style={{ color: '#334155' }}>•</span>
+            <Link to="/privacy-policy" style={{ color: '#94a3b8', textDecoration: 'none', fontWeight: 500 }}>
+              Privacy Policy
+            </Link>
+          </div>
         </div>
       </div>
     </>
@@ -141,7 +152,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
         <Sidebar onLogout={logout} mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', width: '100%' }}>
           <Header user={user} onMenuClick={() => setMobileMenuOpen(true)} />
-          <div style={{ flex: 1, overflow: 'hidden' }}>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
@@ -208,6 +219,9 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/mafiya/rivals" element={<RivalFamilies />} />
               <Route path="/mafiya/usage" element={<UsageMafiya />} />
 
+              <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+              <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
+
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </div>
@@ -222,20 +236,29 @@ export default function App() {
   const [selectedLead, setSelectedLead] = useState(null);
   const [leadRefresh, setLeadRefresh] = useState(0);
 
-  if (!user) {
-    return <LoginPage login={login} authLoading={authLoading} authError={authError} />;
-  }
-
   return (
     <BrowserRouter>
-      <ClientProvider>
-        <AppLayout
-          user={user}
-          logout={logout}
-          leadRefresh={leadRefresh}
-          setLeadRefresh={setLeadRefresh}
+      <Routes>
+        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+        <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
+        <Route
+          path="*"
+          element={
+            user ? (
+              <ClientProvider>
+                <AppLayout
+                  user={user}
+                  logout={logout}
+                  leadRefresh={leadRefresh}
+                  setLeadRefresh={setLeadRefresh}
+                />
+              </ClientProvider>
+            ) : (
+              <LoginPage login={login} authLoading={authLoading} authError={authError} />
+            )
+          }
         />
-      </ClientProvider>
+      </Routes>
     </BrowserRouter>
   );
 }

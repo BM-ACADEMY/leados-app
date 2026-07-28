@@ -424,7 +424,7 @@ export const CampaignsView = () => {
               ) : campaignLogs.length === 0 ? (
                 <p style={{ color: C.muted, fontSize: 13 }}>
                   {reportModal.status === 'failed'
-                    ? 'No eligible recipients matched this campaign. Check the uploaded phone numbers, selected brand, and target status.'
+                    ? `No eligible recipients found for this campaign. Target: ${reportModal.target_status || 'all'}. Please check the uploaded phone numbers and try again.`
                     : 'No delivery logs are available yet. The campaign may still be starting.'}
                 </p>
               ) : filteredLogs.length === 0 ? (

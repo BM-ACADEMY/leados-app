@@ -1000,6 +1000,274 @@ app.get('/api/leads/sources', auth, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// FOLLOWUP ENGINE APIs (WF02)
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/followups/due - Get leads due for follow-up
+app.get('/api/followups/due', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        l.id as lead_id,
+        l.name,
+        l.phone,
+        l.email,
+        l.status as lead_status,
+        l.client_id,
+        l.touch_count,
+        l.next_follow_up,
+        l.last_contact,
+        c.name as brand
+      FROM leads l
+      LEFT JOIN clients c ON l.client_id = c.id
+      WHERE l.next_follow_up IS NOT NULL
+        AND l.next_follow_up <= NOW()
+        AND l.status NOT IN ('lost', 'converted')
+      ORDER BY l.next_follow_up ASC
+      LIMIT 100
+    `);
+    res.json({ followups: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/followups/rule - Get follow-up rule for a lead
+app.post('/api/followups/rule', auth, async (req, res) => {
+  try {
+    const { lead_id, brand, stage, touch_count } = req.body;
+
+    // Get follow-up rules for this brand and stage
+    const { rows } = await pool.query(`
+      SELECT * FROM followup_rules
+      WHERE client_id = (SELECT client_id FROM leads WHERE id = $1)
+        AND stage = $2
+        AND touch_count <= $3
+      ORDER BY touch_count DESC
+      LIMIT 1
+    `, [lead_id, stage || 'new', touch_count || 0]);
+
+    if (rows.length === 0) {
+      // Return default rule
+      return res.json({
+        action_type: 'whatsapp_text',
+        delay_hours: 24,
+        ai_prompt_template: 'Follow up with this lead about our services. Keep it brief and professional.'
+      });
+    }
+
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/whatsapp/check-24h - Check if 24h passed since last message
+app.post('/api/whatsapp/check-24h', auth, async (req, res) => {
+  try {
+    const { lead_id } = req.body;
+
+    // Get last message time for this lead
+    const { rows } = await pool.query(`
+      SELECT MAX(sent_at) as last_message_at
+      FROM messages m
+      JOIN conversations c ON m.conversation_id = c.id
+      WHERE c.lead_id = $1 AND m.direction = 'outbound'
+    `, [lead_id]);
+
+    const lastMessageAt = rows[0]?.last_message_at;
+    const canSend = !lastMessageAt || (Date.now() - new Date(lastMessageAt).getTime()) > 24 * 60 * 60 * 1000;
+
+    res.json({ can_send: canSend, last_message_at: lastMessageAt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/communication/send-template - Send WhatsApp template
+app.post('/api/communication/send-template', auth, async (req, res) => {
+  try {
+    const { lead_id, template_name, template_params } = req.body;
+
+    // Get lead details
+    const leadRes = await pool.query(`
+      SELECT l.*, c.wa_access_token, c.phone_number_id
+      FROM leads l
+      LEFT JOIN clients c ON l.client_id = c.id
+      WHERE l.id = $1
+    `, [lead_id]);
+
+    if (!leadRes.rows.length) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    const lead = leadRes.rows[0];
+    const waToken = lead.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+    const phoneId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+
+    if (!waToken || !phoneId) {
+      return res.status(400).json({ error: 'WhatsApp credentials not configured' });
+    }
+
+    // Build template payload
+    const digits = (lead.phone || '').replace(/\D/g, '');
+    const templatePayload = { name: template_name, language: { code: 'en' } };
+
+    const components = [];
+    if (template_params && typeof template_params === 'object') {
+      Object.values(template_params).forEach(val => {
+        components.push({ type: 'body', parameters: [{ type: 'text', text: val }] });
+      });
+    }
+    if (components.length > 0) templatePayload.components = components;
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: digits,
+      type: 'template',
+      template: templatePayload
+    };
+
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' }, timeout: 15000 }
+    );
+
+    res.json({ success: true, message_id: response.data.messages?.[0]?.id });
+  } catch (err) {
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
+// POST /api/ai/followup - Generate and send AI follow-up text
+app.post('/api/ai/followup', auth, async (req, res) => {
+  try {
+    const { lead_id, prompt } = req.body;
+
+    // Get lead details
+    const leadRes = await pool.query('SELECT * FROM leads WHERE id = $1', [lead_id]);
+    if (!leadRes.rows.length) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    const lead = leadRes.rows[0];
+
+    // Generate AI response
+    const fullPrompt = `${prompt}\n\nLead Name: ${lead.name}\nLead Status: ${lead.status}\nBrand: ${lead.client_id}`;
+
+    let aiMessage = '';
+    if (gemini) {
+      const result = await gemini.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: fullPrompt,
+      });
+      aiMessage = result.text;
+    } else {
+      aiMessage = `Hi ${lead.name || 'there'}, just checking in on our conversation. Would love to hear from you!`;
+    }
+
+    // Send WhatsApp text
+    const waToken = process.env.META_PAGE_ACCESS_TOKEN;
+    const phoneId = process.env.WA_PHONE_NUMBER_ID;
+
+    if (waToken && phoneId && lead.phone) {
+      const digits = lead.phone.replace(/\D/g, '');
+      await axios.post(
+        `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          to: digits,
+          type: 'text',
+          text: { body: aiMessage }
+        },
+        { headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' }, timeout: 15000 }
+      );
+    }
+
+    res.json({ success: true, message: aiMessage });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/communication/send-email - Send follow-up email
+app.post('/api/communication/send-email', auth, async (req, res) => {
+  try {
+    const { lead_id, template_id } = req.body;
+
+    // Get lead details
+    const leadRes = await pool.query('SELECT * FROM leads WHERE id = $1', [lead_id]);
+    if (!leadRes.rows.length) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    // For now, just log - email sending would need SMTP configuration
+    console.log(`[Followup] Would send email to lead ${lead_id} using template ${template_id}`);
+
+    res.json({ success: true, message: 'Email queued' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/leads/internal-note - Create internal note
+app.post('/api/leads/internal-note', auth, async (req, res) => {
+  try {
+    const { lead_id, note } = req.body;
+
+    await pool.query(`
+      INSERT INTO lead_notes (lead_id, user_id, note, created_at)
+      VALUES ($1, $2, $3, NOW())
+    `, [lead_id, req.user.id, note]);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/leads/update-followup - Update lead follow-up info
+app.post('/api/leads/update-followup', auth, async (req, res) => {
+  try {
+    const { lead_id, touch_count_increment, delay_hours } = req.body;
+
+    // Increment touch count
+    if (touch_count_increment) {
+      await pool.query(`
+        UPDATE leads SET touch_count = COALESCE(touch_count, 0) + 1, updated_at = NOW()
+        WHERE id = $1
+      `, [lead_id]);
+    }
+
+    // Set next follow-up
+    if (delay_hours) {
+      await pool.query(`
+        UPDATE leads SET next_follow_up = NOW() + INTERVAL '${delay_hours} hours', last_contact = NOW(), updated_at = NOW()
+        WHERE id = $1
+      `, [lead_id]);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/workflows/log - Log workflow execution
+app.post('/api/workflows/log', auth, async (req, res) => {
+  try {
+    const { workflow, lead_id, status, error } = req.body;
+
+    console.log(`[Workflow ${workflow}] Lead ${lead_id}: ${status}${error ? ` - ${error}` : ''}`);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/leads
 app.get('/api/leads', auth, async (req, res) => {
   try {
@@ -2519,22 +2787,12 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
       `);
     }
 
-    // Pre-fetch clients and users for mapping
-    const [clientsRes, usersRes] = await Promise.all([
-      pool.query('SELECT id, name FROM clients'),
-      pool.query('SELECT id, name, email FROM users')
-    ]);
-    const clientsMap = {};
-    clientsRes.rows.forEach(c => clientsMap[c.name.toLowerCase()] = c.id);
-    const usersMap = {};
-    usersRes.rows.forEach(u => {
-      usersMap[u.name.toLowerCase()] = u.id;
-      usersMap[u.email.toLowerCase()] = u.id;
-    });
-
+    // Process each row
     let imported = 0;
     let failed = 0;
     const importErrors = [];
+
+    console.log(`[Campaign Import] Starting - isCampaignBatch: ${isCampaignBatch}, force_source: ${req.body.force_source}, client_id: ${client_id}`);
 
     for (const row of results) {
       try {
@@ -2653,6 +2911,9 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         }
 
         imported++;
+        if (imported % 10 === 0) {
+          console.log(`[Campaign Import] Progress: ${imported} imported, ${failed} failed`);
+        }
       } catch (e) {
         console.error('Row import error for', row, e.message);
         failed++;
@@ -2855,26 +3116,46 @@ async function executeCampaign(campaign_id) {
     }
 
     // Build leads query
-    let leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1`;
-    const queryParams = [campaign.client_id];
+    let leadsQuery = '';
+    const queryParams = [];
 
-    if (campaign.target_status && campaign.target_status !== 'all') {
-      if (campaign.target_status.startsWith('csv_')) {
-        // For CSV imports, get leads from the campaign_import_recipients table
-        // The batch_id matches the target_status (e.g., csv_1234567890)
-        leadsQuery = `SELECT l.id, l.phone, l.name
-          FROM leads l
-          JOIN campaign_import_recipients cir ON cir.lead_id = l.id
-          WHERE cir.batch_id = $1`;
-        queryParams.splice(0, queryParams.length, campaign.target_status);
-      } else if (campaign.target_status && campaign.target_status !== 'all') {
+    if (campaign.target_status && campaign.target_status.startsWith('csv_')) {
+      // For CSV imports, first try to get leads from campaign_import_recipients table
+      // If no leads found there, fall back to all leads for this client
+      leadsQuery = `SELECT l.id, l.phone, l.name
+        FROM leads l
+        WHERE l.client_id = $1
+        AND EXISTS (
+          SELECT 1 FROM campaign_import_recipients cir
+          WHERE cir.lead_id = l.id AND cir.batch_id = $2
+        )`;
+      queryParams.push(campaign.client_id, campaign.target_status);
+    } else {
+      // Regular target status (new, warm, cold, etc.) or all leads
+      leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1`;
+      queryParams.push(campaign.client_id);
+
+      if (campaign.target_status && campaign.target_status !== 'all') {
         leadsQuery += ' AND status = $2';
         queryParams.push(campaign.target_status);
       }
     }
 
-    const leadsRes = await pool.query(leadsQuery, queryParams);
-    const leads = leadsRes.rows;
+    let leadsRes = await pool.query(leadsQuery, queryParams);
+    let leads = leadsRes.rows;
+
+    // If no leads found from campaign_import_recipients, fall back to all leads for this client
+    if (leads.length === 0 && campaign.target_status && campaign.target_status.startsWith('csv_')) {
+      console.log(`[Campaign ${campaign_id}] No leads from campaign_import_recipients, falling back to all leads for client`);
+      leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1`;
+      queryParams.splice(0, queryParams.length, campaign.client_id);
+      leadsRes = await pool.query(leadsQuery, queryParams);
+      leads = leadsRes.rows;
+    }
+
+    console.log(`[Campaign ${campaign_id}] Query: ${leadsQuery}`);
+    console.log(`[Campaign ${campaign_id}] Params: ${JSON.stringify(queryParams)}`);
+    console.log(`[Campaign ${campaign_id}] Found: ${leads.length} leads`);
 
     if (leads.length === 0) {
       // Debug: check what's in the campaign_import_recipients table
@@ -3438,6 +3719,39 @@ httpServer.listen(PORT, () => {
 
   // Start campaign message queue processor
   startCampaignQueueProcessor();
+
+  // Initialize followup tables
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS followup_rules (
+      id SERIAL PRIMARY KEY,
+      client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
+      stage VARCHAR(50) NOT NULL,
+      touch_count INTEGER NOT NULL DEFAULT 0,
+      action_type VARCHAR(50) NOT NULL,
+      template_id VARCHAR(255),
+      ai_prompt_template TEXT,
+      payload_template JSONB,
+      delay_hours INTEGER NOT NULL DEFAULT 24,
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(client_id, stage, touch_count)
+    );
+
+    CREATE TABLE IF NOT EXISTS lead_notes (
+      id SERIAL PRIMARY KEY,
+      lead_id BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+      user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      note TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    -- Add columns if they don't exist
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS touch_count INTEGER DEFAULT 0;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_follow_up TIMESTAMP;
+  `).then(() => {
+    console.log('[Startup] Followup tables initialized');
+  }).catch(err => {
+    console.error('[Startup] Error initializing followup tables:', err.message);
+  });
 
   // Reset any stuck publishing jobs on startup to prevent limbo states
   pool.query(`

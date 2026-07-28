@@ -482,7 +482,7 @@ router.post('/leads/createOrUpdate', async (req, res) => {
       );
     } else {
       const insert = await pool.query(
-        `INSERT INTO leads (name, phone, email, source, client_id, status, score, next_followup_due) VALUES ($1, $2, $3, $4, $5, 'new', 10, NOW() + INTERVAL '24 hours') RETURNING id`,
+        `INSERT INTO leads (name, phone, email, source, client_id, status, score, next_followup_due) VALUES ($1, $2, $3, $4, $5, 'new', 10, NOW() + INTERVAL '4 hours') RETURNING id`,
         [name, phone, email, source, brand_id]
       );
       lead_id = insert.rows[0].id;
@@ -560,6 +560,15 @@ router.post('/ai/intent', async (req, res) => {
       if (io && savedMsg.rows[0]) {
         io.emit('incoming_message', { lead_id: Number(lead_id), message: savedMsg.rows[0] });
       }
+      await pool.query(`
+        UPDATE leads
+        SET touch_count = 0,
+            next_followup_due = NOW() + INTERVAL '4 hours',
+            updated_at = NOW()
+        WHERE id = $1
+          AND status NOT IN ('converted', 'booked', 'opt-out', 'lost')
+          AND call_booked_at IS NULL
+      `, [lead_id]);
     }
 
     const prompt = `Analyze this message in the locked brand '${effectiveBrand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
@@ -1236,11 +1245,13 @@ router.get('/followups/due', async (req, res) => {
     const MAX_FOLLOWUP_ATTEMPTS = 5; // Stop after 5 attempts
 
     const result = await pool.query(`
-      SELECT l.id as lead_id, COALESCE(c.name, 'ABM Groups') as brand, l.stage, COALESCE(l.touch_count, 0) as touch_count
+      SELECT l.id as lead_id, l.name, l.phone,
+             COALESCE(c.name, 'ABM Groups') as brand,
+             l.stage, COALESCE(l.touch_count, 0) as touch_count
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
       WHERE l.next_followup_due <= NOW()
-        AND l.status NOT IN ('converted', 'booked')
+        AND l.status NOT IN ('converted', 'booked', 'lost', 'opt-out')
         AND (l.status != 'opt-out' OR l.status IS NULL)
         AND l.call_booked_at IS NULL
         AND (l.touch_count IS NULL OR l.touch_count < $1)
@@ -1253,22 +1264,30 @@ router.get('/followups/due', async (req, res) => {
 router.post('/followups/rule', async (req, res) => {
   const { touch_count } = req.body;
   try {
-    // Escalate to a human after 5 ignored touches; fall back to email after 3; otherwise WhatsApp.
+    const cadenceHours = [4, 8, 12, 24, 72];
+    const currentTouch = Math.max(0, Number(touch_count) || 0);
+    const nextDelayHours = cadenceHours[currentTouch + 1] ?? null;
     let base_channel = 'whatsapp';
-    let template_id = touch_count > 1 ? 're_engagement' : 'welcome_followup';
-    let payload_template = touch_count > 1
+    let template_id = currentTouch > 1 ? 're_engagement' : 'welcome_followup';
+    let payload_template = currentTouch > 1
       ? "Hey! Just checking back in - still interested in learning more?"
       : "Hi there! Following up on your interest with us - any questions I can help with?";
-    let ai_prompt_template = `followup_attempt_${touch_count || 1}`;
+    let ai_prompt_template = `contextual_followup_attempt_${currentTouch + 1}`;
 
-    if (touch_count >= 5) {
+    if (currentTouch >= 5) {
       base_channel = 'internal_note';
-      payload_template = `Lead has ignored ${touch_count} automated follow-ups. Needs a manual call.`;
-    } else if (touch_count > 3) {
-      base_channel = 'email';
+      payload_template = 'Lead completed all five staged follow-ups without conversion. Review for a manual call or respectful close.';
     }
 
-    res.json({ ...req.body, delay_hours: 24, base_channel, template_id, payload_template, ai_prompt_template });
+    res.json({
+      ...req.body,
+      current_delay_hours: cadenceHours[currentTouch] ?? 4,
+      delay_hours: nextDelayHours,
+      base_channel,
+      template_id,
+      payload_template,
+      ai_prompt_template,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1331,12 +1350,49 @@ router.post('/ai/followup', async (req, res) => {
     `, [lead_id]);
     const lead = leadRes.rows[0];
     const brandName = lead?.brand_name || 'ABM Groups';
-    const touchCount = lead?.touch_count || 1;
+    const touchCount = lead?.touch_count ?? 0;
     const leadName = (lead?.name || '').split(' ')[0] || 'there';
+
+    if (!lead || ['converted', 'booked', 'opt-out', 'lost'].includes(lead.status) || lead.call_booked_at) {
+      return res.json({ ...req.body, success: true, delivered: false, skipped: true, reason: 'stop_condition' });
+    }
+
+    const historyRes = await pool.query(`
+      SELECT m.direction, m.content, m.sent_at
+      FROM messages m
+      JOIN conversations conversation ON conversation.id = m.conversation_id
+      WHERE conversation.lead_id = $1
+        AND m.content IS NOT NULL
+        AND BTRIM(m.content) <> ''
+      ORDER BY m.sent_at DESC
+      LIMIT 10
+    `, [lead_id]);
+    const recentHistory = historyRes.rows.reverse();
+    const latestMessage = recentHistory[recentHistory.length - 1];
+    if (!latestMessage || latestMessage.direction === 'inbound') {
+      return res.json({
+        ...req.body,
+        success: true,
+        delivered: false,
+        skipped: true,
+        reason: latestMessage ? 'customer_message_awaiting_reply' : 'no_conversation_history',
+      });
+    }
 
     let ai_reply = `Hi ${leadName}, are you still interested in our program?`;
     if (ai) {
-      const prompt = `Write a very short, polite WhatsApp follow-up message addressed to "${leadName}" for a lead who hasn't replied to '${brandName}'. This is follow-up attempt #${touchCount}. Use "${leadName}" directly in the greeting - do not use placeholder text like [Name] or [Lead Name].`;
+      const historyText = recentHistory
+        .map((item) => `${item.direction === 'inbound' ? 'Customer' : 'Assistant'}: ${item.content}`)
+        .join('\n');
+      const prompt = `You write conversion-focused WhatsApp follow-ups for ABM Groups.
+Brand: ${brandName}
+Lead first name: ${leadName}
+Follow-up attempt: ${touchCount + 1} of 5
+
+Latest conversation (oldest to newest):
+${historyText}
+
+Write one natural follow-up that continues the unfinished topic. Reference the specific course, service, job, property, trip, food order, admission, or charity topic already discussed. Never ask the lead to repeat information already present. Use a warm human tone, no pressure, no invented price, offer, availability, or deadline, and no more than 3 short sentences. End with exactly one easy question that moves toward the appropriate conversion step. Return only the message text.`;
       ai_reply = await generateGeminiContent(prompt);
     }
 
@@ -1695,10 +1751,25 @@ router.post('/leads/internal-note', async (req, res) => {
 });
 
 router.post('/leads/update-followup', async (req, res) => {
-  const { lead_id, touch_count_increment, delay_hours } = req.body;
+  const { lead_id, touch_count_increment } = req.body;
   try {
-    const query = `UPDATE leads SET next_followup_due = NOW() + ($1 || ' hours')::INTERVAL, touch_count = COALESCE(touch_count, 0) + $2 WHERE id = $3`;
-    await pool.query(query, [delay_hours || 24, touch_count_increment || 1, lead_id]);
+    const increment = touch_count_increment || 1;
+    const query = `
+      UPDATE leads
+      SET touch_count = COALESCE(touch_count, 0) + $1,
+          next_followup_due = CASE COALESCE(touch_count, 0) + $1
+            WHEN 1 THEN NOW() + INTERVAL '8 hours'
+            WHEN 2 THEN NOW() + INTERVAL '12 hours'
+            WHEN 3 THEN NOW() + INTERVAL '24 hours'
+            WHEN 4 THEN NOW() + INTERVAL '72 hours'
+            ELSE NULL
+          END,
+          updated_at = NOW()
+      WHERE id = $2
+        AND status NOT IN ('converted', 'booked', 'opt-out', 'lost')
+        AND call_booked_at IS NULL
+    `;
+    await pool.query(query, [increment, lead_id]);
     res.json({ ...req.body, success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

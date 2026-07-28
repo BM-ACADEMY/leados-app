@@ -92,7 +92,13 @@ export const CampaignsView = () => {
         formData.append('force_source', batchId);
         
         const importRes = await api.importLeads(formData);
-        toast.success(`Successfully imported ${importRes.imported} leads!`);
+        if (!importRes.imported) {
+          throw new Error(`No valid contacts found in the Excel file${importRes.failed ? ` (${importRes.failed} invalid row${importRes.failed === 1 ? '' : 's'})` : ''}`);
+        }
+        toast.success(
+          `Imported ${importRes.imported} contact${importRes.imported === 1 ? '' : 's'}`
+          + (importRes.failed ? `; skipped ${importRes.failed} invalid row${importRes.failed === 1 ? '' : 's'}` : '')
+        );
         
         finalTargetStatus = batchId;
       }
@@ -336,7 +342,11 @@ export const CampaignsView = () => {
                   <p style={{ color: C.muted, fontSize: 13 }}>Messages are currently being sent out...</p>
                 </div>
               ) : campaignLogs.length === 0 ? (
-                <p style={{ color: C.muted, fontSize: 13 }}>No logs available yet. Messages may not have sent.</p>
+                <p style={{ color: C.muted, fontSize: 13 }}>
+                  {reportModal.status === 'failed'
+                    ? 'No eligible recipients matched this campaign. Check the uploaded phone numbers, selected brand, and target status.'
+                    : 'No delivery logs are available yet. The campaign may still be starting.'}
+                </p>
               ) : (
                 <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>

@@ -79,7 +79,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, name: $json.name, phone: $json.phone, intent: $json.intent, message: $json.message, kb_snippets: $json.kb_snippets, system_instructions: $json.system_instructions, lead_id: $json.lead_id, objections: $json.objections }) }}"
+        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, name: $json.name, phone: $json.phone, intent: $json.intent, message: $json.message, kb_snippets: $json.kb_snippets, system_instructions: $json.system_instructions, chat_history: $json.chat_history, lead_id: $json.lead_id, objections: $json.objections }) }}"
       },
       "id": "55923ed8-d688-4403-a5ca-d99434383d4a",
       "name": "Generate AI Response",

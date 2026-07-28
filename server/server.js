@@ -2097,7 +2097,17 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         let phone = row.phone || row.Phone || row.whatsapp || row['Phone Number'] || row['phone number'] || '';
         let countryCode = row.country_code || row['country code'] || row['Country Code'] || '';
 
-        phone = phone.toString().replace(/=/g, '').replace(/"/g, '').replace(/\D/g, '');
+        // Excel may display large phone numbers in scientific notation, while
+        // XLSX still gives us the correct raw numeric value. A cell stored as a
+        // literal "9.195E+11" has already lost digits, so reject it rather than
+        // risk messaging the wrong number.
+        const phoneText = phone.toString().replace(/=/g, '').replace(/"/g, '').trim();
+        if (/^\d+(?:\.\d+)?e\+\d+$/i.test(phoneText)) {
+          phone = '';
+        } else {
+          phone = phoneText;
+        }
+        phone = phone.replace(/\D/g, '');
         countryCode = countryCode.toString().replace(/\D/g, '');
 
         if (countryCode && !phone.startsWith(countryCode)) {
@@ -2135,7 +2145,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
 
         const email = row.email || row.Email || null;
 
-        if (!phone && !email) {
+        if ((!phone && !email) || (phone && (phone.length < 10 || phone.length > 15))) {
           failed++;
           continue;
         }
@@ -2147,10 +2157,13 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         if (phoneDigits || email) {
            const existingRes = await pool.query(`
              SELECT id FROM leads 
-             WHERE ($1::text != '' AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1)
-                OR ($2::text IS NOT NULL AND LOWER(email) = LOWER($2))
+             WHERE client_id IS NOT DISTINCT FROM $3
+               AND (
+                 ($1::text != '' AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1)
+                 OR ($2::text IS NOT NULL AND LOWER(email) = LOWER($2))
+               )
              LIMIT 1
-           `, [phoneDigits, email]);
+           `, [phoneDigits, email, rowClientId]);
            existingLead = existingRes.rows[0];
         }
 
@@ -2336,9 +2349,16 @@ async function executeCampaign(campaign_id) {
 
     // Frequency cap: skip leads who received any campaign message in the last 7 days,
     // so a lead never gets hit by two campaigns (or two runs of the same one) in a week.
-    let leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1 AND id NOT IN (
-      SELECT DISTINCT lead_id FROM campaign_logs WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '7 days' AND lead_id IS NOT NULL
-    )`;
+    let leadsQuery = `SELECT id, phone, name,
+      EXISTS (
+        SELECT 1
+        FROM campaign_logs recent
+        WHERE recent.lead_id = leads.id
+          AND recent.status IN ('sent', 'delivered', 'read', 'replied')
+          AND recent.sent_at > NOW() - INTERVAL '7 days'
+      ) AS frequency_capped
+      FROM leads
+      WHERE client_id = $1`;
     const queryParams = [campaign.client_id];
 
     if (campaign.target_status && campaign.target_status !== 'all') {
@@ -2351,8 +2371,25 @@ async function executeCampaign(campaign_id) {
     }
 
     const leadsRes = await pool.query(leadsQuery, queryParams);
-    const leads = leadsRes.rows;
+    const targetedLeads = leadsRes.rows;
+    const frequencyCappedLeads = targetedLeads.filter((lead) => lead.frequency_capped);
+    const leads = targetedLeads.filter((lead) => !lead.frequency_capped);
     let sentCount = 0;
+
+    // Never silently complete a campaign with no report rows. These entries
+    // explain why an uploaded recipient was not sent another campaign.
+    for (const lead of frequencyCappedLeads) {
+      await pool.query(`
+        INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
+        VALUES ($1, $2, 'failed', 'Skipped: this contact received a campaign in the last 7 days', NOW())
+      `, [campaign_id, lead.id]);
+    }
+
+    if (targetedLeads.length === 0) {
+      await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
+      console.warn(`Campaign ${campaign_id} has no recipients matching its target.`);
+      return;
+    }
 
     const waToken = campaign.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
     const phoneId = campaign.phone_number_id || process.env.WA_PHONE_NUMBER_ID;

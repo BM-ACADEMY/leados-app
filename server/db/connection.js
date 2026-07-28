@@ -26,4 +26,21 @@ pool.query(`
   ALTER TABLE messages ALTER COLUMN conversation_id TYPE BIGINT;
 `).catch(() => {});
 
+// A custom campaign upload is a temporary audience selection. Keep that
+// relationship separate so an existing lead can be reused without changing
+// their brand, status, source, or other CRM data.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS campaign_import_recipients (
+    batch_id VARCHAR(30) NOT NULL,
+    lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (batch_id, lead_id)
+  )
+`).catch((err) => console.error('Campaign import audience migration failed:', err.message));
+
+pool.query(`
+  ALTER TABLE campaign_logs
+  ADD COLUMN IF NOT EXISTS error_message TEXT
+`).catch((err) => console.error('Campaign log migration failed:', err.message));
+
 module.exports = pool;

@@ -136,9 +136,11 @@ async function setup() {
       lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
       status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'delivered', 'read', 'replied', 'failed')),
       sent_at TIMESTAMP,
-      wa_message_id VARCHAR(100)
+      wa_message_id VARCHAR(100),
+      error_message TEXT
     )
   `);
+  await pool.query('ALTER TABLE campaign_logs ADD COLUMN IF NOT EXISTS error_message TEXT');
   console.log('✅ Table 7/9: campaign_logs');
 
   // ── 8. MESSAGES ────────────────────────────────────────

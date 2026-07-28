@@ -130,6 +130,8 @@ export const InboxView = () => {
   const [showChatOnMobile, setShowChatOnMobile] = useState(false);
   const [localMessages, setLocalMessages] = useState([]);
   const [connected, setConnected] = useState(false);
+  const [typingLeadIds, setTypingLeadIds] = useState(() => new Set());
+  const typingTimeoutsRef = useRef({});
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editContent, setEditContent] = useState('');
   const [attachedFile, setAttachedFile] = useState(null);
@@ -301,6 +303,20 @@ export const InboxView = () => {
     }
   }, [activeLeadId]);
 
+  const clearTypingIndicator = (leadId) => {
+    const key = String(leadId);
+    if (typingTimeoutsRef.current[key]) {
+      clearTimeout(typingTimeoutsRef.current[key]);
+      delete typingTimeoutsRef.current[key];
+    }
+    setTypingLeadIds((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
+
   // ── SOCKET.IO CONNECTION ────────────────────────────────────
   useEffect(() => {
     const socket = socketIO(SOCKET_URL, {
@@ -336,10 +352,25 @@ export const InboxView = () => {
     // Our own outbound message confirmed by server
     socket.on('outgoing_message', ({ lead_id, message }) => {
       refetchLeadsListRef.current();
+      clearTypingIndicator(lead_id);
       if (activeLeadIdRef.current !== null && activeLeadIdRef.current !== undefined && String(lead_id) === String(activeLeadIdRef.current)) {
         setLocalMessages((prev) => {
           return mergeMessages(prev, [message]);
         });
+      }
+    });
+
+    // AI is composing a reply to the customer's last message
+    socket.on('ai_typing', ({ lead_id, typing }) => {
+      if (typing) {
+        const key = String(lead_id);
+        setTypingLeadIds((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+        if (typingTimeoutsRef.current[key]) clearTimeout(typingTimeoutsRef.current[key]);
+        // Safety net in case the AI pipeline errors out and never confirms —
+        // don't leave the indicator stuck forever.
+        typingTimeoutsRef.current[key] = setTimeout(() => clearTypingIndicator(key), 30000);
+      } else {
+        clearTypingIndicator(lead_id);
       }
     });
 
@@ -360,6 +391,8 @@ export const InboxView = () => {
 
     return () => {
       socket.disconnect();
+      Object.values(typingTimeoutsRef.current).forEach(clearTimeout);
+      typingTimeoutsRef.current = {};
     };
   }, []); // Empty dependency array ensures it connects only once!
 
@@ -737,8 +770,11 @@ export const InboxView = () => {
     return date.toLocaleDateString([], { weekday: 'long' });
   };
 
+  const isActiveLeadTyping = activeLeadId !== null && activeLeadId !== undefined && typingLeadIds.has(String(activeLeadId));
+
   return (
     <div style={{ height: '100%', display: 'flex' }}>
+      <style>{`@keyframes typingBounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-4px); opacity: 1; } }`}</style>
       {/* ── SIDEBAR ─────────────────────────────────── */}
       <div
         className={showChatOnMobile ? 'hide-mobile' : 'w-full-mobile'}
@@ -940,7 +976,36 @@ export const InboxView = () => {
               }}
               components={{
                 Header: () => loadingMore ? <div style={{ padding: 10, textAlign: 'center', color: C.muted, fontSize: 11 }}>Loading older messages...</div> : <div style={{ height: 60 }} />,
-                Footer: () => <div style={{ height: 18 }} />
+                Footer: () => (
+                  <div style={{ padding: '0 18px' }}>
+                    {isActiveLeadTyping && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 11 }}>
+                        <div style={{
+                          background: C.accent + '20',
+                          border: '1px solid ' + C.accentDim,
+                          borderRadius: '13px 4px 13px 13px',
+                          padding: '10px 14px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6
+                        }}>
+                          <span style={{ fontSize: 10, color: C.muted, marginRight: 2 }}>AI is typing</span>
+                          {[0, 1, 2].map((dot) => (
+                            <span key={dot} style={{
+                              width: 5,
+                              height: 5,
+                              borderRadius: '50%',
+                              background: C.accent,
+                              animation: 'typingBounce 1.2s infinite',
+                              animationDelay: `${dot * 0.15}s`
+                            }} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ height: 18 }} />
+                  </div>
+                )
               }}
               itemContent={(i, m) => {
                 const messageIndex = i - messageFirstItemIndex;

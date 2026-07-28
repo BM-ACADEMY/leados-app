@@ -586,6 +586,38 @@ const KB_STOP_WORDS = new Set([
   'tell', 'the', 'to', 'what', 'you', 'your',
 ]);
 
+const getRecentChatHistory = async (leadId, limit = 12) => {
+  if (!leadId) return [];
+
+  const result = await pool.query(
+    `SELECT m.direction, m.content
+     FROM messages m
+     JOIN conversations c ON c.id = m.conversation_id
+     WHERE c.lead_id = $1
+       AND m.content IS NOT NULL
+       AND BTRIM(m.content) <> ''
+     ORDER BY m.sent_at DESC
+     LIMIT $2`,
+    [leadId, limit]
+  );
+
+  return result.rows.reverse().map((row) => ({
+    role: row.direction === 'inbound' ? 'user' : 'assistant',
+    text: row.content,
+  }));
+};
+
+const normalizeChatHistory = (history) => (
+  Array.isArray(history)
+    ? history
+      .map((item) => ({
+        role: item?.role || (item?.direction === 'inbound' ? 'user' : 'assistant'),
+        text: String(item?.text ?? item?.content ?? '').trim(),
+      }))
+      .filter((item) => item.text)
+    : []
+);
+
 const getRelevantKnowledge = (documents, query = '') => {
   const normalizedQuery = String(query).toLowerCase();
   const wantsCourseList = /\b(all|available|offer|show|what|which)\b.*\b(course|courses|program|programs)\b|\bcourse list\b/i.test(normalizedQuery);
@@ -627,8 +659,17 @@ const getRelevantKnowledge = (documents, query = '') => {
 
 // 3. Knowledge Retrieval
 router.post('/kb/search', async (req, res) => {
-  const { brand, query, lead_id } = req.body;
+  const { brand, query, lead_id, chat_history } = req.body;
   try {
+    let resolvedHistory = normalizeChatHistory(chat_history);
+    if (resolvedHistory.length === 0 && lead_id) {
+      resolvedHistory = await getRecentChatHistory(lead_id);
+    }
+    const contextualQuery = [
+      ...resolvedHistory.slice(-10).map((item) => item.text),
+      query,
+    ].filter(Boolean).join(' ');
+
     // AIBrainView stores the master multi-brand knowledge under ABM Groups.
     // Load it as a fallback and combine it with any brand-specific documents.
     const targetBrand = brand || 'ABM Groups';
@@ -656,7 +697,9 @@ router.post('/kb/search', async (req, res) => {
       .filter((doc) => doc.doc_type === 'training' && doc.content)
       .map((doc) => doc.content);
 
-    const kb_snippets = getRelevantKnowledge(knowledgeDocs, query) || 'No relevant knowledge found.';
+    // Follow-up questions such as "what is the syllabus?" need the previously
+    // selected program in the retrieval query, not only the latest vague turn.
+    const kb_snippets = getRelevantKnowledge(knowledgeDocs, contextualQuery) || 'No relevant knowledge found.';
     const isBmAcademy = ['bm academy', 'bm-academy', 'bmacademy'].includes(
       String(targetBrand).trim().toLowerCase()
     );
@@ -668,7 +711,7 @@ When asked for available courses or the full course list, include every PROGRAM 
       .filter(Boolean)
       .join('\n\n')
       .slice(0, 8000);
-    res.json({ ...req.body, kb_snippets, system_instructions });
+    res.json({ ...req.body, chat_history: resolvedHistory, kb_snippets, system_instructions });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -717,9 +760,13 @@ router.post('/ai/response', async (req, res) => {
       return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
     }
 
+    let resolvedHistory = normalizeChatHistory(chat_history);
+    if (resolvedHistory.length === 0 && lead_id) {
+      resolvedHistory = await getRecentChatHistory(lead_id);
+    }
     let historyText = "";
-    if (chat_history && Array.isArray(chat_history)) {
-      historyText = "Chat History:\n" + chat_history.map(h => `${h.role}: ${h.text}`).join("\n") + "\n\n";
+    if (resolvedHistory.length > 0) {
+      historyText = "Chat History (oldest to newest):\n" + resolvedHistory.map(h => `${h.role}: ${h.text}`).join("\n") + "\n\n";
     }
 
     const prompt = `AI BRAIN SYSTEM INSTRUCTIONS (editable in LeadOS):\n${system_instructions || DEFAULT_BOT_BEHAVIOR}\n\n
@@ -733,6 +780,8 @@ router.post('/ai/response', async (req, res) => {
       - For a greeting, reply only: "${firstName ? `Hey ${firstName}! 👋 How can I help you today?` : 'Hey! 👋 How can I help you today?'}"
       - Never recite ABM Groups and its brand list as a default greeting.
       - Never reset the conversation or ask again for information already present in chat history.
+      - Resolve follow-up phrases such as "this course", "that course", "it", "details", "fees", "duration", and "the syllabus" to the most recently selected course/topic in chat history.
+      - If a course was identified earlier, keep it as the active course until the user explicitly selects a different course. Do not ask "which course?" again for a follow-up about that active course.
       - If the user asks a FAQ (like contact number, timings, or fees) mid-booking, provide the answer inline and immediately resume the booking flow. Do not reset the conversation or ask for information again.
       - Send exactly one concise WhatsApp reply for this user message.
       - Never claim a booking, calendar entry, reminder, or handoff succeeded unless the corresponding workflow result confirms it.
@@ -945,6 +994,7 @@ router.post('/communication/send', async (req, res) => {
         io.emit('outgoing_message', { lead_id: Number(lead_id), message: savedRows[0] });
         io.emit('message_sent', { lead_id: Number(lead_id), message: savedRows[0] });
         io.emit('incoming_message', { lead_id: Number(lead_id), message: savedRows[0] });
+        io.emit('ai_typing', { lead_id: String(lead_id), typing: false });
       }
     } catch (ioErr) {
       console.warn('Socket emit warning:', ioErr.message);
@@ -1549,15 +1599,6 @@ router.post('/campaigns/check-frequency', async (req, res) => {
       if (days < 7) allowed = false; // Cap at 1 marketing message per 7 days
     }
     res.json({ allowed });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.post('/campaigns/execute', async (req, res) => {
-  const { campaign_id } = req.body;
-  try {
-    if (!campaign_id) return res.status(400).json({ error: 'campaign_id is required' });
-    await pool.query(`UPDATE campaigns SET status = 'completed' WHERE id = $1`, [campaign_id]);
-    res.json({ success: true, message: `Campaign ${campaign_id} executed` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

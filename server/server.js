@@ -1218,6 +1218,9 @@ app.post('/webhook/whatsapp', async (req, res) => {
             // WF00 continues through its synchronous transcription request.
             // Do not call it again and create a duplicate AI response.
             if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL && req.query.source !== 'n8n') {
+              // Let the Inbox show a typing indicator while n8n/Gemini composes
+              // the reply. /communication/send clears it once the reply is sent.
+              io.emit('ai_typing', { lead_id: String(lead.id), typing: true });
               axios.post(process.env.N8N_WEBHOOK_URL, {
                 lead_id: lead.id,
                 phone,
@@ -2073,6 +2076,18 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
     const workbook = xlsx.readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
     const results = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    const isCampaignBatch = String(req.body.force_source || '').startsWith('csv_');
+
+    if (isCampaignBatch) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS campaign_import_recipients (
+          batch_id VARCHAR(30) NOT NULL,
+          lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+          created_at TIMESTAMP DEFAULT NOW(),
+          PRIMARY KEY (batch_id, lead_id)
+        )
+      `);
+    }
 
     // Pre-fetch clients and users for mapping
     const [clientsRes, usersRes] = await Promise.all([
@@ -2089,6 +2104,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
 
     let imported = 0;
     let failed = 0;
+    const importErrors = [];
 
     for (const row of results) {
       try {
@@ -2097,7 +2113,17 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         let phone = row.phone || row.Phone || row.whatsapp || row['Phone Number'] || row['phone number'] || '';
         let countryCode = row.country_code || row['country code'] || row['Country Code'] || '';
 
-        phone = phone.toString().replace(/=/g, '').replace(/"/g, '').replace(/\D/g, '');
+        // Excel may display large phone numbers in scientific notation, while
+        // XLSX still gives us the correct raw numeric value. A cell stored as a
+        // literal "9.195E+11" has already lost digits, so reject it rather than
+        // risk messaging the wrong number.
+        const phoneText = phone.toString().replace(/=/g, '').replace(/"/g, '').trim();
+        if (/^\d+(?:\.\d+)?e\+\d+$/i.test(phoneText)) {
+          phone = '';
+        } else {
+          phone = phoneText;
+        }
+        phone = phone.replace(/\D/g, '');
         countryCode = countryCode.toString().replace(/\D/g, '');
 
         if (countryCode && !phone.startsWith(countryCode)) {
@@ -2135,7 +2161,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
 
         const email = row.email || row.Email || null;
 
-        if (!phone && !email) {
+        if ((!phone && !email) || (phone && (phone.length < 10 || phone.length > 15))) {
           failed++;
           continue;
         }
@@ -2154,39 +2180,73 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
            existingLead = existingRes.rows[0];
         }
 
+        let importedLeadId;
+        const isCampaignImport = isCampaignBatch;
+
         if (existingLead) {
-          // Update existing
-          await pool.query(`
-            UPDATE leads 
-            SET name = COALESCE($1, name),
-                phone = COALESCE($2, phone),
-                email = COALESCE($3, email),
-                status = COALESCE($4, status),
-                client_id = COALESCE($5, client_id),
-                source = COALESCE($6, source),
-                score = COALESCE($7, score),
-                interest = COALESCE($8, interest),
-                assigned_to = COALESCE($9, assigned_to),
-                updated_at = NOW()
-            WHERE id = $10
-          `, [name, phone, email, status, rowClientId, source, score, interest, assignedTo, existingLead.id]);
+          importedLeadId = existingLead.id;
+          if (!isCampaignImport) {
+            // Normal CRM imports may refresh an existing lead. A campaign list
+            // only references it and must not alter its CRM fields.
+            await pool.query(`
+              UPDATE leads
+              SET name = COALESCE($1, name),
+                  phone = COALESCE($2, phone),
+                  email = COALESCE($3, email),
+                  status = COALESCE($4, status),
+                  client_id = COALESCE($5, client_id),
+                  source = COALESCE($6, source),
+                  score = COALESCE($7, score),
+                  interest = COALESCE($8, interest),
+                  assigned_to = COALESCE($9, assigned_to),
+                  updated_at = NOW()
+              WHERE id = $10
+            `, [name, phone, email, status, rowClientId, source, score, interest, assignedTo, existingLead.id]);
+          }
         } else {
           // Insert new
-          await pool.query(`
+          const insertedLead = await pool.query(`
             INSERT INTO leads (client_id, name, phone, email, status, source, score, interest, assigned_to, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            RETURNING id
           `, [rowClientId, name, phone, email, status, source, score, interest, assignedTo]);
+          importedLeadId = insertedLead.rows[0].id;
+        }
+
+        if (isCampaignImport) {
+          await pool.query(`
+            INSERT INTO campaign_import_recipients (batch_id, lead_id)
+            VALUES ($1, $2)
+            ON CONFLICT (batch_id, lead_id) DO NOTHING
+          `, [req.body.force_source, importedLeadId]);
         }
 
         imported++;
       } catch (e) {
         console.error('Row import error for', row, e.message);
         failed++;
+        if (importErrors.length < 5) {
+          importErrors.push({
+            row: imported + failed + 1,
+            name: row.name || row.Name || row['First Name'] || '',
+            phone: row.phone || row.Phone || row.whatsapp || row['Phone Number'] || row['phone number'] || '',
+            error: e.message,
+          });
+        }
       }
     }
 
     fs.unlinkSync(req.file.path); // cleanup
-    res.json({ success: true, imported, failed });
+    if (imported === 0 && failed > 0) {
+      return res.status(400).json({
+        success: false,
+        imported,
+        failed,
+        error: importErrors[0]?.error || 'No valid contacts could be imported',
+        errors: importErrors,
+      });
+    }
+    res.json({ success: true, imported, failed, errors: importErrors });
 
   } catch (err) {
     console.error('Import error:', err);
@@ -2321,6 +2381,13 @@ app.delete('/api/campaigns/:id', auth, async (req, res) => {
 // Background Campaign Execution Function
 async function executeCampaign(campaign_id) {
   try {
+    // Failure details must be recordable even on databases created before the
+    // error_message column was introduced.
+    await pool.query(`
+      ALTER TABLE campaign_logs
+      ADD COLUMN IF NOT EXISTS error_message TEXT
+    `);
+
     const campRes = await pool.query(`
       SELECT c.*, t.body as template_body, t.name as template_name, cl.wa_access_token, cl.phone_number_id
       FROM campaigns c
@@ -2334,25 +2401,37 @@ async function executeCampaign(campaign_id) {
 
     await pool.query("UPDATE campaigns SET status = 'running' WHERE id = $1", [campaign_id]);
 
-    // Frequency cap: skip leads who received any campaign message in the last 7 days,
-    // so a lead never gets hit by two campaigns (or two runs of the same one) in a week.
-    let leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1 AND id NOT IN (
-      SELECT DISTINCT lead_id FROM campaign_logs WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '7 days' AND lead_id IS NOT NULL
-    )`;
+    // Bulk campaigns intentionally send to every lead in the selected audience.
+    // Do not suppress a recipient because they received an earlier campaign.
+    let leadsQuery = `SELECT id, phone, name
+      FROM leads
+      WHERE client_id = $1`;
     const queryParams = [campaign.client_id];
 
     if (campaign.target_status && campaign.target_status !== 'all') {
       if (campaign.target_status.startsWith('csv_')) {
-        leadsQuery += ' AND source = $2';
+        // Include every number from the upload, including existing leads,
+        // without rewriting any of their CRM fields.
+        leadsQuery = `SELECT l.id, l.phone, l.name
+          FROM leads l
+          JOIN campaign_import_recipients cir ON cir.lead_id = l.id
+          WHERE cir.batch_id = $1`;
+        queryParams.splice(0, queryParams.length, campaign.target_status);
       } else {
         leadsQuery += ' AND status = $2';
+        queryParams.push(campaign.target_status);
       }
-      queryParams.push(campaign.target_status);
     }
 
     const leadsRes = await pool.query(leadsQuery, queryParams);
     const leads = leadsRes.rows;
     let sentCount = 0;
+
+    if (leads.length === 0) {
+      await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
+      console.warn(`Campaign ${campaign_id} has no recipients matching its target.`);
+      return;
+    }
 
     const waToken = campaign.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
     const phoneId = campaign.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
@@ -2420,23 +2499,45 @@ async function executeCampaign(campaign_id) {
             VALUES ($1, $2, $3, 'sent', NOW())
           `, [campaign_id, res.lead_id, res.wa_message_id]);
 
-          // Upsert conversation for this lead
-          const convRes = await pool.query(`
-            INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
-            VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
-            ON CONFLICT (phone, tenant_id) DO UPDATE
-              SET lead_id = EXCLUDED.lead_id,
-                  last_message = EXCLUDED.last_message,
-                  last_message_at = NOW()
-            RETURNING id
-          `, [res.lead_id, campaign.client_id, res.phone, campaign.template_body]);
+          // Find (or create) the conversation this lead already chats in, so
+          // the campaign message lands in the same Inbox thread as any reply.
+          // Check by lead_id first (unambiguous — matches getOrUpsertConversation
+          // in routes/salesos.js), then fall back to the phone the inbound
+          // webhook normalizes to (last 10 digits) before creating a new one.
+          let convId;
+          const existingConvRes = await pool.query(
+            `SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`,
+            [res.lead_id]
+          );
+          if (existingConvRes.rows.length > 0) {
+            convId = existingConvRes.rows[0].id;
+            await pool.query(
+              `UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`,
+              [campaign.template_body, convId]
+            );
+          } else {
+            const normalizedConvPhone = res.phone.replace(/\D/g, '').slice(-10);
+            const convRes = await pool.query(`
+              INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+              VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
+              ON CONFLICT (phone, tenant_id) DO UPDATE
+                SET lead_id = EXCLUDED.lead_id,
+                    last_message = EXCLUDED.last_message,
+                    last_message_at = NOW()
+              RETURNING id
+            `, [res.lead_id, campaign.client_id, normalizedConvPhone, campaign.template_body]);
+            convId = convRes.rows[0].id;
+          }
 
-          const convId = convRes.rows[0].id;
-
-          await pool.query(`
+          const { rows: campMsgRows } = await pool.query(`
             INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
             VALUES ($1, 'outbound', $2, 'template', $3, 'sent', false, NOW())
+            RETURNING id, direction, content, msg_type as type, wa_msg_id, status, is_ai, sent_at as timestamp
           `, [convId, campaign.template_body, res.wa_message_id]);
+
+          // Push to an already-open Inbox chat in real time, same as manual
+          // sends (/api/whatsapp/send) and inbound webhook messages do.
+          io.emit('outgoing_message', { lead_id: String(res.lead_id), message: campMsgRows[0] });
 
           sentCount++;
         } else {
@@ -2453,8 +2554,9 @@ async function executeCampaign(campaign_id) {
       }
     }
 
-    await pool.query("UPDATE campaigns SET status = 'completed' WHERE id = $1", [campaign_id]);
-    console.log(`Campaign ${campaign_id} completed. Sent ${sentCount} messages.`);
+    const finalStatus = sentCount > 0 ? 'completed' : 'failed';
+    await pool.query("UPDATE campaigns SET status = $1 WHERE id = $2", [finalStatus, campaign_id]);
+    console.log(`Campaign ${campaign_id} ${finalStatus}. Sent ${sentCount} messages.`);
   } catch (err) {
     console.error('Campaign execution error:', err);
     await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);

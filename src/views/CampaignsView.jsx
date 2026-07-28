@@ -27,6 +27,7 @@ export const CampaignsView = () => {
   const [reportModal, setReportModal] = useState(null);
   const [campaignLogs, setCampaignLogs] = useState([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [reportFilter, setReportFilter] = useState('all');
 
   // Delete state
   const [deleteModal, setDeleteModal] = useState(null);
@@ -131,6 +132,7 @@ export const CampaignsView = () => {
 
   const handleViewReport = async (c) => {
     setReportModal(c);
+    setReportFilter('all');
     setLoadingLogs(true);
     try {
       const res = await api.getCampaignLogs(c.id);
@@ -164,6 +166,10 @@ export const CampaignsView = () => {
   const totalDelivered = displayCampaigns.reduce((a, b) => a + parseInt(b.delivered_count || b.delivered || 0), 0);
   const totalRead = displayCampaigns.reduce((a, b) => a + parseInt(b.read_count || b.read || 0), 0);
   const avgRead = totalDelivered > 0 ? Math.round((totalRead / totalDelivered) * 100) + '%' : '0%';
+
+  const successLogs = campaignLogs.filter(l => l.status !== 'failed');
+  const failedLogs = campaignLogs.filter(l => l.status === 'failed');
+  const filteredLogs = reportFilter === 'success' ? successLogs : reportFilter === 'failed' ? failedLogs : campaignLogs;
 
   return (
     <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%' }}>
@@ -319,14 +325,35 @@ export const CampaignsView = () => {
 
       {reportModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, width: '100%', maxWidth: 600, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, width: '100%', maxWidth: 680, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '16px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, color: C.text }}>Campaign Live Status</h3>
               <button onClick={() => setReportModal(null)} style={{ background: 'transparent', border: 'none', color: C.muted, fontSize: 18, cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
               <p style={{ color: C.muted, fontSize: 13, marginBottom: 16 }}>Live logs for campaign: <strong style={{ color: C.text }}>{reportModal.name}</strong></p>
-              
+
+              {!loadingLogs && reportModal.status !== 'scheduled' && reportModal.status !== 'running' && campaignLogs.length > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <span style={{ background: '#0a2018', color: C.green, padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700 }}>✓ {successLogs.length} Success</span>
+                    <span style={{ background: '#331111', color: C.red, padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700 }}>✕ {failedLogs.length} Failed</span>
+                  </div>
+                  <div style={{ display: 'flex', background: C.surface, border: '1px solid ' + C.border, borderRadius: 8, overflow: 'hidden' }}>
+                    {[['all', `All (${campaignLogs.length})`], ['success', `Success (${successLogs.length})`], ['failed', `Failed (${failedLogs.length})`]].map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setReportFilter(key)}
+                        style={{ padding: '6px 12px', fontSize: 11, fontWeight: 600, border: 'none', background: reportFilter === key ? C.accent : 'transparent', color: reportFilter === key ? '#fff' : C.muted, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {loadingLogs ? (
                 <p style={{ color: C.muted, fontSize: 13 }}>Loading logs...</p>
               ) : reportModal.status === 'scheduled' && reportModal.scheduled_at ? (
@@ -347,31 +374,33 @@ export const CampaignsView = () => {
                     ? 'No eligible recipients matched this campaign. Check the uploaded phone numbers, selected brand, and target status.'
                     : 'No delivery logs are available yet. The campaign may still be starting.'}
                 </p>
+              ) : filteredLogs.length === 0 ? (
+                <p style={{ color: C.muted, fontSize: 13 }}>No {reportFilter} recipients for this campaign.</p>
               ) : (
                 <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
                     <thead style={{ background: C.surface }}>
                       <tr>
-                        <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>Name</th>
-                        <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>Phone</th>
-                        <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>Status</th>
-                        <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>Time</th>
+                        <th style={{ width: '22%', padding: '10px 14px', textAlign: 'left', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>Name</th>
+                        <th style={{ width: '20%', padding: '10px 14px', textAlign: 'left', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>Phone</th>
+                        <th style={{ width: '43%', padding: '10px 14px', textAlign: 'left', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>Status / Reason</th>
+                        <th style={{ width: '15%', padding: '10px 14px', textAlign: 'left', fontSize: 11, color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>Time</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {campaignLogs.map(log => (
+                      {filteredLogs.map(log => (
                         <tr key={log.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                          <td style={{ padding: '10px 14px', fontSize: 12, color: C.text }}>{log.name || 'Unknown'}</td>
-                          <td style={{ padding: '10px 14px', fontSize: 12, color: C.dim }}>+{log.phone}</td>
+                          <td style={{ padding: '10px 14px', fontSize: 12, color: C.text, wordBreak: 'break-word' }}>{log.name || 'Unknown'}</td>
+                          <td style={{ padding: '10px 14px', fontSize: 12, color: C.dim, wordBreak: 'break-word' }}>+{log.phone}</td>
                           <td style={{ padding: '10px 14px', fontSize: 12 }}>
-                            <span style={{ 
+                            <span style={{
                               color: log.status === 'failed' ? C.red : log.status === 'read' ? C.green : log.status === 'replied' ? C.purple : C.accent,
                               fontSize: 11, fontWeight: 700, textTransform: 'uppercase'
                             }}>
-                              {log.status}
+                              {log.status === 'failed' ? '✕ FAILED' : log.status}
                             </span>
                             {log.error_message && (
-                              <div style={{ color: C.red, fontSize: 10, marginTop: 4, maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={log.error_message}>
+                              <div style={{ color: C.red, fontSize: 11, marginTop: 4, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.4 }}>
                                 {log.error_message}
                               </div>
                             )}

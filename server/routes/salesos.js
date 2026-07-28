@@ -736,6 +736,39 @@ router.post('/ai/response', async (req, res) => {
       persistedBrand = leadContext.rows[0]?.brand_name || persistedBrand;
     }
 
+    // Deterministic: the very first reply after the Core Talents bulk hiring
+    // broadcast (template: hiring_template) always gets the fixed follow-up
+    // line below, regardless of content and regardless of the lead's own CRM
+    // brand. Campaign CSV imports intentionally never overwrite an existing
+    // lead's client_id (see /api/leads/import), so a lead who already existed
+    // under another brand keeps that brand's persistedBrand above — relying
+    // on the prompt alone to override that "sticky brand" framing was not
+    // reliable, so this is enforced here instead of left to the model.
+    if (lead_id) {
+      const lastCampaignRes = await pool.query(`
+        SELECT clg.sent_at
+        FROM campaign_logs clg
+        JOIN campaigns camp ON camp.id = clg.campaign_id
+        JOIN templates t ON t.id = camp.template_id
+        WHERE clg.lead_id = $1 AND clg.status != 'failed' AND t.name = 'hiring_template'
+        ORDER BY clg.sent_at DESC
+        LIMIT 1
+      `, [lead_id]);
+
+      if (lastCampaignRes.rows.length > 0) {
+        const replyCountRes = await pool.query(`
+          SELECT COUNT(*) FROM messages m
+          JOIN conversations c ON c.id = m.conversation_id
+          WHERE c.lead_id = $1 AND m.direction = 'inbound' AND m.sent_at > $2
+        `, [lead_id, lastCampaignRes.rows[0].sent_at]);
+
+        if (parseInt(replyCountRes.rows[0].count, 10) === 1) {
+          const ai_reply = 'For more details, kindly call this number: 9403892971.';
+          return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
+        }
+      }
+    }
+
     const firstName = getLeadFirstName(leadName);
     const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(String(message || '').trim());
 

@@ -2399,7 +2399,17 @@ async function executeCampaign(campaign_id) {
     if (!campRes.rows.length) return;
     const campaign = campRes.rows[0];
 
-    await pool.query("UPDATE campaigns SET status = 'running' WHERE id = $1", [campaign_id]);
+    // Atomically claim the campaign: only proceed if it's still 'scheduled'.
+    // Guards against double-sending if this ever gets triggered twice for the
+    // same campaign_id (e.g. a retried "Send Now" request racing the cron).
+    const claimRes = await pool.query(
+      "UPDATE campaigns SET status = 'running' WHERE id = $1 AND status = 'scheduled' RETURNING id",
+      [campaign_id]
+    );
+    if (claimRes.rowCount === 0) {
+      console.warn(`Campaign ${campaign_id}: skipped, already running/completed (not in 'scheduled' state).`);
+      return;
+    }
 
     // Bulk campaigns intentionally send to every lead in the selected audience.
     // Do not suppress a recipient because they received an earlier campaign.
@@ -2436,6 +2446,14 @@ async function executeCampaign(campaign_id) {
     const waToken = campaign.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
     const phoneId = campaign.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
 
+    // Fail fast with one clear reason instead of burning through every
+    // recipient with the same guaranteed-to-fail Meta auth/config error.
+    if (!waToken || !phoneId) {
+      await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
+      console.error(`Campaign ${campaign_id}: missing WhatsApp credentials (wa_access_token/phone_number_id) for this brand and no server-wide fallback configured.`);
+      return;
+    }
+
     // Process in batches of 50 for high performance
     const BATCH_SIZE = 50;
     for (let i = 0; i < leads.length; i += BATCH_SIZE) {
@@ -2443,6 +2461,11 @@ async function executeCampaign(campaign_id) {
 
       const promises = batch.map(async (lead) => {
         try {
+          const digits = (lead.phone || '').replace(/\D/g, '');
+          if (digits.length < 10) {
+            throw new Error(`Invalid phone number on file: "${lead.phone || ''}"`);
+          }
+
           const templatePayload = {
             name: campaign.template_name,
             language: { code: 'en' }
@@ -2461,16 +2484,42 @@ async function executeCampaign(campaign_id) {
             templatePayload.components = components;
           }
 
-          const waRes = await axios.post(
-            `https://graph.facebook.com/v18.0/${phoneId}/messages`,
-            {
-              messaging_product: 'whatsapp',
-              to: lead.phone.replace(/\D/g, ''),
-              type: 'template',
-              template: templatePayload
-            },
-            { headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' } }
-          );
+          const payload = {
+            messaging_product: 'whatsapp',
+            to: digits,
+            type: 'template',
+            template: templatePayload
+          };
+          const requestOptions = {
+            headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' },
+            // Without a timeout, one stalled request can hang this whole batch
+            // (and every batch after it, since batches run sequentially).
+            timeout: 15000
+          };
+
+          // Retry once on rate-limit/server errors — Meta's WhatsApp Cloud API
+          // returns 429 under bulk-send load, and a single retry after a short
+          // pause clears most of them without risking duplicate sends on
+          // permanent failures (bad number, template rejected, etc. never retry).
+          let waRes;
+          let lastErr;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              waRes = await axios.post(`https://graph.facebook.com/v18.0/${phoneId}/messages`, payload, requestOptions);
+              lastErr = null;
+              break;
+            } catch (attemptErr) {
+              lastErr = attemptErr;
+              const statusCode = attemptErr.response?.status;
+              const isRetryable = statusCode === 429 || (statusCode >= 500 && statusCode < 600);
+              if (attempt === 0 && isRetryable) {
+                await new Promise((r) => setTimeout(r, 1000));
+                continue;
+              }
+              throw attemptErr;
+            }
+          }
+          if (lastErr) throw lastErr;
 
           return {
             lead_id: lead.id,
@@ -2491,60 +2540,77 @@ async function executeCampaign(campaign_id) {
 
       const results = await Promise.all(promises);
 
-      // Bulk Insert Logs
+      // Bulk Insert Logs. Each recipient is isolated in its own try/catch so
+      // one bad row (e.g. a malformed phone/DB conflict) can't crash the loop
+      // and abandon every remaining recipient in this and later batches —
+      // that previously fell through to the outer catch, which force-set the
+      // whole campaign to 'failed' even after other recipients had already
+      // been delivered successfully.
       for (const res of results) {
-        if (res.status === 'sent') {
-          await pool.query(`
-            INSERT INTO campaign_logs (campaign_id, lead_id, wa_message_id, status, sent_at)
-            VALUES ($1, $2, $3, 'sent', NOW())
-          `, [campaign_id, res.lead_id, res.wa_message_id]);
+        try {
+          if (res.status === 'sent') {
+            await pool.query(`
+              INSERT INTO campaign_logs (campaign_id, lead_id, wa_message_id, status, sent_at)
+              VALUES ($1, $2, $3, 'sent', NOW())
+            `, [campaign_id, res.lead_id, res.wa_message_id]);
 
-          // Find (or create) the conversation this lead already chats in, so
-          // the campaign message lands in the same Inbox thread as any reply.
-          // Check by lead_id first (unambiguous — matches getOrUpsertConversation
-          // in routes/salesos.js), then fall back to the phone the inbound
-          // webhook normalizes to (last 10 digits) before creating a new one.
-          let convId;
-          const existingConvRes = await pool.query(
-            `SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`,
-            [res.lead_id]
-          );
-          if (existingConvRes.rows.length > 0) {
-            convId = existingConvRes.rows[0].id;
-            await pool.query(
-              `UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`,
-              [campaign.template_body, convId]
+            // Find (or create) the conversation this lead already chats in, so
+            // the campaign message lands in the same Inbox thread as any reply.
+            // Check by lead_id first (unambiguous — matches getOrUpsertConversation
+            // in routes/salesos.js), then fall back to the phone the inbound
+            // webhook normalizes to (last 10 digits) before creating a new one.
+            let convId;
+            const existingConvRes = await pool.query(
+              `SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`,
+              [res.lead_id]
             );
+            if (existingConvRes.rows.length > 0) {
+              convId = existingConvRes.rows[0].id;
+              await pool.query(
+                `UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`,
+                [campaign.template_body, convId]
+              );
+            } else {
+              const normalizedConvPhone = (res.phone || '').replace(/\D/g, '').slice(-10);
+              const convRes = await pool.query(`
+                INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+                VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
+                ON CONFLICT (phone, tenant_id) DO UPDATE
+                  SET lead_id = EXCLUDED.lead_id,
+                      last_message = EXCLUDED.last_message,
+                      last_message_at = NOW()
+                RETURNING id
+              `, [res.lead_id, campaign.client_id, normalizedConvPhone, campaign.template_body]);
+              convId = convRes.rows[0].id;
+            }
+
+            const { rows: campMsgRows } = await pool.query(`
+              INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
+              VALUES ($1, 'outbound', $2, 'template', $3, 'sent', false, NOW())
+              RETURNING id, direction, content, msg_type as type, wa_msg_id, status, is_ai, sent_at as timestamp
+            `, [convId, campaign.template_body, res.wa_message_id]);
+
+            // Push to an already-open Inbox chat in real time, same as manual
+            // sends (/api/whatsapp/send) and inbound webhook messages do.
+            io.emit('outgoing_message', { lead_id: String(res.lead_id), message: campMsgRows[0] });
+
+            sentCount++;
           } else {
-            const normalizedConvPhone = res.phone.replace(/\D/g, '').slice(-10);
-            const convRes = await pool.query(`
-              INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
-              VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
-              ON CONFLICT (phone, tenant_id) DO UPDATE
-                SET lead_id = EXCLUDED.lead_id,
-                    last_message = EXCLUDED.last_message,
-                    last_message_at = NOW()
-              RETURNING id
-            `, [res.lead_id, campaign.client_id, normalizedConvPhone, campaign.template_body]);
-            convId = convRes.rows[0].id;
+            await pool.query(`
+              INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
+              VALUES ($1, $2, 'failed', $3, NOW())
+            `, [campaign_id, res.lead_id, res.error]);
           }
-
-          const { rows: campMsgRows } = await pool.query(`
-            INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
-            VALUES ($1, 'outbound', $2, 'template', $3, 'sent', false, NOW())
-            RETURNING id, direction, content, msg_type as type, wa_msg_id, status, is_ai, sent_at as timestamp
-          `, [convId, campaign.template_body, res.wa_message_id]);
-
-          // Push to an already-open Inbox chat in real time, same as manual
-          // sends (/api/whatsapp/send) and inbound webhook messages do.
-          io.emit('outgoing_message', { lead_id: String(res.lead_id), message: campMsgRows[0] });
-
-          sentCount++;
-        } else {
-          await pool.query(`
-            INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
-            VALUES ($1, $2, 'failed', $3, NOW())
-          `, [campaign_id, res.lead_id, res.error]);
+        } catch (rowErr) {
+          console.error(`Campaign ${campaign_id}: failed to log/save recipient (lead ${res.lead_id})`, rowErr.message);
+          try {
+            await pool.query(`
+              INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
+              VALUES ($1, $2, 'failed', $3, NOW())
+            `, [campaign_id, res.lead_id, `Post-send logging error: ${rowErr.message}`]);
+          } catch (logErr) {
+            console.error(`Campaign ${campaign_id}: failed to record fallback failure log for lead ${res.lead_id}`, logErr.message);
+          }
         }
       }
 

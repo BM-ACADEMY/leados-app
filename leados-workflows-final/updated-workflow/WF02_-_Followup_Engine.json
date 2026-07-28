@@ -7,13 +7,13 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 9 * * *"
+              "expression": "*/10 * * * *"
             }
           ]
         }
       },
       "id": "1ca6c5f2-3ef3-498f-855c-9bd31421fafe",
-      "name": "Cron Hourly",
+      "name": "Check Every 10 Minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
@@ -330,7 +330,7 @@
     }
   ],
   "connections": {
-    "Cron Hourly": {
+    "Check Every 10 Minutes": {
       "main": [
         [
           {

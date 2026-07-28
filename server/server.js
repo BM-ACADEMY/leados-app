@@ -167,11 +167,13 @@ async function initCampaignQueue() {
       last_attempt_at TIMESTAMP,
       error_message TEXT,
       created_at TIMESTAMP DEFAULT NOW(),
-      processed_at TIMESTAMP,
-      INDEX idx_queue_status (status),
-      INDEX idx_queue_campaign (campaign_id)
+      processed_at TIMESTAMP
     )
   `);
+
+  // Create indexes separately for PostgreSQL
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_status ON campaign_message_queue(status)`).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_campaign ON campaign_message_queue(campaign_id)`).catch(() => {});
 
   // Create table to track daily/hourly counts
   await pool.query(`
@@ -184,45 +186,102 @@ async function initCampaignQueue() {
       rate_limited_count INTEGER DEFAULT 0,
       UNIQUE(campaign_id, date)
     )
-  `);
+  `).catch(() => {});
 
   console.log('[Campaign Queue] Database tables initialized');
 }
 
 // Add messages to queue
 async function addToCampaignQueue(campaign_id, leads, campaign) {
-  const values = leads.map((lead, idx) => {
-    return `(
-      ${campaign_id},
-      ${lead.id},
-      '${lead.phone.replace(/'/g, "''")}',
-      '${(lead.name || '').replace(/'/g, "''")}',
-      '${campaign.template_name.replace(/'/g, "''")}',
-      '${(campaign.template_body || '').replace(/'/g, "''")}',
-      '${(campaign.wa_access_token || '').replace(/'/g, "''")}',
-      '${(campaign.phone_number_id || '').replace(/'/g, "''")}'
-    )`;
-  }).join(',');
-
-  if (values) {
+  if (leads.length > 0) {
     await pool.query(`
       INSERT INTO campaign_message_queue
       (campaign_id, lead_id, phone, name, template_name, template_body, wa_token, phone_number_id)
-      VALUES ${values}
-    `);
+      SELECT $1, audience.lead_id, audience.phone, audience.name,
+             $2, $3, $4, $5
+      FROM UNNEST($6::bigint[], $7::text[], $8::text[])
+        AS audience(lead_id, phone, name)
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM campaign_message_queue queued
+        WHERE queued.campaign_id = $1
+          AND queued.lead_id = audience.lead_id
+      )
+    `, [
+      campaign_id,
+      campaign.template_name,
+      campaign.template_body || '',
+      campaign.wa_access_token || '',
+      campaign.phone_number_id || '',
+      leads.map((lead) => lead.id),
+      leads.map((lead) => lead.phone),
+      leads.map((lead) => lead.name || ''),
+    ]);
   }
 }
 
 // Process queue - runs continuously
 async function processCampaignQueue() {
   try {
-    // Get pending messages
+    // Recover jobs abandoned by a crashed/restarted worker. A normal send has
+    // a 15-second HTTP timeout, so five minutes safely indicates a stale claim.
+    await pool.query(`
+      UPDATE campaign_message_queue
+      SET status = 'pending'
+      WHERE status = 'processing'
+        AND last_attempt_at < NOW() - INTERVAL '5 minutes'
+    `);
+
+    // Quarantine duplicate queue rows left by older executions before any
+    // recipient is claimed. Keep the oldest row as the canonical send.
+    await pool.query(`
+      WITH ranked AS (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY campaign_id, lead_id
+                 ORDER BY id
+               ) AS duplicate_rank
+        FROM campaign_message_queue
+        WHERE status IN ('pending', 'processing')
+      )
+      UPDATE campaign_message_queue queue
+      SET status = 'failed',
+          processed_at = NOW(),
+          error_message = 'Duplicate queue entry skipped before send'
+      FROM ranked
+      WHERE queue.id = ranked.id
+        AND (
+          ranked.duplicate_rank > 1
+          OR EXISTS (
+            SELECT 1
+            FROM campaign_message_queue sent
+            WHERE sent.campaign_id = queue.campaign_id
+              AND sent.lead_id = queue.lead_id
+              AND sent.status = 'sent'
+          )
+        )
+    `);
+
+    // Atomically claim rows before doing any network work. FOR UPDATE SKIP
+    // LOCKED prevents overlapping queue intervals (or multiple API instances)
+    // from sending the same recipient at the same time.
     const { rows: pending } = await pool.query(`
-      SELECT * FROM campaign_message_queue
-      WHERE status = 'pending'
-        OR (status = 'failed' AND attempts < ${QUEUE_SETTINGS.MAX_RETRIES})
-      ORDER BY created_at ASC
-      LIMIT ${QUEUE_SETTINGS.BATCH_SIZE}
+      WITH claimable AS (
+        SELECT id
+        FROM campaign_message_queue
+        WHERE status = 'pending'
+          AND attempts < ${QUEUE_SETTINGS.MAX_RETRIES}
+        ORDER BY created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${QUEUE_SETTINGS.BATCH_SIZE}
+      )
+      UPDATE campaign_message_queue queue
+      SET status = 'processing',
+          attempts = queue.attempts + 1,
+          last_attempt_at = NOW()
+      FROM claimable
+      WHERE queue.id = claimable.id
+      RETURNING queue.*
     `);
 
     if (pending.length === 0) return;
@@ -259,6 +318,53 @@ async function processCampaignQueue() {
             VALUES ($1, $2, $3, 'sent', NOW())
           `, [msg.campaign_id, msg.lead_id, result.messageId]);
 
+          // Mirror the successful WhatsApp send into the LeadOS Inbox. Keep
+          // this non-retryable: Meta has already accepted the message, so a CRM
+          // persistence error must never cause the recipient to receive it
+          // again.
+          try {
+            const renderedBody = String(msg.template_body || '')
+              .replace(/\{\{1\}\}/g, msg.name || 'Friend');
+            const conversationResult = await pool.query(`
+              INSERT INTO conversations
+                (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+              SELECT $1, campaign.client_id, $2, 'open', $3, NOW(), NOW()
+              FROM campaigns campaign
+              WHERE campaign.id = $4
+              ON CONFLICT (phone, tenant_id) DO UPDATE
+                SET lead_id = EXCLUDED.lead_id,
+                    status = 'open',
+                    last_message = EXCLUDED.last_message,
+                    last_message_at = NOW()
+              RETURNING id
+            `, [msg.lead_id, msg.phone, renderedBody, msg.campaign_id]);
+
+            const conversationId = conversationResult.rows[0]?.id;
+            if (conversationId) {
+              const messageResult = await pool.query(`
+                INSERT INTO messages
+                  (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
+                VALUES ($1, 'outbound', $2, 'template', $3, 'sent', false, NOW())
+                RETURNING id, conversation_id, direction, content,
+                          msg_type AS type, wa_msg_id, status, is_ai,
+                          sent_at AS timestamp
+              `, [conversationId, renderedBody, result.messageId]);
+
+              io.emit('outgoing_message', {
+                lead_id: Number(msg.lead_id),
+                message: {
+                  ...messageResult.rows[0],
+                  campaign_id: msg.campaign_id,
+                },
+              });
+            }
+          } catch (crmErr) {
+            console.error(
+              `[Campaign Queue] WhatsApp message ${result.messageId} sent, but Inbox sync failed:`,
+              crmErr.message
+            );
+          }
+
           // Update stats
           await pool.query(`
             INSERT INTO campaign_rate_stats (campaign_id, date, messages_sent)
@@ -269,11 +375,10 @@ async function processCampaignQueue() {
 
           recordSendSuccess();
         } else if (result.rateLimited) {
-          // Keep in queue for retry
+          // Release the claim so a later queue pass can retry it.
           await pool.query(`
             UPDATE campaign_message_queue
-            SET attempts = attempts + 1, last_attempt_at = NOW(),
-                error_message = $2
+            SET status = 'pending', error_message = $2
             WHERE id = $1
           `, [msg.id, result.error]);
           recordRateLimit();
@@ -292,7 +397,7 @@ async function processCampaignQueue() {
           await pool.query(`
             UPDATE campaign_message_queue
             SET status = 'failed', processed_at = NOW(),
-                attempts = attempts + 1, last_attempt_at = NOW(), error_message = $2
+                error_message = $2
             WHERE id = $1
           `, [msg.id, result.error]);
 
@@ -317,11 +422,21 @@ async function processCampaignQueue() {
 
       } catch (err) {
         console.error(`[Campaign Queue] Error processing message ${msg.id}:`, err.message);
+        // The external result is unknown for unexpected errors. Do not
+        // immediately release the row and risk a duplicate send; leave it
+        // claimed for stale-job review/recovery.
+        await pool.query(`
+          UPDATE campaign_message_queue
+          SET error_message = $2
+          WHERE id = $1
+        `, [msg.id, `Worker error after claim: ${err.message}`]).catch(() => {});
       }
     }
 
-    // Check if campaign is complete
-    await checkCampaignCompletion(pending[0]?.campaign_id);
+    // A queue batch can contain more than one campaign.
+    for (const campaignId of [...new Set(pending.map((item) => item.campaign_id))]) {
+      await checkCampaignCompletion(campaignId);
+    }
 
   } catch (err) {
     console.error('[Campaign Queue] Queue processing error:', err.message);
@@ -407,7 +522,7 @@ async function checkCampaignCompletion(campaign_id) {
   if (!campaign_id) return;
 
   const [pending, sent, failed] = await Promise.all([
-    pool.query(`SELECT COUNT(*) FROM campaign_message_queue WHERE campaign_id = $1 AND status = 'pending'`, [campaign_id]),
+    pool.query(`SELECT COUNT(*) FROM campaign_message_queue WHERE campaign_id = $1 AND status IN ('pending', 'processing')`, [campaign_id]),
     pool.query(`SELECT COUNT(*) FROM campaign_message_queue WHERE campaign_id = $1 AND status = 'sent'`, [campaign_id]),
     pool.query(`SELECT COUNT(*) FROM campaign_message_queue WHERE campaign_id = $1 AND status = 'failed'`, [campaign_id])
   ]);
@@ -417,7 +532,7 @@ async function checkCampaignCompletion(campaign_id) {
   const failedCount = parseInt(failed.rows[0].count);
 
   if (pendingCount === 0) {
-    const finalStatus = (sentCount + failedCount) > 0 ? 'completed' : 'failed';
+    const finalStatus = sentCount > 0 ? 'completed' : 'failed';
     await pool.query(`UPDATE campaigns SET status = $1 WHERE id = $2`, [finalStatus, campaign_id]);
     console.log(`[Campaign ${campaign_id}] Completed: ${sentCount} sent, ${failedCount} failed`);
   }
@@ -2787,10 +2902,27 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
       `);
     }
 
+    const [clientsRes, usersRes] = await Promise.all([
+      pool.query('SELECT id, name FROM clients'),
+      pool.query('SELECT id, name, email FROM users'),
+    ]);
+    const clientsMap = Object.fromEntries(
+      clientsRes.rows.map((client) => [client.name.toLowerCase(), client.id])
+    );
+    const usersMap = {};
+    usersRes.rows.forEach((user) => {
+      if (user.name) usersMap[user.name.toLowerCase()] = user.id;
+      if (user.email) usersMap[user.email.toLowerCase()] = user.id;
+    });
+
     // Process each row
     let imported = 0;
+    let inserted = 0;
+    let existing = 0;
+    let duplicateRows = 0;
     let failed = 0;
     const importErrors = [];
+    const seenPhones = new Set();
 
     console.log(`[Campaign Import] Starting - isCampaignBatch: ${isCampaignBatch}, force_source: ${req.body.force_source}, client_id: ${client_id}`);
 
@@ -2851,10 +2983,25 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
 
         if ((!phone && !email) || (phone && (phone.length < 10 || phone.length > 15))) {
           failed++;
+          if (importErrors.length < 20) {
+            importErrors.push({
+              row: imported + duplicateRows + failed + 1,
+              name,
+              phone: phoneText,
+              error: phoneText
+                ? 'Phone number must contain 10 to 15 digits'
+                : 'Phone number is missing or stored as unsafe scientific-notation text',
+            });
+          }
           continue;
         }
 
         const phoneDigits = phone ? phone.replace(/\D/g, '').slice(-10) : '';
+        if (phoneDigits && seenPhones.has(phoneDigits)) {
+          duplicateRows++;
+          continue;
+        }
+        if (phoneDigits) seenPhones.add(phoneDigits);
 
         // Check for existing lead by email or 10-digit phone
         let existingLead = null;
@@ -2862,7 +3009,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
            const existingRes = await pool.query(`
              SELECT id FROM leads 
              WHERE ($1::text != '' AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1)
-                OR ($2::text IS NOT NULL AND LOWER(email) = LOWER($2))
+                OR ($1::text = '' AND $2::text IS NOT NULL AND LOWER(email) = LOWER($2))
              LIMIT 1
            `, [phoneDigits, email]);
            existingLead = existingRes.rows[0];
@@ -2873,6 +3020,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
 
         if (existingLead) {
           importedLeadId = existingLead.id;
+          existing++;
           if (!isCampaignImport) {
             // Normal CRM imports may refresh an existing lead. A campaign list
             // only references it and must not alter its CRM fields.
@@ -2899,6 +3047,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
             RETURNING id
           `, [rowClientId, name, phone, email, status, source, score, interest, assignedTo]);
           importedLeadId = insertedLead.rows[0].id;
+          inserted++;
         }
 
         if (isCampaignImport) {
@@ -2938,7 +3087,15 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         errors: importErrors,
       });
     }
-    res.json({ success: true, imported, failed, errors: importErrors });
+    res.json({
+      success: true,
+      imported,
+      inserted,
+      existing,
+      duplicate_rows: duplicateRows,
+      failed,
+      errors: importErrors,
+    });
 
   } catch (err) {
     console.error('Import error:', err);
@@ -3061,10 +3218,12 @@ app.post('/api/campaigns', auth, async (req, res) => {
 
     // If send_immediately is true or no scheduled_at, trigger execution immediately
     if (send_immediately || !scheduled_at) {
-      // Execute asynchronously
-      executeCampaign(campaign.id).catch(err => {
-        console.error('Auto-execute campaign error:', err);
-      });
+      // Execute with delay to ensure campaign is created first
+      setTimeout(() => {
+        executeCampaign(campaign.id).catch(err => {
+          console.error('Auto-execute campaign error:', err);
+        });
+      }, 500);
     }
 
     res.status(201).json({ campaign });
@@ -3087,12 +3246,13 @@ app.delete('/api/campaigns/:id', auth, async (req, res) => {
 
 // Background Campaign Execution Function - Now uses queue system
 async function executeCampaign(campaign_id) {
+  console.log(`[executeCampaign] Starting for campaign ${campaign_id}`);
   try {
     // Ensure error_message column exists
     await pool.query(`
       ALTER TABLE campaign_logs
       ADD COLUMN IF NOT EXISTS error_message TEXT
-    `);
+    `).catch(() => {}); // Ignore if already exists
 
     const campRes = await pool.query(`
       SELECT c.*, t.body as template_body, t.name as template_name, cl.wa_access_token, cl.phone_number_id
@@ -3102,34 +3262,42 @@ async function executeCampaign(campaign_id) {
       WHERE c.id = $1
     `, [campaign_id]);
 
-    if (!campRes.rows.length) return;
+    if (!campRes.rows.length) {
+      console.log(`[executeCampaign] Campaign ${campaign_id} not found`);
+      return;
+    }
     const campaign = campRes.rows[0];
 
-    // Atomically claim the campaign: only proceed if it's still 'scheduled'.
+    console.log(`[executeCampaign] Campaign: ${campaign.name}, target_status: ${campaign.target_status}, client_id: ${campaign.client_id}`);
+
+    // Atomically claim the campaign: only proceed if it's still 'scheduled' or 'failed'.
     const claimRes = await pool.query(
-      "UPDATE campaigns SET status = 'running' WHERE id = $1 AND status = 'scheduled' RETURNING id",
+      "UPDATE campaigns SET status = 'running' WHERE id = $1 AND status IN ('scheduled', 'failed') RETURNING id",
       [campaign_id]
     );
     if (claimRes.rowCount === 0) {
-      console.warn(`Campaign ${campaign_id}: skipped, already running/completed (not in 'scheduled' state).`);
+      console.warn(`Campaign ${campaign_id}: skipped, already running/completed (not in 'scheduled' or 'failed' state).`);
       return;
     }
+
+    console.log(`[executeCampaign] Campaign claimed, finding leads...`);
 
     // Build leads query
     let leadsQuery = '';
     const queryParams = [];
 
     if (campaign.target_status && campaign.target_status.startsWith('csv_')) {
-      // For CSV imports, first try to get leads from campaign_import_recipients table
-      // If no leads found there, fall back to all leads for this client
+      // A custom upload is an exact audience. Existing leads may belong to a
+      // different CRM brand, but the selected campaign brand supplies the
+      // WhatsApp credentials used for this send.
       leadsQuery = `SELECT l.id, l.phone, l.name
         FROM leads l
-        WHERE l.client_id = $1
-        AND EXISTS (
-          SELECT 1 FROM campaign_import_recipients cir
-          WHERE cir.lead_id = l.id AND cir.batch_id = $2
-        )`;
-      queryParams.push(campaign.client_id, campaign.target_status);
+        JOIN campaign_import_recipients cir ON cir.lead_id = l.id
+        WHERE cir.batch_id = $1
+          AND l.phone IS NOT NULL
+          AND BTRIM(l.phone) <> ''
+        ORDER BY cir.created_at, l.id`;
+      queryParams.push(campaign.target_status);
     } else {
       // Regular target status (new, warm, cold, etc.) or all leads
       leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1`;
@@ -3143,15 +3311,6 @@ async function executeCampaign(campaign_id) {
 
     let leadsRes = await pool.query(leadsQuery, queryParams);
     let leads = leadsRes.rows;
-
-    // If no leads found from campaign_import_recipients, fall back to all leads for this client
-    if (leads.length === 0 && campaign.target_status && campaign.target_status.startsWith('csv_')) {
-      console.log(`[Campaign ${campaign_id}] No leads from campaign_import_recipients, falling back to all leads for client`);
-      leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1`;
-      queryParams.splice(0, queryParams.length, campaign.client_id);
-      leadsRes = await pool.query(leadsQuery, queryParams);
-      leads = leadsRes.rows;
-    }
 
     console.log(`[Campaign ${campaign_id}] Query: ${leadsQuery}`);
     console.log(`[Campaign ${campaign_id}] Params: ${JSON.stringify(queryParams)}`);
@@ -3240,12 +3399,20 @@ app.post('/api/campaigns/:id/retry', auth, async (req, res) => {
 
     // Re-execute the campaign (will add fresh messages to queue)
     await pool.query("UPDATE campaigns SET status = 'scheduled' WHERE id = $1", [id]);
-    executeCampaign(id);
 
-    res.json({ success: true, message: 'Campaign retry initiated' });
+    // Execute and wait for result
+    try {
+      await executeCampaign(id);
+      res.json({ success: true, message: 'Campaign retry initiated' });
+    } catch (execErr) {
+      console.error('Execute campaign error:', execErr);
+      // Reset status to failed
+      await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [id]);
+      res.status(500).json({ error: 'Failed to execute campaign: ' + execErr.message });
+    }
   } catch (err) {
     console.error('Campaign retry error:', err);
-    res.status(500).json({ error: 'Failed to retry campaign' });
+    res.status(500).json({ error: err.message });
   }
 });
 

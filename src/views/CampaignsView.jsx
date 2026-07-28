@@ -140,8 +140,9 @@ export const CampaignsView = () => {
           throw new Error(`No valid contacts found in the Excel file${importRes.failed ? ` (${importRes.failed} invalid row${importRes.failed === 1 ? '' : 's'})` : ''}`);
         }
         toast.success(
-          `Prepared ${importRes.imported} contact${importRes.imported === 1 ? '' : 's'} for this campaign`
-          + (importRes.failed ? `; skipped ${importRes.failed} invalid row${importRes.failed === 1 ? '' : 's'}` : '')
+          `Audience ready: ${importRes.inserted || 0} new, ${importRes.existing || 0} existing`
+          + (importRes.duplicate_rows ? `, ${importRes.duplicate_rows} duplicate row${importRes.duplicate_rows === 1 ? '' : 's'} skipped` : '')
+          + (importRes.failed ? `, ${importRes.failed} invalid row${importRes.failed === 1 ? '' : 's'} skipped` : '')
         );
         
         finalTargetStatus = batchId;

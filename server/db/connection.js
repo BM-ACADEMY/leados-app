@@ -38,4 +38,9 @@ pool.query(`
   )
 `).catch((err) => console.error('Campaign import audience migration failed:', err.message));
 
+pool.query(`
+  ALTER TABLE campaign_logs
+  ADD COLUMN IF NOT EXISTS error_message TEXT
+`).catch((err) => console.error('Campaign log migration failed:', err.message));
+
 module.exports = pool;

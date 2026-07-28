@@ -8,7 +8,6 @@ export const CampaignsView = () => {
   const [tab, setTab] = useState('list');
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
 
   const [name, setName] = useState('');
   const [clientId, setClientId] = useState('');
@@ -34,14 +33,16 @@ export const CampaignsView = () => {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
 
+  // Live tracking state
+  const [isLiveTracking, setIsLiveTracking] = useState(false);
+
   const fetchCampaigns = async () => {
     setLoading(true);
-    setError(null);
     try {
       const data = await api.getCampaigns();
       setCampaigns(data.campaigns || []);
     } catch (err) {
-      setError(err.message);
+      console.error('Error fetching campaigns:', err.message);
     } finally {
       setLoading(false);
     }
@@ -62,6 +63,48 @@ export const CampaignsView = () => {
     fetchCampaigns();
     fetchFormMetadata();
   }, []);
+
+  // Live tracking: poll logs when campaign is running
+  useEffect(() => {
+    let interval;
+
+    if (isLiveTracking && reportModal && (reportModal.status === 'running' || reportModal.status === 'scheduled')) {
+      // Fetch latest campaign status first
+      const fetchWithStatusUpdate = async () => {
+        try {
+          const data = await api.getCampaigns();
+          const updatedCampaign = data.campaigns?.find(c => c.id === reportModal.id);
+
+          if (updatedCampaign) {
+            // Update the reportModal with latest status
+            setReportModal(prev => ({ ...prev, ...updatedCampaign }));
+
+            // If completed or failed, stop live tracking
+            if (updatedCampaign.status === 'completed' || updatedCampaign.status === 'failed') {
+              setIsLiveTracking(false);
+              return;
+            }
+          }
+
+          // Fetch logs
+          const res = await api.getCampaignLogs(reportModal.id);
+          setCampaignLogs(res.logs || []);
+        } catch (err) {
+          console.error('Live tracking error:', err.message);
+        }
+      };
+
+      // Initial fetch
+      fetchWithStatusUpdate();
+
+      // Poll every 3 seconds
+      interval = setInterval(fetchWithStatusUpdate, 3000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isLiveTracking, reportModal?.id]);
 
   const handleDownloadTemplate = () => {
     const link = document.createElement('a');
@@ -134,6 +177,11 @@ export const CampaignsView = () => {
     setReportModal(c);
     setReportFilter('all');
     setLoadingLogs(true);
+
+    // Enable live tracking if campaign is running or scheduled (not yet started)
+    const shouldTrack = c.status === 'running' || c.status === 'scheduled';
+    setIsLiveTracking(shouldTrack);
+
     try {
       const res = await api.getCampaignLogs(c.id);
       setCampaignLogs(res.logs || []);
@@ -327,8 +375,16 @@ export const CampaignsView = () => {
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, width: '100%', maxWidth: 680, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '16px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, color: C.text }}>Campaign Live Status</h3>
-              <button onClick={() => setReportModal(null)} style={{ background: 'transparent', border: 'none', color: C.muted, fontSize: 18, cursor: 'pointer' }}>×</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, color: C.text }}>Campaign Live Status</h3>
+                {isLiveTracking && (reportModal.status === 'running' || reportModal.status === 'scheduled') && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.green + '20', color: C.green, padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
+                    <span style={{ width: 6, height: 6, background: C.green, borderRadius: '50%', animation: 'pulse 1.5s infinite' }}></span>
+                    Live
+                  </span>
+                )}
+              </div>
+              <button onClick={() => { setReportModal(null); setIsLiveTracking(false); }} style={{ background: 'transparent', border: 'none', color: C.muted, fontSize: 18, cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
               <p style={{ color: C.muted, fontSize: 13, marginBottom: 16 }}>Live logs for campaign: <strong style={{ color: C.text }}>{reportModal.name}</strong></p>
@@ -415,8 +471,18 @@ export const CampaignsView = () => {
                 </div>
               )}
             </div>
-            <div style={{ padding: '16px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end' }}>
-              <button onClick={() => setReportModal(null)} style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.text, padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Close</button>
+            <div style={{ padding: '16px 24px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {isLiveTracking && (
+                  <button
+                    onClick={() => setIsLiveTracking(false)}
+                    style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Stop Live
+                  </button>
+                )}
+              </div>
+              <button onClick={() => { setReportModal(null); setIsLiveTracking(false); }} style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.text, padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Close</button>
             </div>
           </div>
         </div>

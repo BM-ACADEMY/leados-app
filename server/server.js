@@ -2526,10 +2526,15 @@ async function executeCampaign(campaign_id) {
             convId = convRes.rows[0].id;
           }
 
-          await pool.query(`
+          const { rows: campMsgRows } = await pool.query(`
             INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
             VALUES ($1, 'outbound', $2, 'template', $3, 'sent', false, NOW())
+            RETURNING id, direction, content, msg_type as type, wa_msg_id, status, is_ai, sent_at as timestamp
           `, [convId, campaign.template_body, res.wa_message_id]);
+
+          // Push to an already-open Inbox chat in real time, same as manual
+          // sends (/api/whatsapp/send) and inbound webhook messages do.
+          io.emit('outgoing_message', { lead_id: String(res.lead_id), message: campMsgRows[0] });
 
           sentCount++;
         } else {

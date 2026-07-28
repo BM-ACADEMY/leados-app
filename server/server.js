@@ -958,6 +958,36 @@ app.get('/api/leads/template', (req, res) => {
   res.send(buffer);
 });
 
+// DEBUG: Check campaign import recipients
+app.get('/api/debug/campaign-imports', auth, async (req, res) => {
+  try {
+    const { batch_id } = req.query;
+
+    let query = `
+      SELECT cir.batch_id, cir.lead_id, cir.created_at, l.name, l.phone, l.client_id, l.status
+      FROM campaign_import_recipients cir
+      JOIN leads l ON cir.lead_id = l.id
+    `;
+    let params = [];
+
+    if (batch_id) {
+      query += ' WHERE cir.batch_id = $1';
+      params.push(batch_id);
+    }
+
+    query += ' ORDER BY cir.created_at DESC LIMIT 50';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      count: result.rows.length,
+      recipients: result.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/leads/sources', auth, async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -2614,6 +2644,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         }
 
         if (isCampaignImport) {
+          console.log(`[Campaign Import] Linking lead ${importedLeadId} to batch ${req.body.force_source}`);
           await pool.query(`
             INSERT INTO campaign_import_recipients (batch_id, lead_id)
             VALUES ($1, $2)
@@ -2829,12 +2860,14 @@ async function executeCampaign(campaign_id) {
 
     if (campaign.target_status && campaign.target_status !== 'all') {
       if (campaign.target_status.startsWith('csv_')) {
+        // For CSV imports, get leads from the campaign_import_recipients table
+        // The batch_id matches the target_status (e.g., csv_1234567890)
         leadsQuery = `SELECT l.id, l.phone, l.name
           FROM leads l
           JOIN campaign_import_recipients cir ON cir.lead_id = l.id
           WHERE cir.batch_id = $1`;
         queryParams.splice(0, queryParams.length, campaign.target_status);
-      } else {
+      } else if (campaign.target_status && campaign.target_status !== 'all') {
         leadsQuery += ' AND status = $2';
         queryParams.push(campaign.target_status);
       }
@@ -2844,8 +2877,18 @@ async function executeCampaign(campaign_id) {
     const leads = leadsRes.rows;
 
     if (leads.length === 0) {
+      // Debug: check what's in the campaign_import_recipients table
+      let debugInfo = '';
+      if (campaign.target_status && campaign.target_status.startsWith('csv_')) {
+        const recipientsCheck = await pool.query(
+          `SELECT COUNT(*) as cnt FROM campaign_import_recipients WHERE batch_id = $1`,
+          [campaign.target_status]
+        );
+        debugInfo = ` (batch_id: ${campaign.target_status}, found: ${recipientsCheck.rows[0].cnt} recipients in campaign_import_recipients)`;
+      }
+
       await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
-      console.warn(`Campaign ${campaign_id} has no recipients matching its target.`);
+      console.warn(`Campaign ${campaign_id} has no recipients matching its target.${debugInfo}`);
       return;
     }
 
@@ -2942,6 +2985,56 @@ app.get('/api/campaigns/:id/queue', auth, async (req, res) => {
     res.json({ queue: stats.rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/campaigns/:id/debug - Debug campaign recipients
+app.get('/api/campaigns/:id/debug', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get campaign details
+    const campaign = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (!campaign.rows.length) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const c = campaign.rows[0];
+
+    // Check campaign_import_recipients
+    let recipients = [];
+    if (c.target_status && c.target_status.startsWith('csv_')) {
+      const recipientsRes = await pool.query(`
+        SELECT cir.*, l.name, l.phone, l.client_id
+        FROM campaign_import_recipients cir
+        JOIN leads l ON cir.lead_id = l.id
+        WHERE cir.batch_id = $1
+      `, [c.target_status]);
+      recipients = recipientsRes.rows;
+    }
+
+    // Check leads for this client
+    const leadsRes = await pool.query(`
+      SELECT id, name, phone, client_id, status
+      FROM leads
+      WHERE client_id = $1
+      LIMIT 10
+    `, [c.client_id]);
+
+    res.json({
+      campaign: {
+        id: c.id,
+        name: c.name,
+        client_id: c.client_id,
+        target_status: c.target_status,
+      },
+      csvRecipientsCount: recipients.length,
+      sampleRecipients: recipients.slice(0, 5),
+      leadsForClientCount: leadsRes.rows.length,
+      sampleLeads: leadsRes.rows.slice(0, 5)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

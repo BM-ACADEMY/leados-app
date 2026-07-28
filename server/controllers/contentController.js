@@ -2380,8 +2380,8 @@ async function runBackgroundPublish(postId, jobs, publicUrl, accounts, reqInfo) 
         console.log(`[BackgroundPublish] Successfully published to ${channel} (${statusVal})! Post ID: ${publishRes.post_id}`);
 
         await pool.query(
-          "UPDATE publish_queue SET status = 'success', post_id = $1, published_at = NOW(), error_message = NULL, updated_at = NOW() WHERE id = $2",
-          [publishRes.post_id, job.id]
+          "UPDATE publish_queue SET status = 'success', post_id = $1, published_at = NOW(), error_message = $3, updated_at = NOW() WHERE id = $2",
+          [publishRes.post_id, job.id, publishRes.warning || null]
         );
 
         await pool.query(
@@ -3069,6 +3069,7 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
     console.log(`[YouTube Publish] Upload success. Video ID: ${videoId}`);
 
     // Set custom thumbnail if provided
+    let thumbnailWarning = null;
     if (localThumbnailPath && fs.existsSync(localThumbnailPath)) {
       try {
         await youtube.thumbnails.set({
@@ -3080,14 +3081,22 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
         });
         console.log(`[YouTube Publish] Custom thumbnail set for video ${videoId}`);
       } catch (thumbErr) {
-        // Thumbnail upload can fail if channel is not verified — not fatal
-        console.warn(`[YouTube Publish] Failed to set thumbnail (channel may need verification): ${thumbErr.message}`);
+        const thumbMsg = thumbErr.message || '';
+        const needsVerification = thumbMsg.includes('403') || thumbMsg.includes('forbidden') || thumbMsg.includes('verif');
+        thumbnailWarning = needsVerification
+          ? `Custom thumbnail not set — YouTube channel needs phone/ID verification to use custom thumbnails. Video published without custom thumbnail.`
+          : `Custom thumbnail upload failed: ${thumbMsg}`;
+        console.warn(`[YouTube Publish] ${thumbnailWarning}`);
       }
+    } else if (!localThumbnailPath) {
+      thumbnailWarning = 'No thumbnail file found — video published without custom thumbnail.';
+      console.warn(`[YouTube Publish] ${thumbnailWarning}`);
     }
 
     return {
       success: true,
-      post_id: videoId
+      post_id: videoId,
+      warning: thumbnailWarning || null
     };
   } catch (err) {
     console.error(`[YouTube Publish] API insertion failed:`, err);
@@ -3806,9 +3815,22 @@ async function generatePoster(req, res) {
 
     // Add cache-busting timestamp to URL
     const ts = Date.now();
+    const posterUrl = `${baseUrl}/uploads/poster_${id}.jpg?t=${ts}`;
+
+    // Save poster as thumbnail_url in DB so YouTube/Instagram/Facebook all use the AI poster
+    const posterPathForDb = `${baseUrl}/uploads/poster_${id}.jpg`;
+    try {
+      await pool.query(
+        `UPDATE content_queue SET thumbnail_url = $1, updated_at = NOW() WHERE id = $2`,
+        [posterPathForDb, id]
+      );
+    } catch (dbErr) {
+      console.warn('[generatePoster] Could not save poster URL to content_queue:', dbErr.message);
+    }
+
     res.json({
       success: true,
-      poster_url: `${baseUrl}/uploads/poster_${id}.jpg?t=${ts}`,
+      poster_url: posterUrl,
       engine: engineUsed,
       config_applied: {
         style: styleName,

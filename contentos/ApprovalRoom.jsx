@@ -141,6 +141,8 @@ export function ApprovalRoom({
       });
       if (res.success && res.poster_url) {
         setPosterPreviewUrl(res.poster_url);
+        // Save poster as the thumbnail so YouTube/Instagram/Facebook all use the AI poster
+        setEditValues(prev => ({ ...prev, thumbnail_url: res.poster_url }));
       }
     } catch (err) {
       setThumbError(err.message || 'Thumbnail Brain poster generation failed. Try again.');

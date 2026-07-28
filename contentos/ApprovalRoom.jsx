@@ -4,7 +4,6 @@ import { generateThumbnail } from './thumbnailBrain/index.js';
 
 
 
-
 export function ApprovalRoom({
   items,
   selectedBrand,

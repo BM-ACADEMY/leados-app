@@ -5,6 +5,7 @@ import { Sidebar } from './components/layout/Sidebar.jsx';
 import { Header } from './components/layout/Header.jsx';
 import { useAuth } from './hooks/useAuth.js';
 import { Dashboard } from './views/Dashboard.jsx';
+import { SalesTasksView } from './views/SalesTasksView.jsx';
 import { LeadsView } from './views/LeadsView.jsx';
 import { InboxView } from './views/InboxView.jsx';
 import { CampaignsView } from './views/CampaignsView.jsx';
@@ -16,6 +17,7 @@ import { FounderReportsView } from './views/FounderReportsView.jsx';
 import { ClientsView } from './views/ClientsView.jsx';
 import { SettingsView } from './views/SettingsView.jsx';
 import { WorkflowsView } from './views/WorkflowsView.jsx';
+import { IntegrationsView } from './views/IntegrationsView.jsx';
 
 
 import { AllianceDashboard } from './views/AllianceDashboard.jsx';
@@ -52,6 +54,11 @@ import GmbBrain from './views/mafiya/GmbBrain.jsx';
 import StreetPosts from './views/mafiya/StreetPosts.jsx';
 import GbpInsights from './views/mafiya/GbpInsights.jsx';
 import RivalFamilies from './views/mafiya/RivalFamilies.jsx';
+import Citations from './views/mafiya/Citations.jsx';
+import UsageMafiya from './views/mafiya/Usage.jsx';
+import MafiyaOrders from './views/mafiya/Orders.jsx';
+import PlanManagementMafiya from './views/mafiya/PlanManagement.jsx';
+import Family from './views/mafiya/Family.jsx';
 
 function LoginPage({ login, authLoading, authError }) {
   const [email, setEmail] = useState('kamar@abmgroups.org');
@@ -129,7 +136,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
   return (
     <>
       <style>{STYLE}</style>
-      <Toaster position="top-right" toastOptions={{ style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' } }} />
+      <Toaster position="top-right" containerStyle={{ zIndex: 999999 }} toastOptions={{ style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' } }} />
       <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
         <Sidebar onLogout={logout} mobileOpen={mobileMenuOpen} setMobileOpen={setMobileMenuOpen} />
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', width: '100%' }}>
@@ -138,7 +145,8 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/leads" element={<LeadsView onLeadClick={handleLeadClick} refreshTrigger={leadRefresh} />} />
+              <Route path="/sales-tasks" element={<SalesTasksView />} />
+                <Route path="/leads" element={<LeadsView onLeadClick={handleLeadClick} refreshTrigger={leadRefresh} />} />
               <Route path="/inbox" element={<InboxView />} />
               <Route path="/campaigns" element={<CampaignsView />} />
               <Route path="/templates" element={<TemplatesView />} />
@@ -149,6 +157,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/clients" element={<ClientsView />} />
               <Route path="/settings" element={<SettingsView />} />
               <Route path="/workflows" element={<WorkflowsView />} />
+              <Route path="/integrations" element={<IntegrationsView />} />
               
               <Route path="/alliance-dashboard" element={<AllianceDashboard />} />
               <Route path="/upload-leads" element={<UploadLeads />} />
@@ -187,12 +196,17 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/thedal/local-citations" element={<LocalCitations />} />
               <Route path="/thedal/local-seo-bridge" element={<LocalSeoBridge />} />
 
+              <Route path="/mafiya/orders" element={<MafiyaOrders />} />
+              <Route path="/mafiya/plans" element={<PlanManagementMafiya />} />
               <Route path="/mafiya/add-client" element={<AddClientMafiya />} />
+              <Route path="/mafiya/family" element={<Family />} />
               <Route path="/mafiya/loyalty" element={<LoyaltyMafiya />} />
               <Route path="/mafiya/brain" element={<GmbBrain />} />
               <Route path="/mafiya/street-posts" element={<StreetPosts />} />
+              <Route path="/mafiya/citations" element={<Citations />} />
               <Route path="/mafiya/gbp-insights" element={<GbpInsights />} />
               <Route path="/mafiya/rivals" element={<RivalFamilies />} />
+              <Route path="/mafiya/usage" element={<UsageMafiya />} />
 
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>

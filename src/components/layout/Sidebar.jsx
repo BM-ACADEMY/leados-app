@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, Users, LineChart, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, CheckSquare, MonitorPlay, Search, Activity, FileSearch, ShieldAlert, FileOutput, MapPin, Share2, Eye, FileJson, GitPullRequest, Link as LinkIcon, Target, Shield, UserPlus, Heart, Megaphone, Wand2 } from 'lucide-react';
+import { Home, Users, LineChart, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, CheckSquare, MonitorPlay, Search, Activity, FileSearch, ShieldAlert, FileOutput, MapPin, Share2, Eye, FileJson, GitPullRequest, Link as LinkIcon, Target, Shield, UserPlus, Heart, Megaphone, Globe, ClipboardList, Wand2 } from 'lucide-react';
 import { C } from '../../constants/theme.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
 
 const NAV = [
   { path: '/dashboard', Icon: Home, label: 'Dashboard' },
   { path: '/leads', Icon: Users, label: 'Leads' },
+  { path: '/sales-tasks', Icon: User, label: 'Sales Task' },
   { path: '/inbox', Icon: Inbox, label: 'Inbox', showBadge: true },
   { path: '/campaigns', Icon: Zap, label: 'Campaigns' },
   { path: '/templates', Icon: FileText, label: 'Templates' },
@@ -15,6 +16,7 @@ const NAV = [
   { path: '/reports', Icon: BarChart2, label: 'Reports' },
   { path: '/founder-reports', Icon: FileText, label: 'Founder Reports' },
   { path: '/clients', Icon: Building2, label: 'Clients' },
+  { path: '/integrations', Icon: Share2, label: 'Integrations' },
 ];
 
 export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }) => {
@@ -490,8 +492,18 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 24, marginTop: 4, position: 'relative' }}>
                 <div style={{ position: 'absolute', left: 20, top: 4, bottom: 10, width: 1, background: C.border }} />
 
+              
+
+                <NavLink to="/mafiya/family" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'The Family')}>
+                  <Users size={14} style={{ marginRight: 8 }} /> The Family
+                </NavLink>
+
                 <NavLink to="/mafiya/add-client" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GMB Clients')}>
                   <UserPlus size={14} style={{ marginRight: 8 }} /> GMB Clients
+                </NavLink>
+
+                <NavLink to="/mafiya/plans" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Mafiya Plans')}>
+                  <Layers size={14} style={{ marginRight: 8 }} /> Mafiya Plans
                 </NavLink>
 
                 <NavLink to="/thedal/keyword-tracking" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Turf Control')}>
@@ -502,20 +514,33 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                   <Heart size={14} style={{ marginRight: 8 }} /> Loyalty (Review)
                 </NavLink>
 
-                <NavLink to="/mafiya/gbp-insights" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GBP Insights')}>
-                  <BarChart2 size={14} style={{ marginRight: 8 }} /> GBP Insights
-                </NavLink>
-
                 <NavLink to="/mafiya/street-posts" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Street Posts')}>
                   <Megaphone size={14} style={{ marginRight: 8 }} /> Street Posts
                 </NavLink>
 
-                <NavLink to="/mafiya/brain" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GMB Brain')}>
-                  <Brain size={14} style={{ marginRight: 8 }} /> GMB Brain
-                </NavLink>
-
                 <NavLink to="/mafiya/rivals" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Rival Families')}>
                   <Target size={14} style={{ marginRight: 8 }} /> Rival Families
+                </NavLink>
+
+                <NavLink to="/mafiya/gbp-insights" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'GBP Insights')}>
+                  <BarChart2 size={14} style={{ marginRight: 8 }} /> GBP Insights
+                </NavLink>
+
+                 <NavLink to="/mafiya/citations" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Citation')}>
+                  <Globe size={14} style={{ marginRight: 8 }} /> Citation
+                </NavLink>
+
+                  <NavLink to="/mafiya/orders" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Mafia Orders')}>
+                  <ClipboardList size={14} style={{ marginRight: 8 }} /> Mafia Orders
+                </NavLink>
+
+
+                <NavLink to="/mafiya/brain" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, "Don's Brain")}>
+                  <Brain size={14} style={{ marginRight: 8 }} /> Don's Brain
+                </NavLink>
+
+                <NavLink to="/mafiya/usage" onClick={handleNavClick} style={({ isActive }) => getLinkStyle(isActive, 'Usage')}>
+                  <Activity size={14} style={{ marginRight: 8 }} /> Usage
                 </NavLink>
 
               </div>

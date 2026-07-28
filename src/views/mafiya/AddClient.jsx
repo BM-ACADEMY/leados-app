@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { C } from '../../constants/theme.js';
-import { User, Loader2, CheckCircle2, Building, Phone, Mail, Globe, Shield, Link2, Plus, Trash2, Search, X, Users, Send, MoreVertical } from 'lucide-react';
+import { User, Loader2, CheckCircle2, Building, Phone, Mail, Globe, Shield, Link2, Plus, Trash2, Search, X, Users, Send, MoreVertical, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { io as socketIO } from 'socket.io-client';
 
@@ -21,15 +21,18 @@ const CATEGORIES = [
 
 const INITIAL_FORM = {
   business_name: '',
+  display_name: '',
   business_category: '',
   custom_category: '',
   phone_number: '',
+  business_address: '',
   contact_person: '',
   website_url: '',
   gmb_url: '',
   gmb_email: '',
-  logo_url: '',
   ga4_property_id: '',
+  client_type: 'internal',
+  plan_id: '',
 };
 
 export default function AddClient() {
@@ -41,11 +44,13 @@ export default function AddClient() {
   const [showOtherCategory, setShowOtherCategory] = useState(false);
   const [formData, setFormData] = useState({ ...INITIAL_FORM });
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState('all'); // 'all', 'internal', 'paid'
   const [deletingId, setDeletingId] = useState(null);
   const [resendingId, setResendingId] = useState(null);
   const [disconnectingId, setDisconnectingId] = useState(null);
   const [activeDropdownId, setActiveDropdownId] = useState(null);
   const [editingClient, setEditingClient] = useState(null);
+  const [plans, setPlans] = useState([]);
   const modalRef = useRef(null);
 
   const handleEditClick = (client) => {
@@ -53,15 +58,18 @@ export default function AddClient() {
     const categoryExists = CATEGORIES.includes(client.business_category);
     setFormData({
       business_name: client.business_name || '',
+      display_name: client.display_name || '',
       business_category: categoryExists ? client.business_category : 'Other',
       custom_category: !categoryExists ? client.business_category : '',
       phone_number: client.phone_number || '',
+      business_address: client.business_address || '',
       contact_person: client.contact_person || '',
       website_url: client.website_url || '',
       gmb_url: client.gmb_url || '',
       gmb_email: client.gmb_email || '',
-      logo_url: client.logo_url || '',
       ga4_property_id: client.ga4_property_id || '',
+      client_type: client.client_type || 'internal',
+      plan_id: client.plan_id || '',
     });
     setShowOtherCategory(!categoryExists && client.business_category !== '');
     setErrors({});
@@ -128,7 +136,25 @@ export default function AddClient() {
     }
   };
 
-  useEffect(() => { fetchClients(); }, []);
+  const fetchPlans = async () => {
+    try {
+      const token = localStorage.getItem('leados_token');
+      const res = await fetch(`${API_URL}/api/mafiya/plans`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPlans(data);
+      }
+    } catch (err) {
+      console.error('Fetch plans error:', err);
+    }
+  };
+
+  useEffect(() => { 
+    fetchClients(); 
+    fetchPlans();
+  }, []);
 
   useEffect(() => {
     const closeDropdown = () => setActiveDropdownId(null);
@@ -196,6 +222,7 @@ export default function AddClient() {
     if (!formData.business_name) newErrors.business_name = 'Business name is required';
     if (!formData.phone_number) newErrors.phone_number = 'Phone number is required';
     if (!formData.contact_person) newErrors.contact_person = 'Contact person is required';
+    if (!formData.business_address) newErrors.business_address = 'Business address is required';
     if (showOtherCategory && !formData.custom_category) {
       newErrors.custom_category = 'Please specify your business category';
     }
@@ -214,6 +241,8 @@ export default function AddClient() {
       const body = {
         ...formData,
         business_category: showOtherCategory ? formData.custom_category : formData.business_category,
+        client_type: formData.client_type || 'internal',
+        plan_id: formData.client_type === 'paid' && formData.plan_id ? parseInt(formData.plan_id) : null
       };
       
       if (editingClient) {
@@ -274,6 +303,7 @@ export default function AddClient() {
 
   const filteredClients = clients.filter(c =>
     c.business_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.contact_person?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.gmb_email?.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -294,19 +324,251 @@ export default function AddClient() {
     );
   }
 
+  const totalClientsCount = clients.length;
+  const totalInternalCount = clients.filter(c => c.client_type === 'internal').length;
+  const totalPaidCount = clients.filter(c => c.client_type === 'paid').length;
+
+  const totalMonthlyRecurring = clients
+    .filter(c => c.client_type === 'paid')
+    .reduce((sum, client) => {
+      const plan = plans.find(p => p.id === client.plan_id);
+      return sum + (plan ? parseFloat(plan.price) : 4999);
+    }, 0);
+
+  const avgHealthScore = Math.round(
+    clients.reduce((sum, client) => sum + (client.gmb_verified ? 90 : 45), 0) / (clients.length || 1)
+  );
+
+  const attentionNeededCount = clients.filter(c => !c.gmb_verified).length;
+
+  const internalClients = filteredClients.filter(c => c.client_type === 'internal');
+  const paidClients = filteredClients.filter(c => c.client_type === 'paid');
+
+  const renderClientCard = (client) => (
+    <div key={client.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20, position: 'relative', transition: 'border-color 0.2s, box-shadow 0.2s' }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(249,115,22,0.3)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.3)'; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = 'none'; }}
+    >
+      {/* Card Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 36, height: 36, background: 'linear-gradient(135deg, rgba(249,115,22,0.15), rgba(234,88,12,0.08))', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(249,115,22,0.2)' }}>
+            <Building size={16} color="#f97316" />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#fff' }}>{client.display_name || client.business_name}</h3>
+            {client.display_name && (
+              <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }} title="Official Google Business Name">GBP: {client.business_name}</div>
+            )}
+            <span style={{ fontSize: 11, color: C.muted }}>{client.business_category || client.custom_category || '—'}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: client.client_type === 'paid' ? '#ea580c' : '#3b82f6', background: client.client_type === 'paid' ? 'rgba(234,88,12,0.1)' : 'rgba(59,130,246,0.1)', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.5, border: `1px solid ${client.client_type === 'paid' ? 'rgba(234,88,12,0.2)' : 'rgba(59,130,246,0.2)'}` }}>
+                {client.client_type === 'paid' ? (plans.find(p => p.id === client.plan_id)?.name || 'Paid Client') : 'Internal'}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveDropdownId(activeDropdownId === client.id ? null : client.id);
+            }}
+            style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 6, cursor: 'pointer', transition: 'background 0.15s' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+          >
+            <MoreVertical size={16} color={C.muted} />
+          </button>
+          
+          {activeDropdownId === client.id && (
+            <div style={{
+              position: 'absolute',
+              right: 0,
+              top: '100%',
+              marginTop: 4,
+              background: '#0a0f1d',
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)',
+              zIndex: 50,
+              minWidth: 140,
+              overflow: 'hidden'
+            }}>
+              <button
+                onClick={() => handleEditClick(client)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  width: '100%',
+                  padding: '10px 12px',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#e2e8f0',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <Building size={13} color="#f97316" />
+                Edit Client
+              </button>
+              {client.gmb_verified && (
+                <button
+                  onClick={() => handleDisconnectGmb(client.id)}
+                  disabled={disconnectingId === client.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#e2e8f0',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    transition: 'background 0.15s',
+                    borderTop: `1px solid ${C.border}50`
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  {disconnectingId === client.id ? <Loader2 size={13} className="spin" /> : <X size={13} color="#ef4444" />}
+                  Disconnect GMB
+                </button>
+              )}
+              <button
+                onClick={() => handleDelete(client.id)}
+                disabled={deletingId === client.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  width: '100%',
+                  padding: '10px 12px',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#f87171',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s',
+                  borderTop: `1px solid ${C.border}50`
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                {deletingId === client.id ? <Loader2 size={13} className="spin" color="#ef4444" /> : <Trash2 size={13} color="#ef4444" />}
+                Delete Client
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Card Details */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
+          <User size={13} /> <span style={{ color: '#fff' }}>{client.contact_person}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
+          <Phone size={13} /> <span style={{ color: '#fff' }}>{client.phone_number}</span>
+        </div>
+        {client.business_address && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: C.muted }}>
+            <MapPin size={13} style={{ marginTop: 2, flexShrink: 0 }} /> <span style={{ color: '#fff', whiteSpace: 'pre-line' }}>{client.business_address}</span>
+          </div>
+        )}
+        {client.gmb_email && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
+            <Mail size={13} /> <span style={{ color: '#fff' }}>{client.gmb_email}</span>
+          </div>
+        )}
+        {client.website_url && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
+            <Globe size={13} /> <span style={{ color: '#6ee7b7' }}>{client.website_url}</span>
+          </div>
+        )}
+        {client.gmb_url && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
+            <Link2 size={13} /> <a href={client.gmb_url} target="_blank" rel="noreferrer" style={{ color: '#93c5fd', textDecoration: 'none', fontSize: 12 }}>View GMB Profile ↗</a>
+          </div>
+        )}
+      </div>
+
+      {/* Card Footer */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+        <span style={{ fontSize: 10, color: C.muted }}>
+          Added {new Date(client.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+        </span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {client.gmb_email && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: client.gmb_verified ? '#10b981' : '#f59e0b', background: client.gmb_verified ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)', padding: '3px 10px', borderRadius: 20, textTransform: 'uppercase', letterSpacing: 0.5, border: `1px solid ${client.gmb_verified ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
+                {client.gmb_verified ? '🟢 GMB Connected' : '🟡 GMB Pending'}
+              </span>
+              {!client.gmb_verified && (
+                <button
+                  onClick={() => handleResendEmail(client.id, client.gmb_email)}
+                  disabled={resendingId === client.id}
+                  title="Resend verification email"
+                  style={{
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.15)',
+                    borderRadius: 20,
+                    padding: '3px 8px',
+                    cursor: 'pointer',
+                    color: '#f59e0b',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    transition: 'all 0.15s'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(245, 158, 11, 0.18)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'rgba(245, 158, 11, 0.08)'}
+                >
+                  {resendingId === client.id ? <Loader2 size={9} className="spin" /> : <Send size={9} />}
+                  <span>Send Link</span>
+                </button>
+              )}
+            </div>
+          )}
+          <span style={{ fontSize: 10, fontWeight: 700, color: client.status === 'active' ? '#10b981' : C.muted, background: client.status === 'active' ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.04)', padding: '3px 10px', borderRadius: 20, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            {client.status || 'active'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ padding: 30, color: C.text, height: '100%', overflowY: 'auto', background: 'rgba(0,0,0,0.1)' }}>
 
       {/* ═══ Page Header ═══ */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 42, height: 42, background: 'linear-gradient(135deg, #ea580c, #f97316)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Shield size={22} color="#fff" />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, color: '#fff', margin: 0 }}>
+              Clients
+            </h1>
+            <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(249,115,22,0.12)', color: C.accent, padding: '3px 8px', borderRadius: 20 }}>
+              {totalClientsCount} Total
+            </span>
           </div>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#fff', fontFamily: "'Syne', sans-serif" }}>GMB Client Profiles</h1>
-            <p style={{ margin: 0, color: C.muted, fontSize: 12, marginTop: 2 }}>{clients.length} client{clients.length !== 1 ? 's' : ''} onboarded</p>
-          </div>
+          <p style={{ color: C.muted, fontSize: 12.5, marginTop: 6, margin: 0 }}>
+            {totalInternalCount} internal ABM brands • {totalPaidCount} paying BM TechX clients • ₹{totalMonthlyRecurring.toLocaleString('en-IN')}/month recurring
+          </p>
         </div>
         <button
           onClick={() => { setFormData({ ...INITIAL_FORM }); setErrors({}); setShowOtherCategory(false); setShowModal(true); }}
@@ -314,13 +576,63 @@ export default function AddClient() {
           onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.04)'}
           onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
         >
-          <Plus size={16} /> Add Client
+          <Plus size={16} /> Add New Client
         </button>
+      </div>
+
+      {/* ═══ Tab Bar Filter ═══ */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 26, borderBottom: `1px solid ${C.border}50` }}>
+        {[
+          { id: 'all', label: `All Clients (${totalClientsCount})` },
+          { id: 'internal', label: `Internal ABM (${totalInternalCount})` },
+          { id: 'paid', label: `Paying Clients (${totalPaidCount})` }
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              borderBottom: activeTab === tab.id ? `3px solid ${C.accent}` : '3px solid transparent',
+              color: activeTab === tab.id ? '#fff' : C.muted,
+              padding: '10px 18px',
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              marginBottom: -1
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ═══ Metric Summary Cards ═══ */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16, marginBottom: 28 }}>
+        {/* Card 1: Total Clients */}
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Total Clients</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: '#fff', fontFamily: "'Syne', sans-serif" }}>{totalClientsCount}</div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{totalInternalCount} internal • {totalPaidCount} paying</div>
+        </div>
+        {/* Card 2: Monthly Recurring */}
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Monthly Recurring</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: '#10b981', fontFamily: "'Syne', sans-serif" }}>₹{totalMonthlyRecurring.toLocaleString('en-IN')}</div>
+          <div style={{ fontSize: 12, color: '#10b981', marginTop: 4 }}>↑ ₹9,999 this month</div>
+        </div>
+        {/* Card 3: Average Health Score */}
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Avg Health Score</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: '#f59e0b', fontFamily: "'Syne', sans-serif" }}>{avgHealthScore}</div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{attentionNeededCount} brand{attentionNeededCount !== 1 ? 's' : ''} need attention</div>
+        </div>
       </div>
 
       {/* ═══ Search Bar ═══ */}
       {clients.length > 0 && (
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 26 }}>
           <div style={{ display: 'flex', alignItems: 'center', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '0 14px', maxWidth: 380 }}>
             <Search size={15} color={C.muted} />
             <input
@@ -333,7 +645,7 @@ export default function AddClient() {
         </div>
       )}
 
-      {/* ═══ Client Cards ═══ */}
+      {/* ═══ Client Listing Sections ═══ */}
       {filteredClients.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '80px 20px' }}>
           <Users size={48} color={C.border} style={{ marginBottom: 16 }} />
@@ -342,201 +654,46 @@ export default function AddClient() {
           </p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
-          {filteredClients.map(client => (
-            <div key={client.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20, position: 'relative', transition: 'border-color 0.2s, box-shadow 0.2s' }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(249,115,22,0.3)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.3)'; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              {/* Card Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 36, height: 36, background: 'linear-gradient(135deg, rgba(249,115,22,0.15), rgba(234,88,12,0.08))', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(249,115,22,0.2)' }}>
-                    <Building size={16} color="#f97316" />
-                  </div>
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#fff' }}>{client.business_name}</h3>
-                    <span style={{ fontSize: 11, color: C.muted }}>{client.business_category || client.custom_category || '—'}</span>
-                  </div>
-                </div>
-                <div style={{ position: 'relative' }}>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveDropdownId(activeDropdownId === client.id ? null : client.id);
-                    }}
-                    style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 6, cursor: 'pointer', transition: 'background 0.15s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                  >
-                    <MoreVertical size={16} color={C.muted} />
-                  </button>
-                  
-                  {activeDropdownId === client.id && (
-                    <div style={{
-                      position: 'absolute',
-                      right: 0,
-                      top: '100%',
-                      marginTop: 4,
-                      background: '#0a0f1d',
-                      border: `1px solid ${C.border}`,
-                      borderRadius: 8,
-                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)',
-                      zIndex: 50,
-                      minWidth: 140,
-                      overflow: 'hidden'
-                    }}>
-                      <button
-                        onClick={() => handleEditClick(client)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          width: '100%',
-                          padding: '10px 12px',
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#e2e8f0',
-                          fontSize: 12,
-                          fontWeight: 600,
-                          textAlign: 'left',
-                          cursor: 'pointer',
-                          transition: 'background 0.15s'
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                      >
-                        <Building size={13} color="#f97316" />
-                        Edit Client
-                      </button>
-                      {client.gmb_verified && (
-                        <button
-                          onClick={() => handleDisconnectGmb(client.id)}
-                          disabled={disconnectingId === client.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            width: '100%',
-                            padding: '10px 12px',
-                            background: 'transparent',
-                            border: 'none',
-                            color: '#e2e8f0',
-                            fontSize: 12,
-                            fontWeight: 600,
-                            textAlign: 'left',
-                            cursor: 'pointer',
-                            transition: 'background 0.15s',
-                            borderTop: `1px solid ${C.border}50`
-                          }}
-                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                        >
-                          {disconnectingId === client.id ? <Loader2 size={13} className="spin" /> : <X size={13} color="#ef4444" />}
-                          Disconnect GMB
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleDelete(client.id)}
-                        disabled={deletingId === client.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          width: '100%',
-                          padding: '10px 12px',
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#f87171',
-                          fontSize: 12,
-                          fontWeight: 600,
-                          textAlign: 'left',
-                          cursor: 'pointer',
-                          transition: 'background 0.15s',
-                          borderTop: `1px solid ${C.border}50`
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                      >
-                        {deletingId === client.id ? <Loader2 size={13} className="spin" color="#ef4444" /> : <Trash2 size={13} color="#ef4444" />}
-                        Delete Client
-                      </button>
-                    </div>
-                  )}
-                </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+          
+          {/* Section 1: Internal ABM Brands */}
+          {(activeTab === 'all' || activeTab === 'internal') && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                <Building size={18} color="#3b82f6" />
+                <h2 style={{ fontSize: 16, fontWeight: 800, color: '#fff', margin: 0 }}>Internal ABM Brands</h2>
               </div>
-
-              {/* Card Details */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
-                  <User size={13} /> <span style={{ color: '#fff' }}>{client.contact_person}</span>
+              {internalClients.length === 0 ? (
+                <div style={{ padding: 20, background: 'rgba(255,255,255,0.01)', border: `1px dashed ${C.border}`, borderRadius: 12, color: C.muted, fontSize: 13 }}>
+                  No internal clients found.
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
-                  <Phone size={13} /> <span style={{ color: '#fff' }}>{client.phone_number}</span>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+                  {internalClients.map(renderClientCard)}
                 </div>
-                {client.gmb_email && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
-                    <Mail size={13} /> <span style={{ color: '#fff' }}>{client.gmb_email}</span>
-                  </div>
-                )}
-                {client.website_url && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
-                    <Globe size={13} /> <span style={{ color: '#6ee7b7' }}>{client.website_url}</span>
-                  </div>
-                )}
-                {client.gmb_url && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.muted }}>
-                    <Link2 size={13} /> <a href={client.gmb_url} target="_blank" rel="noreferrer" style={{ color: '#93c5fd', textDecoration: 'none', fontSize: 12 }}>View GMB Profile ↗</a>
-                  </div>
-                )}
-              </div>
-
-              {/* Card Footer */}
-              <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 10, color: C.muted }}>
-                  Added {new Date(client.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                </span>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  {client.gmb_email && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: client.gmb_verified ? '#10b981' : '#f59e0b', background: client.gmb_verified ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)', padding: '3px 10px', borderRadius: 20, textTransform: 'uppercase', letterSpacing: 0.5, border: `1px solid ${client.gmb_verified ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
-                        {client.gmb_verified ? '🟢 GMB Connected' : '🟡 GMB Pending'}
-                      </span>
-                      {!client.gmb_verified && (
-                        <button
-                          onClick={() => handleResendEmail(client.id, client.gmb_email)}
-                          disabled={resendingId === client.id}
-                          title="Resend verification email"
-                          style={{
-                            background: 'rgba(245, 158, 11, 0.08)',
-                            border: '1px solid rgba(245, 158, 11, 0.15)',
-                            borderRadius: 20,
-                            padding: '3px 8px',
-                            cursor: 'pointer',
-                            color: '#f59e0b',
-                            fontSize: 9,
-                            fontWeight: 700,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            transition: 'all 0.15s'
-                          }}
-                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(245, 158, 11, 0.18)'}
-                          onMouseLeave={e => e.currentTarget.style.background = 'rgba(245, 158, 11, 0.08)'}
-                        >
-                          {resendingId === client.id ? <Loader2 size={9} className="spin" /> : <Send size={9} />}
-                          <span>Send Link</span>
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  <span style={{ fontSize: 10, fontWeight: 700, color: client.status === 'active' ? '#10b981' : C.muted, background: client.status === 'active' ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.04)', padding: '3px 10px', borderRadius: 20, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    {client.status || 'active'}
-                  </span>
-                </div>
-              </div>
+              )}
             </div>
-          ))}
+          )}
+
+          {/* Section 2: Paying BM TechX Clients */}
+          {(activeTab === 'all' || activeTab === 'paid') && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, marginTop: activeTab === 'all' ? 12 : 0 }}>
+                <Users size={18} color="#ea580c" />
+                <h2 style={{ fontSize: 16, fontWeight: 800, color: '#fff', margin: 0 }}>Paying BM TechX Clients</h2>
+              </div>
+              {paidClients.length === 0 ? (
+                <div style={{ padding: 20, background: 'rgba(255,255,255,0.01)', border: `1px dashed ${C.border}`, borderRadius: 12, color: C.muted, fontSize: 13 }}>
+                  No paying clients found.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+                  {paidClients.map(renderClientCard)}
+                </div>
+              )}
+            </div>
+          )}
+
         </div>
       )}
 
@@ -576,14 +733,21 @@ export default function AddClient() {
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: C.accent, marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Business Basics</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                   <div>
-                    <label style={labelStyle}>Business Name *</label>
+                    <label style={labelStyle}>Display Name (Internal)</label>
+                    <div style={{ ...inputWrapStyle, border: `1px solid ${C.border}` }}>
+                      <Building size={15} color={C.muted} />
+                      <input name="display_name" value={formData.display_name} onChange={handleInputChange} placeholder="E.g. Raahath Dental (Internal)" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Official Business Name (GBP Name) *</label>
                     <div style={{ ...inputWrapStyle, border: `1px solid ${errors.business_name ? '#ef4444' : C.border}` }}>
                       <Building size={15} color={C.muted} />
                       <input name="business_name" value={formData.business_name} onChange={handleInputChange} placeholder="E.g. Raahath Dental Care" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
                     </div>
                     {errors.business_name && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.business_name}</span>}
                   </div>
-                  <div>
+                  <div style={{ gridColumn: 'span 2' }}>
                     <label style={labelStyle}>Business Type / Category *</label>
                     <select name="business_category" value={formData.business_category} onChange={handleInputChange} style={{ ...inputStyle, background: '#0a0f1d' }}>
                       <option value="">Select Category...</option>
@@ -630,6 +794,25 @@ export default function AddClient() {
                     {errors.phone_number && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.phone_number}</span>}
                   </div>
                 </div>
+
+                <div style={{ marginTop: 14 }}>
+                  <label style={labelStyle}>Business Address *</label>
+                  <textarea
+                    name="business_address"
+                    value={formData.business_address}
+                    onChange={handleInputChange}
+                    rows={5}
+                    placeholder={`Enter the complete business address\nExample:\n123, Business Road,\nKottakuppam,\nPuducherry - 605104,\nIndia`}
+                    style={{
+                      ...inputStyle,
+                      border: `1px solid ${errors.business_address ? '#ef4444' : C.border}`,
+                      resize: 'vertical',
+                      lineHeight: 1.5,
+                      fontFamily: 'inherit'
+                    }}
+                  />
+                  {errors.business_address && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.business_address}</span>}
+                </div>
               </div>
 
               {/* Section 3: GMB Details */}
@@ -652,19 +835,37 @@ export default function AddClient() {
                     {errors.gmb_email && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.gmb_email}</span>}
                   </div>
                   <div>
-                    <label style={labelStyle}>Business Logo URL</label>
-                    <div style={{ ...inputWrapStyle, border: `1px solid ${C.border}` }}>
-                      <Globe size={15} color={C.muted} />
-                      <input name="logo_url" value={formData.logo_url} onChange={handleInputChange} placeholder="E.g. https://domain.com/logo.png" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
-                    </div>
-                  </div>
-                  <div>
                     <label style={labelStyle}>GA4 Property ID (For Post Analytics)</label>
                     <div style={{ ...inputWrapStyle, border: `1px solid ${C.border}` }}>
                       <Globe size={15} color={C.muted} />
                       <input name="ga4_property_id" value={formData.ga4_property_id} onChange={handleInputChange} placeholder="E.g. 123456789" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Section 4: Client Settings & Plan */}
+              <div>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: C.accent, marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Client Settings & Plan</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <div>
+                    <label style={labelStyle}>Client Type</label>
+                    <select name="client_type" value={formData.client_type} onChange={handleInputChange} style={{ ...inputStyle, background: '#0a0f1d' }}>
+                      <option value="internal">Internal Brand (Unlimited)</option>
+                      <option value="paid">Paid Client (Plan-based)</option>
+                    </select>
+                  </div>
+                  {formData.client_type === 'paid' && (
+                    <div>
+                      <label style={labelStyle}>Assigned Pricing Plan</label>
+                      <select name="plan_id" value={formData.plan_id} onChange={handleInputChange} style={{ ...inputStyle, background: '#0a0f1d' }}>
+                        <option value="">Select Plan...</option>
+                        {plans.map(p => (
+                          <option key={p.id} value={p.id}>{p.name} (₹{parseFloat(p.price).toLocaleString()})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               </div>
 

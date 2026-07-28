@@ -38,7 +38,22 @@ router.post('/keywords', async (req, res) => {
     return res.status(400).json({ error: 'client_id and keyword are required' });
   }
 
+  const { checkLimit } = require('../utils/limit-checker');
+
   try {
+    // Enforce keyword limit check
+    const limitCheck = await checkLimit(client_id, 'mafiya_keywords', async () => {
+      const countRes = await pool.query('SELECT COUNT(*) FROM mafiya_turf_keywords WHERE client_id = $1', [client_id]);
+      return parseInt(countRes.rows[0].count, 10);
+    });
+
+    if (!limitCheck.allowed) {
+      return res.status(403).json({ 
+        error: 'Limit reached', 
+        message: `Your current plan allows up to ${limitCheck.limit} keywords. Please upgrade your plan to track more keywords.` 
+      });
+    }
+
     const result = await pool.query(
       `INSERT INTO mafiya_turf_keywords (client_id, keyword, initial_rank, current_rank, pack_status, last_checked)
        VALUES ($1, $2, $3, $3, $4, NOW())

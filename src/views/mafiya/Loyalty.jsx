@@ -3,8 +3,8 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 import { C } from '../../constants/theme.js';
-import { 
-  Loader2, MapPin, Star, MessageCircle, Eye, Search, 
+import {
+  Loader2, MapPin, Star, MessageCircle, Eye, Search,
   MousePointerClick, CheckCircle, Megaphone, Send, LogOut,
   Image as ImageIcon, Shield, Sparkles, AlertTriangle, RefreshCw, Heart
 } from 'lucide-react';
@@ -23,7 +23,7 @@ const getFriendlyGoogleError = (err) => {
         title: 'Google API Rate Limit Exceeded',
         desc: 'Google APIs have temporarily rate-limited requests for this account. Please wait a few minutes before trying again.'
       };
-      
+
     }
     if (code === 403 || message.toLowerCase().includes('permission') || message.toLowerCase().includes('access denied') || message.toLowerCase().includes('forbidden')) {
       return {
@@ -54,7 +54,7 @@ const parseRelativeTime = (timeStr) => {
   if (!timeStr) return 0;
   const now = new Date();
   const lower = timeStr.toLowerCase().trim();
-  
+
   if (lower.includes('second')) {
     const val = parseInt(lower) || 1;
     return now.setSeconds(now.getSeconds() - val);
@@ -83,7 +83,7 @@ const parseRelativeTime = (timeStr) => {
     const val = parseInt(lower) || 1;
     return now.setFullYear(now.getFullYear() - val);
   }
-  
+
   const parsed = Date.parse(timeStr);
   return isNaN(parsed) ? 0 : parsed;
 };
@@ -122,14 +122,14 @@ export default function Loyalty() {
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const businessName = activeClient?.business_name || 'our company';
+      const businessName = activeClient?.display_name || activeClient?.business_name || 'our company';
       const author = review.author || 'customer';
-      const wrappedReply = `${author},\n\n${data.reply}\n\nWarm Regards,\nTeam ${businessName}`;
+      const wrappedReply = `Dear ${author},\n\n${data.reply}\n\nWarm Regards,\nTeam ${businessName}`;
       setReplyText(wrappedReply);
     } catch (e) {
       console.error("AI Generation failed, falling back to template:", e);
       toast.error(`AI API Limit Exceeded / Error: ${e.message}`);
-      const businessName = activeClient?.business_name || 'our company';
+      const businessName = activeClient?.display_name || activeClient?.business_name || 'our company';
       const author = review.author || 'customer';
       let text = '';
       if (review.rating >= 5) {
@@ -170,10 +170,10 @@ export default function Loyalty() {
     setDataLoading(true);
     try {
       const token = localStorage.getItem('leados_token');
-      
+
       // Get Status
       const { data: statusData } = await axios.get(`${API_URL}/api/mafiya/reviews/status?clientId=${clientId}`, {
-        headers: { 
+        headers: {
           Authorization: `Bearer ${token}`,
           'x-data-mode': mode
         }
@@ -183,7 +183,7 @@ export default function Loyalty() {
       // Get Data
       try {
         const { data: details } = await axios.get(`${API_URL}/api/mafiya/reviews/data?clientId=${clientId}${refresh ? '&refresh=true' : ''}`, {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${token}`,
             'x-data-mode': mode
           }
@@ -218,22 +218,22 @@ export default function Loyalty() {
     try {
       const token = localStorage.getItem('leados_token');
       await axios.post(`${API_URL}/api/mafiya/reviews/reply-review`, {
-        clientId: activeClient.id, 
-        reviewId, 
-        replyText 
+        clientId: activeClient.id,
+        reviewId,
+        replyText
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       // Optimistic update
-      const updatedReviews = data.recentReviews.map(r => 
+      const updatedReviews = data.recentReviews.map(r =>
         r.id === reviewId ? { ...r, replied: true, replyText } : r
       );
       setData({ ...data, recentReviews: updatedReviews });
       toast.success('Reply submitted successfully!');
       setReplyingTo(null);
       setReplyText('');
-      
+
       // Refresh backend reviews cache immediately
       fetchReviewData(activeClient.id, 'real');
     } catch (err) {
@@ -266,7 +266,7 @@ export default function Loyalty() {
     );
   }
 
-  const sortedReviews = data?.recentReviews 
+  const sortedReviews = data?.recentReviews
     ? [...data.recentReviews].sort((a, b) => {
         const timeA = (a.timestamp && !isNaN(new Date(a.timestamp).getTime())) ? new Date(a.timestamp).getTime() : parseRelativeTime(a.date);
         const timeB = (b.timestamp && !isNaN(new Date(b.timestamp).getTime())) ? new Date(b.timestamp).getTime() : parseRelativeTime(b.date);
@@ -284,6 +284,16 @@ export default function Loyalty() {
         .spin {
           animation: spin 1s linear infinite;
         }
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        .skeleton-shimmer {
+          background: linear-gradient(90deg, #1c1c1f 25%, #27272a 50%, #1c1c1f 75%);
+          background-size: 200% 100%;
+          animation: shimmer 1.5s infinite linear;
+          border-radius: 8px;
+        }
       `}</style>
 
       {/* HEADER */}
@@ -298,7 +308,7 @@ export default function Loyalty() {
             </span>
           </div>
           <p style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>
-            Manage GMB reviews, ratings, and customer sentiment for <strong style={{ color: '#fff' }}>{activeClient?.business_name}</strong>
+            Manage GMB reviews, ratings, and customer sentiment for <strong style={{ color: '#fff' }}>{activeClient?.display_name || activeClient?.business_name}</strong>
           </p>
         </div>
 
@@ -334,21 +344,21 @@ export default function Loyalty() {
               const selected = clients.find(c => c.id === parseInt(e.target.value, 10));
               if (selected) setActiveClient(selected);
             }}
-            style={{ 
-              background: '#0f172a', 
-              border: `1px solid ${C.border}`, 
-              borderRadius: 8, 
-              padding: '8px 16px', 
-              color: '#e2e8f0', 
-              fontSize: 13, 
-              outline: 'none', 
+            style={{
+              background: '#0f172a',
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              padding: '8px 16px',
+              color: '#e2e8f0',
+              fontSize: 13,
+              outline: 'none',
               cursor: 'pointer',
               height: 38
             }}
           >
             {clients.map(c => (
               <option key={c.id} value={c.id}>
-                {c.business_name}
+                 {c.display_name || c.business_name}
               </option>
             ))}
           </select>
@@ -462,7 +472,7 @@ export default function Loyalty() {
                       <p style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 1.5, margin: '0 0 16px 0', whiteSpace: 'pre-wrap' }}>
                         {review.text?.replace(/<br\s*\/?>/gi, '\n')}
                       </p>
-                      
+
                       {review.replied && replyingTo !== review.id ? (
                         <div style={{ background: 'rgba(255,255,255,0.03)', padding: 16, borderRadius: 8, borderLeft: `3px solid ${C.accent}` }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -476,7 +486,7 @@ export default function Loyalty() {
 
 
 
-                                
+
                                 setReplyingTo(review.id);
                                 setReplyText(review.replyText || '');
                               }}
@@ -493,35 +503,49 @@ export default function Loyalty() {
                         <div>
                           {replyingTo === review.id ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                              <textarea 
-                                value={replyText}
-                                onChange={e => setReplyText(e.target.value.slice(0, 1500))}
-                                maxLength={1500}
-                                placeholder="Write a public reply..."
-                                style={{
-                                  width: '100%',
-                                  background: 'rgba(0,0,0,0.2)',
-                                  border: `1px solid ${C.border}`,
-                                  borderRadius: 8,
-                                  padding: 12,
-                                  color: '#fff',
-                                  fontSize: 14,
-                                  minHeight: 80,
-                                  resize: 'vertical',
-                                  outline: 'none'
-                                }}
-                              />
-                              <div style={{ fontSize: 11, color: C.muted, textAlign: 'right', marginTop: -4 }}>
-                                {replyText.length} / 1500 characters
-                              </div>
+                              {generatingAiFor === review.id ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '16px 20px', background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.05)', minHeight: 92 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                    <Sparkles size={13} className="spin" color="#f97316" />
+                                    <span style={{ fontSize: 11.5, color: '#f97316', fontWeight: 600 }}>AI is drafting a reply...</span>
+                                  </div>
+                                  <div className="skeleton-shimmer" style={{ height: 10, width: '40%' }} />
+                                  <div className="skeleton-shimmer" style={{ height: 10, width: '90%' }} />
+                                  <div className="skeleton-shimmer" style={{ height: 10, width: '75%' }} />
+                                </div>
+                              ) : (
+                                <>
+                                  <textarea
+                                    value={replyText}
+                                    onChange={e => setReplyText(e.target.value.slice(0, 1500))}
+                                    maxLength={1500}
+                                    placeholder="Write a public reply..."
+                                    style={{
+                                      width: '100%',
+                                      background: 'rgba(0,0,0,0.2)',
+                                      border: `1px solid ${C.border}`,
+                                      borderRadius: 8,
+                                      padding: 12,
+                                      color: '#fff',
+                                      fontSize: 14,
+                                      minHeight: 80,
+                                      resize: 'vertical',
+                                      outline: 'none'
+                                    }}
+                                  />
+                                  <div style={{ fontSize: 11, color: C.muted, textAlign: 'right', marginTop: -4 }}>
+                                    {replyText.length} / 1500 characters
+                                  </div>
+                                </>
+                              )}
                               <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-                                <button 
+                                <button
                                   onClick={() => { setReplyingTo(null); setReplyText(''); }}
                                   style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
                                 >
                                   Cancel
                                 </button>
-                                <button 
+                                <button
                                   onClick={() => submitReply(review.id)}
                                   disabled={submittingReply}
                                   style={{
@@ -538,14 +562,14 @@ export default function Loyalty() {
                                     gap: 6
                                   }}
                                 >
-                                  {submittingReply ? <Loader2 size={14} className="spin" /> : <Send size={14} />} 
+                                  {submittingReply ? <Loader2 size={14} className="spin" /> : <Send size={14} />}
                                   Post Reply
                                 </button>
                               </div>
                             </div>
                           ) : (
                             <div style={{ display: 'flex', gap: 12 }}>
-                              <button 
+                              <button
                                 onClick={() => setReplyingTo(review.id)}
                                 style={{
                                   background: 'transparent',
@@ -564,7 +588,7 @@ export default function Loyalty() {
                                 Reply
                               </button>
 
-                              <button 
+                              <button
                                 onClick={() => generateAiReply(review)}
                                 disabled={generatingAiFor === review.id}
                                 style={{

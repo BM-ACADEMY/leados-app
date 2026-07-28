@@ -72,12 +72,12 @@ export default function PlanSubscription() {
     const pOld = currentPlanObj.price || 0;
     const pNew = newPlanObj.price || 0;
     
-    const createdDate = new Date(selectedClient.created_at || Date.now());
-    const daysElapsed = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000)) % 30;
-    const daysRemaining = Math.max(0, 30 - daysElapsed);
-    
     const oldCycleDays = currentPlanObj.billing_cycle === -1 ? 36500 : Number(currentPlanObj.billing_cycle) || 30;
     const newCycleDays = newPlanObj.billing_cycle === -1 ? 36500 : Number(newPlanObj.billing_cycle) || 30;
+
+    const startDate = new Date(selectedClient.updated_at || selectedClient.created_at || Date.now());
+    const daysElapsed = Math.floor((Date.now() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+    const daysRemaining = Math.max(0, oldCycleDays - daysElapsed);
     
     const dailyRateOld = oldCycleDays > 0 ? (pOld / oldCycleDays) : 0;
     const unusedCredit = Math.max(0, parseFloat((dailyRateOld * daysRemaining).toFixed(2)));
@@ -210,8 +210,15 @@ export default function PlanSubscription() {
                     {client.email} {client.phone ? `• ${client.phone}` : ''}
                   </div>
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.accent, background: 'rgba(0,0,0,0.3)', padding: '4px 10px', borderRadius: 20 }}>
-                  {client.plan || 'No Plan'}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {client.is_expired_auto_downgraded && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239,68,68,0.3)', padding: '2px 8px', borderRadius: 10 }}>
+                      Expired & Downgraded
+                    </span>
+                  )}
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.accent, background: 'rgba(0,0,0,0.3)', padding: '4px 10px', borderRadius: 20 }}>
+                    {client.plan || 'No Plan'}
+                  </div>
                 </div>
               </div>
             )) : (

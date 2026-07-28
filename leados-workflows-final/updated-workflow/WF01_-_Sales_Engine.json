@@ -25,7 +25,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: $json.body.message, brand: $json.body.brand, lead_id: $json.body.lead_id, source: $json.body.source, campaign_id: $json.body.campaign_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ message: $json.body.message, name: $json.body.name, phone: $json.body.phone, brand: $json.body.brand, lead_id: $json.body.lead_id, source: $json.body.source, campaign_id: $json.body.campaign_id }) }}"
       },
       "id": "11463102-1b24-40c2-84ae-8605a8263798",
       "name": "Intent Detection",
@@ -79,7 +79,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, intent: $json.intent, message: $json.message, kb_snippets: $json.kb_snippets, lead_id: $json.lead_id, objections: $json.objections }) }}"
+        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, name: $json.name, phone: $json.phone, intent: $json.intent, message: $json.message, kb_snippets: $json.kb_snippets, system_instructions: $json.system_instructions, lead_id: $json.lead_id, objections: $json.objections }) }}"
       },
       "id": "55923ed8-d688-4403-a5ca-d99434383d4a",
       "name": "Generate AI Response",

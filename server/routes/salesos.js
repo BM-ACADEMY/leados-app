@@ -8,23 +8,275 @@ const axios = require('axios');
 // ==========================================
 
 const { GoogleGenAI } = require('@google/genai');
+
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
+// Resolve a raw Meta WhatsApp payload synchronously so n8n can continue the
+// same execution with the spoken text instead of ending on an audio placeholder.
+router.post('/whatsapp/transcribe', async (req, res) => {
+  try {
+    const payload = req.body?.payload || req.body;
+    const value = payload?.entry?.[0]?.changes?.[0]?.value;
+    const audio = value?.messages?.[0]?.audio;
+
+    if (!audio?.id) {
+      return res.json(payload);
+    }
+    if (!ai) {
+      return res.status(503).json({
+        error: 'Voice transcription is not configured. Set GEMINI_API_KEY on the API server.',
+      });
+    }
+
+    const phoneNumberId = value?.metadata?.phone_number_id;
+    const clientResult = phoneNumberId
+      ? await pool.query('SELECT wa_access_token FROM clients WHERE phone_number_id = $1 LIMIT 1', [phoneNumberId])
+      : { rows: [] };
+    const waToken = clientResult.rows[0]?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+    if (!waToken) {
+      return res.status(503).json({ error: 'No WhatsApp access token is configured for this phone number.' });
+    }
+
+    const mediaResponse = await axios.get(`https://graph.facebook.com/v18.0/${audio.id}`, {
+      headers: { Authorization: `Bearer ${waToken}` },
+    });
+    const mediaUrl = mediaResponse.data?.url;
+    if (!mediaUrl) {
+      return res.status(502).json({ error: 'Meta did not return a URL for the voice note.' });
+    }
+
+    const audioResponse = await axios.get(mediaUrl, {
+      headers: { Authorization: `Bearer ${waToken}` },
+      responseType: 'arraybuffer',
+    });
+    const mimeType = mediaResponse.data?.mime_type || audio.mime_type || 'audio/ogg';
+    const result = await ai.models.generateContent({
+      model: process.env.GEMINI_AUDIO_MODEL || 'gemini-3.6-flash',
+      contents: [
+        {
+          text: 'Transcribe this WhatsApp voice note precisely in its original language. Return only the spoken words, without commentary or formatting.',
+        },
+        {
+          inlineData: {
+            mimeType,
+            data: Buffer.from(audioResponse.data).toString('base64'),
+          },
+        },
+      ],
+    });
+    const transcription = String(result?.text || '').trim();
+    if (!transcription) {
+      return res.status(502).json({ error: 'The transcription provider returned an empty transcript.' });
+    }
+
+    // Present the transcript to WF00 exactly like a normal text message so the
+    // existing normalization, lead detection and sales-engine nodes continue.
+    const message = value.messages[0];
+    message.type = 'text';
+    message.text = { body: transcription };
+    message.original_type = 'audio';
+    delete message.audio;
+    return res.json(payload);
+  } catch (err) {
+    console.error('[WhatsApp Transcription Error]', err.response?.data || err.message);
+    return res.status(502).json({ error: 'Voice-note transcription failed.', detail: err.message });
+  }
+});
+
+const GEMINI_MODELS = (process.env.GEMINI_MODELS || 'gemini-3.5-flash,gemini-3.1-flash-lite')
+  .split(',')
+  .map((model) => model.trim())
+  .filter(Boolean);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const GEMINI_REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || 12000);
+
+const withTimeout = (promise, timeoutMs, label) => {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new GeminiServiceError({
+          message: `${label} timed out after ${timeoutMs}ms.`,
+          status: 504,
+          category: 'deadline_exceeded',
+          retryable: true,
+        }));
+      }, timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+};
+
+const getGeminiStatus = (err) => {
+  const value = err?.status ?? err?.code ?? err?.response?.status;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const getGeminiCategory = (status) => {
+  if (status === 429) return 'quota_exceeded';
+  if (status === 503) return 'temporarily_unavailable';
+  if (status === 504) return 'deadline_exceeded';
+  if (status === 401 || status === 403) return 'authentication_or_permission';
+  if (status === 404) return 'model_not_found';
+  if (status === 400) return 'invalid_request';
+  if (status && status >= 500) return 'provider_error';
+  return 'network_or_unknown';
+};
+
+class GeminiServiceError extends Error {
+  constructor({ message, status = 502, category, retryable = false, model = null, cause = null }) {
+    super(message);
+    this.name = 'GeminiServiceError';
+    this.httpStatus = status;
+    this.category = category;
+    this.retryable = retryable;
+    this.model = model;
+    this.cause = cause;
+  }
+}
+
+const sendAiError = (res, err) => {
+  if (!(err instanceof GeminiServiceError)) {
+    console.error('[AI] Unexpected error:', err);
+    return res.status(500).json({
+      error: 'AI request failed due to an internal server error.',
+      code: 'internal_error',
+      retryable: false,
+    });
+  }
+
+  return res.status(err.httpStatus).json({
+    error: err.message,
+    code: err.category,
+    retryable: err.retryable,
+    model: err.model,
+  });
+};
+
+const BRAND_KEYWORDS = [
+  { name: 'BM Academy', pattern: /\b(course|class|syllabus|placement|job[- ]?ready|batch|fees?|academy|training|learn|learning|certification)\b/i },
+  // "Digital marketing" alone is intentionally not a TechX switch signal: it is
+  // also an Academy course. TechX requires explicit service/business context.
+  { name: 'BM TechX', pattern: /\b(bm\s*techx|techx|marketing (service|agency)|digital marketing (service|agency)|run (meta |google )?ads?|grow (my |our )?business|business marketing|website|branding service|generate leads?|lead generation|gmb|seo service|social media service)\b/i },
+  { name: 'CoreTalents', pattern: /\b(hiring|recruit|candidate|staff|vacancy|resume|coretalents?)\b/i },
+  { name: 'Namma Pondy Properties', pattern: /\b(property|plot|villa|land|patta|ec|real estate|jipmer)\b/i },
+  { name: 'TravellersNeed', pattern: /\b(trip|tour|package|travel|holiday|pondy tour|travellers?need)\b/i },
+  { name: "Dada's Kitchen", pattern: /\b(food|catering|kitchen|order|dada'?s kitchen)\b/i },
+  { name: 'EduConsultants', pattern: /\b(study abroad|education abroad|overseas admission|educonsultants?)\b/i },
+  { name: 'BM Foundation', pattern: /\b(donation|ngo|charity|volunteer|foundation)\b/i },
+];
+
+const detectExplicitBrand = (message = '') =>
+  BRAND_KEYWORDS.find(({ pattern }) => pattern.test(message))?.name || null;
+
+const getLeadFirstName = (name) => {
+  const cleanName = String(name || '').trim();
+  // Empty, numbers only, or too short names return empty to avoid broken greetings
+  if (!cleanName || /^\+?\d+$/.test(cleanName) || cleanName.length < 2) return '';
+  // Remove special characters and get first valid word
+  const sanitized = cleanName.replace(/[^a-zA-Z0-9\s]/g, '').trim();
+  const firstWord = sanitized.split(/\s+/)[0] || '';
+  // Only return if it's a valid name (at least 2 chars, letters only)
+  if (firstWord.length >= 2 && /^[a-zA-Z]+$/.test(firstWord)) {
+    return firstWord;
+  }
+  return '';
+};
+
+const DEFAULT_BOT_BEHAVIOR = `You are the ABM Groups shared WhatsApp assistant.
+Use the current contact's first name naturally. For a greeting, reply only:
+"Hey {first_name}! 👋 How can I help you today?"
+Never recite the ABM Groups brand list as a default greeting.
+Keep the detected brand sticky until the user clearly mentions another brand.
+"Digital marketing" alone inherits the locked brand: it is an Academy course when
+BM Academy is locked. Switch to BM TechX only for explicit service/business intent
+such as marketing service, run ads, grow my business, website or lead generation.
+Remember information already supplied and never ask for it again.
+For bookings, collect missing topic, date, time, name and number. Never claim a
+booking, calendar write, reminder or handoff succeeded unless its tool succeeded.
+For a voice note, ask the contact to type it. Send exactly one concise reply.`;
+
+// Gemini-only fallback chain (paid key — higher rate limits).
+// Tries 4 models in order: if one is busy/overloaded the next kicks in automatically.
 async function generateGeminiContent(prompt) {
-  if (!ai) throw new Error("Gemini API not initialized");
-  const models = ['gemini-3.5-flash', 'gemini-2.5-flash'];
-  for (const model of models) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
+  if (!ai) {
+    throw new GeminiServiceError({
+      message: 'GEMINI_API_KEY is not configured on the API server.',
+      status: 500,
+      category: 'configuration_error',
+    });
+  }
+
+  let lastFailure = null;
+  const errors = [];
+  for (const model of GEMINI_MODELS) {
+    // One bounded attempt per model keeps the entire API request below the
+    // reverse-proxy timeout. The next configured model is the retry/fallback.
+    for (let attempt = 1; attempt <= 1; attempt += 1) {
       try {
-        const aiRes = await ai.models.generateContent({ model, contents: prompt });
-        return aiRes.text.trim();
+        const aiRes = await withTimeout(
+          ai.models.generateContent({ model, contents: prompt }),
+          GEMINI_REQUEST_TIMEOUT_MS,
+          `Gemini ${model}`
+        );
+        const text = aiRes?.text?.trim();
+        if (!text) {
+          throw new GeminiServiceError({
+            message: `Gemini returned an empty response from ${model}.`,
+            status: 502,
+            category: 'empty_response',
+            retryable: true,
+            model,
+          });
+        }
+        console.log(`[AI] ✅ Gemini (${model})`);
+        return text;
       } catch (err) {
-        console.warn(`Gemini (${model}) attempt ${attempt} error: ${err.message}`);
-        if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
+        const upstreamStatus = getGeminiStatus(err);
+        const category = err instanceof GeminiServiceError
+          ? err.category
+          : getGeminiCategory(upstreamStatus);
+        const retryable = err instanceof GeminiServiceError
+          ? err.retryable
+          : upstreamStatus === 429 || upstreamStatus === 503 ||
+            upstreamStatus === 504 || (upstreamStatus !== null && upstreamStatus >= 500) ||
+            upstreamStatus === null;
+        const msg = err?.message || category;
+        errors.push(`${model}#${attempt}: ${category} (${upstreamStatus || 'unknown'})`);
+
+        lastFailure = err instanceof GeminiServiceError
+          ? err
+          : new GeminiServiceError({
+              message: `Gemini request failed: ${category}.`,
+              status: upstreamStatus === 429 ? 429 : (retryable ? 503 : 502),
+              category,
+              retryable,
+              model,
+              cause: err,
+            });
+        console.warn(`[AI] Gemini (${model}) attempt ${attempt} failed: ${msg}`);
+        console.error('[AI] Gemini failure details', { model, attempt, upstreamStatus, category, message: msg });
+
+        // Bad credentials and malformed requests affect every configured model.
+        if ([400, 401, 403].includes(upstreamStatus)) throw lastFailure;
+        // Do not retry a retired/unknown model; try the next configured model.
+        if (upstreamStatus === 404) break;
+        if (!retryable || attempt === 1) break;
+
+        const delayMs = (1000 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 400);
+        await sleep(delayMs);
       }
     }
   }
-  throw new Error("AI models temporarily in high demand after automatic retries. Please try again.");
+
+  console.error('[AI] ❌ All Gemini models exhausted:', errors.join(' | '));
+  throw lastFailure || new GeminiServiceError({
+    message: 'No Gemini models are configured.',
+    status: 500,
+    category: 'configuration_error',
+  });
 }
 
 async function getOrUpsertConversation(lead_id) {
@@ -129,12 +381,47 @@ router.post('/leads/deduplicate', async (req, res) => {
 
 // 2. Hybrid Brand Detection
 router.post('/brand/detect', async (req, res) => {
-  const { phone_number_id } = req.body;
+  const { phone_number_id, phone, message } = req.body;
   try {
     let brandId = null;
     let brandName = 'ABM Groups';
+    const explicitBrand = detectExplicitBrand(message);
 
-    if (phone_number_id) {
+    // An explicit keyword is the only reason to switch an existing session.
+    if (explicitBrand) {
+      const explicitRes = await pool.query(
+        `SELECT id, name
+         FROM clients
+         WHERE LOWER(name) = LOWER($1)
+         LIMIT 1`,
+        [explicitBrand]
+      );
+      if (explicitRes.rows.length > 0) {
+        brandId = explicitRes.rows[0].id;
+        brandName = explicitRes.rows[0].name;
+      }
+    }
+
+    // Sticky brand: when the message has no switch keyword, retain the brand
+    // already assigned to this WhatsApp number.
+    if (!brandId && phone) {
+      const digits = String(phone).replace(/\D/g, '');
+      const existingRes = await pool.query(
+        `SELECT c.id, c.name
+         FROM leads l
+         JOIN clients c ON c.id = l.client_id
+         WHERE RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = RIGHT($1, 10)
+         ORDER BY l.updated_at DESC
+         LIMIT 1`,
+        [digits]
+      );
+      if (existingRes.rows.length > 0) {
+        brandId = existingRes.rows[0].id;
+        brandName = existingRes.rows[0].name;
+      }
+    }
+
+    if (!brandId && phone_number_id) {
       const clientRes = await pool.query(`SELECT id, name FROM clients WHERE phone_number_id = $1 LIMIT 1`, [phone_number_id]);
       if (clientRes.rows.length > 0) {
         brandId = clientRes.rows[0].id;
@@ -149,7 +436,14 @@ router.post('/brand/detect', async (req, res) => {
       }
     }
 
-    res.json({ ...req.body, brand_id: brandId, brand_name: brandName, brand: brandName });
+    res.json({
+      ...req.body,
+      brand_id: brandId,
+      brand_name: brandName,
+      brand: brandName,
+      brand_locked: Boolean(brandId),
+      brand_switched: Boolean(explicitBrand),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -178,7 +472,7 @@ router.post('/leads/createOrUpdate', async (req, res) => {
       );
     } else {
       const insert = await pool.query(
-        `INSERT INTO leads (name, phone, email, source, client_id, status, score) VALUES ($1, $2, $3, $4, $5, 'new', 10) RETURNING id`,
+        `INSERT INTO leads (name, phone, email, source, client_id, status, score, next_followup_due) VALUES ($1, $2, $3, $4, $5, 'new', 10, NOW() + INTERVAL '24 hours') RETURNING id`,
         [name, phone, email, source, brand_id]
       );
       lead_id = insert.rows[0].id;
@@ -197,23 +491,68 @@ router.post('/leads/createOrUpdate', async (req, res) => {
 router.post('/ai/intent', async (req, res) => {
   const { message, brand, lead_id } = req.body;
   try {
+    let effectiveBrand = brand || 'ABM Groups';
+    const explicitBrand = detectExplicitBrand(message);
+
+    if (lead_id) {
+      const currentBrandRes = await pool.query(
+        `SELECT c.name
+         FROM leads l
+         LEFT JOIN clients c ON c.id = l.client_id
+         WHERE l.id = $1
+         LIMIT 1`,
+        [lead_id]
+      );
+      const currentBrand = currentBrandRes.rows[0]?.name;
+      effectiveBrand = currentBrand || effectiveBrand;
+
+      // Persist a switch only for an unambiguous keyword. Phrases such as
+      // "digital marketing" have no explicit target and therefore remain in the
+      // current locked brand (e.g. the BM Academy course conversation).
+      if (explicitBrand && explicitBrand !== currentBrand) {
+        const targetBrandRes = await pool.query(
+          `SELECT id, name FROM clients WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+          [explicitBrand]
+        );
+        if (targetBrandRes.rows[0]) {
+          await pool.query(
+            `UPDATE leads SET client_id = $1, updated_at = NOW() WHERE id = $2`,
+            [targetBrandRes.rows[0].id, lead_id]
+          );
+          effectiveBrand = targetBrandRes.rows[0].name;
+        }
+      }
+    }
+
     // FIX: Ensure conversation exists safely without constraint errors and log inbound message for bidirectional UI
     if (lead_id && message) {
       const conversation_id = await getOrUpsertConversation(lead_id);
-      // Only insert if this message hasn't been logged recently to prevent dupes
+      // The WhatsApp webhook normally persists this message before n8n runs.
+      // Insert only when no matching inbound event was saved in the last minute.
       const savedMsg = await pool.query(
-        `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai, sent_at) VALUES ($1, 'inbound', 'text', $2, 'delivered', false, NOW()) RETURNING id, direction, content, msg_type as type, status, sent_at as timestamp`,
+        `INSERT INTO messages (conversation_id, direction, msg_type, content, status, is_ai, sent_at)
+         SELECT $1, 'inbound', 'text', $2, 'delivered', false, NOW()
+         WHERE NOT EXISTS (
+           SELECT 1
+           FROM messages
+           WHERE conversation_id = $1
+             AND direction = 'inbound'
+             AND content = $2
+             AND sent_at >= NOW() - INTERVAL '1 minute'
+         )
+         RETURNING id, direction, content, msg_type as type, status, sent_at as timestamp`,
         [conversation_id, message]
       );
-      await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW(), unread_count = COALESCE(unread_count, 0) + 1 WHERE id = $2`, [message, conversation_id]);
+      if (savedMsg.rows[0]) {
+        await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW(), unread_count = COALESCE(unread_count, 0) + 1 WHERE id = $2`, [message, conversation_id]);
+      }
       const io = req.app.get('io');
       if (io && savedMsg.rows[0]) {
         io.emit('incoming_message', { lead_id: Number(lead_id), message: savedMsg.rows[0] });
       }
     }
 
-    if (!ai) return res.json({ intent: "GENERAL", confidence: 50 });
-    const prompt = `Analyze this message sent to the brand '${brand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
+    const prompt = `Analyze this message in the locked brand '${effectiveBrand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
     const output = await generateGeminiContent(prompt);
     const parts = output.split(',');
     const intent = parts[0] ? parts[0].trim() : 'GENERAL';
@@ -222,9 +561,9 @@ router.post('/ai/intent', async (req, res) => {
     if (lead_id) {
       await pool.query(`INSERT INTO ai_decisions (lead_id, module, input, output, confidence) VALUES ($1, $2, $3, $4, $5)`, [lead_id, 'intent_detection', message, intent, confidence]);
     }
-    res.json({ ...req.body, intent, confidence });
+    res.json({ ...req.body, brand: effectiveBrand, brand_locked: true, intent, confidence });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendAiError(res, err);
   }
 });
 
@@ -232,22 +571,104 @@ router.post('/ai/intent', async (req, res) => {
 router.post('/ai/objections', async (req, res) => {
   const { message, brand, lead_id } = req.body;
   try {
-    if (!ai) return res.json({ objections: "none" });
     const prompt = `Analyze this message. Does the user have any objections? Choose one: [TOO_EXPENSIVE, NO_TIME, NOT_SURE, USING_COMPETITOR, NONE]. Message: "${message}". Reply ONLY with the objection type.`;
     const objections = await generateGeminiContent(prompt);
     res.json({ ...req.body, objections });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendAiError(res, err);
   }
 });
+
+const KB_MAX_CHARS = Number(process.env.AI_KB_MAX_CHARS || 18000);
+const KB_STOP_WORDS = new Set([
+  'a', 'all', 'and', 'are', 'available', 'can', 'course', 'courses', 'do',
+  'for', 'have', 'i', 'in', 'is', 'list', 'me', 'of', 'please', 'show',
+  'tell', 'the', 'to', 'what', 'you', 'your',
+]);
+
+const getRelevantKnowledge = (documents, query = '') => {
+  const normalizedQuery = String(query).toLowerCase();
+  const wantsCourseList = /\b(all|available|offer|show|what|which)\b.*\b(course|courses|program|programs)\b|\bcourse list\b/i.test(normalizedQuery);
+  const queryTerms = [...new Set(
+    normalizedQuery
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter((term) => term.length > 1 && !KB_STOP_WORDS.has(term))
+  )];
+
+  const chunks = documents
+    .flatMap((document) => String(document || '').split(/(?=^#{2,3}\s)/gm))
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+
+  const ranked = chunks.map((chunk, index) => {
+    const lower = chunk.toLowerCase();
+    let score = queryTerms.reduce((total, term) => total + (lower.includes(term) ? 5 : 0), 0);
+    if (/^## brand_router/im.test(chunk)) score += 2;
+    if (wantsCourseList && /complete course catalogue/i.test(chunk)) score += 100;
+    if (wantsCourseList && /^### program_/im.test(chunk)) score += 1;
+    return { chunk, index, score };
+  }).sort((a, b) => b.score - a.score || a.index - b.index);
+
+  const selected = [];
+  let length = 0;
+  for (const item of ranked) {
+    if (item.score <= 0 && selected.length > 0) continue;
+    const remaining = KB_MAX_CHARS - length;
+    if (remaining <= 0) break;
+    const value = item.chunk.slice(0, remaining);
+    selected.push(value);
+    length += value.length;
+    if (selected.length >= 8) break;
+  }
+
+  return selected.join('\n\n');
+};
 
 // 3. Knowledge Retrieval
 router.post('/kb/search', async (req, res) => {
   const { brand, query, lead_id } = req.body;
   try {
-    const kbRes = await pool.query(`SELECT content FROM brain_docs WHERE client_id = (SELECT id FROM clients WHERE name = 'ABM Groups' LIMIT 1) AND doc_type = 'prompt' LIMIT 1`);
-    const kb_snippets = kbRes.rows.length > 0 ? kbRes.rows[0].content : "No knowledge base found.";
-    res.json({ ...req.body, kb_snippets });
+    // AIBrainView stores the master multi-brand knowledge under ABM Groups.
+    // Load it as a fallback and combine it with any brand-specific documents.
+    const targetBrand = brand || 'ABM Groups';
+    const docsRes = await pool.query(
+      `SELECT c.name AS client_name, bd.doc_type, bd.content
+       FROM brain_docs bd
+       JOIN clients c ON c.id = bd.client_id
+       WHERE (LOWER(c.name) = LOWER($1) OR LOWER(c.name) = LOWER('ABM Groups'))
+         AND bd.doc_type IN ('prompt', 'training', 'product', 'pricing')
+       ORDER BY
+         CASE WHEN LOWER(c.name) = LOWER($1) THEN 1 ELSE 0 END,
+         CASE bd.doc_type
+           WHEN 'prompt' THEN 1
+           WHEN 'product' THEN 2
+           WHEN 'pricing' THEN 3
+           WHEN 'training' THEN 4
+         END`,
+      [targetBrand]
+    );
+
+    const knowledgeDocs = docsRes.rows
+      .filter((doc) => ['prompt', 'product', 'pricing'].includes(doc.doc_type) && doc.content)
+      .map((doc) => doc.content);
+    const trainingDocs = docsRes.rows
+      .filter((doc) => doc.doc_type === 'training' && doc.content)
+      .map((doc) => doc.content);
+
+    const kb_snippets = getRelevantKnowledge(knowledgeDocs, query) || 'No relevant knowledge found.';
+    const isBmAcademy = ['bm academy', 'bm-academy', 'bmacademy'].includes(
+      String(targetBrand).trim().toLowerCase()
+    );
+    const bmAcademyCourseRule = isBmAcademy
+      ? `BM ACADEMY COURSE LIST RULE:
+When asked for available courses or the full course list, include every PROGRAM entry in the knowledge base, not only the first four. The catalogue has 23 courses. Group the names under Flagship & Placement, Digital Marketing, Creator & Video, Design & Web, AI Tools, and Kids & Teens. Show names first, then ask which course needs details.`
+      : '';
+    const system_instructions = [...trainingDocs, bmAcademyCourseRule]
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 8000);
+    res.json({ ...req.body, kb_snippets, system_instructions });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -255,37 +676,159 @@ router.post('/kb/search', async (req, res) => {
 
 // 4. Generate AI Response
 router.post('/ai/response', async (req, res) => {
-  const { brand, intent, message, kb_snippets, lead_id, chat_history } = req.body;
+  const { brand, intent, message, kb_snippets, system_instructions, lead_id, chat_history, name } = req.body;
   try {
-    if (!ai) return res.json({ ...req.body, ai_reply: "AI is currently offline. We will get back to you shortly!" });
+    let leadName = name || '';
+    let persistedBrand = brand || 'ABM Groups';
+    if (lead_id) {
+      const leadContext = await pool.query(
+        `SELECT l.name, c.name AS brand_name
+         FROM leads l
+         LEFT JOIN clients c ON c.id = l.client_id
+         WHERE l.id = $1
+         LIMIT 1`,
+        [lead_id]
+      );
+      leadName = leadContext.rows[0]?.name || leadName;
+      persistedBrand = leadContext.rows[0]?.brand_name || persistedBrand;
+    }
+
+    const firstName = getLeadFirstName(leadName);
+    const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(String(message || '').trim());
+
+    // Detect voice/audio messages - respond immediately without AI
+    const msgContent = String(message || '').toLowerCase();
+    const isVoiceMessage = msgContent.includes('[voice_message]') ||
+                         msgContent.includes('[audio]') ||
+                         msgContent.includes('voice note') ||
+                         msgContent.includes('🎧');
+
+    if (isVoiceMessage) {
+      const voiceReply = "Got your voice note 🎧 — could you type it quickly so I can help right away?";
+      return res.json({ ...req.body, ai_reply: voiceReply });
+    }
+
+    // Greetings are deterministic so the model can never fall back to the old
+    // all-brand recital. This also saves one paid Gemini request.
+    if (isSimpleGreeting) {
+      const ai_reply = firstName
+        ? `Hey ${firstName}! 👋 How can I help you today?`
+        : 'Hey! 👋 How can I help you today?';
+      return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
+    }
 
     let historyText = "";
     if (chat_history && Array.isArray(chat_history)) {
       historyText = "Chat History:\n" + chat_history.map(h => `${h.role}: ${h.text}`).join("\n") + "\n\n";
     }
 
-    const prompt = `System Prompt (ABM Groups Knowledge Base):\n${kb_snippets}\n\n${historyText}User Intent detected: ${intent}\n\nUser Message: "${message}"\n\nWrite a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.`;
+    const prompt = `AI BRAIN SYSTEM INSTRUCTIONS (editable in LeadOS):\n${system_instructions || DEFAULT_BOT_BEHAVIOR}\n\n
+      NON-NEGOTIABLE ORCHESTRATION RULES:
+      - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${persistedBrand}".
+      - Address the contact naturally by first name ("${firstName || 'there'}") when useful, but do not repeat their name in every sentence.
+      - The brand is sticky. Stay with "${persistedBrand}" unless the current message explicitly names or clearly keywords another ABM brand.
+      - "Digital marketing" alone never switches brands. Under BM Academy it means the course; under BM TechX it means the service.
+      - Academy learning signals: course, class, syllabus, batch, fees, training, placement, certification.
+      - TechX service signals: marketing service/agency, run ads, business growth, website, branding service, lead generation, GMB or SEO service.
+      - For a greeting, reply only: "${firstName ? `Hey ${firstName}! 👋 How can I help you today?` : 'Hey! 👋 How can I help you today?'}"
+      - Never recite ABM Groups and its brand list as a default greeting.
+      - Never reset the conversation or ask again for information already present in chat history.
+      - If the user asks a FAQ (like contact number, timings, or fees) mid-booking, provide the answer inline and immediately resume the booking flow. Do not reset the conversation or ask for information again.
+      - Send exactly one concise WhatsApp reply for this user message.
+      - Never claim a booking, calendar entry, reminder, or handoff succeeded unless the corresponding workflow result confirms it.
 
-    const ai_reply = await generateGeminiContent(prompt);
+      KNOWLEDGE BASE REFERENCE:
+      ${kb_snippets}
+
+      ${historyText}User Intent detected: ${intent}
+      User Message: "${message}"
+
+      CRITICAL BEHAVIOR SPECIFICATIONS:
+      1. Greeting: Mirror the user's opener (e.g. "hi" -> "Hi!", "hello" -> "Hello!"). Keep it to one short line. Do NOT open with "Vanakkam, this is ABM Groups" or list all brands on every message. Only fall back to full brand list if intent is genuinely unclear.
+      2. Brand detection: Only switch brands if the new message clearly contains a different brand keyword (BM Academy, BM TechX, CoreTalents, Namma Pondy Properties, TravellersNeed, Dada's Kitchen, EduConsultants, BM Foundation). Otherwise, stick to the locked brand.
+      3. Conversation memory: Never ask for something already provided (e.g., don't ask the time slot again after the user gave "4pm", or name if already given).
+      4. Fallbacks: If it's a voice note (audio), reply: "Got your voice note 🎧 — could you type it quickly so I can help right away?". If unclear, ask ONE short clarifying question.
+      5. Tone: Write a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.
+      6. Routing Numbers: Use these exact numbers if the user asks for contact info: Shared WABA (inbound) is ${process.env.SHARED_WABA_NUMBER || '919944509441'}, Outbound contact for ALL brands is ${process.env.OUTBOUND_CONTACT_NUMBER || '94038 92971'}, General / partnerships is ${process.env.GENERAL_PARTNERSHIPS_NUMBER || '99442 88271'}, BM Academy admissions is ${process.env.BM_ACADEMY_ADMISSIONS_NUMBER || '94038 92971'}.
+      
+      JSON OUTPUT REQUIREMENT:
+      You MUST return your response as a raw JSON object with the following keys exactly:
+      {
+        "reply": "your generated reply message following the behavior specs",
+        "extracted_name": "John Doe", (or null if the user has not provided their name)
+        "extracted_booking_time": "2026-07-25T16:00:00Z" (or null if the user has not provided a preferred date/time for a call)
+      }
+      Respond ONLY with the JSON object, no markdown formatting, no backticks.`;
+
+    const rawAiResponse = await generateGeminiContent(prompt);
+      
+    let ai_reply = "I'm sorry, I couldn't process that. Can you repeat?";
+    let extractedData = null;
+
+    try {
+      const cleanJsonStr = rawAiResponse.replace(/\s*```json\s*/gi, '').replace(/\s*```\s*/g, '').trim();
+      extractedData = JSON.parse(cleanJsonStr);
+      ai_reply = extractedData.reply || rawAiResponse;
+
+      if (lead_id) {
+         if (extractedData.extracted_name) {
+           await pool.query(`UPDATE leads SET name = $1 WHERE id = $2`, [extractedData.extracted_name, lead_id]);
+         }
+         if (extractedData.extracted_booking_time) {
+           // When a booking time is extracted, set status to 'booked' to STOP follow-ups
+           await pool.query(`UPDATE leads SET call_booked_at = $1, status = 'booked', updated_at = NOW() WHERE id = $2`, [extractedData.extracted_booking_time, lead_id]);
+           console.log(`[AI Booking] Lead ${lead_id} booked for ${extractedData.extracted_booking_time} - follow-ups STOPPED`);
+         }
+      }
+    } catch (parseErr) {
+      console.error("Failed to parse Gemini JSON:", parseErr.message, rawAiResponse);
+      ai_reply = rawAiResponse; 
+    }
+
     res.json({ ...req.body, ai_reply });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // Keep the WhatsApp workflow moving when every AI model is temporarily
+    // slow/unavailable. HTTP 200 prevents an nginx/n8n 504 failure.
+    if (err instanceof GeminiServiceError && err.retryable) {
+      console.error('[AI] Returning safe fallback after provider timeout:', err.message);
+      return res.json({
+        ...req.body,
+        ai_reply: "I'm taking a little longer than usual. Please send that once more, and I'll help you right away.",
+        ai_fallback: true,
+        ai_error_code: err.category,
+      });
+    }
+    sendAiError(res, err);
   }
 });
 
-// 5. Qualify And Score
+// 5. Qualify And Score - DETERMINISTIC FORMULA (no LLM involvement)
 router.post('/leads/score', async (req, res) => {
   const { lead_id, message, intent, objections } = req.body;
   try {
     let scoreBoost = 0;
+
+    // Intent-based scoring (deterministic)
     if (intent === 'BOOK_CALL' || intent === 'PRICING') scoreBoost = 20;
     else if (intent === 'NOT_INTERESTED') scoreBoost = -20;
-    else scoreBoost = 5;
+    else if (intent === 'MORE_INFO' || intent === 'GENERAL_CHAT') scoreBoost = 5;
+    else if (intent === 'COMPLAINT') scoreBoost = -15;
+    else scoreBoost = 5; // Default
+
+    // Objection-based scoring (deterministic)
+    if (objections) {
+      const obj = String(objections).toLowerCase();
+      if (obj.includes('too_expensive') || obj.includes('no_time')) scoreBoost -= 10;
+      if (obj.includes('not_sure')) scoreBoost -= 5;
+      if (obj.includes('using_competitor')) scoreBoost -= 10;
+    }
 
     const result = await pool.query(
       `UPDATE leads SET score = LEAST(GREATEST(score + $1, 0), 100), updated_at = NOW() WHERE id = $2 RETURNING score`,
       [scoreBoost, lead_id]
     );
+
+    console.log(`[Lead Scoring] Lead ${lead_id}: intent=${intent}, objections=${objections}, boost=${scoreBoost}, new_score=${result.rows[0]?.score}`);
     res.json({ ...req.body, lead_score: result.rows[0]?.score || 10 });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -296,8 +839,18 @@ router.post('/leads/score', async (req, res) => {
 router.post('/leads/assign-owner', async (req, res) => {
   const { lead_id, brand, lead_score, intent } = req.body;
   try {
-    let owner = 'ai_bot';
-    if (lead_score >= 75) owner = 'human_sales';
+    let owner = 'System (AI)';
+    if (lead_score >= 75) {
+      // For hot leads, try to find a real human user; fallback to 'Sales Team' group
+      const userRes = await pool.query(
+        `SELECT id FROM users WHERE role IN ('admin', 'agent', 'sales') AND is_active = true ORDER BY created_at ASC LIMIT 1`
+      );
+      if (userRes.rows.length > 0) {
+        owner = String(userRes.rows[0].id);
+      } else {
+        owner = 'Sales Team';
+      }
+    }
 
     await pool.query(`UPDATE leads SET owner = $1 WHERE id = $2`, [owner, lead_id]);
     res.json({ ...req.body, owner });
@@ -522,14 +1075,14 @@ router.get('/workflows/telemetry', async (req, res) => {
 
 router.get('/reports/revenue-today', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'won' AND updated_at >= CURRENT_DATE`);
+    const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'converted' AND updated_at >= CURRENT_DATE`);
     res.json({ revenue: parseInt(result.rows[0].revenue) || 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.get('/reports/revenue-month', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'won' AND date_trunc('month', updated_at) = date_trunc('month', CURRENT_DATE)`);
+    const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'converted' AND date_trunc('month', updated_at) = date_trunc('month', CURRENT_DATE)`);
     res.json({ revenue: parseInt(result.rows[0].revenue) || 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -540,7 +1093,7 @@ router.get('/reports/brand-revenue', async (req, res) => {
       SELECT c.name as brand, (COUNT(l.id) * 500) as revenue 
       FROM leads l
       JOIN clients c ON l.client_id = c.id
-      WHERE l.status = 'won'
+      WHERE l.status = 'converted'
       GROUP BY c.name
     `);
     res.json({ data: result.rows });
@@ -563,14 +1116,14 @@ router.get('/reports/conversion-rate', async (req, res) => {
 
 router.get('/reports/followups-pending', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT COUNT(*) as count FROM leads WHERE next_followup_due > NOW() AND status != 'WON'`);
+    const result = await pool.query(`SELECT COUNT(*) as count FROM leads WHERE next_followup_due > NOW() AND status != 'converted'`);
     res.json({ pending: parseInt(result.rows[0].count) || 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.get('/reports/sla-breaches', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT COUNT(*) as count FROM leads WHERE next_followup_due < NOW() AND status != 'WON'`);
+    const result = await pool.query(`SELECT COUNT(*) as count FROM leads WHERE next_followup_due < NOW() AND status != 'converted'`);
     res.json({ breaches: parseInt(result.rows[0].count) || 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -587,12 +1140,18 @@ router.get('/reports/ai-performance', async (req, res) => {
 // ==========================================
 router.get('/followups/due', async (req, res) => {
   try {
+    const MAX_FOLLOWUP_ATTEMPTS = 5; // Stop after 5 attempts
+
     const result = await pool.query(`
       SELECT l.id as lead_id, COALESCE(c.name, 'ABM Groups') as brand, l.stage, COALESCE(l.touch_count, 0) as touch_count
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
-      WHERE l.next_followup_due <= NOW() AND l.status != 'WON'
-    `);
+      WHERE l.next_followup_due <= NOW()
+        AND l.status NOT IN ('converted', 'booked')
+        AND (l.status != 'opt-out' OR l.status IS NULL)
+        AND l.call_booked_at IS NULL
+        AND (l.touch_count IS NULL OR l.touch_count < $1)
+    `, [MAX_FOLLOWUP_ATTEMPTS]);
     res.json({ followups: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -618,6 +1177,26 @@ router.post('/followups/rule', async (req, res) => {
 
     res.json({ ...req.body, delay_hours: 24, base_channel, template_id, payload_template, ai_prompt_template });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Opt-out: Stop follow-ups when lead says "not interested"
+router.post('/leads/opt-out', async (req, res) => {
+  const { lead_id, reason } = req.body;
+  try {
+    if (!lead_id) {
+      return res.status(400).json({ success: false, error: "Missing lead_id" });
+    }
+
+    await pool.query(
+      `UPDATE leads SET status = 'opt-out', updated_at = NOW() WHERE id = $1`,
+      [lead_id]
+    );
+
+    console.log(`[Opt-Out] Lead ${lead_id} opted out - follow-ups STOPPED`);
+    res.json({ success: true, message: "Lead has been opted out. No more follow-ups will be sent." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 3. Check 24h Window
@@ -729,8 +1308,28 @@ router.post('/ai/report-generator', async (req, res) => {
   const data = req.body.data || req.body.metrics || req.body;
   try {
     if (!ai) return res.json({ summary: "Daily Summary generated." });
-    const prompt = `Summarize these daily metrics for a Founder Dashboard:\n${JSON.stringify(data)}\nWrite 3 bullet points.`;
-    const summary = await generateGeminiContent(prompt);
+
+    // STRICT rules to prevent hallucination and force INR
+    const prompt = `You are a financial reporter for an Indian business. CRITICAL RULES:
+1. ALL currency amounts MUST use Indian Rupees (₹) symbol - NEVER use $ or USD
+2. Do NOT invent any numbers, scores, or percentages not present in the data
+3. Use ONLY the exact metrics provided below
+4. If a metric is missing, state "Not available" - never make it up
+5. Output ONLY bullet points, no extra commentary
+
+Data to summarize:
+${JSON.stringify(data, null, 2)}
+
+Write exactly 3 bullet points. Use format: "• ₹X,XXX" for all currency values.`;
+
+    let summary = await generateGeminiContent(prompt);
+    console.log('[report-generator] Raw LLM response:', summary);
+
+    // Post-process: Force INR currency - split on $ and rejoin with ₹
+    summary = summary.split('$').join('₹');
+
+    console.log('[report-generator] After replace:', summary);
+
     res.json({ summary });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -814,7 +1413,7 @@ router.post('/leads/find-by-invoice', async (req, res) => {
       const fallback = await pool.query(
         `SELECT l.id as lead_id, l.name, l.phone, c.name as brand, l.client_id as brand_id
          FROM leads l LEFT JOIN clients c ON l.client_id = c.id
-         WHERE l.status = 'won' ORDER BY l.updated_at DESC LIMIT 1`
+         WHERE l.status = 'converted' ORDER BY l.updated_at DESC LIMIT 1`
       );
       lead = fallback.rows[0] || null;
     }
@@ -925,7 +1524,7 @@ router.get('/campaigns/active', async (req, res) => {
 router.post('/campaigns/select-leads', async (req, res) => {
   const { campaign_id, status_filter } = req.body;
   try {
-    let query = `SELECT id, phone, name FROM leads WHERE status != 'won' AND phone IS NOT NULL LIMIT 500`;
+    let query = `SELECT id, phone, name FROM leads WHERE status != 'converted' AND phone IS NOT NULL LIMIT 500`;
     if (status_filter) {
       query = `SELECT id, phone, name FROM leads WHERE status = $1 AND phone IS NOT NULL LIMIT 500`;
       const result = await pool.query(query, [status_filter]);
@@ -950,6 +1549,15 @@ router.post('/campaigns/check-frequency', async (req, res) => {
       if (days < 7) allowed = false; // Cap at 1 marketing message per 7 days
     }
     res.json({ allowed });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/campaigns/execute', async (req, res) => {
+  const { campaign_id } = req.body;
+  try {
+    if (!campaign_id) return res.status(400).json({ error: 'campaign_id is required' });
+    await pool.query(`UPDATE campaigns SET status = 'completed' WHERE id = $1`, [campaign_id]);
+    res.json({ success: true, message: `Campaign ${campaign_id} executed` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1013,7 +1621,7 @@ router.post('/leads/update-followup', async (req, res) => {
 
 router.get('/reports/overdue-followups', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT id, name, next_followup_due FROM leads WHERE next_followup_due < NOW() AND status != 'won' LIMIT 50`);
+    const result = await pool.query(`SELECT id, name, next_followup_due FROM leads WHERE next_followup_due < NOW() AND status != 'converted' LIMIT 50`);
     res.json({ overdue: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1036,7 +1644,7 @@ router.get('/reports/reminder-bundle', async (req, res) => {
       pool.query(`SELECT id as lead_id, name, call_booked_at as time, owner FROM leads WHERE call_booked_at >= CURRENT_DATE AND call_booked_at < CURRENT_DATE + INTERVAL '1 day'`),
       pool.query(`SELECT id as lead_id, name, stage, owner FROM leads WHERE next_followup_due >= CURRENT_DATE AND next_followup_due < CURRENT_DATE + INTERVAL '1 day'`),
       Promise.resolve({ rows: [] }), // no invoice table yet - mirrors /reports/pending-payments
-      pool.query(`SELECT id, name, next_followup_due, owner FROM leads WHERE next_followup_due < NOW() AND status != 'won' LIMIT 50`),
+      pool.query(`SELECT id, name, next_followup_due, owner FROM leads WHERE next_followup_due < NOW() AND status != 'converted' LIMIT 50`),
       pool.query(`SELECT id, name, score, owner FROM leads WHERE status = 'hot' ORDER BY score DESC LIMIT 10`)
     ]);
 
@@ -1099,6 +1707,79 @@ router.post('/communication/notify-staff', async (req, res) => {
     }
     res.json({ ...req.body, success: true, delivered, wa_msg_id: waMessageId });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+// ==========================================
+// Sales Person Tasks API
+// ==========================================
+router.get('/sales-tasks', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT st.*, l.name, l.phone, l.email, l.status as lead_status 
+      FROM sales_tasks st
+      JOIN leads l ON st.lead_id = l.id
+      WHERE DATE(st.created_at) = CURRENT_DATE
+      ORDER BY st.status DESC, st.created_at DESC
+    `);
+    res.json({ success: true, tasks: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/sales-tasks/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    let query = `UPDATE sales_tasks SET status = $1, updated_at = NOW()`;
+    if (status === 'completed') {
+      query += `, completed_at = NOW()`;
+    }
+    query += ` WHERE id = $2 RETURNING *`;
+    const result = await pool.query(query, [status, req.params.id]);
+    res.json({ success: true, task: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/sales-tasks/:id', async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM sales_tasks WHERE id = $1`, [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ==========================================
+// Bot Integration: Book a Call - STOPS FOLLOW-UPS
+// ==========================================
+router.post('/leads/book-call', async (req, res) => {
+  try {
+    const { lead_id, booking_time } = req.body;
+
+    if (!lead_id || !booking_time) {
+      return res.status(400).json({ success: false, error: "Missing lead_id or booking_time" });
+    }
+
+    // Update call_booked_at AND status to indicate booked - this stops follow-ups
+    const result = await pool.query(
+      `UPDATE leads SET call_booked_at = $1, status = 'booked', updated_at = NOW() WHERE id = $2 RETURNING id, call_booked_at, status`,
+      [booking_time, lead_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: "Lead not found" });
+    }
+
+    console.log(`[Book Call] Lead ${lead_id} booked for ${booking_time} - follow-ups will STOP`);
+    res.json({ success: true, lead: result.rows[0], message: "Call booked! Follow-ups have been stopped for this lead." });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 module.exports = router;

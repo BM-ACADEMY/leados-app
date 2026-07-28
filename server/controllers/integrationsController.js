@@ -1,0 +1,386 @@
+const db = require('../db/connection');
+const cryptoHelper = require('../utils/crypto');
+const axios = require('axios');
+
+async function linkMetaAccount(req, res) {
+  const { brand_name, platform, account_name, account_id, facebook_page_id, instagram_business_id, access_token } = req.body;
+
+  if (!brand_name || !platform || !access_token) {
+    return res.status(400).json({ success: false, error: 'Missing required fields' });
+  }
+
+  try {
+    const encryptedToken = cryptoHelper.encrypt(access_token);
+    const expiry = new Date();
+    expiry.setDate(expiry.getDate() + 60);
+
+    // Manual check to avoid constraint issues during development
+    const checkQuery = `
+      SELECT id FROM brand_social_accounts 
+      WHERE brand_name = $1 AND platform = $2 AND account_name = $3
+    `;
+    const checkRes = await db.query(checkQuery, [brand_name, platform, account_name]);
+
+    let result;
+    if (checkRes.rows.length > 0) {
+      // Update existing
+      const updateQuery = `
+        UPDATE brand_social_accounts SET 
+          account_id = $1, facebook_page_id = $2, instagram_business_id = $3, 
+          access_token = $4, token_expires_at = $5, is_active = true
+        WHERE id = $6
+        RETURNING *;
+      `;
+      const updateRes = await db.query(updateQuery, [
+        account_id, facebook_page_id, instagram_business_id, encryptedToken, expiry, checkRes.rows[0].id
+      ]);
+      result = updateRes.rows[0];
+    } else {
+      // Because there's a bad unique constraint on just (brand_name, platform), let's see if we hit it.
+      // We will try an insert, and if it fails, we will fall back to updating based on just (brand_name, platform)
+      try {
+        const insertQuery = `
+          INSERT INTO brand_social_accounts 
+            (brand_name, platform, account_name, account_id, facebook_page_id, instagram_business_id, access_token, token_expires_at, is_active)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+          RETURNING *;
+        `;
+        const insertRes = await db.query(insertQuery, [
+          brand_name, platform, account_name, account_id, facebook_page_id, instagram_business_id, encryptedToken, expiry
+        ]);
+        result = insertRes.rows[0];
+      } catch (insertErr) {
+        if (insertErr.code === '23505') {
+          // Fallback update on the existing duplicate if the constraint is blocking us
+          const fallbackQuery = `
+            UPDATE brand_social_accounts SET 
+              account_name = $1, account_id = $2, facebook_page_id = $3, 
+              instagram_business_id = $4, access_token = $5, token_expires_at = $6, is_active = true
+            WHERE brand_name = $7 AND platform = $8
+            RETURNING *;
+          `;
+          const fallbackRes = await db.query(fallbackQuery, [
+            account_name, account_id, facebook_page_id, instagram_business_id, encryptedToken, expiry, brand_name, platform
+          ]);
+          result = fallbackRes.rows[0];
+        } else {
+          throw insertErr;
+        }
+      }
+    }
+
+    // Auto-Subscribe to Meta Leads Webhook
+    if (platform === 'facebook' && (facebook_page_id || account_id)) {
+      const pageIdToSubscribe = facebook_page_id || account_id;
+      try {
+        const pageTokenRes = await axios.get(
+          `https://graph.facebook.com/v18.0/${pageIdToSubscribe}`,
+          { params: { fields: 'access_token', access_token: access_token } }
+        );
+        const pageAccessToken = pageTokenRes.data.access_token;
+        if (pageAccessToken) {
+          await axios.post(
+            `https://graph.facebook.com/v18.0/${pageIdToSubscribe}/subscribed_apps`,
+            { subscribed_fields: ['leadgen'] },
+            { params: { access_token: pageAccessToken } }
+          );
+        }
+      } catch (subErr) {
+        console.error(`[Meta Webhook] Failed to auto-subscribe page ${pageIdToSubscribe}:`, subErr.response?.data || subErr.message);
+      }
+    }
+
+    res.json({ success: true, account: result });
+  } catch (err) {
+    console.error('Link brand account error:', err);
+    res.status(500).json({ success: false, error: 'Database saving failed: ' + err.message });
+  }
+}
+
+async function deleteMetaAccount(req, res) {
+  try {
+    const { id } = req.params;
+    await db.query('DELETE FROM brand_social_accounts WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+const VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN || 'leados_secret_webhook_token';
+
+async function verifyMetaWebhook(req, res) {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode && token) {
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+      console.log('WEBHOOK_VERIFIED');
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  } else {
+    res.sendStatus(400);
+  }
+}
+
+async function handleMetaWebhook(req, res) {
+  const body = req.body;
+  if (body.object === 'page') {
+    for (const entry of body.entry) {
+      const pageId = entry.id;
+      for (const change of entry.changes) {
+        if (change.field === 'leadgen') {
+          const leadgenId = change.value.leadgen_id;
+          
+          try {
+            const { rows } = await db.query(`
+              SELECT access_token, brand_name, c.id as client_id 
+              FROM brand_social_accounts bsa
+              LEFT JOIN clients c ON bsa.brand_name = c.name
+              WHERE bsa.facebook_page_id = $1 AND bsa.is_active = true LIMIT 1
+            `, [pageId]);
+            
+            if (rows.length === 0) continue;
+            
+            const masterTokenEncrypted = rows[0].access_token;
+            const masterToken = cryptoHelper.decrypt(masterTokenEncrypted);
+            const clientId = rows[0].client_id;
+            
+            const pageTokenRes = await axios.get(
+              `https://graph.facebook.com/v18.0/${pageId}?fields=access_token&access_token=${masterToken}`
+            );
+            const pageToken = pageTokenRes.data.access_token;
+            
+            const leadRes = await axios.get(
+              `https://graph.facebook.com/v18.0/${leadgenId}`,
+              { params: { access_token: pageToken } }
+            );
+            
+            const leadData = leadRes.data;
+            let email = '', phone = '', name = '';
+            
+            if (leadData.field_data) {
+              for (const field of leadData.field_data) {
+                if (field.name.includes('email')) email = field.values[0];
+                if (field.name.includes('phone') || field.name === 'contact_number') phone = field.values[0];
+                if (field.name.includes('name')) name = field.values[0];
+              }
+            }
+            
+            if (phone.startsWith('+')) phone = phone.substring(1);
+            if (phone.startsWith('0')) phone = phone.substring(1);
+            if (!phone.startsWith('91') && phone.length === 10) phone = '91' + phone;
+
+            await db.query(`
+              INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id)
+              VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5)
+              ON CONFLICT (leadgen_id) DO NOTHING
+            `, [name || 'FB Lead', phone, email, clientId, leadgenId]);
+            
+            console.log(`Successfully saved Meta lead ${leadgenId}`);
+          } catch (err) {
+            console.error('Error processing webhook lead:', err.response?.data || err.message);
+          }
+        }
+      }
+    }
+    res.status(200).send('EVENT_RECEIVED');
+  } else {
+    res.sendStatus(404);
+  }
+}
+
+async function syncHistoricalLeads(req, res) {
+  const { account_id } = req.body; 
+  try {
+    const { rows } = await db.query(`
+      SELECT bsa.*, c.id as client_id 
+      FROM brand_social_accounts bsa
+      LEFT JOIN clients c ON bsa.brand_name = c.name 
+      WHERE bsa.id = $1
+    `, [account_id]);
+    
+    if (rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    
+    const acc = rows[0];
+    const pageId = acc.facebook_page_id;
+    if (!pageId) return res.status(400).json({ error: 'Not a Facebook Page' });
+    
+    const masterToken = cryptoHelper.decrypt(acc.access_token);
+    const clientId = acc.client_id;
+    
+    const pageTokenRes = await axios.get(
+      `https://graph.facebook.com/v18.0/${pageId}?fields=access_token&access_token=${masterToken}`
+    );
+    const pageToken = pageTokenRes.data.access_token;
+    
+    const formsRes = await axios.get(
+      `https://graph.facebook.com/v18.0/${pageId}/leadgen_forms`,
+      { params: { access_token: pageToken } }
+    );
+    
+    let totalSynced = 0;
+    
+    for (const form of formsRes.data.data) {
+      const formId = form.id;
+      const leadsRes = await axios.get(
+        `https://graph.facebook.com/v18.0/${formId}/leads`,
+        { params: { access_token: pageToken, limit: 100 } }
+      );
+      
+      const leads = leadsRes.data.data || [];
+      for (const leadData of leads) {
+        const leadgenId = leadData.id;
+        
+        // Skip if exists
+        const checkRes = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]);
+        if (checkRes.rows.length > 0) continue;
+
+        let email = '', phone = '', name = '';
+        if (leadData.field_data) {
+          for (const field of leadData.field_data) {
+            if (field.name.includes('email')) email = field.values[0];
+            if (field.name.includes('phone') || field.name === 'contact_number') phone = field.values[0];
+            if (field.name.includes('name')) name = field.values[0];
+          }
+        }
+        
+        if (phone.startsWith('+')) phone = phone.substring(1);
+        if (phone.startsWith('0')) phone = phone.substring(1);
+        if (!phone.startsWith('91') && phone.length === 10) phone = '91' + phone;
+
+        // Ensure no phone conflict
+        if (phone) {
+           const pcRes = await db.query('SELECT id FROM leads WHERE phone = $1 AND client_id = $2', [phone, clientId]);
+           if (pcRes.rows.length > 0) {
+              await db.query('UPDATE leads SET leadgen_id = $1, meta_lead_id = $1 WHERE id = $2', [leadgenId, pcRes.rows[0].id]);
+              continue;
+           }
+        }
+
+        try {
+          await db.query(`
+            INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id)
+            VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5)
+            ON CONFLICT (leadgen_id) DO NOTHING
+          `, [name || 'FB Lead', phone, email, clientId, leadgenId]);
+          totalSynced++;
+        } catch(e) {
+          console.error("Insert error for lead", leadgenId, e.message);
+        }
+      }
+    }
+    
+    res.json({ success: true, synced: totalSynced });
+  } catch (err) {
+    console.error('Error syncing leads:', err.response?.data || err.message);
+    res.status(500).json({ success: false, error: 'Failed to sync leads: ' + err.message });
+  }
+}
+
+async function syncAllHistoricalLeads(req, res) {
+  try {
+    const { rows } = await db.query(`
+      SELECT bsa.*, c.id as client_id 
+      FROM brand_social_accounts bsa
+      LEFT JOIN clients c ON bsa.brand_name = c.name 
+      WHERE bsa.platform = 'facebook' AND bsa.is_active = true AND bsa.facebook_page_id IS NOT NULL
+    `);
+    
+    // Respond immediately to the frontend to prevent timeouts
+    res.json({ success: true, message: 'Sync started in background. It may take a minute.' });
+    
+    // Run the syncing loop in the background
+    (async () => {
+      let totalSynced = 0;
+      for (const acc of rows) {
+        const pageId = acc.facebook_page_id;
+        const masterToken = cryptoHelper.decrypt(acc.access_token);
+        const clientId = acc.client_id;
+        
+        try {
+          const pageTokenRes = await axios.get(
+            `https://graph.facebook.com/v18.0/${pageId}?fields=access_token&access_token=${masterToken}`
+          );
+          const pageToken = pageTokenRes.data.access_token;
+          
+          const formsRes = await axios.get(
+            `https://graph.facebook.com/v18.0/${pageId}/leadgen_forms`,
+            { params: { access_token: pageToken } }
+          );
+          
+          for (const form of formsRes.data.data) {
+            const formId = form.id;
+            const leadsRes = await axios.get(
+              `https://graph.facebook.com/v18.0/${formId}/leads`,
+              { params: { access_token: pageToken, limit: 100 } }
+            );
+            
+            const leads = leadsRes.data.data || [];
+            for (const leadData of leads) {
+              const leadgenId = leadData.id;
+              
+              // Skip if exists
+              const checkRes = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]);
+              if (checkRes.rows.length > 0) continue;
+
+              let email = '', phone = '', name = '';
+              if (leadData.field_data) {
+                for (const field of leadData.field_data) {
+                  if (field.name.includes('email')) email = field.values[0];
+                  if (field.name.includes('phone') || field.name === 'contact_number') phone = field.values[0];
+                  if (field.name.includes('name')) name = field.values[0];
+                }
+              }
+              
+              if (phone.startsWith('+')) phone = phone.substring(1);
+              if (phone.startsWith('0')) phone = phone.substring(1);
+              if (!phone.startsWith('91') && phone.length === 10) phone = '91' + phone;
+              
+              // Truncate to fit database constraints
+              if (phone.length > 20) phone = phone.substring(0, 20);
+
+              if (phone) {
+                 const pcRes = await db.query('SELECT id FROM leads WHERE phone = $1 AND client_id = $2', [phone, clientId]);
+                 if (pcRes.rows.length > 0) {
+                    await db.query('UPDATE leads SET leadgen_id = $1, meta_lead_id = $1 WHERE id = $2', [leadgenId, pcRes.rows[0].id]);
+                    continue;
+                 }
+              }
+
+              try {
+                await db.query(`
+                  INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, created_at)
+                  VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5, $6)
+                  ON CONFLICT (leadgen_id) DO NOTHING
+                `, [name || 'FB Lead', phone, email, clientId, leadgenId, new Date(leadData.created_time || Date.now())]);
+                totalSynced++;
+              } catch(e) {
+                console.error("Insert error for lead", leadgenId, e.message);
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`Error syncing page ${pageId}:`, err.response?.data || err.message);
+        }
+      }
+      console.log('Background sync completed. Total synced:', totalSynced);
+    })();
+    
+  } catch (err) {
+    console.error('Error syncing all leads:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to initiate sync: ' + err.message });
+  }
+}
+
+module.exports = {
+  linkMetaAccount,
+  deleteMetaAccount,
+  verifyMetaWebhook,
+  handleMetaWebhook,
+  syncHistoricalLeads,
+  syncAllHistoricalLeads
+};

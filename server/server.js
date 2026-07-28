@@ -20,11 +20,16 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { GoogleGenAI } = require('@google/genai');
+const cryptoHelper = require('./utils/crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 
 const app = express();
 const httpServer = http.createServer(app);
 const PORT = process.env.PORT || 3600;
+const gemini = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  : null;
 
 // ── SOCKET.IO ─────────────────────────────────────────────
 const io = new SocketIOServer(httpServer, {
@@ -95,6 +100,8 @@ const thedalLocalSeoBridgeRoutes = require('./routes/thedal-localseobridge');
 const thedalRankDropAlertRoutes = require('./routes/thedal-rank-drop-alert');
 const thedalContentRoutes = require('./routes/thedal-content');
 const contentRoutes = require('./routes/contentRoutes');
+const integrationsRoutes = require('./routes/integrationsRoutes');
+
 const salesosRoutes = require('./routes/salesos');
 
 app.use('/api', salesosRoutes);
@@ -134,6 +141,7 @@ const internalAuth = (req, res, next) => {
 
 // ── CONTENT OS ROUTES ─────────────────────────────────────
 app.use('/api/content', internalAuth, contentRoutes);
+app.use('/api/integrations', internalAuth, integrationsRoutes);
 app.use('/api/content-os', internalAuth, contentOsRoutes);
 
 // Thedal OS Routes
@@ -161,11 +169,20 @@ const mafiyaTurfRoutes = require('./routes/mafiya-turf');
 const mafiyaReviewsRoutes = require('./routes/mafiya-reviews');
 const mafiyaInsightsRoutes = require('./routes/mafiya-insights');
 const mafiyaRivalsRoutes = require('./routes/mafiya-rivals');
+const mafiyaUsageRoutes = require('./routes/mafiya-usage');
+const citationRoutes = require('./routes/citation.routes');
 
+const mafiyaPlansRoutes = require('./routes/mafiya-plans');
+const mafiyaOrdersRoutes = require('./routes/mafiya-orders');
+
+app.use('/api/mafiya/plans', auth, mafiyaPlansRoutes);
 app.use('/api/mafiya/clients', auth, mafiyaClientsRoutes);
 app.use('/api/mafiya/gmb', mafiyaGmbRoutes); // No auth — email links are clicked by external clients
 app.use('/api/mafiya/turf', auth, mafiyaTurfRoutes);
 app.use('/api/mafiya/rivals', auth, mafiyaRivalsRoutes);
+app.use('/api/mafiya/usage', auth, mafiyaUsageRoutes);
+app.use('/api/mafiya/orders', auth, mafiyaOrdersRoutes);
+app.use('/api/citations', auth, citationRoutes);
 
 // Public route for Google to download GMB Post images (bypassing the 'auth' middleware on the main reviews router)
 app.get('/api/mafiya/reviews/image/:filename', (req, res) => {
@@ -523,6 +540,24 @@ app.post('/api/messages/upload', auth, mediaUpload.single('file'), (req, res) =>
 // ══════════════════════════════════════════════════════════
 
 // GET /api/leads/sources — distinct source values
+// Public campaign import template. Keep this static route before
+// `/api/leads/:id`, otherwise Express treats "template" as a lead ID.
+app.get('/api/leads/template', (req, res) => {
+  const ws = xlsx.utils.json_to_sheet([
+    { Name: 'John Doe', Phone: '919876543210' },
+    { Name: 'Jane Smith', Phone: '919876543211' }
+  ]);
+  ws['!cols'] = [{ wch: 20 }, { wch: 20 }];
+
+  const wb = xlsx.utils.book_new();
+  xlsx.utils.book_append_sheet(wb, ws, 'Template');
+  const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+  res.setHeader('Content-Disposition', 'attachment; filename="leados_campaign_template.xlsx"');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buffer);
+});
+
 app.get('/api/leads/sources', auth, async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -538,7 +573,7 @@ app.get('/api/leads/sources', auth, async (req, res) => {
 // GET /api/leads
 app.get('/api/leads', auth, async (req, res) => {
   try {
-    const { status, brand, search, limit = 100, offset = 0 } = req.query;
+    const { status, brand, search, source, limit = 100, offset = 0 } = req.query;
     let q = `
       SELECT l.*, c.name as brand_name, u.name as assigned_name,
         COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id), 0) as unread,
@@ -570,6 +605,10 @@ app.get('/api/leads', auth, async (req, res) => {
     if (brand && brand !== 'All Brands') {
       params.push(`%${brand}%`);
       q += ` AND c.name ILIKE $${params.length}`;
+    }
+    if (source && source !== 'all') {
+      params.push(source);
+      q += ` AND l.source = $${params.length}`;
     }
     if (search) {
       params.push(`%${search}%`);
@@ -1085,7 +1124,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
           // ── AUDIO TRANSCRIPTION ──────────────────────────────
           console.log(`[DEBUG] Audio check: msg.type=${msg.type}, msg.audio?.id=${msg.audio?.id}, GEMINI_KEY=${!!process.env.GEMINI_API_KEY}`);
-          if (msg.type === 'audio' && msg.audio?.id && process.env.GEMINI_API_KEY) {
+          if (msg.type === 'audio' && msg.audio?.id && gemini) {
             try {
               const waToken = lead.client_wa_token || client?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
               if (waToken) {
@@ -1101,40 +1140,35 @@ app.post('/webhook/whatsapp', async (req, res) => {
                     responseType: 'arraybuffer'
                   });
                   
-                  // Use a perfectly safe filename without waMessageId special characters
-                  const safeName = `audio_${Date.now()}_${Math.floor(Math.random()*1000)}.ogg`;
-                  const tempAudioPath = path.join(__dirname, 'uploads', safeName);
-                  fs.writeFileSync(tempAudioPath, Buffer.from(audioRes.data));
-                  
-                  console.log(`[Audio] Transcribing with Gemini API...`);
-                  
-                  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-                  const base64Audio = Buffer.from(audioRes.data).toString('base64');
-                  
-                  const payload = {
-                    contents: [{
-                      parts: [
-                        { text: "Transcribe this audio precisely in its original language. Output ONLY the transcription, nothing else." },
-                        { inline_data: { mime_type: "audio/ogg", data: base64Audio } }
-                      ]
-                    }]
-                  };
-                  
-                  const aiRes = await axios.post(geminiUrl, payload);
-                  const transcriptionText = aiRes.data.candidates?.[0]?.content?.parts?.[0]?.text;
+                  const mimeType = mediaRes.data.mime_type || msg.audio?.mime_type || 'audio/ogg';
+                  console.log('[Audio] Transcribing with Gemini...');
+                  const transcription = await gemini.models.generateContent({
+                    model: process.env.GEMINI_AUDIO_MODEL || 'gemini-3.6-flash',
+                    contents: [
+                      {
+                        text: 'Transcribe this WhatsApp voice note precisely in its original language. Return only the spoken words, without commentary or formatting.',
+                      },
+                      {
+                        inlineData: {
+                          mimeType,
+                          data: Buffer.from(audioRes.data).toString('base64'),
+                        },
+                      },
+                    ],
+                  });
+                  const transcriptionText = transcription?.text;
                   
                   if (transcriptionText) {
                     console.log(`[Audio] Transcription success: ${transcriptionText}`);
-                    text = `[Voice Message] ${transcriptionText.trim()}`;
+                    // Send only the spoken words to the sales AI. Keeping the
+                    // voice marker here would trigger the old "please type it"
+                    // fallback in /api/ai/response.
+                    text = transcriptionText.trim();
                   }
-                  
-                  // Cleanup
-                  if (fs.existsSync(tempAudioPath)) fs.unlinkSync(tempAudioPath);
                 }
               }
             } catch (err) {
               console.error('[Audio Transcription Error]', err.response?.data || err.message);
-              const fs = require('fs');
               fs.appendFileSync(path.join(__dirname, 'uploads', 'audio_error.txt'), `[${new Date().toISOString()}] ${err.message}\n${err.stack}\n`);
             }
           }
@@ -1151,8 +1185,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
             ON CONFLICT (phone, tenant_id) DO UPDATE
               SET lead_id = EXCLUDED.lead_id,
                   last_message = EXCLUDED.last_message,
-                  last_message_at = NOW(),
-                  unread_count = COALESCE(conversations.unread_count, 0) + 1
+                  last_message_at = NOW()
             RETURNING id
           `, [lead.id, tenantId, normalizedPhone, text]);
           const conversationId = convRes.rows[0].id;
@@ -1170,12 +1203,21 @@ app.post('/webhook/whatsapp', async (req, res) => {
             `, [conversationId, text, msgType, mediaUrl, waMessageId, isForwarded]);
 
             // ── REAL-TIME: push to CRM Inbox immediately ─────────
+            // Count only messages that passed the duplicate webhook check.
+            await pool.query(`
+              UPDATE conversations
+              SET unread_count = COALESCE(unread_count, 0) + 1
+              WHERE id = $1
+            `, [conversationId]);
+
             io.emit('incoming_message', { lead_id: String(lead.id), message: savedRows[0] });
             console.log(`[Webhook] ✅ Saved inbound ${msgType} from ${phone} → lead ${lead.id}, msg_id ${savedRows[0].id}`);
 
             // ── Forward to n8n for AI auto-reply (only for text/button/interactive/audio) ──
             const shouldTriggerAI = ['text', 'button', 'interactive', 'audio'].includes(msg.type);
-            if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL) {
+            // WF00 continues through its synchronous transcription request.
+            // Do not call it again and create a duplicate AI response.
+            if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL && req.query.source !== 'n8n') {
               axios.post(process.env.N8N_WEBHOOK_URL, {
                 lead_id: lead.id,
                 phone,
@@ -1213,11 +1255,50 @@ app.post('/webhook/meta-leads', async (req, res) => {
         const leadgenId = change.value.leadgen_id;
         const pageId = change.value.page_id;
 
-        // Fetch full lead from Meta
-        const metaLead = await axios.get(
-          `https://graph.facebook.com/v18.0/${leadgenId}`,
-          { params: { access_token: process.env.META_PAGE_ACCESS_TOKEN } }
+        // 1. Lookup dynamic access token and client mapping
+        const { rows: accountRows } = await pool.query(
+          `SELECT bsa.access_token, c.id as client_id 
+           FROM brand_social_accounts bsa 
+           JOIN clients c ON bsa.brand_name = c.name 
+           WHERE bsa.facebook_page_id = $1 OR bsa.account_id = $1 
+           LIMIT 1`,
+          [pageId]
         );
+
+        if (!accountRows.length || !accountRows[0].access_token) {
+          console.error(`[Meta Leads] No access token found for page_id: ${pageId}. Cannot fetch leadgen_id: ${leadgenId}`);
+          await pool.query(
+            `INSERT INTO failed_webhooks (page_id, leadgen_id, payload, error_message) VALUES ($1, $2, $3, $4)`,
+            [pageId, leadgenId, change.value, 'No access token found for this page in database.']
+          );
+          continue;
+        }
+
+        const { access_token, client_id } = accountRows[0];
+        
+        let decryptedToken;
+        try {
+          decryptedToken = cryptoHelper.decrypt(access_token);
+        } catch (e) {
+          console.error(`[Meta Leads] Failed to decrypt token for page ${pageId}:`, e.message);
+          continue;
+        }
+
+        // 2. Fetch full lead from Meta
+        let metaLead;
+        try {
+          metaLead = await axios.get(
+            `https://graph.facebook.com/v18.0/${leadgenId}`,
+            { params: { access_token: decryptedToken } }
+          );
+        } catch (apiErr) {
+          console.error(`[Meta Leads] Graph API Error for leadgen_id ${leadgenId}:`, apiErr.response?.data || apiErr.message);
+          await pool.query(
+            `INSERT INTO failed_webhooks (page_id, leadgen_id, payload, error_message) VALUES ($1, $2, $3, $4)`,
+            [pageId, leadgenId, change.value, apiErr.response?.data ? JSON.stringify(apiErr.response.data) : apiErr.message]
+          );
+          continue;
+        }
 
         const fields = {};
         for (const f of metaLead.data.field_data || []) {
@@ -1230,22 +1311,43 @@ app.post('/webhook/meta-leads', async (req, res) => {
 
         if (!phone) continue;
 
+        // 3. Deduplicate using leadgen_id
         const existing = await pool.query(
-          `SELECT id FROM leads WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT($1, 10)`,
-          [phone]
+          `SELECT id FROM leads WHERE leadgen_id = $1`,
+          [leadgenId]
         );
-        if (existing.rows.length) continue;
+        if (existing.rows.length) {
+          console.log(`[Meta Leads] Lead ${leadgenId} already exists. Skipping.`);
+          continue;
+        }
 
-        const newLeadRes = await pool.query(`
-          INSERT INTO leads (name, phone, email, source, status, score, created_at)
-          VALUES ($1, $2, $3, 'Meta Ads', 'new', 20, NOW())
-          RETURNING *
-        `, [name, phone, email]);
-        
-        const newLead = newLeadRes.rows[0];
+        // 4. Insert lead properly assigned to client
+        let newLead;
+        try {
+          const newLeadRes = await pool.query(`
+            INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, created_at)
+            VALUES ($1, $2, $3, 'Meta Ads', 'new', 20, $4, $5, NOW())
+            RETURNING *
+          `, [name, phone, email, client_id, leadgenId]);
+          newLead = newLeadRes.rows[0];
+        } catch (insertErr) {
+          console.error(`[Meta Leads] Error inserting lead: ${insertErr.message}. Attempting update on conflict.`);
+          // Fallback if there is a conflict on (phone, client_id)
+          const fallbackRes = await pool.query(`
+            UPDATE leads SET 
+              leadgen_id = $1, 
+              name = $2, 
+              email = $3, 
+              source = 'Meta Ads'
+            WHERE phone = $4 AND client_id = $5
+            RETURNING *
+          `, [leadgenId, name, email, phone, client_id]);
+          newLead = fallbackRes.rows[0];
+          if (!newLead) continue;
+        }
 
         // Trigger n8n webhook for Meta leads to send welcome template
-        if (process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
+        if (process.env.N8N_NEW_LEAD_WEBHOOK_URL && newLead) {
           axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
             lead_id: newLead.id,
             name: newLead.name,
@@ -1259,6 +1361,61 @@ app.post('/webhook/meta-leads', async (req, res) => {
     }
   } catch (err) {
     console.error('Meta leads webhook error:', err.message);
+  }
+});
+
+// ── META PAGE SUBSCRIPTION ──────────────────────────────────
+app.post('/api/meta/pages/:page_id/subscribe', auth, async (req, res) => {
+  try {
+    const { page_id } = req.params;
+    
+    // 1. Lookup dynamic access token
+    const { rows: accountRows } = await pool.query(
+      `SELECT access_token FROM brand_social_accounts 
+       WHERE (facebook_page_id = $1 OR account_id = $1) AND access_token IS NOT NULL 
+       LIMIT 1`,
+      [page_id]
+    );
+
+    if (!accountRows.length) {
+      return res.status(404).json({ error: 'Page access token not found in database. Please reconnect the page.' });
+    }
+
+    const { access_token } = accountRows[0];
+    
+    let decryptedToken;
+    try {
+      decryptedToken = cryptoHelper.decrypt(access_token);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to decrypt access token' });
+    }
+
+    // 2. Exchange system user token for Page Access Token
+    const pageTokenRes = await axios.get(
+      `https://graph.facebook.com/v18.0/${page_id}`,
+      { params: { fields: 'access_token', access_token: decryptedToken } }
+    );
+    
+    if (!pageTokenRes.data.access_token) {
+      throw new Error("Could not retrieve Page Access Token using the provided token.");
+    }
+    
+    const pageAccessToken = pageTokenRes.data.access_token;
+
+    // 3. Make subscription call to Meta using Page Access Token
+    const metaRes = await axios.post(
+      `https://graph.facebook.com/v18.0/${page_id}/subscribed_apps`,
+      { subscribed_fields: ['leadgen'] },
+      { params: { access_token: pageAccessToken } }
+    );
+
+    res.json({ success: true, message: 'Successfully subscribed to page webhooks.', meta_response: metaRes.data });
+  } catch (err) {
+    console.error('[Meta Webhook Subscription Error]:', err.response?.data || err.message);
+    res.status(500).json({ 
+      error: 'Failed to subscribe to page webhooks', 
+      details: err.response?.data || err.message 
+    });
   }
 });
 
@@ -1465,12 +1622,12 @@ app.post('/api/templates/sync-all', auth, async (req, res) => {
 
 app.post('/api/templates', auth, async (req, res) => {
   try {
-    const { name, category, language, header_format, header, body, footer, buttons, client_id } = req.body;
+    const { name, category, language, header_format, header, body, footer, buttons, client_id, samples } = req.body;
     const { rows } = await pool.query(`
-      INSERT INTO templates (name, category, language, header_format, header, body, footer, buttons, client_id, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', NOW())
+      INSERT INTO templates (name, category, language, header_format, header, body, footer, buttons, client_id, status, created_at, samples)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', NOW(), $10)
       RETURNING *
-    `, [name, category, language || 'en', header_format || 'TEXT', header || null, body, footer || null, JSON.stringify(buttons || []), client_id || null]);
+    `, [name, category, language || 'en', header_format || 'TEXT', header || null, body, footer || null, JSON.stringify(buttons || []), client_id || null, samples ? JSON.stringify(samples) : '[]']);
     res.status(201).json({ template: rows[0] });
   } catch (err) {
     console.error('Create template err:', err);
@@ -1502,7 +1659,11 @@ app.post('/api/templates/:id/submit', auth, async (req, res) => {
       components.push({ type: 'HEADER', format: 'TEXT', text: tpl.header });
     }
 
-    components.push({ type: 'BODY', text: tpl.body });
+    const bodyComp = { type: 'BODY', text: tpl.body };
+    if (tpl.samples && Array.isArray(tpl.samples) && tpl.samples.length > 0) {
+      bodyComp.example = { body_text: [tpl.samples] };
+    }
+    components.push(bodyComp);
     if (tpl.footer) components.push({ type: 'FOOTER', text: tpl.footer });
     if (tpl.buttons && tpl.buttons.length > 0) {
       components.push({ type: 'BUTTONS', buttons: tpl.buttons });
@@ -1514,6 +1675,7 @@ app.post('/api/templates/:id/submit', auth, async (req, res) => {
         name: tpl.name,
         language: tpl.language || 'en',
         category: tpl.category || 'UTILITY',
+        allow_category_change: true,
         components,
       },
       { headers: { Authorization: `Bearer ${waToken}` } }
@@ -1578,7 +1740,7 @@ app.get('/api/templates/:id/sync', auth, async (req, res) => {
 // PUT /api/templates/:id
 app.put('/api/templates/:id', auth, async (req, res) => {
   try {
-    const { name, category, language, header_format, header, body, footer, buttons, client_id } = req.body;
+    const { name, category, language, header_format, header, body, footer, buttons, client_id, samples } = req.body;
     const { id } = req.params;
 
     const { rows: currentRows } = await pool.query('SELECT * FROM templates WHERE id = $1', [id]);
@@ -1598,7 +1760,13 @@ app.put('/api/templates/:id', auth, async (req, res) => {
       components.push({ type: 'HEADER', format: 'TEXT', text: finalHeader });
     }
 
-    components.push({ type: 'BODY', text: body || current.body });
+    const bodyComp = { type: 'BODY', text: body || current.body };
+    const finalSamples = samples !== undefined ? samples : current.samples;
+    if (finalSamples && Array.isArray(finalSamples) && finalSamples.length > 0) {
+      bodyComp.example = { body_text: [finalSamples] };
+    }
+    components.push(bodyComp);
+
     if (footer !== undefined ? footer : current.footer) components.push({ type: 'FOOTER', text: footer !== undefined ? footer : current.footer });
     const finalBtns = buttons !== undefined ? buttons : current.buttons;
     if (finalBtns && finalBtns.length > 0) {
@@ -1627,9 +1795,10 @@ app.put('/api/templates/:id', auth, async (req, res) => {
           footer = $7, 
           buttons = COALESCE($8, buttons),
           client_id = COALESCE($9, client_id),
+          samples = COALESCE($10, samples),
           status = CASE WHEN status != 'draft' THEN 'pending' ELSE status END,
           updated_at = NOW()
-      WHERE id = $10
+      WHERE id = $11
       RETURNING *
     `, [
       name, category, language,
@@ -1639,6 +1808,7 @@ app.put('/api/templates/:id', auth, async (req, res) => {
       footer !== undefined ? footer : current.footer,
       buttons ? JSON.stringify(buttons) : null,
       client_id || null,
+      samples ? JSON.stringify(samples) : null,
       id
     ]);
 
@@ -1892,23 +2062,6 @@ app.post('/api/brain', auth, async (req, res) => {
 
 // ── LEADS IMPORT ──────────────────────────────────────────
 const upload = multer({ dest: 'uploads/' });
-
-// GET /api/leads/template
-app.get('/api/leads/template', (req, res) => {
-  const xlsx = require('xlsx');
-  const ws = xlsx.utils.json_to_sheet([
-    { Name: 'John Doe', Phone: '919876543210' },
-    { Name: 'Jane Smith', Phone: '919876543211' }
-  ]);
-  // Set column widths
-  ws['!cols'] = [{ wch: 20 }, { wch: 20 }];
-  const wb = xlsx.utils.book_new();
-  xlsx.utils.book_append_sheet(wb, ws, "Template");
-  const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
-  res.setHeader('Content-Disposition', 'attachment; filename="leados_campaign_template.xlsx"');
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.send(buffer);
-});
 
 app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
   try {
@@ -2670,76 +2823,51 @@ cron.schedule('*/5 * * * *', async () => {
   }
 });
 
-// ── START ─────────────────────────────────────────────────
-function startServer(retryCount = 0) {
-  httpServer.listen(PORT, () => {
-    console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);
-
-    // Reset any stuck publishing jobs on startup to prevent limbo states
-    pool.query(`
-      UPDATE publish_queue 
-      SET status = 'failed', 
-          error_message = 'Publishing interrupted by server restart', 
-          updated_at = NOW() 
-      WHERE status = 'publishing'
-    `).then(async (res) => {
-      if (res.rowCount > 0) {
-        console.log(`[Startup] Cleaned up ${res.rowCount} stuck publishing jobs.`);
-        const { rows } = await pool.query(`
-          SELECT DISTINCT content_id FROM publish_queue 
-          WHERE error_message = 'Publishing interrupted by server restart'
-        `);
-        const { updateOverallPostStatus } = require("./controllers/contentController");
-        for (const r of rows) {
-          await updateOverallPostStatus(r.content_id);
-        }
-      }
-    }).catch(err => {
-      console.error('[Startup] Failed to clean up stuck publishing jobs:', err.message);
-    });
-  });
-
-  httpServer.on('error', (err) => {
-    if (err.code === 'EADDRINUSE' && retryCount < 3) {
-      console.warn(`[Startup] Port ${PORT} in use, killing old process and retrying (attempt ${retryCount + 1}/3)...`);
-      const { execSync } = require('child_process');
-      try {
-        // Find and kill the process holding the port
-        const result = execSync(`netstat -ano | findstr :${PORT} | findstr LISTENING`, { encoding: 'utf8' });
-        const lines = result.trim().split('\n');
-        const pids = new Set();
-        for (const line of lines) {
-          const parts = line.trim().split(/\s+/);
-          const pid = parts[parts.length - 1];
-          if (pid && pid !== '0' && pid !== String(process.pid)) pids.add(pid);
-        }
-        for (const pid of pids) {
-          try {
-            execSync(`taskkill /PID ${pid} /F`, { encoding: 'utf8' });
-            console.log(`[Startup] Killed old process PID ${pid}`);
-          } catch (e) { /* already dead */ }
-        }
-      } catch (e) { /* no process found */ }
-
-      // Wait a moment then retry
-      setTimeout(() => startServer(retryCount + 1), 1500);
-    } else {
-      console.error(`[Startup] Fatal server error:`, err);
-      process.exit(1);
+// Run every Sunday at 2 AM automatically to refresh citations for all GMB clients
+cron.schedule('0 2 * * 0', async () => {
+  console.log('Cron: Starting weekly Mafiya citation check for all active clients...');
+  try {
+    const { rows: clients } = await pool.query("SELECT id FROM mafiya_gmb_clients WHERE status = 'active'");
+    const { runCheckForBusiness } = require('./services/citations/citation.service');
+    for (const client of clients) {
+      console.log(`Cron: Running citation check for GMB Client ID ${client.id}...`);
+      await runCheckForBusiness(client.id).catch(err => {
+        console.error(`Cron: Citation check failed for Client ID ${client.id}:`, err.message);
+      });
     }
+    console.log('Cron: Weekly Mafiya citation check completed.');
+  } catch (err) {
+    console.error('Cron Weekly Citation Check error:', err);
+  }
+});
+
+// ── START ─────────────────────────────────────────────────
+httpServer.listen(PORT, () => {
+  console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);
+
+  // Reset any stuck publishing jobs on startup to prevent limbo states
+  pool.query(`
+    UPDATE publish_queue 
+    SET status = 'failed', 
+        error_message = 'Publishing interrupted by server restart', 
+        updated_at = NOW() 
+    WHERE status = 'publishing'
+  `).then(async (res) => {
+    if (res.rowCount > 0) {
+      console.log(`[Startup] Cleaned up ${res.rowCount} stuck publishing jobs.`);
+      const { rows } = await pool.query(`
+        SELECT DISTINCT content_id FROM publish_queue 
+        WHERE error_message = 'Publishing interrupted by server restart'
+      `);
+      const { updateOverallPostStatus } = require("./controllers/contentController");
+      for (const r of rows) {
+        await updateOverallPostStatus(r.content_id);
+      }
+    }
+  }).catch(err => {
+    console.error('[Startup] Failed to clean up stuck publishing jobs:', err.message);
   });
-}
-
-// Graceful shutdown for nodemon restarts
-process.on('SIGTERM', () => {
-  console.log('[Shutdown] SIGTERM received, closing server...');
-  httpServer.close(() => process.exit(0));
-});
-process.on('SIGINT', () => {
-  console.log('[Shutdown] SIGINT received, closing server...');
-  httpServer.close(() => process.exit(0));
 });
 
-startServer();
-
-module.exports = { app, httpServer, io };
+module.exports = { app, httpServer, io };
+  

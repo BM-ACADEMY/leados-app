@@ -89,12 +89,12 @@ router.post('/scan', async (req, res) => {
     return res.status(400).json({ error: 'Keyword is required' });
   }
 
-  const SERP_API_KEY = process.env.SERP_RADAR_API_KEY || process.env.SERP_API_KEY || process.env.SERPKEY;
+  const SERP_API_KEY = process.env.VALUESERP_API_KEY || process.env.SERP_RADAR_API_KEY || process.env.SERP_API_KEY || process.env.SERPKEY;
   const isDemoMode = req.headers['x-data-mode'] === 'demo';
 
   if (!isDemoMode && !SERP_API_KEY) {
     return res.status(403).json({
-      error: 'SERP API Access Denied. The SERP_RADAR_API_KEY environment variable is not configured on the server. Please add your SerpApi key to your server .env file, or switch the dashboard to Demo Sandbox mode to test this feature.'
+      error: 'SERP API Access Denied. The VALUESERP_API_KEY environment variable is not configured on the server. Please add your API key to your server .env file, or switch the dashboard to Demo Sandbox mode to test this feature.'
     });
   }
 
@@ -193,8 +193,8 @@ router.post('/scan', async (req, res) => {
   }
 
   try {
-    // 1. Fetch live data from Google via SerpApi
-    const response = await axios.get('https://serpapi.com/search.json', {
+    // 1. Fetch live data from Google via ValueSerp
+    const response = await axios.get('https://api.valueserp.com/search', {
       params: {
         q: keyword,
         engine: 'google',

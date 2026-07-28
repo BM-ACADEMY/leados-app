@@ -13,6 +13,7 @@ const LABELS = {
   reports: 'Reports',
   clients: 'Clients',
   settings: 'Settings',
+  'sales-tasks': 'Sales Tasks',
 };
 
 const SEARCH_PAGES = [

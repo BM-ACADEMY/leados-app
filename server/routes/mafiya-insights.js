@@ -424,11 +424,22 @@ router.get('/:clientId', async (req, res) => {
   try {
     // Check client exists
     const clientRes = await pool.query(
-      'SELECT id, business_name, gmb_verified FROM mafiya_gmb_clients WHERE id = $1',
+      'SELECT id, business_name, gmb_verified, client_type, plan_id FROM mafiya_gmb_clients WHERE id = $1',
       [clientId]
     );
     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
     const client = clientRes.rows[0];
+
+    // Enforce Starter plan date restriction
+    if (startDate && endDate && client.client_type === 'paid' && client.plan_id) {
+      const planRes = await pool.query('SELECT name FROM mafiya_plans WHERE id = $1', [client.plan_id]);
+      if (planRes.rows.length > 0 && planRes.rows[0].name.toLowerCase().includes('starter')) {
+        return res.status(403).json({ 
+          error: 'Forbidden', 
+          message: 'Custom date range filtering is not available on the Starter plan. Please upgrade to Growth or Pro Agency.' 
+        });
+      }
+    }
 
     if (!client.gmb_verified) {
       return res.status(403).json({ error: 'GMB not connected for this client', code: 'NOT_CONNECTED' });

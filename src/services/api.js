@@ -347,6 +347,12 @@ class LeadOSAPI {
     });
   }
 
+  async retryCampaign(id) {
+    return this.request(`/api/campaigns/${id}/retry`, {
+      method: 'POST',
+    });
+  }
+
   async executeCampaign(id) {
     return this.request(`/api/campaigns/execute`, {
       method: 'POST',

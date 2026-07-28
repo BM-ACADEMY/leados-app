@@ -149,17 +149,11 @@ export const CampaignsView = () => {
 
       // 2. Create the Campaign
       const finalScheduledAt = sendType === 'now' ? '' : new Date(scheduledAt).toISOString();
-      const res = await api.createCampaign({ 
-        name, client_id: clientId, template_id: templateId, 
-        target_status: finalTargetStatus, scheduled_at: finalScheduledAt || null 
+      const res = await api.createCampaign({
+        name, client_id: clientId, template_id: templateId,
+        target_status: finalTargetStatus, scheduled_at: finalScheduledAt || null,
+        send_immediately: sendType === 'now'
       });
-
-      if (sendType === 'now') {
-        await api.request(`/api/campaigns/execute`, {
-          method: 'POST',
-          body: JSON.stringify({ campaign_id: res.campaign.id })
-        });
-      }
 
       toast.success('Campaign created! ' + res.campaign.name);
       setTab('list');
@@ -270,6 +264,9 @@ export const CampaignsView = () => {
                       <td style={{ padding: '13px 14px' }}>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <button onClick={() => handleViewReport(c)} style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.text, padding: '5px 10px', fontSize: 11, cursor: 'pointer', transition: 'all 0.2s' }}>View Report</button>
+                          {(c.status === 'failed' || c.status === 'scheduled') && (
+                            <button onClick={async () => { await api.retryCampaign(c.id); fetchCampaigns(); toast.success('Campaign retry started'); }} style={{ background: 'transparent', border: 'none', color: C.accent, cursor: 'pointer', display: 'flex', alignItems: 'center', transition: 'color 0.2s', marginRight: 4 }} title="Retry Campaign"><span style={{ fontSize: 14, fontWeight: 600 }}>↻</span></button>
+                          )}
                           <button onClick={() => setDeleteModal(c)} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex', alignItems: 'center', transition: 'color 0.2s' }} onMouseEnter={(e) => e.currentTarget.style.color = C.red} onMouseLeave={(e) => e.currentTarget.style.color = C.muted} title="Delete Campaign"><Trash2 size={16} /></button>
                         </div>
                       </td>

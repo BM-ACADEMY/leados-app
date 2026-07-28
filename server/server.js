@@ -2754,13 +2754,28 @@ app.get('/api/campaigns', auth, async (req, res) => {
 });
 app.post('/api/campaigns', auth, async (req, res) => {
   try {
-    const { name, client_id, template_id, target_status, scheduled_at } = req.body;
+    const { name, client_id, template_id, target_status, scheduled_at, send_immediately } = req.body;
+
+    // Determine initial status
+    const initialStatus = scheduled_at && new Date(scheduled_at) > new Date() ? 'scheduled' : 'scheduled';
+
     const { rows } = await pool.query(`
       INSERT INTO campaigns (name, client_id, template_id, target_status, scheduled_at, status, created_by, created_at)
-      VALUES ($1, $2, $3, $4, $5, 'scheduled', $6, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
       RETURNING *
-    `, [name, client_id, template_id, target_status, scheduled_at, req.user.id]);
-    res.status(201).json({ campaign: rows[0] });
+    `, [name, client_id, template_id, target_status, scheduled_at, initialStatus, req.user.id]);
+
+    const campaign = rows[0];
+
+    // If send_immediately is true or no scheduled_at, trigger execution immediately
+    if (send_immediately || !scheduled_at) {
+      // Execute asynchronously
+      executeCampaign(campaign.id).catch(err => {
+        console.error('Auto-execute campaign error:', err);
+      });
+    }
+
+    res.status(201).json({ campaign });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -2871,6 +2886,42 @@ app.post('/api/campaigns/execute', internalAuth, async (req, res) => {
   } catch (err) {
     console.error('Campaign execution trigger error:', err);
     res.status(500).json({ error: 'Failed to trigger campaign' });
+  }
+});
+
+// POST /api/campaigns/:id/retry - Retry a failed/stuck campaign
+app.post('/api/campaigns/:id/retry', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get campaign details
+    const campRes = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (!campRes.rows.length) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const campaign = campRes.rows[0];
+
+    // Check if there are already messages in queue for this campaign
+    const queueCheck = await pool.query(
+      'SELECT COUNT(*) as count FROM campaign_message_queue WHERE campaign_id = $1',
+      [id]
+    );
+
+    if (parseInt(queueCheck.rows[0].count) > 0) {
+      // Messages already in queue, just reset status to running
+      await pool.query("UPDATE campaigns SET status = 'running' WHERE id = $1", [id]);
+      return res.json({ success: true, message: 'Campaign already has messages in queue, status reset to running' });
+    }
+
+    // Re-execute the campaign (will add fresh messages to queue)
+    await pool.query("UPDATE campaigns SET status = 'scheduled' WHERE id = $1", [id]);
+    executeCampaign(id);
+
+    res.json({ success: true, message: 'Campaign retry initiated' });
+  } catch (err) {
+    console.error('Campaign retry error:', err);
+    res.status(500).json({ error: 'Failed to retry campaign' });
   }
 });
 

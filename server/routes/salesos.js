@@ -1601,15 +1601,6 @@ router.post('/campaigns/check-frequency', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/campaigns/execute', async (req, res) => {
-  const { campaign_id } = req.body;
-  try {
-    if (!campaign_id) return res.status(400).json({ error: 'campaign_id is required' });
-    await pool.query(`UPDATE campaigns SET status = 'completed' WHERE id = $1`, [campaign_id]);
-    res.json({ success: true, message: `Campaign ${campaign_id} executed` });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 router.post('/campaigns/log', (req, res) => res.json({ success: true }));
 
 // ==========================================

@@ -279,13 +279,23 @@ async function generateGeminiContent(prompt) {
   });
 }
 
+// conversations.tenant_id is a foreign key into a legacy `tenants` table that
+// was never actually populated per brand — only tenants.id=1 exists. Every
+// conversation-creating path in the app (inbound webhook, /api/whatsapp/send,
+// campaign sends in server.js) is on this same single seed row. Using a
+// lead's clients.id here instead — as this used to, via `client_id as
+// tenant_id` — violates that FK for any brand whose id isn't coincidentally
+// 1, and even when it didn't error, it silently searched the wrong tenant
+// bucket for an existing conversation (real rows all live under tenant_id=1).
+const DEFAULT_TENANT_ID = 1;
+
 async function getOrUpsertConversation(lead_id) {
   const convRes = await pool.query(`SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`, [lead_id]);
   if (convRes.rows.length > 0) return convRes.rows[0].id;
 
-  const leadRes = await pool.query(`SELECT phone, client_id as tenant_id FROM leads WHERE id = $1`, [lead_id]);
+  const leadRes = await pool.query(`SELECT phone FROM leads WHERE id = $1`, [lead_id]);
   const phone = leadRes.rows[0]?.phone || '';
-  const tenant_id = leadRes.rows[0]?.tenant_id || 1;
+  const tenant_id = DEFAULT_TENANT_ID;
   const leadExists = leadRes.rows.length > 0;
   const safeLeadId = leadExists ? lead_id : null;
 

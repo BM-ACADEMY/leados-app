@@ -19,6 +19,64 @@ const ffprobePath = require("@ffprobe-installer/ffprobe").path;
 ffmpeg.setFfprobePath(ffprobePath);
 const { GoogleGenAI } = require("@google/genai");
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+// Separate client targeting v1alpha — required for image-generation models (gemini-2.0-flash-preview-image-generation)
+const genAIImage = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { apiVersion: 'v1alpha' } })
+  : null;
+
+// Helper: multi-model fallback for text generation
+// Tries multiple models so rate limits on one don't block everything
+async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
+  const geminiModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+  
+  // Strategy 1: Try Gemini models in order
+  if (genAI) {
+    for (const model of geminiModels) {
+      try {
+        const response = await genAI.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            maxOutputTokens: maxTokens,
+            temperature,
+            responseMimeType: 'application/json'
+          }
+        });
+        const text = (response.candidates?.[0]?.content?.parts?.[0]?.text || response.text || '').trim();
+        if (text) {
+          console.log(`[geminiChat] Success with model: ${model}`);
+          return text;
+        }
+      } catch (err) {
+        const isRateLimit = err.status === 429 || err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED') || err.message?.includes('quota');
+        if (isRateLimit) {
+          console.warn(`[geminiChat] ${model} rate limited, trying next...`);
+          continue;
+        }
+        // Non-rate-limit error — still try next model
+        console.warn(`[geminiChat] ${model} failed: ${err.message}, trying next...`);
+        continue;
+      }
+    }
+  }
+
+  // Strategy 2: Fall back to Groq llama
+  try {
+    console.log('[geminiChat] All Gemini models exhausted, falling back to Groq...');
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: maxTokens,
+      temperature,
+      response_format: { type: 'json_object' },
+      messages: [{ role: 'user', content: prompt }]
+    });
+    return response.choices[0].message.content.trim();
+  } catch (groqErr) {
+    console.error('[geminiChat] Groq fallback also failed:', groqErr.message);
+  }
+
+  throw new Error('All AI models are currently rate limited. Please wait a few minutes and try again.');
+}
 
 
 function extractDriveFileId(url) {
@@ -77,8 +135,18 @@ async function downloadDriveFileServiceAccount(fileId, destPath) {
   response.data.pipe(writer);
 
   return new Promise((resolve, reject) => {
-    writer.on('finish', resolve);
-    writer.on('error', reject);
+    writer.on('finish', () => {
+      if (fs.existsSync(destPath) && fs.statSync(destPath).size > 100) {
+        resolve();
+      } else {
+        if (fs.existsSync(destPath)) try { fs.unlinkSync(destPath); } catch (_) {}
+        reject(new Error(`Downloaded video from Drive (ID ${fileId}) is empty or invalid.`));
+      }
+    });
+    writer.on('error', (err) => {
+      if (fs.existsSync(destPath)) try { fs.unlinkSync(destPath); } catch (_) {}
+      reject(err);
+    });
   });
 }
 
@@ -104,6 +172,9 @@ function transcodeVideo(inputPath, outputPath) {
         resolve();
       })
       .on('error', (err) => {
+        if (fs.existsSync(outputPath)) {
+          try { fs.unlinkSync(outputPath); } catch (_) {}
+        }
         reject(err);
       })
       .run();
@@ -649,15 +720,7 @@ Do NOT use markdown code blocks. Respond ONLY with a valid JSON array matching t
 ]`;
 
   try {
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 1500,
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    const content = response.choices[0].message.content.trim();
+    const content = await geminiChat({ prompt, maxTokens: 1500, temperature: 0.7 });
     const result = JSON.parse(content);
 
     const arrayResult = Array.isArray(result) ? result : (result.results || result.captions || Object.values(result)[0]);
@@ -1124,8 +1187,22 @@ async function healMissingMedia(driveFileId) {
     const transcodedPath = path.join(uploadsDir, `transcoded_${driveFileId}.mp4`);
     const thumbnailPath = path.join(uploadsDir, `thumbnail_${driveFileId}.jpg`);
 
-    const transcodeExists = fs.existsSync(transcodedPath);
-    const thumbnailExists = fs.existsSync(thumbnailPath);
+    let transcodeExists = fs.existsSync(transcodedPath);
+    let thumbnailExists = fs.existsSync(thumbnailPath);
+
+    // If transcoded file is corrupted or 0-byte, remove it to force re-transcoding
+    if (transcodeExists) {
+      try {
+        const stats = fs.statSync(transcodedPath);
+        if (stats.size < 10000) { // under 10KB is corrupted/incomplete
+          console.warn(`[SelfHealing] transcoded_${driveFileId}.mp4 is incomplete or corrupt (${stats.size} bytes). Removing file to force recovery.`);
+          fs.unlinkSync(transcodedPath);
+          transcodeExists = false;
+        }
+      } catch (_) {
+        transcodeExists = false;
+      }
+    }
 
     if (transcodeExists && thumbnailExists) {
       console.log(`[SelfHealing] Both transcoded video and thumbnail already exist on disk for ${driveFileId}.`);
@@ -2526,15 +2603,7 @@ Respond ONLY with a valid JSON object:
   ]
 }`;
 
-      const allResponse = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        max_tokens: 2500,
-        temperature: 0.7,
-        response_format: { type: 'json_object' },
-        messages: [{ role: 'user', content: allPrompt }]
-      });
-
-      const allContent = allResponse.choices[0].message.content.trim();
+      const allContent = await geminiChat({ prompt: allPrompt, maxTokens: 2500, temperature: 0.7 });
       const allResult = JSON.parse(allContent);
       return res.json({ success: true, meta: allResult });
     }
@@ -2568,14 +2637,8 @@ Respond ONLY as valid JSON:
   ]
 }`;
 
-      const hashRes = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        max_tokens: 800,
-        temperature: 0.6,
-        response_format: { type: 'json_object' },
-        messages: [{ role: 'user', content: hashtagPrompt }]
-      });
-      const hashResult = JSON.parse(hashRes.choices[0].message.content.trim());
+      const hashContent = await geminiChat({ prompt: hashtagPrompt, maxTokens: 800, temperature: 0.6 });
+      const hashResult = JSON.parse(hashContent);
       return res.json({ success: true, suggestions: hashResult.suggestions });
     }
 
@@ -2705,15 +2768,7 @@ For each caption, output its category style.
 }
 Do not write any introductory or explanatory text. Return ONLY the valid JSON object.`;
 
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 1500,
-      temperature: 0.8,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    const content = response.choices[0].message.content.trim();
+    const content = await geminiChat({ prompt, maxTokens: 1500, temperature: 0.8 });
     const result = JSON.parse(content);
 
     res.json({ success: true, suggestions: result.suggestions });
@@ -2802,15 +2857,7 @@ For each story set, output its category style.
 }
 Do not write any introductory or explanatory text. Return ONLY the valid JSON object.`;
 
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 1800,
-      temperature: 0.8,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    const content = response.choices[0].message.content.trim();
+    const content = await geminiChat({ prompt, maxTokens: 1800, temperature: 0.8 });
     const result = JSON.parse(content);
 
     res.json({ success: true, suggestions: result.suggestions });
@@ -3420,16 +3467,32 @@ async function generateThumbnails(req, res) {
       return res.status(400).json({ error: 'Video file not found on server. Please wait for transcoding to complete or re-upload the video.' });
     }
 
-    // Get video duration via ffprobe
-    const duration = await new Promise((resolve, reject) => {
-      ffmpeg.ffprobe(videoPath, (err, meta) => {
-        if (err) reject(err);
-        else resolve(meta.format.duration || 30);
+    // Get video duration via ffprobe with self-healing on corruption
+    let duration = 30;
+    try {
+      duration = await new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(videoPath, (err, meta) => {
+          if (err) reject(err);
+          else resolve(meta?.format?.duration || 30);
+        });
       });
-    });
+    } catch (ffErr) {
+      console.error(`[generateThumbnails] ffprobe failed for videoPath=${videoPath}:`, ffErr.message);
+      // Clean up corrupted file so self-healing can re-download clean media from Google Drive
+      if (fs.existsSync(videoPath)) {
+        try { fs.unlinkSync(videoPath); } catch (_) {}
+      }
+      if (driveFileId) {
+        healMissingMedia(driveFileId);
+      }
+      return res.status(422).json({
+        error: `Video file was corrupted or incomplete (${ffErr.message}). The file has been cleared and auto-recovery initiated. Please try again in 10-15 seconds.`
+      });
+    }
 
-    // Extract 8 frames spread across the video for better variety
-    const pcts = [0.05, 0.15, 0.25, 0.4, 0.5, 0.65, 0.8, 0.92];
+    // Extract 20 frames spread evenly across the video
+    const NUM_FRAMES = 20;
+    const pcts = Array.from({ length: NUM_FRAMES }, (_, i) => 0.03 + (i / (NUM_FRAMES - 1)) * 0.94);
     const timestamps = pcts.map(p => Math.max(0.5, Math.floor(duration * p)));
 
     const framePaths = timestamps.map((_, i) => path.join(uploadsDir, `frame_${id}_${i}.jpg`));
@@ -3500,7 +3563,7 @@ async function generateThumbnails(req, res) {
 
 async function generatePoster(req, res) {
   const { id } = req.params;
-  const { frame_url } = req.body;
+  const { frame_url, prompt: clientPrompt, model: clientModel, config: clientConfig } = req.body;
   const uploadsDir = path.join(__dirname, '../uploads');
   const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
 
@@ -3517,48 +3580,244 @@ async function generatePoster(req, res) {
 
     const frameBase64 = fs.readFileSync(framePath).toString('base64');
 
-    // Get video context
+    // Get video context (title, caption)
     const { rows } = await pool.query(
-      `SELECT youtube_title, thumbnail_title, caption, instagram_caption FROM content_queue WHERE id = $1`,
+      `SELECT youtube_title, thumbnail_title, caption, instagram_caption, brand_name FROM content_queue WHERE id = $1`,
       [id]
     );
     const title = rows[0]?.youtube_title || rows[0]?.thumbnail_title || '';
+    const caption = rows[0]?.caption || rows[0]?.instagram_caption || '';
+    const brandName = rows[0]?.brand_name || '';
 
-    // Step 1: Gemini Vision analyzes the selected frame for a rich scene description
-    let sceneDesc = title || 'professional video content';
-    if (genAI) {
+    const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
+    let posterGenerated = false;
+    let geminiErrorDetails = null;
+    let engineUsed = 'none';
+
+    // Parse Thumbnail Brain configuration
+    const aspectRatio = clientConfig?.aspectRatio || '16:9';
+    const styleName = clientConfig?.style || 'Cinematic';
+    const titleSafeArea = Number(clientConfig?.titleSafeArea ?? 35);
+
+    // Calculate dimensions based on requested Aspect Ratio
+    let targetWidth = 1280;
+    let targetHeight = 720;
+    if (aspectRatio === '1:1') {
+      targetWidth = 1080;
+      targetHeight = 1080;
+    } else if (aspectRatio === '9:16') {
+      targetWidth = 720;
+      targetHeight = 1280;
+    } else if (aspectRatio === '4:3') {
+      targetWidth = 1024;
+      targetHeight = 768;
+    } else if (aspectRatio === '16:9') {
+      targetWidth = 1280;
+      targetHeight = 720;
+    }
+
+    const fallbackPrompt = `Transform this video frame into a professional YouTube thumbnail poster. Keep the SAME person and scene exactly as they are. Apply ${styleName} enhancements. Output only the enhanced image.`;
+    const editPrompt = clientPrompt || fallbackPrompt;
+
+    // === Strategy 1: Gemini Image Editing (uses the actual frame) ===
+    if (genAIImage) {
       try {
-        const descRes = await genAI.models.generateContent({
-          model: 'gemini-2.0-flash',
+        console.log(`[generatePoster] Attempting Gemini image editing for id=${id}`);
+        console.log('────────────────────────────────────────────────────');
+        console.log('[generatePoster] Thumbnail Brain Config Received:');
+        console.log('  Client Prompt:', clientPrompt ? `YES (${clientPrompt.length} chars)` : 'NO');
+        console.log('  Client Model: ', clientModel || '(none)');
+        console.log('  Aspect Ratio: ', aspectRatio, `(${targetWidth}x${targetHeight})`);
+        console.log('  Style:        ', styleName);
+        console.log('  Title Safe Area:', titleSafeArea + '%');
+        console.log('────────────────────────────────────────────────────');
+
+        // Map Thumbnail Brain UI model names to valid Google GenAI v1alpha model IDs.
+        const MODEL_MAP = {
+          'gemini-2.5-flash-image': 'gemini-2.5-flash-image',
+          'gemini-2.5-pro-image':   'gemini-3-pro-image',
+          'imagen':                 'gemini-3.1-flash-image',
+          'openai-image':           'gemini-3.1-flash-image',
+          'flux':                   'gemini-3.1-flash-image',
+        };
+        const geminiModel = MODEL_MAP[clientModel] || 'gemini-3.1-flash-image';
+
+        console.log('[generatePoster] Final Prompt (first 200 chars):', editPrompt.substring(0, 200));
+        console.log('[generatePoster] Target Gemini Model:', geminiModel);
+
+        const response = await genAIImage.models.generateContent({
+          model: geminiModel,
           contents: [
             {
               role: 'user',
               parts: [
                 { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
-                { text: 'Describe this video frame in 1-2 sentences to help generate a YouTube thumbnail poster. Include: the person\'s appearance and expression, background, mood, lighting, and color palette. Be specific and vivid. Output only the description.' }
+                { text: editPrompt }
               ]
             }
-          ]
+          ],
+          config: {
+            responseModalities: ['TEXT', 'IMAGE']
+          }
         });
-        const desc = descRes.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (desc) sceneDesc = desc;
-        console.log(`[generatePoster] Gemini scene description: ${sceneDesc}`);
-      } catch (visionErr) {
-        console.warn('[generatePoster] Gemini vision failed, using title:', visionErr.message);
+
+        // Extract the generated image from the response
+        if (response.candidates && response.candidates[0]?.content?.parts) {
+          for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData && part.inlineData.data) {
+              const imgBuffer = Buffer.from(part.inlineData.data, 'base64');
+              fs.writeFileSync(posterPath, imgBuffer);
+              posterGenerated = true;
+              engineUsed = 'gemini';
+              console.log(`[generatePoster] ✅ Gemini image editing succeeded for id=${id} with model=${geminiModel}`);
+              break;
+            }
+          }
+        }
+
+        if (!posterGenerated) {
+          console.warn('[generatePoster] Gemini returned no image data, falling back to Jimp');
+        }
+      } catch (geminiEditErr) {
+        geminiErrorDetails = geminiEditErr.message;
+        console.warn('[generatePoster] ⚠️ Gemini image editing failed, falling back to Jimp:', geminiEditErr.message);
       }
     }
 
-    // Step 2: Pollinations FLUX generates a cinematic poster from the description
-    const promptText = `Cinematic professional YouTube thumbnail poster. ${sceneDesc}${title ? `. Topic: ${title}` : ''}. Style: dramatic studio lighting, vivid bold colors, high contrast, photorealistic, 8K quality, modern thumbnail aesthetic, no text, no words, no letters, clean 16:9 composition`;
-    const encodedPrompt = encodeURIComponent(promptText);
-    const seed = Date.now() % 99999;
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=720&seed=${seed}&model=flux&nologo=true`;
+    // === Strategy 2: Jimp-based enhancement (fallback when Gemini is unavailable) ===
+    // Reads the actual selected video frame from disk and applies style-based color grading.
+    // The user's real frame is ALWAYS preserved — no AI-generated replacement faces.
+    if (!posterGenerated) {
+      try {
+        console.log(`[generatePoster] Using Jimp engine with Thumbnail Brain settings for id=${id}`);
+        console.log(`  Target dimensions: ${targetWidth}x${targetHeight} (${aspectRatio})`);
+        console.log(`  Style applied: ${styleName}`);
+        console.log(`  Title Safe Area: ${titleSafeArea}%`);
 
-    const imgRes = await axios.get(pollinationsUrl, { responseType: 'arraybuffer', timeout: 90000 });
-    const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
-    fs.writeFileSync(posterPath, Buffer.from(imgRes.data));
+        const image = await Jimp.read(framePath);
 
-    res.json({ success: true, poster_url: `${baseUrl}/uploads/poster_${id}.jpg` });
+        // Crop & cover to exact Aspect Ratio and Target Resolution
+        image.cover(targetWidth, targetHeight);
+
+        // Style presets for color grading & contrast
+        if (styleName === 'Business') {
+          image.contrast(0.20);
+          image.brightness(0.02);
+        } else if (styleName === 'Cinematic') {
+          image.contrast(0.25);
+          image.brightness(0.04);
+        } else if (styleName === 'Technology' || styleName === 'AI') {
+          image.contrast(0.30);
+          image.brightness(0.05);
+        } else if (styleName === 'Gaming') {
+          image.contrast(0.35);
+          image.brightness(0.06);
+        } else if (styleName === 'Minimal') {
+          image.contrast(0.12);
+          image.brightness(0.02);
+        } else {
+          image.contrast(0.18);
+          image.brightness(0.03);
+        }
+
+        // Apply dark title-safe overlay based on configured Title Safe Area %
+        const safeAreaFraction = Math.min(Math.max(titleSafeArea, 20), 60) / 100;
+        const gradientHeight = Math.floor(targetHeight * safeAreaFraction);
+        const startY = targetHeight - gradientHeight;
+
+        for (let y = startY; y < targetHeight; y++) {
+          const progress = (y - startY) / gradientHeight;
+          const alpha = Math.floor(progress * 190); // 0 to 190 opacity
+
+          for (let x = 0; x < targetWidth; x++) {
+            const currentColor = image.getPixelColor(x, y);
+            const rgba = Jimp.intToRGBA(currentColor);
+
+            let blendedR = Math.max(0, Math.floor(rgba.r * (1 - alpha / 255)));
+            let blendedG = Math.max(0, Math.floor(rgba.g * (1 - alpha / 255)));
+            let blendedB = Math.max(0, Math.floor(rgba.b * (1 - alpha / 255)));
+
+            // Style color tinting
+            if (styleName === 'Business') {
+              blendedB = Math.min(255, Math.floor(blendedB * 1.15)); // Cool corporate blue tint
+            } else if (styleName === 'Cinematic') {
+              blendedR = Math.min(255, Math.floor(blendedR * 1.12)); // Warm amber/golden grade
+            } else if (styleName === 'Technology' || styleName === 'AI') {
+              blendedG = Math.min(255, Math.floor(blendedG * 1.12)); // Cyan/teal tint
+              blendedB = Math.min(255, Math.floor(blendedB * 1.15));
+            } else if (styleName === 'Gaming') {
+              blendedR = Math.min(255, Math.floor(blendedR * 1.15)); // Vibrant purple tint
+              blendedB = Math.min(255, Math.floor(blendedB * 1.20));
+            }
+
+            image.setPixelColor(
+              Jimp.rgbaToInt(blendedR, blendedG, blendedB, rgba.a),
+              x, y
+            );
+          }
+        }
+
+        // Top vignette gradient
+        const topGradientHeight = Math.floor(targetHeight * 0.18);
+        for (let y = 0; y < topGradientHeight; y++) {
+          const progress = 1 - (y / topGradientHeight);
+          const alpha = Math.floor(progress * 110);
+          for (let x = 0; x < targetWidth; x++) {
+            const currentColor = image.getPixelColor(x, y);
+            const rgba = Jimp.intToRGBA(currentColor);
+            const blendedR = Math.max(0, Math.floor(rgba.r * (1 - alpha / 255)));
+            const blendedG = Math.max(0, Math.floor(rgba.g * (1 - alpha / 255)));
+            const blendedB = Math.max(0, Math.floor(rgba.b * (1 - alpha / 255)));
+            image.setPixelColor(
+              Jimp.rgbaToInt(blendedR, blendedG, blendedB, rgba.a),
+              x, y
+            );
+          }
+        }
+
+        // Add title text if available
+        if (title) {
+          const font = await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE);
+          const maxWidth = targetWidth - 80;
+          const textHeight = Jimp.measureTextHeight(font, title, maxWidth);
+          const textY = targetHeight - textHeight - 40;
+          image.print(font, 40, textY, {
+            text: title.toUpperCase(),
+            alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT,
+            alignmentY: Jimp.VERTICAL_ALIGN_BOTTOM
+          }, maxWidth, textHeight + 20);
+        }
+
+        // Add brand name badge at top-left
+        if (brandName) {
+          const smallFont = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
+          image.print(smallFont, 30, 24, brandName.toUpperCase());
+        }
+
+        await image.writeAsync(posterPath);
+        posterGenerated = true;
+        engineUsed = 'jimp';
+        console.log(`[generatePoster] ✅ Poster created using Jimp engine with ${aspectRatio} (${targetWidth}x${targetHeight}) & ${styleName} style`);
+      } catch (jimpErr) {
+        console.error('[generatePoster] Jimp processing failed:', jimpErr);
+        return res.status(500).json({ error: 'Poster generation failed. Please try again.' });
+      }
+    }
+
+    // Add cache-busting timestamp to URL
+    const ts = Date.now();
+    res.json({
+      success: true,
+      poster_url: `${baseUrl}/uploads/poster_${id}.jpg?t=${ts}`,
+      engine: engineUsed,
+      config_applied: {
+        style: styleName,
+        aspect_ratio: aspectRatio,
+        dimensions: `${targetWidth}x${targetHeight}`,
+        title_safe_area: `${titleSafeArea}%`
+      },
+      gemini_warning: geminiErrorDetails ? `Gemini API: ${geminiErrorDetails}` : null
+    });
   } catch (err) {
     console.error('[generatePoster] Error:', err);
     res.status(500).json({ error: err.message });
@@ -3602,5 +3861,76 @@ module.exports = {
   runBackgroundPublish,
   updateOverallPostStatus,
   generateThumbnails,
-  generatePoster
+  generatePoster,
+  generateAIImage
 };
+
+async function generateAIImage(req, res) {
+  const { prompt, aspectRatio = '1:1', style = 'Photorealistic', model = 'gemini-3.1-flash-image' } = req.body;
+
+  if (!prompt || !prompt.trim()) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  if (!genAIImage) {
+    return res.status(503).json({ error: 'AI service is not configured. GEMINI_API_KEY is missing.' });
+  }
+
+  try {
+    const styleGuide = {
+      'Photorealistic': 'ultra-realistic photography, 8k resolution, sharp details, professional lighting',
+      'Cinematic': 'cinematic film still, anamorphic lens, dramatic lighting, movie color grade',
+      'Digital Art': 'digital illustration, vibrant colors, concept art, trending on ArtStation',
+      'Anime': 'anime style, studio quality, cel shading, detailed backgrounds',
+      'Oil Painting': 'oil painting style, textured brushstrokes, classical art, museum quality',
+      'Watercolor': 'delicate watercolor painting, soft washes, artistic, flowing colors',
+      'Sketch': 'pencil sketch, detailed line art, graphite, professional illustration',
+      '3D Render': 'octane render, 3D CGI, photorealistic materials, ray tracing, studio lighting',
+    };
+
+    const styleHint = styleGuide[style] || style;
+    const fullPrompt = `${prompt.trim()}. ${styleHint}. High quality, masterpiece, best quality.`;
+
+    const VALID_MODELS = ['gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image', 'gemini-3-pro-image', 'gemini-2.5-flash-image'];
+    const selectedModel = VALID_MODELS.includes(model) ? model : 'gemini-3.1-flash-image';
+
+    console.log(`[generateAIImage] Model: ${selectedModel}, Aspect: ${aspectRatio}, Style: ${style}`);
+    console.log(`[generateAIImage] Prompt (${fullPrompt.length} chars):`, fullPrompt.substring(0, 120));
+
+    const response = await genAIImage.models.generateContent({
+      model: selectedModel,
+      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+      config: { responseModalities: ['IMAGE'] }
+    });
+
+    let imageData = null;
+    let mimeType = 'image/jpeg';
+
+    if (response.candidates && response.candidates[0]?.content?.parts) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData && part.inlineData.data) {
+          imageData = part.inlineData.data;
+          mimeType = part.inlineData.mimeType || 'image/jpeg';
+          break;
+        }
+      }
+    }
+
+    if (!imageData) {
+      return res.status(500).json({ error: 'No image in response. Try a more descriptive prompt.' });
+    }
+
+    const ext = mimeType.includes('png') ? 'png' : 'jpg';
+    const filename = `ai_gen_${Date.now()}.${ext}`;
+    const uploadsDir = path.join(__dirname, '../uploads');
+    fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(imageData, 'base64'));
+
+    const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+    console.log(`[generateAIImage] ✅ Image saved: ${filename} (gemini-2.0-flash-exp)`);
+
+    res.json({ success: true, image_url: `${baseUrl}/uploads/${filename}?t=${Date.now()}`, filename });
+  } catch (err) {
+    console.error('[generateAIImage] Error:', err.message);
+    res.status(500).json({ error: err.message || 'Image generation failed. Please try again.' });
+  }
+}

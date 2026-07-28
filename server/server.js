@@ -2496,18 +2496,35 @@ async function executeCampaign(campaign_id) {
             VALUES ($1, $2, $3, 'sent', NOW())
           `, [campaign_id, res.lead_id, res.wa_message_id]);
 
-          // Upsert conversation for this lead
-          const convRes = await pool.query(`
-            INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
-            VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
-            ON CONFLICT (phone, tenant_id) DO UPDATE
-              SET lead_id = EXCLUDED.lead_id,
-                  last_message = EXCLUDED.last_message,
-                  last_message_at = NOW()
-            RETURNING id
-          `, [res.lead_id, campaign.client_id, res.phone, campaign.template_body]);
-
-          const convId = convRes.rows[0].id;
+          // Find (or create) the conversation this lead already chats in, so
+          // the campaign message lands in the same Inbox thread as any reply.
+          // Check by lead_id first (unambiguous — matches getOrUpsertConversation
+          // in routes/salesos.js), then fall back to the phone the inbound
+          // webhook normalizes to (last 10 digits) before creating a new one.
+          let convId;
+          const existingConvRes = await pool.query(
+            `SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`,
+            [res.lead_id]
+          );
+          if (existingConvRes.rows.length > 0) {
+            convId = existingConvRes.rows[0].id;
+            await pool.query(
+              `UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`,
+              [campaign.template_body, convId]
+            );
+          } else {
+            const normalizedConvPhone = res.phone.replace(/\D/g, '').slice(-10);
+            const convRes = await pool.query(`
+              INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+              VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
+              ON CONFLICT (phone, tenant_id) DO UPDATE
+                SET lead_id = EXCLUDED.lead_id,
+                    last_message = EXCLUDED.last_message,
+                    last_message_at = NOW()
+              RETURNING id
+            `, [res.lead_id, campaign.client_id, normalizedConvPhone, campaign.template_body]);
+            convId = convRes.rows[0].id;
+          }
 
           await pool.query(`
             INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)

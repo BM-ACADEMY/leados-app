@@ -2073,6 +2073,18 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
     const workbook = xlsx.readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
     const results = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    const isCampaignBatch = String(req.body.force_source || '').startsWith('csv_');
+
+    if (isCampaignBatch) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS campaign_import_recipients (
+          batch_id VARCHAR(30) NOT NULL,
+          lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+          created_at TIMESTAMP DEFAULT NOW(),
+          PRIMARY KEY (batch_id, lead_id)
+        )
+      `);
+    }
 
     // Pre-fetch clients and users for mapping
     const [clientsRes, usersRes] = await Promise.all([
@@ -2089,6 +2101,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
 
     let imported = 0;
     let failed = 0;
+    const importErrors = [];
 
     for (const row of results) {
       try {
@@ -2157,49 +2170,80 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         if (phoneDigits || email) {
            const existingRes = await pool.query(`
              SELECT id FROM leads 
-             WHERE client_id IS NOT DISTINCT FROM $3
-               AND (
-                 ($1::text != '' AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1)
-                 OR ($2::text IS NOT NULL AND LOWER(email) = LOWER($2))
-               )
+             WHERE ($1::text != '' AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1)
+                OR ($2::text IS NOT NULL AND LOWER(email) = LOWER($2))
              LIMIT 1
-           `, [phoneDigits, email, rowClientId]);
+           `, [phoneDigits, email]);
            existingLead = existingRes.rows[0];
         }
 
+        let importedLeadId;
+        const isCampaignImport = isCampaignBatch;
+
         if (existingLead) {
-          // Update existing
-          await pool.query(`
-            UPDATE leads 
-            SET name = COALESCE($1, name),
-                phone = COALESCE($2, phone),
-                email = COALESCE($3, email),
-                status = COALESCE($4, status),
-                client_id = COALESCE($5, client_id),
-                source = COALESCE($6, source),
-                score = COALESCE($7, score),
-                interest = COALESCE($8, interest),
-                assigned_to = COALESCE($9, assigned_to),
-                updated_at = NOW()
-            WHERE id = $10
-          `, [name, phone, email, status, rowClientId, source, score, interest, assignedTo, existingLead.id]);
+          importedLeadId = existingLead.id;
+          if (!isCampaignImport) {
+            // Normal CRM imports may refresh an existing lead. A campaign list
+            // only references it and must not alter its CRM fields.
+            await pool.query(`
+              UPDATE leads
+              SET name = COALESCE($1, name),
+                  phone = COALESCE($2, phone),
+                  email = COALESCE($3, email),
+                  status = COALESCE($4, status),
+                  client_id = COALESCE($5, client_id),
+                  source = COALESCE($6, source),
+                  score = COALESCE($7, score),
+                  interest = COALESCE($8, interest),
+                  assigned_to = COALESCE($9, assigned_to),
+                  updated_at = NOW()
+              WHERE id = $10
+            `, [name, phone, email, status, rowClientId, source, score, interest, assignedTo, existingLead.id]);
+          }
         } else {
           // Insert new
-          await pool.query(`
+          const insertedLead = await pool.query(`
             INSERT INTO leads (client_id, name, phone, email, status, source, score, interest, assigned_to, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            RETURNING id
           `, [rowClientId, name, phone, email, status, source, score, interest, assignedTo]);
+          importedLeadId = insertedLead.rows[0].id;
+        }
+
+        if (isCampaignImport) {
+          await pool.query(`
+            INSERT INTO campaign_import_recipients (batch_id, lead_id)
+            VALUES ($1, $2)
+            ON CONFLICT (batch_id, lead_id) DO NOTHING
+          `, [req.body.force_source, importedLeadId]);
         }
 
         imported++;
       } catch (e) {
         console.error('Row import error for', row, e.message);
         failed++;
+        if (importErrors.length < 5) {
+          importErrors.push({
+            row: imported + failed + 1,
+            name: row.name || row.Name || row['First Name'] || '',
+            phone: row.phone || row.Phone || row.whatsapp || row['Phone Number'] || row['phone number'] || '',
+            error: e.message,
+          });
+        }
       }
     }
 
     fs.unlinkSync(req.file.path); // cleanup
-    res.json({ success: true, imported, failed });
+    if (imported === 0 && failed > 0) {
+      return res.status(400).json({
+        success: false,
+        imported,
+        failed,
+        error: importErrors[0]?.error || 'No valid contacts could be imported',
+        errors: importErrors,
+      });
+    }
+    res.json({ success: true, imported, failed, errors: importErrors });
 
   } catch (err) {
     console.error('Import error:', err);
@@ -2347,45 +2391,33 @@ async function executeCampaign(campaign_id) {
 
     await pool.query("UPDATE campaigns SET status = 'running' WHERE id = $1", [campaign_id]);
 
-    // Frequency cap: skip leads who received any campaign message in the last 7 days,
-    // so a lead never gets hit by two campaigns (or two runs of the same one) in a week.
-    let leadsQuery = `SELECT id, phone, name,
-      EXISTS (
-        SELECT 1
-        FROM campaign_logs recent
-        WHERE recent.lead_id = leads.id
-          AND recent.status IN ('sent', 'delivered', 'read', 'replied')
-          AND recent.sent_at > NOW() - INTERVAL '7 days'
-      ) AS frequency_capped
+    // Bulk campaigns intentionally send to every lead in the selected audience.
+    // Do not suppress a recipient because they received an earlier campaign.
+    let leadsQuery = `SELECT id, phone, name
       FROM leads
       WHERE client_id = $1`;
     const queryParams = [campaign.client_id];
 
     if (campaign.target_status && campaign.target_status !== 'all') {
       if (campaign.target_status.startsWith('csv_')) {
-        leadsQuery += ' AND source = $2';
+        // Include every number from the upload, including existing leads,
+        // without rewriting any of their CRM fields.
+        leadsQuery = `SELECT l.id, l.phone, l.name
+          FROM leads l
+          JOIN campaign_import_recipients cir ON cir.lead_id = l.id
+          WHERE cir.batch_id = $1`;
+        queryParams.splice(0, queryParams.length, campaign.target_status);
       } else {
         leadsQuery += ' AND status = $2';
+        queryParams.push(campaign.target_status);
       }
-      queryParams.push(campaign.target_status);
     }
 
     const leadsRes = await pool.query(leadsQuery, queryParams);
-    const targetedLeads = leadsRes.rows;
-    const frequencyCappedLeads = targetedLeads.filter((lead) => lead.frequency_capped);
-    const leads = targetedLeads.filter((lead) => !lead.frequency_capped);
+    const leads = leadsRes.rows;
     let sentCount = 0;
 
-    // Never silently complete a campaign with no report rows. These entries
-    // explain why an uploaded recipient was not sent another campaign.
-    for (const lead of frequencyCappedLeads) {
-      await pool.query(`
-        INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
-        VALUES ($1, $2, 'failed', 'Skipped: this contact received a campaign in the last 7 days', NOW())
-      `, [campaign_id, lead.id]);
-    }
-
-    if (targetedLeads.length === 0) {
+    if (leads.length === 0) {
       await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
       console.warn(`Campaign ${campaign_id} has no recipients matching its target.`);
       return;

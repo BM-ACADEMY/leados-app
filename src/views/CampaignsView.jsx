@@ -96,7 +96,7 @@ export const CampaignsView = () => {
           throw new Error(`No valid contacts found in the Excel file${importRes.failed ? ` (${importRes.failed} invalid row${importRes.failed === 1 ? '' : 's'})` : ''}`);
         }
         toast.success(
-          `Imported ${importRes.imported} contact${importRes.imported === 1 ? '' : 's'}`
+          `Prepared ${importRes.imported} contact${importRes.imported === 1 ? '' : 's'} for this campaign`
           + (importRes.failed ? `; skipped ${importRes.failed} invalid row${importRes.failed === 1 ? '' : 's'}` : '')
         );
         

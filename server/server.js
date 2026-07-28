@@ -139,6 +139,17 @@ const internalAuth = (req, res, next) => {
   return auth(req, res, next);
 };
 
+// conversations.tenant_id is a foreign key into a legacy `tenants` table from
+// an earlier multi-tenant schema that was never actually populated per brand —
+// only tenants.id=1 exists. Every conversation-creating path in this app
+// relies on that same single seed row, whether intentionally (the inbound
+// webhook's `lead.tenant_id || 1`) or previously by accident (a query that
+// never selected tenant_id, so it fell through to `undefined`/`|| 1`).
+// Passing a brand's clients.id here instead violates that FK for any brand
+// whose id isn't coincidentally 1 — use this constant everywhere a
+// conversation row is created so the whole app stays on the same tenant.
+const DEFAULT_TENANT_ID = 1;
+
 // ── CONTENT OS ROUTES ─────────────────────────────────────
 app.use('/api/content', internalAuth, contentRoutes);
 app.use('/api/integrations', internalAuth, integrationsRoutes);
@@ -932,7 +943,7 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
             last_message = EXCLUDED.last_message,
             last_message_at = NOW()
       RETURNING id
-    `, [lead_id, lead.tenant_id, phone, message]);
+    `, [lead_id, DEFAULT_TENANT_ID, phone, message]);
     const conversationId = convRes.rows[0].id;
 
     // Insert message into messages table
@@ -1178,7 +1189,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
           const normalizedPhone = phoneDigits.slice(-10);
 
           // Upsert conversation thread
-          const tenantId = lead.tenant_id || 1;
+          const tenantId = DEFAULT_TENANT_ID;
           const convRes = await pool.query(`
             INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
             VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
@@ -2547,13 +2558,26 @@ async function executeCampaign(campaign_id) {
       // whole campaign to 'failed' even after other recipients had already
       // been delivered successfully.
       for (const res of results) {
-        try {
-          if (res.status === 'sent') {
+        if (res.status === 'sent') {
+          // The WhatsApp message has already been delivered by Meta at this
+          // point — record that as a fact and count it, independent of
+          // whether the Inbox-sync bookkeeping below succeeds. A crash in
+          // that bookkeeping must never retroactively relabel a real send as
+          // "failed": that produced exactly the confusing duplicate-looking
+          // rows (one genuine send + one contradictory failure) seen for the
+          // same contact in the report.
+          try {
             await pool.query(`
               INSERT INTO campaign_logs (campaign_id, lead_id, wa_message_id, status, sent_at)
               VALUES ($1, $2, $3, 'sent', NOW())
             `, [campaign_id, res.lead_id, res.wa_message_id]);
+            sentCount++;
+          } catch (logErr) {
+            console.error(`Campaign ${campaign_id}: failed to record 'sent' log for lead ${res.lead_id}`, logErr.message);
+            continue;
+          }
 
+          try {
             // Find (or create) the conversation this lead already chats in, so
             // the campaign message lands in the same Inbox thread as any reply.
             // Check by lead_id first (unambiguous — matches getOrUpsertConversation
@@ -2580,7 +2604,7 @@ async function executeCampaign(campaign_id) {
                       last_message = EXCLUDED.last_message,
                       last_message_at = NOW()
                 RETURNING id
-              `, [res.lead_id, campaign.client_id, normalizedConvPhone, campaign.template_body]);
+              `, [res.lead_id, DEFAULT_TENANT_ID, normalizedConvPhone, campaign.template_body]);
               convId = convRes.rows[0].id;
             }
 
@@ -2593,23 +2617,20 @@ async function executeCampaign(campaign_id) {
             // Push to an already-open Inbox chat in real time, same as manual
             // sends (/api/whatsapp/send) and inbound webhook messages do.
             io.emit('outgoing_message', { lead_id: String(res.lead_id), message: campMsgRows[0] });
-
-            sentCount++;
-          } else {
-            await pool.query(`
-              INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
-              VALUES ($1, $2, 'failed', $3, NOW())
-            `, [campaign_id, res.lead_id, res.error]);
+          } catch (bookkeepingErr) {
+            // Message was genuinely delivered (already counted above) — this
+            // only means it won't show in the Inbox thread until the next
+            // inbound reply repairs the conversation link. Not a send failure.
+            console.error(`Campaign ${campaign_id}: sent to lead ${res.lead_id} but failed to sync into Inbox`, bookkeepingErr.message);
           }
-        } catch (rowErr) {
-          console.error(`Campaign ${campaign_id}: failed to log/save recipient (lead ${res.lead_id})`, rowErr.message);
+        } else {
           try {
             await pool.query(`
               INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
               VALUES ($1, $2, 'failed', $3, NOW())
-            `, [campaign_id, res.lead_id, `Post-send logging error: ${rowErr.message}`]);
+            `, [campaign_id, res.lead_id, res.error]);
           } catch (logErr) {
-            console.error(`Campaign ${campaign_id}: failed to record fallback failure log for lead ${res.lead_id}`, logErr.message);
+            console.error(`Campaign ${campaign_id}: failed to record failure log for lead ${res.lead_id}`, logErr.message);
           }
         }
       }

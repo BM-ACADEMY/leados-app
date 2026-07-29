@@ -1,5 +1,7 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import leadosLogo from '../assets/leadoslogo.png';
+import { Building2, Globe, Mail, Phone, MapPin, FileText } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth.js';
 
 export function TermsAndConditions() {
@@ -7,58 +9,76 @@ export function TermsAndConditions() {
   const { user } = useAuth();
 
   return (
-    <div style={{ minHeight: '100vh', width: '100%', overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#060c17', color: '#e2e8f0', fontFamily: 'Inter, system-ui, sans-serif' }}>
-      {/* Header Bar */}
+    <div style={{
+      minHeight: '100vh',
+      width: '100%',
+      overflowY: 'auto',
+      WebkitOverflowScrolling: 'touch',
+      background: '#040812',
+      color: '#e2e8f0',
+      fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between'
+    }}>
+      {/* ---------------- STICKY NAVBAR ---------------- */}
       <header style={{
-        background: '#0c1525',
-        borderBottom: '1px solid #1a2e4a',
-        padding: '16px 32px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
         position: 'sticky',
         top: 0,
-        zIndex: 50,
-        backdropFilter: 'blur(8px)'
+        zIndex: 100,
+        background: 'rgba(6, 12, 23, 0.85)',
+        backdropFilter: 'blur(16px)',
+        borderBottom: '1px solid rgba(30, 41, 59, 0.7)',
+        padding: '14px 28px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }} onClick={() => navigate(user ? '/dashboard' : '/')}>
-          <div style={{
-            width: 38,
-            height: 38,
-            background: 'linear-gradient(135deg, #f97316, #ea580c)',
-            borderRadius: 10,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontFamily: "'Syne', sans-serif",
-            fontWeight: 800,
-            fontSize: 20,
-            color: '#fff'
-          }}>L</div>
+        {/* Logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }} onClick={() => navigate('/')}>
+          <img
+            src={leadosLogo}
+            alt="Lead OS Logo"
+            style={{
+              height: 56,
+              width: 'auto',
+              objectFit: 'contain',
+              borderRadius: 8,
+              filter: 'drop-shadow(0 2px 10px rgba(249, 115, 22, 0.35))'
+            }}
+          />
           <div>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 18, color: '#f8fafc', lineHeight: 1.1 }}>LeadOS</div>
-            <div style={{ fontSize: 10, color: '#64748b' }}>ABM Groups - Powered by BM TechX</div>
+            <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 22, color: '#f8fafc', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+              Lead OS
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <Link to="/privacy-policy" style={{ color: '#94a3b8', textDecoration: 'none', fontSize: 13, fontWeight: 500 }}>
-            Privacy Policy
-          </Link>
+        {/* Navigation Links */}
+        <nav style={{ display: 'flex', alignItems: 'center', gap: 24 }} className="nav-links">
+          <Link to="/#about" style={{ color: '#94a3b8', textDecoration: 'none', fontSize: 14, fontWeight: 500, transition: 'color 0.2s' }}>About Lead OS</Link>
+          <Link to="/#how-it-works" style={{ color: '#94a3b8', textDecoration: 'none', fontSize: 14, fontWeight: 500, transition: 'color 0.2s' }}>How It Works</Link>
+          <Link to="/#security" style={{ color: '#94a3b8', textDecoration: 'none', fontSize: 14, fontWeight: 500, transition: 'color 0.2s' }}>Security & OAuth</Link>
+          <Link to="/#preview" style={{ color: '#94a3b8', textDecoration: 'none', fontSize: 14, fontWeight: 500, transition: 'color 0.2s' }}>Dashboard Preview</Link>
+          <Link to="/#faq" style={{ color: '#94a3b8', textDecoration: 'none', fontSize: 14, fontWeight: 500, transition: 'color 0.2s' }}>FAQ</Link>
+        </nav>
+
+        {/* Auth CTAs */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button
-            onClick={() => navigate(user ? '/dashboard' : '/')}
+            onClick={() => navigate(user ? '/dashboard' : '/login')}
             style={{
-              background: 'linear-gradient(135deg, #f97316, #ea580c)',
+              background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
               border: 'none',
-              borderRadius: 8,
-              padding: '8px 16px',
+              borderRadius: 9,
+              padding: '9px 20px',
               color: '#fff',
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: 600,
               cursor: 'pointer',
-              boxShadow: '0 2px 10px rgba(249,115,22,0.2)'
+              boxShadow: '0 4px 20px rgba(249, 115, 22, 0.35)'
             }}>
-            {user ? 'Dashboard' : 'Sign In'}
+            {user ? 'Dashboard' : 'Login'}
           </button>
         </div>
       </header>
@@ -205,9 +225,108 @@ export function TermsAndConditions() {
         </div>
       </main>
 
-      {/* Footer */}
-      <footer style={{ borderTop: '1px solid #1a2e4a', background: '#060c17', padding: '24px', textAlign: 'center', fontSize: 12, color: '#64748b' }}>
-        © {new Date().getFullYear()} LeadOS by ABM Groups - Powered by BM TechX. All rights reserved.
+      {/* ---------------- GOOGLE DISCLAIMER BANNER ---------------- */}
+      <section style={{
+        padding: '20px 20px',
+        maxWidth: 1050,
+        margin: '20px auto 0 auto',
+        textAlign: 'center',
+        borderTop: '1px solid rgba(30, 41, 59, 0.5)'
+      }}>
+        <p style={{
+          fontSize: 11,
+          color: '#64748b',
+          lineHeight: 1.6,
+          maxWidth: 820,
+          margin: '0 auto'
+        }}>
+          <strong>Disclaimer:</strong> Lead OS uses Google Business Profile APIs and Google OAuth 2.0 for authentication. Lead OS is an independent application and is not affiliated with, endorsed by, or sponsored by Google LLC.
+        </p>
+      </section>
+
+      {/* ---------------- FOOTER WITH CONTACT & LEGAL ---------------- */}
+      <footer style={{
+        background: '#02050c',
+        borderTop: '1px solid #1a2e4a',
+        padding: '40px 24px 30px 24px',
+        marginTop: 20
+      }}>
+        <div style={{ maxWidth: 1050, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 30 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 30 }}>
+            {/* Column 1 - App Branding */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <img
+                  src={leadosLogo}
+                  alt="Lead OS Logo"
+                  style={{
+                    height: 48,
+                    width: 'auto',
+                    objectFit: 'contain',
+                    borderRadius: 8,
+                    filter: 'drop-shadow(0 2px 8px rgba(249, 115, 22, 0.3))'
+                  }}
+                />
+                <span style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 20, color: '#f8fafc' }}>Lead OS</span>
+              </div>
+              <p style={{ fontSize: 12, color: '#64748b', maxWidth: 300, lineHeight: 1.5 }}>
+                Lead OS is an AI-powered Google Business Profile management platform.
+              </p>
+              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 8, fontWeight: 600 }}>
+                ABM Groups - Powered by BM TechX
+              </div>
+            </div>
+
+            {/* Column 2 - Organization & Contact Info */}
+            <div style={{ maxWidth: 340 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#f97316', marginBottom: 10, textTransform: 'uppercase' }}>Organization & Contact</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 12, color: '#94a3b8' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Building2 size={15} style={{ color: '#f97316', flexShrink: 0 }} />
+                  <span>Company: <b>ABM Groups - Powered by BM TechX</b></span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Globe size={15} style={{ color: '#a855f7', flexShrink: 0 }} />
+                  <span>Website: <a href="https://abmgroups.org" target="_blank" rel="noopener noreferrer" style={{ color: '#a855f7', textDecoration: 'none' }}>abmgroups.org</a></span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Mail size={15} style={{ color: '#38bdf8', flexShrink: 0 }} />
+                  <span>Support Email: <a href="mailto:admin@abmgroups.org" style={{ color: '#38bdf8', textDecoration: 'none' }}>admin@abmgroups.org</a></span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Phone size={15} style={{ color: '#10b981', flexShrink: 0 }} />
+                  <span>Phone: <a href="tel:+919944940051" style={{ color: '#10b981', textDecoration: 'none' }}>+91 9944940051</a></span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <MapPin size={15} style={{ color: '#f59e0b', flexShrink: 0, marginTop: 2 }} />
+                  <span style={{ lineHeight: 1.4 }}>Address: 252, 2nd Floor, MG Road, Kottakuppam, Vanur, Puducherry, 605104</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Column 3 - Legal Links */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#f97316', marginBottom: 10, textTransform: 'uppercase' }}>Legal Policies</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }}>
+                <Link to="/privacy-policy" style={{ color: '#94a3b8', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <FileText size={14} />
+                  <span>Privacy Policy</span>
+                </Link>
+                <Link to="/terms-and-conditions" style={{ color: '#94a3b8', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <FileText size={14} />
+                  <span>Terms & Conditions</span>
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ borderTop: '1px solid #1e293b', paddingTop: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14, fontSize: 12, color: '#64748b' }}>
+            <div>© {new Date().getFullYear()} Lead OS • ABM Groups. All rights reserved.</div>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <span>Secure Google OAuth 2.0 Integration</span>
+            </div>
+          </div>
+        </div>
       </footer>
     </div>
   );

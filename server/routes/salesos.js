@@ -1813,6 +1813,18 @@ router.get('/reports/reminder-bundle', async (req, res) => {
       + overdue.rows.filter(r => r.owner === 'human_sales').length
       + hot.rows.filter(r => r.owner === 'human_sales').length;
 
+    // Sync tasks to sales_tasks table
+    const insertTask = async (lead_id, type) => {
+       const exists = await pool.query(`SELECT id FROM sales_tasks WHERE lead_id = $1 AND task_type = $2 AND DATE(created_at) = CURRENT_DATE`, [lead_id, type]);
+       if (exists.rows.length === 0) {
+         await pool.query(`INSERT INTO sales_tasks (lead_id, task_type) VALUES ($1, $2)`, [lead_id, type]);
+       }
+    };
+    for (const c of calls.rows) await insertTask(c.lead_id || c.id, 'call');
+    for (const f of followups.rows) await insertTask(f.lead_id || f.id, 'followup');
+    for (const o of overdue.rows) await insertTask(o.lead_id || o.id, 'overdue');
+    for (const h of hot.rows) await insertTask(h.lead_id || h.id, 'hot_lead');
+
     const salesperson_summaries = [{
       owner: 'human_sales',
       text: `Today's Tasks: ${followups.rows.length} Follow-ups, ${calls.rows.length} Calls, ${payments.rows.length} Payments, ${hot.rows.length} HOT Leads, ${overdue.rows.length} Overdue. (${humanTaskCount} assigned to the human sales team.)`

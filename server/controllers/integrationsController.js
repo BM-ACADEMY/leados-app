@@ -1,6 +1,7 @@
 const db = require('../db/connection');
 const cryptoHelper = require('../utils/crypto');
 const axios = require('axios');
+const { evaluateLeadBrandAndSchedule } = require('../services/aiBrain');
 
 async function linkMetaAccount(req, res) {
   const { brand_name, platform, account_name, account_id, facebook_page_id, instagram_business_id, access_token } = req.body;
@@ -180,6 +181,8 @@ async function handleMetaWebhook(req, res) {
               ON CONFLICT (leadgen_id) DO NOTHING
             `, [name || 'FB Lead', phone, email, clientId, leadgenId]);
             
+            const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]);
+            if(newLead.rows.length) { evaluateLeadBrandAndSchedule(newLead.rows[0].id).catch(console.error); }
             console.log(`Successfully saved Meta lead ${leadgenId}`);
           } catch (err) {
             console.error('Error processing webhook lead:', err.response?.data || err.message);
@@ -268,6 +271,7 @@ async function syncHistoricalLeads(req, res) {
             ON CONFLICT (leadgen_id) DO NOTHING
           `, [name || 'FB Lead', phone, email, clientId, leadgenId]);
           totalSynced++;
+          const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]); if(newLead.rows.length) { evaluateLeadBrandAndSchedule(newLead.rows[0].id).catch(console.error); }
         } catch(e) {
           console.error("Insert error for lead", leadgenId, e.message);
         }
@@ -358,6 +362,7 @@ async function syncAllHistoricalLeads(req, res) {
                   ON CONFLICT (leadgen_id) DO NOTHING
                 `, [name || 'FB Lead', phone, email, clientId, leadgenId, new Date(leadData.created_time || Date.now())]);
                 totalSynced++;
+                const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]); if(newLead.rows.length) { evaluateLeadBrandAndSchedule(newLead.rows[0].id).catch(console.error); }
               } catch(e) {
                 console.error("Insert error for lead", leadgenId, e.message);
               }

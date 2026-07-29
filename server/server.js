@@ -51,6 +51,7 @@ io.on('connection', (socket) => {
 
 // ── DB CONNECTION ─────────────────────────────────────────
 const pool = require('./db/connection');
+const { evaluateLeadBrandAndSchedule, evaluateStuckLeads } = require('./services/aiBrain');
 const { checkNewDriveVideos, publishPost } = require("./controllers/contentController");
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1535,6 +1536,8 @@ app.post('/api/leads', auth, async (req, res) => {
         wa_access_token: process.env.META_PAGE_ACCESS_TOKEN
       }).catch(e => console.error('[n8n Webhook Error]', e.message));
     }
+
+    evaluateLeadBrandAndSchedule(rows[0].id).catch(console.error);
 
     res.status(201).json({ lead: rows[0] });
   } catch (err) {

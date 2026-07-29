@@ -105,7 +105,7 @@ async function evaluateStuckLeads() {
         AND l.client_id IS NOT NULL
         AND (l.next_follow_up IS NULL OR l.next_follow_up < NOW())
       ORDER BY l.created_at ASC
-      LIMIT 10
+      LIMIT 50
     `);
 
     for (const lead of stuckLeads.rows) {
@@ -174,6 +174,9 @@ FORMAT:
       }
 
       console.log(`[AI Brain] Processed stuck lead ${lead.id}, next follow-up in ${delayHours} hours.`);
+      
+      // Delay for 2 seconds to avoid hitting Gemini API rate limits
+      await new Promise(r => setTimeout(r, 2000));
     }
 
   } catch (err) {

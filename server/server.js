@@ -1794,6 +1794,36 @@ app.post('/webhook/whatsapp', async (req, res) => {
     const body = req.body;
     fs.appendFileSync(path.join(__dirname, 'uploads', 'incoming_payloads.log'), `[${new Date().toISOString()}] ${JSON.stringify(body, null, 2)}\n\n`);
     
+    if (!body.object || body.object !== 'whatsapp_business_account') return;
+
+    // ── FILTER UNMANAGED PHONE NUMBERS ─────────────────────
+    let hasValidPhoneNumber = true; // Default true for non-message events
+    for (const entry of body.entry || []) {
+      for (const change of entry.changes || []) {
+        if (change.field === 'messages') {
+          hasValidPhoneNumber = false;
+          const phoneNumberId = change.value?.metadata?.phone_number_id;
+          if (phoneNumberId) {
+            if (phoneNumberId === process.env.WA_PHONE_NUMBER_ID) {
+              hasValidPhoneNumber = true;
+            } else {
+              const clientRes = await pool.query('SELECT id FROM clients WHERE phone_number_id = $1 LIMIT 1', [phoneNumberId]);
+              if (clientRes.rows.length > 0) {
+                hasValidPhoneNumber = true;
+              }
+            }
+          }
+        } else {
+          hasValidPhoneNumber = true; // Let template updates pass
+        }
+      }
+    }
+
+    if (!hasValidPhoneNumber) {
+      console.log('🚫 Ignored webhook for unmanaged phone_number_id');
+      return;
+    }
+
     // FORWARD TO N8N WEBHOOK
     // This allows the Node server to act as a proxy if needed.
     // If the request is already coming from n8n (source=n8n), we SKIP forwarding to prevent an infinite loop.
@@ -1806,8 +1836,6 @@ app.post('/webhook/whatsapp', async (req, res) => {
         console.error('⚠️ Failed to forward payload to n8n:', n8nErr.message);
       }
     }
-    
-    if (!body.object || body.object !== 'whatsapp_business_account') return;
 
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {

@@ -59,14 +59,16 @@ FORMAT:
 `;
 
     const response = await gemini.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.5-flash',
       contents: prompt,
       config: {
         responseMimeType: "application/json",
       }
     });
 
-    const aiText = response.text().trim();
+    let aiText = response.text.trim();
+    const match = aiText.match(/\{[\s\S]*\}/);
+    if (match) aiText = match[0];
     const result = JSON.parse(aiText);
 
     if (result.client_id) {
@@ -96,15 +98,11 @@ async function evaluateStuckLeads() {
   if (!gemini) return;
 
   try {
-    // Find leads that haven't been touched in 24+ hours, are not converted/lost, 
-    // and whose next_follow_up is either past due or null.
-    // Also ensuring they have an assigned brand.
     const stuckLeads = await db.query(`
-      SELECT l.id, l.name, l.source, l.status, l.touch_count, l.client_id, l.next_follow_up, l.last_contact
+      SELECT l.id, l.name, l.source, l.status, l.touch_count, l.client_id, l.next_follow_up
       FROM leads l
       WHERE l.status NOT IN ('lost', 'converted')
         AND l.client_id IS NOT NULL
-        AND (l.last_contact IS NULL OR l.last_contact < NOW() - INTERVAL '24 hours')
         AND (l.next_follow_up IS NULL OR l.next_follow_up < NOW())
       ORDER BY l.created_at ASC
       LIMIT 10
@@ -128,7 +126,7 @@ This lead seems to be stuck or idle.
 Name: ${lead.name}
 Status: ${lead.status}
 Past Touches: ${lead.touch_count || 0}
-Last Contact Date: ${lead.last_contact || 'Never'}
+Last Contact Date: N/A
 
 RECENT CONVERSATION HISTORY:
 ${history || '(No messages sent or received yet)'}
@@ -146,14 +144,17 @@ FORMAT:
 `;
 
       const response = await gemini.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-flash',
         contents: prompt,
         config: {
           responseMimeType: "application/json",
         }
       });
 
-      const result = JSON.parse(response.text().trim());
+      let aiText = response.text.trim();
+      const match = aiText.match(/\{[\s\S]*\}/);
+      if (match) aiText = match[0];
+      const result = JSON.parse(aiText);
       const delayHours = parseInt(result.delay_hours) || 24;
 
       await db.query(`
@@ -164,12 +165,12 @@ FORMAT:
         WHERE id = $1
       `, [lead.id]);
       
-      // Save the internal note to history
       if (result.internal_note) {
-         await db.query(`
-            INSERT INTO lead_history (lead_id, action, note, created_at)
-            VALUES ($1, 'ai_followup_scheduled', $2, NOW())
-         `, [lead.id, `AI Brain Scheduled next follow up in ${delayHours}h: ${result.internal_note}`]);
+        // Fallback: append note directly to lead notes if history table doesn't exist.
+        await db.query(`
+          UPDATE leads SET notes = COALESCE(notes, '') || '\n[' || NOW() || '] AI Brain: ' || $1
+          WHERE id = $2
+        `, [result.internal_note, lead.id]).catch(e => console.error("Could not save note", e));
       }
 
       console.log(`[AI Brain] Processed stuck lead ${lead.id}, next follow-up in ${delayHours} hours.`);

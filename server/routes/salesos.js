@@ -393,6 +393,20 @@ router.post('/leads/deduplicate', async (req, res) => {
 router.post('/brand/detect', async (req, res) => {
   const { phone_number_id, phone, message } = req.body;
   try {
+    if (phone_number_id) {
+      let isManaged = false;
+      if (phone_number_id === process.env.WA_PHONE_NUMBER_ID) {
+        isManaged = true;
+      } else {
+        const clientCheck = await pool.query('SELECT id FROM clients WHERE phone_number_id = $1 LIMIT 1', [phone_number_id]);
+        if (clientCheck.rows.length > 0) isManaged = true;
+      }
+      if (!isManaged) {
+        console.log('🚫 [Brand Detect] Halted n8n workflow for unmanaged phone_number_id:', phone_number_id);
+        return res.status(403).json({ error: 'Unmanaged phone_number_id', ignored: true });
+      }
+    }
+
     let brandId = null;
     let brandName = 'ABM Groups';
     const explicitBrand = detectExplicitBrand(message);

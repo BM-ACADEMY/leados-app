@@ -127,13 +127,23 @@ export const InboxView = () => {
   const { lead: activeLead, conversations, loadingMore, hasMore, loadMoreMessages, refetch: refetchLead, loading: loadingLead } = useLead(activeLeadId);
   const [msg, setMsg] = useState('');
   const [sending, setSending] = useState(false);
-  const [showChatOnMobile, setShowChatOnMobile] = useState(false);
+  const [showChatOnMobile, setShowChatOnMobile] = useState(!!location.state?.leadId);
   const [localMessages, setLocalMessages] = useState([]);
   const [connected, setConnected] = useState(false);
-  const [typingLeadIds, setTypingLeadIds] = useState(() => new Set());
+  const [typingLeadIds, setTypingLeadIds] = useState(() => new Map()); // Map<lead_id, 'waiting'|'composing'>
   const typingTimeoutsRef = useRef({});
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editContent, setEditContent] = useState('');
+
+  // Sync activeLeadId and showChatOnMobile if location state changes
+  useEffect(() => {
+    if (location.state?.leadId && location.state.leadId !== activeLeadId) {
+      setActiveLeadId(location.state.leadId);
+      setShowChatOnMobile(true);
+      // Clean up location state so refreshing doesn't keep forcing it if user selected someone else
+      window.history.replaceState({}, document.title)
+    }
+  }, [location.state?.leadId, activeLeadId]);
   const [attachedFile, setAttachedFile] = useState(null);
   const [hoveredMessage, setHoveredMessage] = useState(null);
   const [activeDropdownId, setActiveDropdownId] = useState(null);
@@ -311,7 +321,7 @@ export const InboxView = () => {
     }
     setTypingLeadIds((prev) => {
       if (!prev.has(key)) return prev;
-      const next = new Set(prev);
+      const next = new Map(prev);
       next.delete(key);
       return next;
     });
@@ -360,15 +370,15 @@ export const InboxView = () => {
       }
     });
 
-    // AI is composing a reply to the customer's last message
-    socket.on('ai_typing', ({ lead_id, typing }) => {
+    // AI is waiting in queue / composing a reply to the customer's last message
+    socket.on('ai_typing', ({ lead_id, typing, status }) => {
       if (typing) {
         const key = String(lead_id);
-        setTypingLeadIds((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+        const aiStatus = status || 'composing';
+        setTypingLeadIds((prev) => { const m = new Map(prev); m.set(key, aiStatus); return m; });
         if (typingTimeoutsRef.current[key]) clearTimeout(typingTimeoutsRef.current[key]);
-        // Safety net in case the AI pipeline errors out and never confirms —
-        // don't leave the indicator stuck forever.
-        typingTimeoutsRef.current[key] = setTimeout(() => clearTypingIndicator(key), 30000);
+        // Safety net — 90s covers 60s queue + 30s composing
+        typingTimeoutsRef.current[key] = setTimeout(() => clearTypingIndicator(key), 90000);
       } else {
         clearTypingIndicator(lead_id);
       }
@@ -471,9 +481,12 @@ export const InboxView = () => {
 
       const sentMsg = await api.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
 
-      // If window was closed, backend sent a template silently — just remove the optimistic message
+      // If window was closed, backend sent a template to reopen it silently.
+      // We must remove the optimistic message because WhatsApp API STRICTLY blocks 
+      // arbitrary media/text outside the 24-hour window. The server never sent the video/text to Meta.
       if (sentMsg?.window_closed) {
         setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
+        toast.error('Message not sent! The WhatsApp 24-hour window has expired. A standard template was sent automatically to reopen the chat. You can send files once they reply.', { duration: 6000 });
         return;
       }
 
@@ -654,7 +667,7 @@ export const InboxView = () => {
   };
 
   const displayLeads = leads || [];
-  const activeObj = displayLeads.find((l) => l.id === activeLeadId) || displayLeads[0];
+  const activeObj = displayLeads.find((l) => l.id === activeLeadId) || activeLead || displayLeads[0];
 
   const chatImages = localMessages.filter(m => m.type === 'image' && m.media_url && !deletedForMeIds.includes(m.id));
 
@@ -770,7 +783,8 @@ export const InboxView = () => {
     return date.toLocaleDateString([], { weekday: 'long' });
   };
 
-  const isActiveLeadTyping = activeLeadId !== null && activeLeadId !== undefined && typingLeadIds.has(String(activeLeadId));
+  const activeLeadTypingStatus = (activeLeadId !== null && activeLeadId !== undefined) ? typingLeadIds.get(String(activeLeadId)) : null;
+  const isActiveLeadTyping = !!activeLeadTypingStatus;
 
   return (
     <div style={{ height: '100%', display: 'flex' }}>
@@ -981,25 +995,43 @@ export const InboxView = () => {
                     {isActiveLeadTyping && (
                       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 11 }}>
                         <div style={{
-                          background: C.accent + '20',
-                          border: '1px solid ' + C.accentDim,
+                          background: activeLeadTypingStatus === 'waiting' ? C.muted + '15' : C.accent + '20',
+                          border: '1px solid ' + (activeLeadTypingStatus === 'waiting' ? C.muted + '40' : C.accentDim),
                           borderRadius: '13px 4px 13px 13px',
-                          padding: '10px 14px',
+                          padding: '9px 13px',
                           display: 'flex',
                           alignItems: 'center',
                           gap: 6
                         }}>
-                          <span style={{ fontSize: 10, color: C.muted, marginRight: 2 }}>AI is typing</span>
-                          {[0, 1, 2].map((dot) => (
-                            <span key={dot} style={{
-                              width: 5,
-                              height: 5,
-                              borderRadius: '50%',
-                              background: C.accent,
-                              animation: 'typingBounce 1.2s infinite',
-                              animationDelay: `${dot * 0.15}s`
-                            }} />
-                          ))}
+                          {activeLeadTypingStatus === 'waiting' ? (
+                            <>
+                              <span style={{ fontSize: 10, color: C.muted, marginRight: 2 }}>⏳ AI in queue...</span>
+                              {[0, 1, 2].map((dot) => (
+                                <span key={dot} style={{
+                                  width: 4,
+                                  height: 4,
+                                  borderRadius: '50%',
+                                  background: C.muted,
+                                  animation: 'typingBounce 1.8s infinite',
+                                  animationDelay: `${dot * 0.25}s`
+                                }} />
+                              ))}
+                            </>
+                          ) : (
+                            <>
+                              <span style={{ fontSize: 10, color: C.muted, marginRight: 2 }}>🤖 AI is typing</span>
+                              {[0, 1, 2].map((dot) => (
+                                <span key={dot} style={{
+                                  width: 5,
+                                  height: 5,
+                                  borderRadius: '50%',
+                                  background: C.accent,
+                                  animation: 'typingBounce 1.2s infinite',
+                                  animationDelay: `${dot * 0.15}s`
+                                }} />
+                              ))}
+                            </>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1251,8 +1283,8 @@ export const InboxView = () => {
                     {m.is_starred && <Star size={11} fill={C.muted} color={C.muted} style={{ opacity: 0.8 }} />}
                     <p style={{ fontSize: 9, color: C.muted }}>{isSending ? 'Sending…' : getMessageTime(m)}</p>
                     {!isLead && m.status && !isSending && (
-                      <span style={{ fontSize: 8, color: m.status === 'read' ? C.blue : m.status === 'delivered' ? C.green : C.muted }}>
-                        {m.status === 'read' ? '✓✓' : m.status === 'delivered' ? '✓✓' : m.status === 'sent' ? '✓' : m.status === 'failed' ? '✗' : ''}
+                      <span style={{ fontSize: 8, color: m.status === 'read' ? C.blue : m.status === 'delivered' ? C.green : m.status === 'window_closed' ? '#ff9800' : C.muted }}>
+                        {m.status === 'read' ? '✓✓' : m.status === 'delivered' ? '✓✓' : m.status === 'sent' ? '✓' : m.status === 'failed' ? '✗' : m.status === 'window_closed' ? '🔒' : ''}
                       </span>
                     )}
                   </div>

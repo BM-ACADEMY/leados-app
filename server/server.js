@@ -1109,8 +1109,31 @@ app.get('/api/leads/sources', auth, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT DISTINCT source FROM leads WHERE source IS NOT NULL AND source <> '' ORDER BY source`
     );
-    const sources = rows.map(r => r.source);
-    res.json({ sources });
+    
+    let rawSources = rows.map(r => r.source)
+                         .filter(s => !s.startsWith('Csv_') && !s.startsWith('={{') && s.toLowerCase() !== 'test');
+    
+    const uniqueSources = [];
+    const seen = new Set();
+    for (const s of rawSources) {
+      const lower = s.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        
+        // Custom formatting for common sources
+        if (lower === 'whatsapp') {
+          uniqueSources.push('WhatsApp');
+        } else if (lower === 'meta_ads') {
+          uniqueSources.push('Meta Ads');
+        } else if (lower === 'instagram dm') {
+          uniqueSources.push('Instagram DM');
+        } else {
+          uniqueSources.push(s.charAt(0).toUpperCase() + s.slice(1).toLowerCase());
+        }
+      }
+    }
+    
+    res.json({ sources: uniqueSources.sort() });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -1422,7 +1445,7 @@ app.get('/api/leads', auth, async (req, res) => {
     }
     if (source && source !== 'all') {
       params.push(source);
-      q += ` AND l.source = $${params.length}`;
+      q += ` AND l.source ILIKE $${params.length}`;
     }
     if (search) {
       params.push(`%${search}%`);
@@ -1619,6 +1642,14 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
   try {
     const { lead_id, message, media_url, msg_type, reply_to_wa_id, is_forwarded } = req.body;
 
+    // Admin manually intervened: cancel any pending AI reply for this lead
+    if (aiReplyQueue.has(lead_id)) {
+      clearTimeout(aiReplyQueue.get(lead_id));
+      aiReplyQueue.delete(lead_id);
+      io.emit('ai_typing', { lead_id: String(lead_id), typing: false });
+      console.log(`[AI Queue] Cancelled AI reply for lead ${lead_id} due to manual admin message.`);
+    }
+
     const leadRes = await pool.query(`
       SELECT l.*, c.phone_number_id, c.wa_access_token
       FROM leads l
@@ -1775,6 +1806,7 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
 });
 
 // ── WHATSAPP WEBHOOK ──────────────────────────────────────
+const aiReplyQueue = new Map(); // Store timeouts for delayed AI replies
 
 // GET — Meta webhook verification
 app.get('/webhook/whatsapp', (req, res) => {
@@ -2062,17 +2094,31 @@ app.post('/webhook/whatsapp', async (req, res) => {
             // WF00 continues through its synchronous transcription request.
             // Do not call it again and create a duplicate AI response.
             if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL && req.query.source !== 'n8n') {
-              // Let the Inbox show a typing indicator while n8n/Gemini composes
-              // the reply. /communication/send clears it once the reply is sent.
-              io.emit('ai_typing', { lead_id: String(lead.id), typing: true });
-              axios.post(process.env.N8N_WEBHOOK_URL, {
-                lead_id: lead.id,
-                phone,
-                message: text,
-                phone_number_id: lead.client_phone_number_id || phoneNumberId,
-                wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN,
-                gemini_api_key: process.env.GEMINI_API_KEY
-              }).catch(e => console.error('[n8n forward error]', e.message));
+              // Clear any existing waiting queue for this lead
+              if (aiReplyQueue.has(lead.id)) {
+                clearTimeout(aiReplyQueue.get(lead.id));
+              }
+
+              // Let the Inbox show a waiting indicator while the AI is in queue
+              io.emit('ai_typing', { lead_id: String(lead.id), typing: true, status: 'waiting' });
+
+              // Queue the new message with a 60 second wait period
+              const timer = setTimeout(() => {
+                aiReplyQueue.delete(lead.id);
+                // Update indicator to 'composing' once we actually forward to n8n
+                io.emit('ai_typing', { lead_id: String(lead.id), typing: true, status: 'composing' });
+                
+                axios.post(process.env.N8N_WEBHOOK_URL, {
+                  lead_id: lead.id,
+                  phone,
+                  message: text,
+                  phone_number_id: lead.client_phone_number_id || phoneNumberId,
+                  wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN,
+                  gemini_api_key: process.env.GEMINI_API_KEY
+                }).catch(e => console.error('[n8n forward error]', e.message));
+              }, 60000); // 60 seconds delay
+
+              aiReplyQueue.set(lead.id, timer);
             }
           }
         }
@@ -3079,6 +3125,40 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
           `, [rowClientId, name, phone, email, status, source, score, interest, assignedTo]);
           importedLeadId = insertedLead.rows[0].id;
           inserted++;
+
+          // ── Send welcome template for newly inserted leads (not existing ones) ──
+          if (!isCampaignImport && process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
+            // Stagger by 1s per lead to avoid WhatsApp rate limits on bulk import
+            const delay = inserted * 1000;
+            setTimeout(() => {
+              // Fetch client-specific credentials for this lead (if client_id set)
+              pool.query(
+                'SELECT c.phone_number_id, c.wa_access_token FROM clients c WHERE c.id = $1',
+                [rowClientId]
+              ).then(clientRes => {
+                const phoneNumberId = clientRes.rows[0]?.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+                const waAccessToken = clientRes.rows[0]?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+                axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
+                  lead_id: importedLeadId,
+                  name,
+                  phone,
+                  client_id: rowClientId,
+                  phone_number_id: phoneNumberId,
+                  wa_access_token: waAccessToken,
+                }).catch(e => console.error(`[Import Welcome] Failed for lead ${importedLeadId}:`, e.message));
+              }).catch(() => {
+                // fallback to default credentials
+                axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
+                  lead_id: importedLeadId,
+                  name,
+                  phone,
+                  client_id: rowClientId,
+                  phone_number_id: process.env.WA_PHONE_NUMBER_ID,
+                  wa_access_token: process.env.META_PAGE_ACCESS_TOKEN,
+                }).catch(e => console.error(`[Import Welcome Fallback] Failed for lead ${importedLeadId}:`, e.message));
+              });
+            }, delay);
+          }
         }
 
         if (isCampaignImport) {

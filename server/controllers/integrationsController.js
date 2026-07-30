@@ -156,7 +156,7 @@ async function handleMetaWebhook(req, res) {
             const pageToken = pageTokenRes.data.access_token;
             
             const leadRes = await axios.get(
-              `https://graph.facebook.com/v18.0/${leadgenId}`,
+              `https://graph.facebook.com/v18.0/${leadgenId}?fields=created_time,id,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,field_data`,
               { params: { access_token: pageToken } }
             );
             
@@ -175,11 +175,22 @@ async function handleMetaWebhook(req, res) {
             if (phone.startsWith('0')) phone = phone.substring(1);
             if (!phone.startsWith('91') && phone.length === 10) phone = '91' + phone;
 
+            const formIdStr = leadData.form_id || null;
+            const campaignIdStr = leadData.campaign_id || null;
+            const campaignNameStr = leadData.campaign_name || null;
+            const adNameStr = leadData.ad_name || null;
+            const adIdStr = leadData.ad_id || null;
+
             await db.query(`
-              INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id)
-              VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5)
-              ON CONFLICT (leadgen_id) DO NOTHING
-            `, [name || 'FB Lead', phone, email, clientId, leadgenId]);
+              INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, lead_ad_form_id, campaign_id, campaign_name, ad_name, ad_id)
+              VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5, $6, $7, $8, $9, $10)
+              ON CONFLICT (leadgen_id) DO UPDATE SET 
+                  lead_ad_form_id = COALESCE(EXCLUDED.lead_ad_form_id, leads.lead_ad_form_id),
+                  campaign_id = COALESCE(EXCLUDED.campaign_id, leads.campaign_id),
+                  campaign_name = COALESCE(EXCLUDED.campaign_name, leads.campaign_name),
+                  ad_name = COALESCE(EXCLUDED.ad_name, leads.ad_name),
+                  ad_id = COALESCE(EXCLUDED.ad_id, leads.ad_id)
+            `, [name || 'FB Lead', phone, email, clientId, leadgenId, formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr]);
             
             const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]);
             if(newLead.rows.length) { evaluateLeadBrandAndSchedule(newLead.rows[0].id).catch(console.error); }
@@ -231,16 +242,16 @@ async function syncHistoricalLeads(req, res) {
       const formId = form.id;
       const leadsRes = await axios.get(
         `https://graph.facebook.com/v18.0/${formId}/leads`,
-        { params: { access_token: pageToken, limit: 100 } }
+        { params: { access_token: pageToken, limit: 100, fields: 'created_time,id,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,field_data' } }
       );
       
       const leads = leadsRes.data.data || [];
       for (const leadData of leads) {
         const leadgenId = leadData.id;
         
-        // Skip if exists
-        const checkRes = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]);
-        if (checkRes.rows.length > 0) continue;
+        // We still want to update existing leads with new campaign details if they are missing
+        const checkRes = await db.query('SELECT id, campaign_id FROM leads WHERE leadgen_id = $1', [leadgenId]);
+        const exists = checkRes.rows.length > 0;
 
         let email = '', phone = '', name = '';
         if (leadData.field_data) {
@@ -264,14 +275,27 @@ async function syncHistoricalLeads(req, res) {
            }
         }
 
+        const formIdStr = leadData.form_id || formId;
+        const campaignIdStr = leadData.campaign_id || null;
+        const adNameStr = leadData.ad_name || leadData.campaign_name || null;
+        const adIdStr = leadData.ad_id || null;
+
         try {
           await db.query(`
-            INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id)
-            VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5)
-            ON CONFLICT (leadgen_id) DO NOTHING
-          `, [name || 'FB Lead', phone, email, clientId, leadgenId]);
+            INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, created_at, lead_ad_form_id, campaign_id, ad_name, ad_id)
+            VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (leadgen_id) DO UPDATE SET 
+                  lead_ad_form_id = COALESCE(EXCLUDED.lead_ad_form_id, leads.lead_ad_form_id),
+                  campaign_id = COALESCE(EXCLUDED.campaign_id, leads.campaign_id),
+                  ad_name = COALESCE(EXCLUDED.ad_name, leads.ad_name),
+                  ad_id = COALESCE(EXCLUDED.ad_id, leads.ad_id)
+          `, [name || 'FB Lead', phone, email, clientId, leadgenId, new Date(leadData.created_time || Date.now()), formIdStr, campaignIdStr, adNameStr, adIdStr]);
           totalSynced++;
-          const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]); if(newLead.rows.length) { evaluateLeadBrandAndSchedule(newLead.rows[0].id).catch(console.error); }
+          if (!exists) {
+            const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]); 
+            if(newLead.rows.length) { evaluateLeadBrandAndSchedule(newLead.rows[0].id).catch(console.error); }
+          }
+
         } catch(e) {
           console.error("Insert error for lead", leadgenId, e.message);
         }
@@ -320,16 +344,16 @@ async function syncAllHistoricalLeads(req, res) {
             const formId = form.id;
             const leadsRes = await axios.get(
               `https://graph.facebook.com/v18.0/${formId}/leads`,
-              { params: { access_token: pageToken, limit: 100 } }
+              { params: { access_token: pageToken, limit: 100, fields: 'created_time,id,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,field_data' } }
             );
             
             const leads = leadsRes.data.data || [];
             for (const leadData of leads) {
               const leadgenId = leadData.id;
               
-              // Skip if exists
+              // Update if exists instead of skip
               const checkRes = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]);
-              if (checkRes.rows.length > 0) continue;
+              const exists = checkRes.rows.length > 0;
 
               let email = '', phone = '', name = '';
               if (leadData.field_data) {
@@ -355,16 +379,32 @@ async function syncAllHistoricalLeads(req, res) {
                  }
               }
 
-              try {
-                await db.query(`
-                  INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, created_at)
-                  VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5, $6)
-                  ON CONFLICT (leadgen_id) DO NOTHING
-                `, [name || 'FB Lead', phone, email, clientId, leadgenId, new Date(leadData.created_time || Date.now())]);
-                totalSynced++;
-                const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]); if(newLead.rows.length) { evaluateLeadBrandAndSchedule(newLead.rows[0].id).catch(console.error); }
-              } catch(e) {
-                console.error("Insert error for lead", leadgenId, e.message);
+              const formIdStr = leadData.form_id || formId;
+              const campaignIdStr = leadData.campaign_id || null;
+              const campaignNameStr = leadData.campaign_name || null;
+              const adNameStr = leadData.ad_name || null;
+              const adIdStr = leadData.ad_id || null;
+
+              if (phone) {
+                try {
+                  await db.query(`
+                    INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, created_at, lead_ad_form_id, campaign_id, campaign_name, ad_name, ad_id)
+                    VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5, $6, $7, $8, $9, $10, $11)
+                    ON CONFLICT (leadgen_id) DO UPDATE SET 
+                      lead_ad_form_id = COALESCE(EXCLUDED.lead_ad_form_id, leads.lead_ad_form_id),
+                      campaign_id = COALESCE(EXCLUDED.campaign_id, leads.campaign_id),
+                      campaign_name = COALESCE(EXCLUDED.campaign_name, leads.campaign_name),
+                      ad_name = COALESCE(EXCLUDED.ad_name, leads.ad_name),
+                      ad_id = COALESCE(EXCLUDED.ad_id, leads.ad_id)
+                  `, [name || 'FB Lead', phone, email, clientId, leadgenId, new Date(leadData.created_time || Date.now()), formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr]);
+                  totalSynced++;
+                  if (!exists) {
+                    const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]); 
+                    if(newLead.rows.length) { evaluateLeadBrandAndSchedule(newLead.rows[0].id).catch(console.error); }
+                  }
+                } catch(e) {
+                  console.error("Insert error for lead", leadgenId, e.message);
+                }
               }
             }
           }

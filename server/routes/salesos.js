@@ -1135,11 +1135,13 @@ router.post('/workflows/log', async (req, res) => {
 router.get('/workflows/logs', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT w.id, w.workflow, w.lead_id, w.status, w.message, w.created_at, l.name as lead_name
+      SELECT w.id, w.workflow, w.lead_id, w.status, w.message, w.created_at, 
+             l.name as lead_name, l.source, l.campaign_name, l.campaign_id, 
+             l.ad_name, l.ad_id, l.lead_ad_form_id, l.meta_lead_id, l.phone, l.email
       FROM workflow_logs w
       LEFT JOIN leads l ON w.lead_id = CAST(l.id AS TEXT)
       ORDER BY w.created_at DESC
-      LIMIT 100
+      LIMIT 1000
     `);
     res.json({ logs: result.rows });
   } catch (err) {

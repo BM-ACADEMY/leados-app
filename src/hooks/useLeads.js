@@ -52,7 +52,7 @@ export const useLeads = (filters = {}) => {
 
   useEffect(() => {
     fetchLeads();
-  }, [filters.status, filters.brand, filters.search, filters.limit, filters.offset]);
+  }, [filters.status, filters.brand, filters.source, filters.search, filters.limit, filters.offset]);
 
   return { leads, total, loading, loadingMore, hasMore, error, refetch: fetchLeads, loadMoreLeads };
 };

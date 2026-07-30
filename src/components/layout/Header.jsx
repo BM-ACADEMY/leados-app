@@ -17,15 +17,74 @@ const LABELS = {
 };
 
 const SEARCH_PAGES = [
+  // Primary
   { path: '/dashboard', label: 'Dashboard', desc: 'Overview and quick stats' },
-  { path: '/leads', label: 'Lead Management', desc: 'View, filter, and manage all leads' },
+  { path: '/leads', label: 'Leads', desc: 'View, filter, and manage all leads' },
+  { path: '/sales-tasks', label: 'Sales Task', desc: 'Manage your daily sales activities' },
   { path: '/inbox', label: 'WhatsApp Inbox', desc: 'Chat directly with your leads' },
   { path: '/campaigns', label: 'Bulk Campaigns', desc: 'Send mass WhatsApp messages' },
   { path: '/templates', label: 'Templates', desc: 'Manage WhatsApp message templates' },
   { path: '/brain', label: 'AI Brain', desc: 'Configure AI assistant behavior' },
+  { path: '/ai-image', label: 'AI Image', desc: 'Generate AI images' },
   { path: '/reports', label: 'Reports', desc: 'Detailed analytics and performance' },
+  { path: '/founder-reports', label: 'Founder Reports', desc: 'Executive summaries and metrics' },
   { path: '/clients', label: 'Clients', desc: 'Manage client accounts and billing' },
+  { path: '/integrations', label: 'Integrations', desc: 'Connect third-party tools' },
+  { path: '/workflows', label: 'Workflow Logs', desc: 'View automated workflow executions' },
   { path: '/settings', label: 'Settings', desc: 'System configuration and preferences' },
+
+  // AllianceOS
+  { path: '/alliance-dashboard', label: 'AllianceOS Dashboard', desc: 'Alliance overview' },
+  { path: '/upload-leads', label: 'Upload Leads', desc: 'AllianceOS - Import new leads' },
+  { path: '/lead-list', label: 'Lead List', desc: 'AllianceOS - View leads' },
+  { path: '/pipeline', label: 'Pipeline', desc: 'AllianceOS - Sales pipeline' },
+  { path: '/lead-profile', label: 'Lead Profile', desc: 'AllianceOS - Lead details' },
+  { path: '/knowledge-base', label: 'Knowledge Base', desc: 'AllianceOS - Documentation' },
+  { path: '/prompt-manager', label: 'Prompt Manager', desc: 'AllianceOS - Manage prompts' },
+  { path: '/alliance-inbox', label: 'Alliance Inbox', desc: 'AllianceOS - Messages' },
+
+  // Content OS
+  { path: '/admin/content-os/approval', label: 'Approval Room', desc: 'Content OS - Review content' },
+  { path: '/admin/content-os/monitors', label: 'Folder Monitors', desc: 'Content OS - Track folders' },
+  { path: '/admin/content-os/scheduler', label: 'Scheduler', desc: 'Content OS - Schedule posts' },
+  { path: '/admin/content-os/captions', label: 'Caption Studio', desc: 'Content OS - Manage captions' },
+  { path: '/admin/content-os/thumbnail-brain', label: 'Thumbnail Brain', desc: 'Content OS - AI thumbnails' },
+  { path: '/admin/content-os/social-connection', label: 'Social Accounts', desc: 'Content OS - Social links' },
+  { path: '/admin/content-os/tokens', label: 'Token Health', desc: 'Content OS - API token status' },
+  { path: '/admin/content-os/logs', label: 'Publish Logs', desc: 'Content OS - Publishing history' },
+  { path: '/admin/content-os/reach', label: 'Reach Report', desc: 'Content OS - Analytics' },
+  { path: '/admin/content-os/failed', label: 'Failed Jobs', desc: 'Content OS - Error logs' },
+
+  // Thedal OS
+  { path: '/thedal/keyword-tracking', label: 'Keyword Tracking', desc: 'Thedal OS - SEO keywords' },
+  { path: '/thedal/gsc-intel', label: 'GSC Intel', desc: 'Thedal OS - Google Search Console' },
+  { path: '/thedal/on-page-audit', label: 'On-Page Audit', desc: 'Thedal OS - Site scanning' },
+  { path: '/thedal/content-factory', label: 'Content Factory', desc: 'Thedal OS - Create content' },
+  { path: '/thedal/monthly-report', label: 'Monthly Report', desc: 'Thedal OS - PDF reports' },
+  { path: '/thedal/rank-drop-alert', label: 'Rank Drop Alert', desc: 'Thedal OS - SEO alerts' },
+  { path: '/thedal/clients', label: 'Thedal Clients', desc: 'Thedal OS - Manage clients' },
+  { path: '/thedal/plan-subscription', label: 'Plan Subscription', desc: 'Thedal OS - Subscriptions' },
+  { path: '/thedal/plans', label: 'Thedal Plans', desc: 'Thedal OS - Pricing and plans' },
+  { path: '/thedal/serp-radar', label: 'SERP Radar', desc: 'Thedal OS - Search rankings' },
+  { path: '/thedal/gap-hunter', label: 'Gap Hunter', desc: 'Thedal OS - Keyword gaps' },
+  { path: '/thedal/schema-library', label: 'Schema Library', desc: 'Thedal OS - Structured data' },
+  { path: '/thedal/competitor-spy', label: 'Competitor Spy', desc: 'Thedal OS - Competitor analysis' },
+  { path: '/thedal/backlink-tracker', label: 'Backlink Tracker', desc: 'Thedal OS - Backlink CRM' },
+  { path: '/thedal/local-citations', label: 'Local Citations', desc: 'Thedal OS - Local listings' },
+  { path: '/thedal/local-seo-bridge', label: 'Local SEO Bridge', desc: 'Thedal OS - GMB integration' },
+
+  // Mafiya OS
+  { path: '/mafiya/family', label: 'The Family', desc: 'Mafiya OS - Users' },
+  { path: '/mafiya/add-client', label: 'GMB Clients', desc: 'Mafiya OS - Client management' },
+  { path: '/mafiya/plans', label: 'Mafiya Plans', desc: 'Mafiya OS - Plans' },
+  { path: '/mafiya/loyalty', label: 'Loyalty (Review)', desc: 'Mafiya OS - Reviews' },
+  { path: '/mafiya/street-posts', label: 'Street Posts', desc: 'Mafiya OS - Social posting' },
+  { path: '/mafiya/rivals', label: 'Rival Families', desc: 'Mafiya OS - Competitors' },
+  { path: '/mafiya/gbp-insights', label: 'GBP Insights', desc: 'Mafiya OS - Business Profile' },
+  { path: '/mafiya/citations', label: 'Citation', desc: 'Mafiya OS - Citations' },
+  { path: '/mafiya/orders', label: 'Mafia Orders', desc: 'Mafiya OS - Orders' },
+  { path: '/mafiya/brain', label: "Don's Brain", desc: 'Mafiya OS - AI Assistant' },
+  { path: '/mafiya/usage', label: 'Usage', desc: 'Mafiya OS - Platform usage' },
 ];
 
 export const Header = ({user, onMenuClick}) => {

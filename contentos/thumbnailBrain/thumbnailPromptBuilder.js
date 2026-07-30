@@ -42,10 +42,15 @@ export function buildFinalPrompt(config, runtimeVars = {}) {
   const styleSection = `\n\n${buildStyleInstruction(config.style)}`;
 
   // ── Runtime content context (injected from Approval Room at call time) ──
-  const { videoTitle = '', description = '', category = '' } = runtimeVars;
+  const { videoTitle = '', category = '' } = runtimeVars;
   const contextLines = [];
-  if (videoTitle) contextLines.push(`Title: ${videoTitle}`);
-  if (description) contextLines.push(`Description: ${description}`);
+
+  // Skip filename-like titles (e.g. "WhatsApp Video 2026-06-19 at 12.31.21") — they
+  // are meaningless as context and cause Gemini to render the filename as text in the image.
+  const isFilenameTitle = /whatsapp\s*video|^\d{4}[-_]\d{2}[-_]\d{2}|\.(mp4|mov|avi|mkv)$/i.test(videoTitle);
+  if (videoTitle && !isFilenameTitle) contextLines.push(`Title: ${videoTitle}`);
+  // Description is intentionally excluded from image prompt — long captions cause Gemini
+  // to reinterpret the scene. Description is used server-side only for overlay text generation.
   if (category) contextLines.push(`Category: ${category}`);
   const contextSection = contextLines.length
     ? `\n\nContent Context:\n${contextLines.join('\n')}`
@@ -69,3 +74,5 @@ export function buildFinalPrompt(config, runtimeVars = {}) {
 
   return basePrompt + styleSection + contextSection + titleSafeNote + outputSection;
 }
+
+

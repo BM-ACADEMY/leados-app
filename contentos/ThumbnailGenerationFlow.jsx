@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { loadConfig } from './thumbnailBrain/thumbnailBrainConfig.js';
+import { renderTextOverlayCanvas, extractPunchyHeadline, extractMarketingCopy } from '../src/utils/canvasTextOverlay.js';
+
 import {
   Video,
   FileText,
@@ -97,19 +100,74 @@ export function ThumbnailGenerationFlow() {
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [stylePreset, setStylePreset] = useState('Architectural Editorial');
 
-  // Handle caption generation trigger
+  // Thumbnail Brain Config & Marketing Overlay State
+  const brainConfig = loadConfig();
+  const textOverlayConfig = brainConfig.textOverlay || {};
+
+  const [overlayTitle, setOverlayTitle] = useState(textOverlayConfig.customHeadline || 'BECOME A DATA ANALYST');
+  const [overlaySubtitle, setOverlaySubtitle] = useState(textOverlayConfig.subtitle || 'Placement in 90 Days');
+  const [overlayCtaBadge, setOverlayCtaBadge] = useState(textOverlayConfig.ctaBadge || 'Admissions Open');
+  const [renderedPosterUrl, setRenderedPosterUrl] = useState(null);
+
+  // Auto-extract headline when description changes if auto mode enabled
+  useEffect(() => {
+    if (description) {
+      const copy = extractMarketingCopy(description);
+      if (textOverlayConfig.headlineSource === 'auto') {
+        setOverlayTitle(copy.title);
+      }
+      setOverlaySubtitle(copy.subtitle);
+      setOverlayCtaBadge(copy.cta);
+    }
+  }, [description]);
+
+  // Re-render poster canvas whenever frame, marketing copy or config changes
+  useEffect(() => {
+    let isMounted = true;
+    if (selectedFrame?.src && textOverlayConfig.enabled !== false) {
+      renderTextOverlayCanvas(selectedFrame.src, {
+        title: overlayTitle,
+        subtitle: overlaySubtitle,
+        ctaBadge: overlayCtaBadge,
+        fontFamily: textOverlayConfig.fontFamily || 'Anton',
+        fontSize: textOverlayConfig.fontSize || 54,
+        textColor: textOverlayConfig.textColor || '#FFFFFF',
+        strokeColor: textOverlayConfig.strokeColor || '#000000',
+        strokeWidth: textOverlayConfig.strokeWidth || 6,
+        bgColor: textOverlayConfig.bgColor || 'rgba(249, 115, 22, 0.95)',
+        subBgColor: textOverlayConfig.subBgColor || 'rgba(15, 23, 42, 0.9)',
+        subTextColor: textOverlayConfig.subTextColor || '#E2E8F0',
+        ctaBgColor: textOverlayConfig.ctaBgColor || '#10B981',
+        ctaTextColor: textOverlayConfig.ctaTextColor || '#FFFFFF',
+        bgPadding: textOverlayConfig.bgPadding || 14,
+        borderRadius: textOverlayConfig.borderRadius || 8,
+        shadowColor: textOverlayConfig.shadowColor || 'rgba(0, 0, 0, 0.75)',
+        shadowBlur: textOverlayConfig.shadowBlur || 14,
+        position: textOverlayConfig.position || 'top_left',
+        showBgPill: textOverlayConfig.showBgPill !== false,
+        showSubtitle: textOverlayConfig.showSubtitle !== false,
+        showCtaBadge: textOverlayConfig.showCtaBadge !== false,
+      }).then((url) => {
+        if (isMounted) setRenderedPosterUrl(url);
+      }).catch(err => console.warn('Overlay render error:', err));
+    }
+    return () => { isMounted = false; };
+  }, [selectedFrame, overlayTitle, overlaySubtitle, overlayCtaBadge]);
+
+
+  // Handle caption & thumbnail copy generation trigger
   const handleGenerateCaptions = () => {
     setIsExtractingCaptions(true);
     setTimeout(() => {
       setIsExtractingCaptions(false);
-      setTitle(
-        'Building High-Yield Content Engine: 5 Structural Principles'
-      );
-      setDescription(
-        'In this breakdown, we unpack the exact database-backed workflow architecture used to generate high-performing video thumbnails and social captions automatically.'
-      );
+      setTitle('Building High-Yield Content Engine: 5 Structural Principles');
+      setDescription('In this breakdown, we unpack the exact database-backed workflow architecture used to generate high-performing video thumbnails and social captions automatically.');
+      setOverlayTitle('BECOME A DATA ANALYST');
+      setOverlaySubtitle('Placement in 90 Days');
+      setOverlayCtaBadge('Admissions Open');
     }, 600);
   };
+
 
   // Handle final thumbnail generation
   const handleGenerateThumbnail = () => {
@@ -787,36 +845,22 @@ export function ThumbnailGenerationFlow() {
             <div className="lg:col-span-7 space-y-3">
               <div className="relative aspect-video rounded-xl overflow-hidden border border-slate-800 shadow-xl bg-slate-950 group">
                 <img
-                  src={selectedFrame.src}
+                  src={renderedPosterUrl || selectedFrame.src}
                   alt="Completed Thumbnail"
                   className="w-full h-full object-cover"
                 />
                 
-                {/* Architectural Text Overlay Mockup on Poster */}
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/30 to-transparent p-6 flex flex-col justify-between">
-                  <div className="flex justify-between items-start">
-                    <span className="bg-blue-600 text-white font-mono text-[10px] uppercase tracking-wider px-2.5 py-1 rounded font-bold shadow-sm">
-                      CONTENT OS ARCHITECTURE
-                    </span>
-                    <span className="bg-slate-900/90 text-slate-200 font-mono text-xs px-2 py-0.5 rounded border border-slate-700">
-                      {aspectRatio}
-                    </span>
-                  </div>
-
-                  <div>
-                    <h2 className="text-xl md:text-2xl font-serif font-bold text-white leading-tight drop-shadow-md max-w-lg">
-                      {title}
-                    </h2>
-                    <p className="text-xs text-slate-300 mt-2 font-mono drop-shadow line-clamp-1">
-                      {description}
-                    </p>
-                  </div>
+                {/* Architectural Overlay Tag */}
+                <div className="absolute top-3 right-3 flex items-center gap-2">
+                  <span className="bg-slate-900/90 text-slate-200 font-mono text-[10px] uppercase font-bold px-2 py-0.5 rounded backdrop-blur-sm border border-slate-700">
+                    {aspectRatio} · {textOverlayConfig.fontFamily || 'Anton'} Font
+                  </span>
                 </div>
               </div>
 
               <div className="flex items-center justify-between text-xs font-mono text-slate-500 px-1">
                 <span>Asset ID: THUMB_88392_FINAL.PNG</span>
-                <span>Rendered via Architectural Scholar Engine</span>
+                <span>Rendered via Thumbnail Brain Text Overlay</span>
               </div>
             </div>
 
@@ -836,23 +880,74 @@ export function ThumbnailGenerationFlow() {
                     <span className="text-slate-800 font-medium">{stylePreset}</span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-slate-200">
-                    <span className="text-slate-500">Typography:</span>
-                    <span className="text-slate-800 font-medium">Editorial Serif + Mono</span>
+                    <span className="text-slate-500">Google Font:</span>
+                    <span className="text-blue-600 font-bold">{textOverlayConfig.fontFamily || 'Anton'}</span>
                   </div>
                   <div className="flex justify-between py-1.5">
                     <span className="text-slate-500">Output Quality:</span>
-                    <span className="text-emerald-700 font-bold">2048 × 1152 (High-Res)</span>
+                    <span className="text-emerald-700 font-bold">1920 × 1080 (High-Res)</span>
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-2.5 pt-2">
+              {/* INTERACTIVE PROMOTIONAL MARKETING COPY EDITOR */}
+              <div className="bg-white p-4 rounded-lg border border-slate-200 space-y-3">
+                <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 block">
+                  🚀 Edit Thumbnail Marketing Copy Stack
+                </label>
+                
+                <div>
+                  <label className="text-[10px] font-mono font-semibold text-slate-500 block mb-1">Thumbnail Title</label>
+                  <input
+                    type="text"
+                    value={overlayTitle}
+                    onChange={(e) => setOverlayTitle(e.target.value)}
+                    placeholder="e.g. BECOME A DATA ANALYST"
+                    className="w-full bg-slate-50 border border-slate-300 rounded px-3 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-blue-500 transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-mono font-semibold text-slate-500 block mb-1">Subtitle / Outcome</label>
+                  <input
+                    type="text"
+                    value={overlaySubtitle}
+                    onChange={(e) => setOverlaySubtitle(e.target.value)}
+                    placeholder="e.g. Placement in 90 Days"
+                    className="w-full bg-slate-50 border border-slate-300 rounded px-3 py-1.5 text-xs text-slate-800 outline-none focus:border-blue-500 transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-mono font-semibold text-slate-500 block mb-1">CTA Badge</label>
+                  <input
+                    type="text"
+                    value={overlayCtaBadge}
+                    onChange={(e) => setOverlayCtaBadge(e.target.value)}
+                    placeholder="e.g. Admissions Open"
+                    className="w-full bg-slate-50 border border-slate-300 rounded px-3 py-1.5 text-xs font-bold text-emerald-700 outline-none focus:border-emerald-500 transition-colors"
+                  />
+                </div>
+
+                <p className="text-[10px] text-slate-500 font-mono pt-1">
+                  Updates live on thumbnail using {textOverlayConfig.fontFamily || 'Anton'} typography & brand colors.
+                </p>
+              </div>
+
+              <div className="space-y-2.5 pt-1">
                 <button
-                  onClick={() => alert('Downloading high-resolution thumbnail asset...')}
+                  onClick={() => {
+                    const link = document.createElement('a');
+                    link.href = renderedPosterUrl || selectedFrame.src;
+                    link.download = `marketing-thumbnail-${(overlayTitle || 'promo').toLowerCase().replace(/\s+/g, '-')}.png`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  }}
                   className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm"
                 >
                   <Download className="w-4 h-4 text-emerald-400" />
-                  Download High-Res Asset (.PNG)
+                  Download High-Res Promotional Thumbnail (.PNG)
                 </button>
 
                 <button
@@ -864,6 +959,8 @@ export function ThumbnailGenerationFlow() {
                 </button>
               </div>
             </div>
+
+
           </div>
         </section>
 

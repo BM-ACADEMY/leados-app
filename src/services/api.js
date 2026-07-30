@@ -600,7 +600,7 @@ class LeadOSAPI {
     return this.post('/content/generate-ai-image', { prompt, aspectRatio, style, model });
   }
 
-  async generatePoster(id, frameUrl, prompt = null, model = null, config = null) {
+  async generatePoster(id, frameUrl, prompt = null, model = null, config = null, description = '') {
     return this.request(`/api/content/${id}/generate-poster`, {
       method: 'POST',
       body: JSON.stringify({
@@ -608,7 +608,22 @@ class LeadOSAPI {
         ...(prompt ? { prompt } : {}),
         ...(model ? { model } : {}),
         ...(config ? { config } : {}),
+        ...(description ? { description } : {}),
       }),
+    });
+  }
+
+  async generateThumbnailHeadline(id, caption, description) {
+    return this.request(`/api/content/${id}/generate-thumbnail-headline`, {
+      method: 'POST',
+      body: JSON.stringify({ caption, description }),
+    });
+  }
+
+  async uploadPosterOverlay(id, posterDataUrl) {
+    return this.request(`/api/content/${id}/upload-poster-overlay`, {
+      method: 'POST',
+      body: JSON.stringify({ poster_data_url: posterDataUrl }),
     });
   }
 

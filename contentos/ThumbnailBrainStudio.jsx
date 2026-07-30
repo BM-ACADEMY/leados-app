@@ -6,6 +6,8 @@ import {
   X, Copy, RotateCcw, Zap, Eye, Brain, ChevronRight,
 } from 'lucide-react';
 import { api } from '../src/services/api.js';
+import { POPULAR_GOOGLE_FONTS, loadGoogleFont, renderTextOverlayCanvas, extractPunchyHeadline } from '../src/utils/canvasTextOverlay.js';
+
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 const C = {
@@ -34,10 +36,8 @@ const TABS = [
 ];
 
 const AI_MODELS = [
-  { value: 'gemini-3.1-flash-image',      label: 'Gemini 3.1 Flash',      badge: '⭐ Recommended', color: C.accent },
-  { value: 'gemini-3.1-flash-lite-image', label: 'Gemini 3.1 Flash Lite', badge: 'Fast & Cheap',   color: C.green },
-  { value: 'gemini-3-pro-image',          label: 'Gemini 3 Pro',          badge: 'Highest Quality',color: C.purple },
-  { value: 'gemini-2.5-flash-image',      label: 'Gemini 2.5 Flash',      badge: 'Legacy',         color: C.muted },
+  { value: 'gemini-2.0-flash-preview-image-generation', label: 'Gemini 2.0 Flash Image', badge: '⭐ Recommended', color: C.accent },
+  { value: 'gemini-2.0-flash-exp',                      label: 'Gemini 2.0 Flash Exp',   badge: 'Experimental',   color: C.green },
 ];
 
 const COMPOSITION_OPTIONS = [
@@ -104,7 +104,7 @@ const NEGATIVE_OPTIONS = [
 ];
 
 const DEFAULT_CONFIG = {
-  aiEngine: { provider: 'google', model: 'gemini-3.1-flash-image', temperature: 0.7, maxTokens: 2048, imageQuality: 'ultra_hd', creativityLevel: 7, safetyLevel: 'moderate' },
+  aiEngine: { provider: 'google', model: 'gemini-2.0-flash-preview-image-generation', temperature: 0.7, maxTokens: 2048, imageQuality: 'ultra_hd', creativityLevel: 7, safetyLevel: 'moderate' },
   subjectPreservation: { face: true, hair: true, expression: true, clothing: true, pose: true, cameraAngle: true, skinTone: true },
   compositionRules: ['rule_of_thirds', 'close_up'],
   lighting: ['cinematic'],
@@ -218,6 +218,11 @@ export const ThumbnailBrainStudio = () => {
     setSaving(true);
     try {
       await api.saveThumbnailBrainConfig(config, versionName || undefined);
+      // Mirror textOverlay settings to localStorage so ApprovalRoom picks up position, font, etc.
+      try {
+        const existing = JSON.parse(localStorage.getItem('thumbnail_brain_config') || '{}');
+        localStorage.setItem('thumbnail_brain_config', JSON.stringify({ ...existing, textOverlay: config.textOverlay }));
+      } catch (_) {}
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -909,22 +914,332 @@ const LightingTab = ({ config, updateConfig }) => {
   );
 };
 
-// ── TAB: Typography ────────────────────────────────────────────────────────
-const TypographyTab = ({ config, updateConfig }) => (
-  <div style={{ maxWidth: 700 }}>
-    <SectionCard title="Typography Style" subtitle="Select a typography preset. The AI uses this for text layout guidance and visual hierarchy.">
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-        {TYPOGRAPHY_OPTIONS.map(opt => (
-          <button key={opt.id} onClick={() => updateConfig('typography', opt.id)}
-            style={{ padding: '18px 16px', borderRadius: 12, border: `2px solid ${config.typography === opt.id ? C.accent : C.border}`, background: config.typography === opt.id ? C.accent + '15' : C.card, cursor: 'pointer', textAlign: 'center', transition: 'all 0.15s' }}>
-            <p style={{ color: config.typography === opt.id ? C.accent : C.text, fontSize: 15, fontWeight: 700, marginBottom: 4 }}>{opt.label}</p>
-            <p style={{ color: C.muted, fontSize: 11 }}>{opt.desc}</p>
-          </button>
-        ))}
+// ── TAB: Typography & Marketing Thumbnail Studio ───────────────────────────
+const TypographyTab = ({ config, updateConfig }) => {
+  const t = config.textOverlay || {
+    enabled: true,
+    mode: 'canvas',
+    headlineSource: 'custom',
+    customHeadline: 'BECOME A DATA ANALYST',
+    subtitle: 'Placement in 90 Days',
+    ctaBadge: 'Admissions Open',
+    fontFamily: 'Anton',
+    fontSize: 54,
+    textColor: '#FFFFFF',
+    strokeColor: '#000000',
+    strokeWidth: 6,
+    bgColor: 'rgba(249, 115, 22, 0.95)',
+    subBgColor: 'rgba(15, 23, 42, 0.9)',
+    subTextColor: '#E2E8F0',
+    ctaBgColor: '#10B981',
+    ctaTextColor: '#FFFFFF',
+    bgPadding: 14,
+    borderRadius: 8,
+    shadowColor: 'rgba(0, 0, 0, 0.75)',
+    shadowBlur: 14,
+    position: 'top_left',
+    showBgPill: true,
+    showSubtitle: true,
+    showCtaBadge: true,
+  };
+
+  const [previewDataUrl, setPreviewDataUrl] = useState(null);
+
+  const setT = (key, val) => {
+    updateConfig(`textOverlay.${key}`, val);
+  };
+
+  const sampleBg = 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1280&q=80';
+
+  useEffect(() => {
+    let isMounted = true;
+    const enabled = t.enabled !== false;
+
+    renderTextOverlayCanvas(sampleBg, {
+      title: enabled ? (t.customHeadline || 'YOUR HEADLINE') : '',
+      subtitle: enabled && t.showSubtitle !== false ? (t.subtitle || 'Supporting line') : '',
+      ctaBadge: enabled && t.showCtaBadge !== false ? (t.ctaBadge || 'Call to Action') : '',
+      fontFamily: t.fontFamily || 'Anton',
+      fontSize: t.fontSize || 54,
+      textColor: t.textColor || '#FFFFFF',
+      strokeColor: t.strokeColor || '#000000',
+      strokeWidth: t.strokeWidth || 6,
+      bgColor: t.bgColor || 'rgba(249, 115, 22, 0.95)',
+      subBgColor: t.subBgColor || 'rgba(15, 23, 42, 0.9)',
+      subTextColor: t.subTextColor || '#E2E8F0',
+      ctaBgColor: t.ctaBgColor || '#10B981',
+      ctaTextColor: t.ctaTextColor || '#FFFFFF',
+      bgPadding: t.bgPadding || 14,
+      borderRadius: t.borderRadius || 8,
+      shadowColor: t.shadowColor || 'rgba(0, 0, 0, 0.75)',
+      shadowBlur: t.shadowBlur || 14,
+      position: t.position || 'top_left',
+      showBgPill: enabled && t.showBgPill !== false,
+      showSubtitle: enabled && t.showSubtitle !== false,
+      showCtaBadge: enabled && t.showCtaBadge !== false,
+      canvasWidth: 1280,
+      canvasHeight: 720,
+    }).then(url => {
+      if (isMounted) setPreviewDataUrl(url);
+    }).catch(err => console.warn('Preview overlay render err:', err));
+
+    return () => { isMounted = false; };
+  }, [
+    t.enabled, t.customHeadline, t.subtitle, t.ctaBadge,
+    t.fontFamily, t.fontSize, t.textColor, t.strokeColor, t.strokeWidth,
+    t.bgColor, t.subBgColor, t.subTextColor, t.ctaBgColor, t.ctaTextColor,
+    t.bgPadding, t.borderRadius, t.shadowColor, t.shadowBlur, t.position,
+    t.showBgPill, t.showSubtitle, t.showCtaBadge,
+  ]);
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, maxWidth: 1100 }}>
+      {/* LEFT COLUMN: CONTROLS */}
+      <div>
+        <SectionCard title="Marketing Thumbnail Status" subtitle="Enable AI & Canvas marketing overlay suite on video frames">
+          <Toggle
+            checked={!!t.enabled}
+            onChange={v => setT('enabled', v)}
+            label="Enable Promotional Marketing Overlays"
+            desc="Renders Title, Subtitle, and CTA badges directly on generated thumbnails"
+          />
+        </SectionCard>
+
+        {t.enabled && (
+          <>
+            {/* GOOGLE FONTS SELECTOR */}
+            <SectionCard title="Google Fonts Typography" subtitle="Select headline font style for marketing thumbnails">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, maxHeight: 180, overflowY: 'auto', paddingRight: 4 }}>
+                {POPULAR_GOOGLE_FONTS.map(font => {
+                  const isSelected = (t.fontFamily || 'Anton').toLowerCase() === font.name.toLowerCase();
+                  return (
+                    <button
+                      key={font.name}
+                      onClick={() => setT('fontFamily', font.name)}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: 8,
+                        border: `1px solid ${isSelected ? C.accent : C.border}`,
+                        background: isSelected ? C.accent + '20' : C.card,
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      <p style={{ color: isSelected ? C.accent : C.text, fontSize: 14, fontWeight: 700 }}>{font.name}</p>
+                      <p style={{ color: C.muted, fontSize: 10 }}>{font.style} · {font.category}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </SectionCard>
+
+            {/* MARKETING COPY INPUTS */}
+            <SectionCard title="Marketing Copy Stack (Title, Subtitle, CTA)" subtitle="Configure thumbnail copy generated by Caption Brain or enter custom copy">
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.text, display: 'block', marginBottom: 4 }}>1. Thumbnail Title (3–8 Words)</label>
+                <input
+                  type="text"
+                  value={t.customHeadline || ''}
+                  onChange={e => setT('customHeadline', e.target.value)}
+                  placeholder="e.g. BECOME A DATA ANALYST"
+                  style={{ width: '100%', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '9px 12px', color: C.text, fontSize: 13, outline: 'none', fontWeight: 700 }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.text, display: 'block', marginBottom: 4 }}>2. Subtitle / Outcome (2–6 Words)</label>
+                <input
+                  type="text"
+                  value={t.subtitle || ''}
+                  onChange={e => setT('subtitle', e.target.value)}
+                  placeholder="e.g. Placement in 90 Days"
+                  style={{ width: '100%', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', color: C.text, fontSize: 12, outline: 'none' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.text, display: 'block', marginBottom: 4 }}>3. CTA Badge Text</label>
+                <input
+                  type="text"
+                  value={t.ctaBadge || ''}
+                  onChange={e => setT('ctaBadge', e.target.value)}
+                  placeholder="e.g. Admissions Open / Free Workshop"
+                  style={{ width: '100%', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', color: C.accent, fontSize: 12, outline: 'none', fontWeight: 700 }}
+                />
+              </div>
+            </SectionCard>
+
+            {/* COLOR & STROKE & BADGE STYLING */}
+            <SectionCard title="Color Palette & Badge Theme" subtitle="Customize header colors, CTA badge background, and outline strokes">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Title Fill</label>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input type="color" value={t.textColor || '#FFFFFF'} onChange={e => setT('textColor', e.target.value)} style={{ width: 34, height: 34, borderRadius: 6, border: 'none', cursor: 'pointer' }} />
+                    <span style={{ fontSize: 11, fontFamily: 'monospace', color: C.text }}>{t.textColor || '#FFFFFF'}</span>
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Title Pill</label>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input type="color" value={(t.bgColor || '#f97316').substring(0, 7)} onChange={e => setT('bgColor', e.target.value)} style={{ width: 34, height: 34, borderRadius: 6, border: 'none', cursor: 'pointer' }} />
+                    <span style={{ fontSize: 11, fontFamily: 'monospace', color: C.text }}>Title Banner</span>
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>CTA Badge</label>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input type="color" value={t.ctaBgColor || '#10B981'} onChange={e => setT('ctaBgColor', e.target.value)} style={{ width: 34, height: 34, borderRadius: 6, border: 'none', cursor: 'pointer' }} />
+                    <span style={{ fontSize: 11, fontFamily: 'monospace', color: C.text }}>CTA Pill</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.muted, marginBottom: 4 }}>
+                  <span>Title Font Size</span>
+                  <span style={{ fontWeight: 700, color: C.text }}>{t.fontSize || 54}px</span>
+                </div>
+                <input type="range" min={30} max={90} step={2} value={t.fontSize || 54} onChange={e => setT('fontSize', parseInt(e.target.value))} style={{ width: '100%', accentColor: C.accent }} />
+              </div>
+
+              <Toggle
+                checked={t.showCtaBadge !== false}
+                onChange={v => setT('showCtaBadge', v)}
+                label="Show CTA Badge (e.g. ★ Admissions Open)"
+                desc="Displays a high-converting promotional pill badge"
+              />
+              <Toggle
+                checked={t.showSubtitle !== false}
+                onChange={v => setT('showSubtitle', v)}
+                label="Show Subtitle Banner"
+                desc="Displays a secondary outcome subtitle pill below the headline"
+              />
+            </SectionCard>
+
+            {/* POSITION MATRIX */}
+            <SectionCard title="Layout Safe Placement" subtitle="Select anchor position for text stack in negative space">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                {[
+                  { id: 'top_left', label: '↖ Top Left' },
+                  { id: 'top_center', label: '↑ Top Center' },
+                  { id: 'top_right', label: '↗ Top Right' },
+                  { id: 'center', label: '• Center' },
+                  { id: 'bottom_left', label: '↙ Bottom Left' },
+                  { id: 'bottom_center', label: '↓ Bottom Center' },
+                ].map(pos => (
+                  <button
+                    key={pos.id}
+                    onClick={() => setT('position', pos.id)}
+                    style={{
+                      padding: '10px 8px', borderRadius: 8,
+                      border: `1px solid ${t.position === pos.id ? C.accent : C.border}`,
+                      background: t.position === pos.id ? C.accent + '20' : C.card,
+                      color: t.position === pos.id ? C.accent : C.muted,
+                      fontSize: 11, fontWeight: 700, cursor: 'pointer', textAlign: 'center'
+                    }}
+                  >
+                    {pos.label}
+                  </button>
+                ))}
+              </div>
+            </SectionCard>
+          </>
+        )}
       </div>
-    </SectionCard>
-  </div>
-);
+
+      {/* RIGHT COLUMN: LIVE CANVAS PREVIEW */}
+      <div style={{ position: 'sticky', top: 20 }}>
+        <SectionCard title="Live Preview" subtitle="Canvas updates instantly as you change settings">
+
+          {/* Preview frame */}
+          <div style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', background: '#000', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', marginBottom: 12 }}>
+            {/* LIVE badge */}
+            <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 20, background: 'rgba(239,68,68,0.88)', color: '#fff', fontSize: 8, fontWeight: 900, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.12em' }}>
+              ● LIVE
+            </div>
+
+            {previewDataUrl ? (
+              <img
+                src={previewDataUrl}
+                alt="Typography Preview"
+                style={{ width: '100%', height: 'auto', display: 'block' }}
+              />
+            ) : (
+              <div style={{ aspectRatio: '16/9', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, background: C.dim }}>
+                <div style={{ width: 22, height: 22, borderRadius: '50%', border: `2px solid ${C.border}`, borderTopColor: C.accent, animation: 'spin 0.9s linear infinite' }} />
+                <span style={{ color: C.muted, fontSize: 11 }}>Rendering preview…</span>
+              </div>
+            )}
+          </div>
+
+          {/* Platform tags */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+            {['YouTube', 'Instagram', 'Facebook', 'LinkedIn'].map(p => (
+              <span key={p} style={{ fontSize: 9, fontWeight: 700, padding: '3px 9px', borderRadius: 20, background: C.dim, color: C.muted, letterSpacing: '0.05em', border: `1px solid ${C.border}` }}>{p}</span>
+            ))}
+          </div>
+
+          {/* Applied settings panel */}
+          <div style={{ background: C.dim, borderRadius: 10, padding: '14px 16px', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 9, fontWeight: 800, color: C.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 12 }}>Applied Settings</div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {/* CTA Badge row */}
+              {t.showCtaBadge !== false && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 32, height: 22, borderRadius: 11, background: t.ctaBgColor || '#10B981', flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontSize: 9, color: C.muted, marginBottom: 2, letterSpacing: '0.06em' }}>CTA BADGE</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>★ {t.ctaBadge || 'Admissions Open'}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Headline row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 22, borderRadius: 4, background: t.bgColor || 'rgba(249,115,22,0.95)', flexShrink: 0 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 9, color: C.muted, marginBottom: 2, letterSpacing: '0.06em' }}>HEADLINE</div>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: C.text, fontFamily: `"${t.fontFamily || 'Anton'}", sans-serif`, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {t.customHeadline || 'YOUR HEADLINE'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Subtitle row */}
+              {t.showSubtitle !== false && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 32, height: 22, borderRadius: 4, background: t.subBgColor || 'rgba(15,23,42,0.9)', flexShrink: 0, border: `1px solid ${C.border}` }} />
+                  <div>
+                    <div style={{ fontSize: 9, color: C.muted, marginBottom: 2, letterSpacing: '0.06em' }}>SUBTITLE</div>
+                    <div style={{ fontSize: 11, color: C.text }}>{t.subtitle || 'Supporting line'}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Divider */}
+              <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, display: 'flex', gap: 20 }}>
+                <div>
+                  <div style={{ fontSize: 9, color: C.muted, marginBottom: 3, letterSpacing: '0.06em' }}>FONT</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.blue }}>{t.fontFamily || 'Anton'} · {t.fontSize || 54}px</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 9, color: C.muted, marginBottom: 3, letterSpacing: '0.06em' }}>POSITION</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, textTransform: 'capitalize' }}>{(t.position || 'top_left').replace('_', ' ')}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </SectionCard>
+      </div>
+    </div>
+  );
+};
+
+
 
 // ── TAB: Background Styles ─────────────────────────────────────────────────
 const BackgroundsTab = ({ config, updateConfig }) => (
@@ -1056,7 +1371,7 @@ const TestStudioTab = ({ config, platforms, brandStyles, buildFinalPrompt }) => 
     const start = Date.now();
     try {
       const platform = platforms.find(p => p.slug === platformSlug);
-      const res = await api.generatePoster(0, frameUrl.trim(), finalPrompt, config.aiEngine?.model || 'gemini-3.1-flash-image', {
+      const res = await api.generatePoster(0, frameUrl.trim(), finalPrompt, config.aiEngine?.model || 'gemini-2.0-flash-preview-image-generation', {
         aspectRatio: platform?.aspect_ratio || '16:9',
         style: brandStyles.find(b => b.id === brandId)?.typography_style || 'Cinematic',
         titleSafeArea: config.titleSafeArea || 35,

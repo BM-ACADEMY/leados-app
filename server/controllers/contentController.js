@@ -19,21 +19,48 @@ const ffprobePath = require("@ffprobe-installer/ffprobe").path;
 ffmpeg.setFfprobePath(ffprobePath);
 const { GoogleGenAI } = require("@google/genai");
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
-// Separate client targeting v1alpha — required for image-generation models (gemini-2.0-flash-preview-image-generation)
+// v1alpha client — for image editing models
 const genAIImage = process.env.GEMINI_API_KEY
   ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { apiVersion: 'v1alpha' } })
   : null;
+// v1 stable client — for newer text + Imagen models
+const genAIv1 = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { apiVersion: 'v1' } })
+  : null;
 
 // Helper: multi-model fallback for text generation
-// Tries multiple models so rate limits on one don't block everything
+// gemini-2.0-flash works for TEXT in v1alpha (just not image output).
+// Groq is the final safety net.
 async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
-  const geminiModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
-  
-  // Strategy 1: Try Gemini models in order
-  if (genAI) {
+  // v1alpha text-capable models (confirmed to exist)
+  const v1alphaModels = ['gemini-2.0-flash', 'gemini-2.0-flash-001'];
+  if (genAIImage) {
+    for (const model of v1alphaModels) {
+      try {
+        const response = await genAIImage.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { maxOutputTokens: maxTokens, temperature, responseMimeType: 'application/json' }
+        });
+        const text = (response.candidates?.[0]?.content?.parts?.[0]?.text || response.text || '').trim();
+        if (text) {
+          console.log(`[geminiChat] Success with v1alpha model: ${model}`);
+          return text;
+        }
+      } catch (err) {
+        console.warn(`[geminiChat] v1alpha ${model} failed: ${err.message?.substring(0, 80)}, trying next...`);
+      }
+    }
+  }
+
+  // v1 stable models to try
+  const geminiModels = ['gemini-2.0-flash', 'gemini-2.0-flash-001', 'gemini-1.5-flash', 'gemini-1.5-flash-001'];
+
+  // Strategy 2: Try v1 stable Gemini models
+  if (genAIv1) {
     for (const model of geminiModels) {
       try {
-        const response = await genAI.models.generateContent({
+        const response = await genAIv1.models.generateContent({
           model,
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           config: {
@@ -44,17 +71,11 @@ async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
         });
         const text = (response.candidates?.[0]?.content?.parts?.[0]?.text || response.text || '').trim();
         if (text) {
-          console.log(`[geminiChat] Success with model: ${model}`);
+          console.log(`[geminiChat] Success with v1 model: ${model}`);
           return text;
         }
       } catch (err) {
-        const isRateLimit = err.status === 429 || err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED') || err.message?.includes('quota');
-        if (isRateLimit) {
-          console.warn(`[geminiChat] ${model} rate limited, trying next...`);
-          continue;
-        }
-        // Non-rate-limit error — still try next model
-        console.warn(`[geminiChat] ${model} failed: ${err.message}, trying next...`);
+        console.warn(`[geminiChat] v1 ${model} failed: ${err.message?.substring(0, 80)}, trying next...`);
         continue;
       }
     }
@@ -701,39 +722,56 @@ VIDEO TRANSCRIPT OR CONTEXT:
 ${inferredTopic}
 
 Generate ONE caption for EACH of these platforms: ${platformList}.
+Also generate a structured THUMBNAIL COPY object ("thumbnail") containing promotional marketing copy for video thumbnails:
+- Title: 3–8 words, short, bold, and optimized for maximum click-through rate.
+- Subtitle: 2–6 words highlighting a key benefit or timeline (optional).
+- CTA Badge: Short 1–3 word action badge (e.g., "Admissions Open", "Free Workshop", "Limited Seats", "Apply Now", "85% Scholarship").
 
 Rules for each platform (Make it FUNNEL-AWARE):
 - Instagram (platform: "instagram"): Caption (hook + WhatsApp CTA), Tanglish (Tamil-English mix) where indicates, emojis. 3-5 lines.
 - Facebook (platform: "facebook"): Caption (hook + WhatsApp CTA), Tanglish (Tamil-English mix) where indicates, emojis. 3-5 lines.
 - LinkedIn (platform: "linkedin"): Professional B2B tone (BM TechX agency positioning), no excessive emojis, English. 2-4 lines.
 - X (Twitter) (platform: "x_twitter"): Punchy, under 240 characters.
-- YouTube (platform: "youtube"): Generate BOTH a compelling Title ("title") and description ("caption"). Make it SEO keyword-rich (searchable terms like 'digital marketing course Pondicherry', 'job guarantee training Tamil Nadu', 'LeadOS automation') + WhatsApp CTA.
+- YouTube (platform: "youtube"): Generate BOTH a compelling Title ("title") and description ("caption"). Make it SEO keyword-rich + WhatsApp CTA.
 
 Output Format:
-Do NOT use markdown code blocks. Respond ONLY with a valid JSON array matching this format:
-[
-  {"platform": "instagram", "caption": "your instagram caption"},
-  {"platform": "facebook", "caption": "your facebook caption"},
-  {"platform": "linkedin", "caption": "your linkedin caption"},
-  {"platform": "x_twitter", "caption": "your x caption"},
-  {"platform": "youtube", "title": "your youtube video title", "caption": "your youtube video description"}
-]`;
+Do NOT use markdown code blocks. Respond ONLY with a valid JSON object or array matching this format:
+{
+  "captions": [
+    {"platform": "instagram", "caption": "your instagram caption"},
+    {"platform": "facebook", "caption": "your facebook caption"},
+    {"platform": "linkedin", "caption": "your linkedin caption"},
+    {"platform": "x_twitter", "caption": "your x caption"},
+    {"platform": "youtube", "title": "your youtube video title", "caption": "your youtube video description"}
+  ],
+  "thumbnail": {
+    "title": "Become a Data Analyst",
+    "subtitle": "Placement in 90 Days",
+    "cta": "Admissions Open"
+  }
+}
+`;
+
 
   try {
     const content = await geminiChat({ prompt, maxTokens: 1500, temperature: 0.7 });
     const result = JSON.parse(content);
 
-    const arrayResult = Array.isArray(result) ? result : (result.results || result.captions || Object.values(result)[0]);
-    if (!Array.isArray(arrayResult)) {
-      throw new Error("Response is not an array");
-    }
+    const arrayResult = Array.isArray(result) ? result : (result.captions || result.results || Object.values(result).find(v => Array.isArray(v)) || []);
+    const thumbnailCopy = result.thumbnail || {
+      title: extractedTitle || "Master New Skills",
+      subtitle: "Step by Step Tutorial",
+      cta: "Learn More"
+    };
 
     res.json({
       success: true,
       results: arrayResult,
+      thumbnail: thumbnailCopy,
       video_title: extractedTitle,
       transcript: transcript || null
     });
+
   } catch (err) {
     console.error("generateCaptions error:", err);
     res.status(500).json({ success: false, error: "AI caption generation failed: " + err.message });
@@ -3589,14 +3627,18 @@ async function generatePoster(req, res) {
 
     const frameBase64 = fs.readFileSync(framePath).toString('base64');
 
-    // Get video context (title, caption)
+    // Get video context (title, caption, description)
     const { rows } = await pool.query(
-      `SELECT youtube_title, thumbnail_title, caption, instagram_caption, brand_name FROM content_queue WHERE id = $1`,
+      `SELECT youtube_title, thumbnail_title, caption, instagram_caption, youtube_description, brand_name FROM content_queue WHERE id = $1`,
       [id]
     );
-    const title = rows[0]?.youtube_title || rows[0]?.thumbnail_title || '';
+    const rawTitle = rows[0]?.youtube_title || rows[0]?.thumbnail_title || '';
+    // Strip filename-like titles so the AI text prompt doesn't produce garbage (e.g. "WhatsApp Video 2026-06-19")
+    const isFilenameTitle = /whatsapp\s*video|^\d{4}[-_]\d{2}[-_]\d{2}|\.(mp4|mov|avi|mkv)$/i.test(rawTitle);
+    const title = isFilenameTitle ? '' : rawTitle;
     const caption = rows[0]?.caption || rows[0]?.instagram_caption || '';
     const brandName = rows[0]?.brand_name || '';
+    const descriptionFromDb = rows[0]?.youtube_description || caption || '';
 
     const posterPath = path.join(uploadsDir, `poster_${id}.jpg`);
     let posterGenerated = false;
@@ -3641,51 +3683,60 @@ async function generatePoster(req, res) {
         console.log('  Title Safe Area:', titleSafeArea + '%');
         console.log('────────────────────────────────────────────────────');
 
-        // Map Thumbnail Brain UI model names to valid Google GenAI v1alpha model IDs.
-        const MODEL_MAP = {
-          'gemini-2.5-flash-image': 'gemini-2.5-flash-image',
-          'gemini-2.5-pro-image':   'gemini-3-pro-image',
-          'imagen':                 'gemini-3.1-flash-image',
-          'openai-image':           'gemini-3.1-flash-image',
-          'flux':                   'gemini-3.1-flash-image',
-        };
-        const geminiModel = MODEL_MAP[clientModel] || 'gemini-3.1-flash-image';
+        // Try image-editing capable models in order until one succeeds.
+        // These models support image input + image output via generateContent in v1alpha.
+        const IMAGE_MODELS = [
+          'gemini-2.0-flash-exp',
+          'gemini-2.0-flash',
+          'gemini-2.0-flash-001',
+          'gemini-2.0-flash-preview-image-generation',
+        ];
 
         console.log('[generatePoster] Final Prompt (first 200 chars):', editPrompt.substring(0, 200));
-        console.log('[generatePoster] Target Gemini Model:', geminiModel);
 
-        const response = await genAIImage.models.generateContent({
-          model: geminiModel,
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
-                { text: editPrompt }
-              ]
-            }
-          ],
-          config: {
-            responseModalities: ['TEXT', 'IMAGE']
-          }
-        });
+        for (const imageModel of IMAGE_MODELS) {
+          if (posterGenerated) break;
+          try {
+            console.log(`[generatePoster] Trying model: ${imageModel}`);
+            const response = await genAIImage.models.generateContent({
+              model: imageModel,
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    { inlineData: { mimeType: 'image/jpeg', data: frameBase64 } },
+                    { text: editPrompt }
+                  ]
+                }
+              ],
+              config: {
+                responseModalities: ['TEXT', 'IMAGE']
+              }
+            });
 
-        // Extract the generated image from the response
-        if (response.candidates && response.candidates[0]?.content?.parts) {
-          for (const part of response.candidates[0].content.parts) {
-            if (part.inlineData && part.inlineData.data) {
-              const imgBuffer = Buffer.from(part.inlineData.data, 'base64');
-              fs.writeFileSync(posterPath, imgBuffer);
-              posterGenerated = true;
-              engineUsed = 'gemini';
-              console.log(`[generatePoster] ✅ Gemini image editing succeeded for id=${id} with model=${geminiModel}`);
-              break;
+            if (response.candidates && response.candidates[0]?.content?.parts) {
+              for (const part of response.candidates[0].content.parts) {
+                if (part.inlineData && part.inlineData.data) {
+                  const imgBuffer = Buffer.from(part.inlineData.data, 'base64');
+                  fs.writeFileSync(posterPath, imgBuffer);
+                  posterGenerated = true;
+                  engineUsed = 'gemini';
+                  console.log(`[generatePoster] ✅ Gemini image editing succeeded with model=${imageModel}`);
+                  break;
+                }
+              }
             }
+            if (!posterGenerated) {
+              console.warn(`[generatePoster] ${imageModel} returned no image data, trying next model...`);
+            }
+          } catch (modelErr) {
+            geminiErrorDetails = modelErr.message;
+            console.warn(`[generatePoster] ${imageModel} failed: ${modelErr.message?.substring(0, 120)}, trying next...`);
           }
         }
 
         if (!posterGenerated) {
-          console.warn('[generatePoster] Gemini returned no image data, falling back to Jimp');
+          console.warn('[generatePoster] All Gemini image models exhausted, falling back to Jimp');
         }
       } catch (geminiEditErr) {
         geminiErrorDetails = geminiEditErr.message;
@@ -3828,9 +3879,40 @@ async function generatePoster(req, res) {
       console.warn('[generatePoster] Could not save poster URL to content_queue:', dbErr.message);
     }
 
+    // Generate thumbnail overlay text (title, subtitle, CTA) from description using Gemini
+    let overlayText = { title: '', subtitle: '', cta: '' };
+    const descriptionForText = req.body.description || descriptionFromDb;
+    if (descriptionForText) {
+      try {
+        const textPrompt = `You are a thumbnail text designer for social media videos.
+
+Video information:
+- Title: "${title}"
+- Description: "${descriptionForText}"
+- Brand: "${brandName}"
+
+Generate exactly 3 pieces of thumbnail overlay text:
+1. title: 2-4 word UPPERCASE punchy headline about the actual topic (not generic)
+2. subtitle: 1 short supporting line, 5-7 words max, title case
+3. cta: 2-3 word call to action (e.g. "Watch Now", "Apply Now", "Join Free")
+
+Return ONLY valid JSON, no explanation, no markdown:
+{"title":"...","subtitle":"...","cta":"..."}`;
+
+        const raw = await geminiChat({ prompt: textPrompt, maxTokens: 200, temperature: 0.4 });
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          overlayText = JSON.parse(jsonMatch[0]);
+        }
+      } catch (textErr) {
+        console.warn('[generatePoster] Overlay text generation failed:', textErr.message);
+      }
+    }
+
     res.json({
       success: true,
       poster_url: posterUrl,
+      overlay_text: overlayText,
       engine: engineUsed,
       config_applied: {
         style: styleName,
@@ -3842,6 +3924,40 @@ async function generatePoster(req, res) {
     });
   } catch (err) {
     console.error('[generatePoster] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function uploadPosterOverlay(req, res) {
+  const { id } = req.params;
+  const { poster_data_url } = req.body;
+
+  if (!poster_data_url || !poster_data_url.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'Invalid poster data URL' });
+  }
+
+  try {
+    const matches = poster_data_url.match(/^data:image\/(\w+);base64,(.+)$/s);
+    if (!matches) return res.status(400).json({ error: 'Could not parse data URL' });
+
+    const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+    const imgBuffer = Buffer.from(matches[2], 'base64');
+
+    const uploadsDir = path.join(__dirname, '../uploads');
+    const filename = `poster_overlay_${id}_${Date.now()}.${ext}`;
+    fs.writeFileSync(path.join(uploadsDir, filename), imgBuffer);
+
+    const baseUrl = process.env.API_BASE_URL || 'https://leados-api.abmgroups.org';
+    const posterUrl = `${baseUrl}/uploads/${filename}`;
+
+    await pool.query(
+      `UPDATE content_queue SET thumbnail_url = $1, updated_at = NOW() WHERE id = $2`,
+      [posterUrl, id]
+    );
+
+    res.json({ success: true, poster_url: posterUrl });
+  } catch (err) {
+    console.error('[uploadPosterOverlay] Error:', err);
     res.status(500).json({ error: err.message });
   }
 }
@@ -3884,7 +4000,8 @@ module.exports = {
   updateOverallPostStatus,
   generateThumbnails,
   generatePoster,
-  generateAIImage
+  generateAIImage,
+  uploadPosterOverlay
 };
 
 async function generateAIImage(req, res) {
@@ -3913,8 +4030,7 @@ async function generateAIImage(req, res) {
     const styleHint = styleGuide[style] || style;
     const fullPrompt = `${prompt.trim()}. ${styleHint}. High quality, masterpiece, best quality.`;
 
-    const VALID_MODELS = ['gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image', 'gemini-3-pro-image', 'gemini-2.5-flash-image'];
-    const selectedModel = VALID_MODELS.includes(model) ? model : 'gemini-3.1-flash-image';
+    const selectedModel = 'gemini-2.0-flash-preview-image-generation';
 
     console.log(`[generateAIImage] Model: ${selectedModel}, Aspect: ${aspectRatio}, Style: ${style}`);
     console.log(`[generateAIImage] Prompt (${fullPrompt.length} chars):`, fullPrompt.substring(0, 120));

@@ -39,7 +39,29 @@ import { buildFinalPrompt } from './thumbnailPromptBuilder.js';
  */
 export async function generateThumbnail({ contentId, frameUrl, videoTitle = '', description = '', category = '' }) {
   // ── Step 1: Load the latest saved configuration ───────────────
-  const rawConfig = loadConfig();
+  // Prefer server API (Studio config) over localStorage (classic config).
+  // validateConfig() applies correct defaults (Cinematic, 16:9, etc.) for any
+  // fields not present in the Studio format, so old localStorage values are bypassed.
+  let rawConfig;
+  let configSource = 'defaults';
+  try {
+    const { config: serverCfg } = await api.getThumbnailBrainConfig();
+    if (serverCfg && typeof serverCfg === 'object') {
+      rawConfig = serverCfg;
+      configSource = 'server';
+    } else {
+      rawConfig = loadConfig();
+      configSource = isConfigSaved() ? 'localStorage' : 'defaults';
+    }
+  } catch (_) {
+    rawConfig = loadConfig();
+    configSource = isConfigSaved() ? 'localStorage' : 'defaults';
+  }
+  // Studio format stores model under aiEngine.model; classic format stores it under model.
+  // Normalise so validateConfig always sees config.model.
+  if (rawConfig.aiEngine?.model && !rawConfig.model) {
+    rawConfig = { ...rawConfig, model: rawConfig.aiEngine.model };
+  }
   const config = validateConfig(rawConfig);
 
   // ── Step 2: Build the final prompt (with style, output settings, and content context) ──
@@ -47,14 +69,9 @@ export async function generateThumbnail({ contentId, frameUrl, videoTitle = '', 
   const prompt = buildFinalPrompt(config, runtimeVars);
 
   // ── Step 3: Debug logs ────────────────────────────────────────
-  const configSaved = isConfigSaved();
-  if (!configSaved) {
-    console.warn('[ThumbnailBrain] ⚠️ No saved config in localStorage — using built-in defaults. Go to Thumbnail Brain and click Save.');
-  }
-
   console.log('────────────────────────────────────────────────────────');
   console.log('[ThumbnailBrain] Config Loaded:');
-  console.log('  Source:         ', configSaved ? 'localStorage' : 'defaults');
+  console.log('  Source:         ', configSource);
   console.log('  Style:          ', config.style);
   console.log('  Aspect Ratio:   ', config.aspectRatio);
   console.log('  Resolution:     ', config.resolution);
@@ -78,7 +95,7 @@ export async function generateThumbnail({ contentId, frameUrl, videoTitle = '', 
   console.log('────────────────────────────────────────────────────────');
 
   // ── Step 4: Call the Gemini Image API ────────────────────────
-  const res = await api.generatePoster(contentId, frameUrl, prompt, config.model, config);
+  const res = await api.generatePoster(contentId, frameUrl, prompt, config.model, config, description);
 
   return res;
 }

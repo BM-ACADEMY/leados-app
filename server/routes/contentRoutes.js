@@ -57,6 +57,9 @@ router.post("/:id/generate-thumbnails", ctrl.generateThumbnails);
 // AI-enhance selected frame into a poster
 router.post("/:id/generate-poster", ctrl.generatePoster);
 
+// Upload canvas-rendered poster overlay (with typography) as a permanent file
+router.post("/:id/upload-poster-overlay", ctrl.uploadPosterOverlay);
+
 // Standalone AI image generation from text prompt
 router.post("/generate-ai-image", ctrl.generateAIImage);
 

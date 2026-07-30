@@ -21,11 +21,8 @@ export const RESOLUTIONS = ['1920x1080', '1280x720', '3840x2160', '1080x1920'];
 export const QUALITIES = ['Ultra HD', 'HD', 'Standard'];
 
 export const MODELS = [
-  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' },
-  { value: 'gemini-2.5-pro-image',   label: 'Gemini 2.5 Pro Image' },
-  { value: 'imagen',                 label: 'Imagen' },
-  { value: 'openai-image',           label: 'OpenAI Image' },
-  { value: 'flux',                   label: 'Flux' },
+  { value: 'gemini-2.0-flash-preview-image-generation', label: 'Gemini 2.0 Flash Image' },
+  { value: 'gemini-2.0-flash-exp',                      label: 'Gemini 2.0 Flash Exp' },
 ];
 
 /* ── Default prompt ───────────────────────────────────────────────── */
@@ -79,6 +76,34 @@ Ultra HD
 
 Professional YouTube Thumbnail`;
 
+export const DEFAULT_TEXT_OVERLAY = {
+  enabled: true,
+  mode: 'canvas', // 'canvas' | 'ai_prompt' | 'both'
+  headlineSource: 'auto', // 'auto' | 'custom'
+  customHeadline: 'BECOME A DATA ANALYST',
+  subtitle: 'Placement in 90 Days',
+  ctaBadge: 'Admissions Open',
+  fontFamily: 'Anton',
+  fontSize: 54,
+  textColor: '#FFFFFF',
+  strokeColor: '#000000',
+  strokeWidth: 6,
+  bgColor: 'rgba(249, 115, 22, 0.95)',
+  subBgColor: 'rgba(15, 23, 42, 0.9)',
+  subTextColor: '#E2E8F0',
+  ctaBgColor: '#10B981',
+  ctaTextColor: '#FFFFFF',
+  bgPadding: 14,
+  borderRadius: 8,
+  shadowColor: 'rgba(0, 0, 0, 0.75)',
+  shadowBlur: 14,
+  position: 'top_left',
+  showBgPill: true,
+  showSubtitle: true,
+  showCtaBadge: true,
+};
+
+
 /* ── Default configuration ────────────────────────────────────────── */
 
 export const DEFAULT_CONFIG = {
@@ -88,7 +113,8 @@ export const DEFAULT_CONFIG = {
   resolution:    '1920x1080',
   quality:       'Ultra HD',
   titleSafeArea: 35,
-  model:         'gemini-2.5-flash-image',
+  model:         'gemini-2.0-flash-preview-image-generation',
+  textOverlay:   { ...DEFAULT_TEXT_OVERLAY },
 };
 
 /* ── Load / Save / Validate ───────────────────────────────────────── */
@@ -100,9 +126,16 @@ export const DEFAULT_CONFIG = {
 export function loadConfig() {
   try {
     const saved = localStorage.getItem(THUMB_BRAIN_KEY);
-    if (saved) return { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        ...DEFAULT_CONFIG,
+        ...parsed,
+        textOverlay: { ...DEFAULT_TEXT_OVERLAY, ...(parsed.textOverlay || {}) },
+      };
+    }
   } catch {}
-  return { ...DEFAULT_CONFIG };
+  return { ...DEFAULT_CONFIG, textOverlay: { ...DEFAULT_TEXT_OVERLAY } };
 }
 
 /**
@@ -132,5 +165,7 @@ export function validateConfig(config) {
     quality:       QUALITIES.includes(config.quality) ? config.quality : DEFAULT_CONFIG.quality,
     titleSafeArea: typeof config.titleSafeArea === 'number' ? config.titleSafeArea : DEFAULT_CONFIG.titleSafeArea,
     model:         MODELS.some(m => m.value === config.model) ? config.model : DEFAULT_CONFIG.model,
+    textOverlay:   { ...DEFAULT_TEXT_OVERLAY, ...(config.textOverlay || {}) },
   };
 }
+

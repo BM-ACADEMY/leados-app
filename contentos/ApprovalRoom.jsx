@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../src/services/api.js';
 import { generateThumbnail } from './thumbnailBrain/index.js';
+import { loadConfig } from './thumbnailBrain/thumbnailBrainConfig.js';
+import { renderTextOverlayCanvas } from '../src/utils/canvasTextOverlay.js';
 
 
 
@@ -47,6 +49,7 @@ export function ApprovalRoom({
   const [thumbBestIndex, setThumbBestIndex] = useState(0);
   const [extractingFrames, setExtractingFrames] = useState(false);
   const [generatingPoster, setGeneratingPoster] = useState(false);
+  const [uploadingPosterOverlay, setUploadingPosterOverlay] = useState(false);
   const [posterPreviewUrl, setPosterPreviewUrl] = useState('');
   const [thumbError, setThumbError] = useState('');
   const prevItemIdRef = useRef(null);
@@ -140,8 +143,46 @@ export function ApprovalRoom({
         description: editValues.youtube_description || editValues.caption || '',
       });
       if (res.success && res.poster_url) {
-        setPosterPreviewUrl(res.poster_url);
-        // Save poster as the thumbnail so YouTube/Instagram/Facebook all use the AI poster
+        // Apply Typography overlay from Thumbnail Brain config
+        let previewUrl = res.poster_url;
+        try {
+          const thumbConfig = loadConfig();
+          const overlay = thumbConfig.textOverlay || {};
+          if (overlay.enabled !== false) {
+            const title = overlay.customHeadline || '';
+            const subtitle = overlay.subtitle || '';
+            const cta = overlay.ctaBadge || '';
+            previewUrl = await renderTextOverlayCanvas(res.poster_url, {
+              title,
+              subtitle: overlay.showSubtitle !== false ? subtitle : '',
+              ctaBadge: overlay.showCtaBadge !== false ? cta : '',
+              fontFamily: overlay.fontFamily || 'Anton',
+              fontSize: overlay.fontSize || 54,
+              textColor: overlay.textColor || '#FFFFFF',
+              strokeColor: overlay.strokeColor || '#000000',
+              strokeWidth: overlay.strokeWidth || 6,
+              bgColor: overlay.bgColor || 'rgba(249, 115, 22, 0.95)',
+              subBgColor: overlay.subBgColor || 'rgba(15, 23, 42, 0.9)',
+              subTextColor: overlay.subTextColor || '#E2E8F0',
+              ctaBgColor: overlay.ctaBgColor || '#10B981',
+              ctaTextColor: overlay.ctaTextColor || '#FFFFFF',
+              bgPadding: overlay.bgPadding || 14,
+              borderRadius: overlay.borderRadius || 8,
+              shadowColor: overlay.shadowColor || 'rgba(0, 0, 0, 0.75)',
+              shadowBlur: overlay.shadowBlur || 14,
+              position: overlay.position || 'top_left',
+              showBgPill: overlay.showBgPill !== false,
+              showSubtitle: overlay.showSubtitle !== false,
+              showCtaBadge: overlay.showCtaBadge !== false,
+              // canvasWidth/canvasHeight intentionally omitted — auto-detected from poster
+            });
+          }
+        } catch (overlayErr) {
+          console.warn('[Typography] Overlay failed, using raw poster:', overlayErr.message);
+          previewUrl = res.poster_url;
+        }
+        setPosterPreviewUrl(previewUrl);
+        // Keep the raw server URL as thumbnail_url for upload (not the canvas data URL)
         setEditValues(prev => ({ ...prev, thumbnail_url: res.poster_url }));
       }
     } catch (err) {
@@ -663,10 +704,26 @@ export function ApprovalRoom({
                       <span style={{ fontSize: 10, fontWeight: 800, color: '#8B72F0', letterSpacing: '0.05em' }}>🧠 THUMBNAIL BRAIN GENERATED POSTER</span>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button
-                          onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: posterPreviewUrl })); setPosterPreviewUrl(''); }}
-                          style={{ fontSize: 10, fontWeight: 700, padding: '4px 12px', borderRadius: 5, background: 'linear-gradient(135deg, #8B72F0, #00C4A0)', color: '#fff', border: 'none', cursor: 'pointer' }}
+                          disabled={uploadingPosterOverlay}
+                          onClick={async () => {
+                            if (!posterPreviewUrl || !selectedItem?.id) return;
+                            setUploadingPosterOverlay(true);
+                            try {
+                              const res = await api.uploadPosterOverlay(selectedItem.id, posterPreviewUrl);
+                              const permanentUrl = res.poster_url || posterPreviewUrl;
+                              setEditValues(prev => ({ ...prev, thumbnail_url: permanentUrl }));
+                              setPosterPreviewUrl('');
+                            } catch (err) {
+                              console.error('[uploadPosterOverlay] Failed:', err);
+                              setEditValues(prev => ({ ...prev, thumbnail_url: posterPreviewUrl }));
+                              setPosterPreviewUrl('');
+                            } finally {
+                              setUploadingPosterOverlay(false);
+                            }
+                          }}
+                          style={{ fontSize: 10, fontWeight: 700, padding: '4px 12px', borderRadius: 5, background: uploadingPosterOverlay ? 'var(--bg3)' : 'linear-gradient(135deg, #8B72F0, #00C4A0)', color: uploadingPosterOverlay ? 'var(--t3)' : '#fff', border: 'none', cursor: uploadingPosterOverlay ? 'not-allowed' : 'pointer' }}
                         >
-                          ✓ Use as Thumbnail
+                          {uploadingPosterOverlay ? 'Saving…' : '✓ Use as Thumbnail'}
                         </button>
                         <button
                           onClick={() => setPosterPreviewUrl('')}
@@ -681,6 +738,7 @@ export function ApprovalRoom({
                     </div>
                   </div>
                 )}
+
               </div>
 
               {/* Status and reject notices */}

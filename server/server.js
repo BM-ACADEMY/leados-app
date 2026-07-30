@@ -2589,6 +2589,63 @@ app.post('/api/templates/:id/submit', auth, async (req, res) => {
   }
 });
 
+// POST /api/templates/upload-media — upload sample media to Meta and get a handle
+const templateMediaMulter = multer({ dest: 'uploads/temp/' });
+app.post('/api/templates/upload-media', auth, templateMediaMulter.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const { client_id } = req.body;
+  let waToken = process.env.META_PAGE_ACCESS_TOKEN;
+  
+  try {
+    if (client_id && client_id !== 'null' && client_id !== 'undefined') {
+      const { rows } = await pool.query('SELECT wa_access_token FROM clients WHERE id = $1', [client_id]);
+      if (rows[0] && rows[0].wa_access_token) waToken = rows[0].wa_access_token;
+    }
+
+    // 1. Get App ID from the token
+    const appRes = await axios.get(`https://graph.facebook.com/v18.0/app?access_token=${waToken}`);
+    const appId = appRes.data.id;
+    if (!appId) throw new Error('Could not resolve App ID from token');
+
+    // 2. Initialize Resumable Upload Session
+    const fileStats = require('fs').statSync(req.file.path);
+    const sessionRes = await axios.post(
+      `https://graph.facebook.com/v18.0/${appId}/uploads?file_length=${fileStats.size}&file_type=${encodeURIComponent(req.file.mimetype)}`,
+      null,
+      { headers: { Authorization: `Bearer ${waToken}` } }
+    );
+    const sessionId = sessionRes.data.id;
+
+    // 3. Upload file data to session
+    const fileData = require('fs').readFileSync(req.file.path);
+    const uploadRes = await axios.post(
+      `https://graph.facebook.com/v18.0/${sessionId}`,
+      fileData,
+      {
+        headers: {
+          Authorization: `OAuth ${waToken}`,
+          'file_offset': '0',
+          'Content-Type': 'application/octet-stream'
+        }
+      }
+    );
+    
+    // Cleanup local file
+    require('fs').unlinkSync(req.file.path);
+    
+    res.json({ success: true, handle: uploadRes.data.h });
+  } catch (err) {
+    console.error('Meta Upload Error:', err.response?.data || err.message);
+    if (req.file && require('fs').existsSync(req.file.path)) {
+      require('fs').unlinkSync(req.file.path);
+    }
+    const metaErr = err.response?.data?.error;
+    res.status(500).json({ 
+      error: metaErr ? `Meta Error: ${metaErr.message}` : 'Failed to upload media to Meta'
+    });
+  }
+});
+
 // GET /api/templates/:id/sync — sync status from Meta
 app.get('/api/templates/:id/sync', auth, async (req, res) => {
   try {

@@ -100,16 +100,26 @@ const WaPreview = ({ form }) => {
             <div style={{ background: '#005c4b', borderRadius: '12px 12px 0 12px', overflow: 'hidden' }}>
               {/* Header */}
               {form.header_format === 'IMAGE' && (
-                <div style={{ background: '#0d2a25', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Image size={24} color="#34d399" />
-                  <span style={{ fontSize: 10, color: '#34d399', marginLeft: 6 }}>Image</span>
-                </div>
+                form.media_preview ? (
+                  <img src={form.media_preview} alt="Header" style={{ width: '100%', height: 120, objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ background: '#0d2a25', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Image size={24} color="#34d399" />
+                    <span style={{ fontSize: 10, color: '#34d399', marginLeft: 6 }}>Image</span>
+                  </div>
+                )
               )}
               {form.header_format === 'VIDEO' && (
-                <div style={{ background: '#1a1a2e', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Video size={24} color="#818cf8" />
-                  <span style={{ fontSize: 10, color: '#818cf8', marginLeft: 6 }}>Video</span>
-                </div>
+                form.media_preview ? (
+                  <div style={{ position: 'relative', width: '100%', height: 120, background: '#000' }}>
+                    <video src={form.media_preview} style={{ width: '100%', height: '100%', objectFit: 'cover' }} autoPlay loop muted playsInline />
+                  </div>
+                ) : (
+                  <div style={{ background: '#1a1a2e', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Video size={24} color="#818cf8" />
+                    <span style={{ fontSize: 10, color: '#818cf8', marginLeft: 6 }}>Video</span>
+                  </div>
+                )
               )}
               {form.header_format === 'DOCUMENT' && (
                 <div style={{ background: '#1e2a3a', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -235,6 +245,7 @@ export const TemplatesView = () => {
   const [deleteConfirmText, setDeleteConfirmText] = useState(''); // text for delete confirmation
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [mediaUploading, setMediaUploading] = useState(false);
 
   const defaultForm = {
     name: '',
@@ -350,6 +361,25 @@ export const TemplatesView = () => {
       showToast('Templates Sync failed: ' + err.message, 'error');
     } finally {
       setBulkSyncLoading(false);
+    }
+  };
+
+  const handleMediaUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMediaUploading(true);
+    try {
+      const res = await api.uploadTemplateMedia(file, form.client_id);
+      if (res.handle) {
+        const previewUrl = URL.createObjectURL(file);
+        setForm(f => ({ ...f, header: res.handle, media_preview: previewUrl }));
+        showToast('Media uploaded successfully!');
+      }
+    } catch (err) {
+      showToast('Media upload failed: ' + err.message, 'error');
+    } finally {
+      setMediaUploading(false);
+      e.target.value = ''; // reset input
     }
   };
 
@@ -1136,7 +1166,7 @@ export const TemplatesView = () => {
                       return (
                         <button
                           key={fmt}
-                          onClick={() => setForm(f => ({ ...f, header_format: fmt, header: fmt === 'NONE' ? '' : f.header }))}
+                          onClick={() => setForm(f => ({ ...f, header_format: fmt, header: fmt === 'NONE' || fmt !== f.header_format ? '' : f.header, media_preview: fmt !== f.header_format ? null : f.media_preview }))}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600,
                             background: active ? C.accent + '20' : C.card,
@@ -1159,11 +1189,32 @@ export const TemplatesView = () => {
                     />
                   )}
                   {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(form.header_format) && (
-                    <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '14px', textAlign: 'center' }}>
-                      <p style={{ fontSize: 11, color: C.muted }}>
-                        {form.header_format === 'IMAGE' ? '🖼️ Image' : form.header_format === 'VIDEO' ? '🎬 Video' : '📄 Document'} will be uploaded when sending
-                      </p>
-                      <p style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Preview shows placeholder. Actual media is attached at send time.</p>
+                    <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '14px', textAlign: 'center', marginTop: 8 }}>
+                      {form.header && form.header.startsWith('h:') ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                          <Check size={20} color={C.green} />
+                          <p style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>Media Sample Uploaded</p>
+                          <p style={{ fontSize: 10, color: C.dim, fontFamily: 'monospace', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{form.header}</p>
+                          <button onClick={() => setForm(f => ({ ...f, header: '', media_preview: null }))} style={{ background: 'transparent', border: `1px solid ${C.red}40`, color: C.red, padding: '4px 10px', borderRadius: 6, fontSize: 10, cursor: 'pointer', marginTop: 4 }}>Remove</button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                          <p style={{ fontSize: 11, color: C.muted }}>Upload a sample {form.header_format.toLowerCase()} for Meta approval.</p>
+                          <label style={{
+                            background: mediaUploading ? C.card : C.accent, border: mediaUploading ? `1px solid ${C.border}` : 'none', color: mediaUploading ? C.muted : '#fff', padding: '7px 16px', borderRadius: 8, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6, cursor: mediaUploading ? 'not-allowed' : 'pointer'
+                          }}>
+                            {mediaUploading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : (form.header_format === 'IMAGE' ? <Image size={13} /> : form.header_format === 'VIDEO' ? <Video size={13} /> : <FileText size={13} />)}
+                            {mediaUploading ? 'Uploading...' : `Upload ${form.header_format}`}
+                            <input
+                              type="file"
+                              accept={form.header_format === 'IMAGE' ? 'image/*' : form.header_format === 'VIDEO' ? 'video/mp4' : 'application/pdf'}
+                              style={{ display: 'none' }}
+                              onChange={handleMediaUpload}
+                              disabled={mediaUploading}
+                            />
+                          </label>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -208,6 +208,28 @@ class LeadOSAPI {
     });
   }
 
+  async uploadTemplateMedia(file, clientId) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (clientId) {
+      formData.append('client_id', clientId);
+    }
+    const headers = {};
+    if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+
+    const res = await fetch(`${this.baseUrl}/api/templates/upload-media`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Failed to upload media');
+    }
+    return res.json();
+  }
+
+
   // ─── SALESOS REPORTS ──────────────────────
   async getSalesOSReports() {
     // Fetch all SalesOS metrics concurrently

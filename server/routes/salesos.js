@@ -279,13 +279,23 @@ async function generateGeminiContent(prompt) {
   });
 }
 
+// conversations.tenant_id is a foreign key into a legacy `tenants` table that
+// was never actually populated per brand — only tenants.id=1 exists. Every
+// conversation-creating path in the app (inbound webhook, /api/whatsapp/send,
+// campaign sends in server.js) is on this same single seed row. Using a
+// lead's clients.id here instead — as this used to, via `client_id as
+// tenant_id` — violates that FK for any brand whose id isn't coincidentally
+// 1, and even when it didn't error, it silently searched the wrong tenant
+// bucket for an existing conversation (real rows all live under tenant_id=1).
+const DEFAULT_TENANT_ID = 1;
+
 async function getOrUpsertConversation(lead_id) {
   const convRes = await pool.query(`SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`, [lead_id]);
   if (convRes.rows.length > 0) return convRes.rows[0].id;
 
-  const leadRes = await pool.query(`SELECT phone, client_id as tenant_id FROM leads WHERE id = $1`, [lead_id]);
+  const leadRes = await pool.query(`SELECT phone FROM leads WHERE id = $1`, [lead_id]);
   const phone = leadRes.rows[0]?.phone || '';
-  const tenant_id = leadRes.rows[0]?.tenant_id || 1;
+  const tenant_id = DEFAULT_TENANT_ID;
   const leadExists = leadRes.rows.length > 0;
   const safeLeadId = leadExists ? lead_id : null;
 
@@ -383,6 +393,20 @@ router.post('/leads/deduplicate', async (req, res) => {
 router.post('/brand/detect', async (req, res) => {
   const { phone_number_id, phone, message } = req.body;
   try {
+    if (phone_number_id) {
+      let isManaged = false;
+      if (phone_number_id === process.env.WA_PHONE_NUMBER_ID) {
+        isManaged = true;
+      } else {
+        const clientCheck = await pool.query('SELECT id FROM clients WHERE phone_number_id = $1 LIMIT 1', [phone_number_id]);
+        if (clientCheck.rows.length > 0) isManaged = true;
+      }
+      if (!isManaged) {
+        console.log('🚫 [Brand Detect] Halted n8n workflow for unmanaged phone_number_id:', phone_number_id);
+        return res.status(403).json({ error: 'Unmanaged phone_number_id', ignored: true });
+      }
+    }
+
     let brandId = null;
     let brandName = 'ABM Groups';
     const explicitBrand = detectExplicitBrand(message);
@@ -472,7 +496,7 @@ router.post('/leads/createOrUpdate', async (req, res) => {
       );
     } else {
       const insert = await pool.query(
-        `INSERT INTO leads (name, phone, email, source, client_id, status, score, next_followup_due) VALUES ($1, $2, $3, $4, $5, 'new', 10, NOW() + INTERVAL '24 hours') RETURNING id`,
+        `INSERT INTO leads (name, phone, email, source, client_id, status, score, next_followup_due) VALUES ($1, $2, $3, $4, $5, 'new', 10, NOW() + INTERVAL '4 hours') RETURNING id`,
         [name, phone, email, source, brand_id]
       );
       lead_id = insert.rows[0].id;
@@ -550,6 +574,15 @@ router.post('/ai/intent', async (req, res) => {
       if (io && savedMsg.rows[0]) {
         io.emit('incoming_message', { lead_id: Number(lead_id), message: savedMsg.rows[0] });
       }
+      await pool.query(`
+        UPDATE leads
+        SET touch_count = 0,
+            next_followup_due = NOW() + INTERVAL '4 hours',
+            updated_at = NOW()
+        WHERE id = $1
+          AND status NOT IN ('converted', 'booked', 'opt-out', 'lost')
+          AND call_booked_at IS NULL
+      `, [lead_id]);
     }
 
     const prompt = `Analyze this message in the locked brand '${effectiveBrand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
@@ -734,6 +767,39 @@ router.post('/ai/response', async (req, res) => {
       );
       leadName = leadContext.rows[0]?.name || leadName;
       persistedBrand = leadContext.rows[0]?.brand_name || persistedBrand;
+    }
+
+    // Deterministic: the very first reply after the Core Talents bulk hiring
+    // broadcast (template: hiring_template) always gets the fixed follow-up
+    // line below, regardless of content and regardless of the lead's own CRM
+    // brand. Campaign CSV imports intentionally never overwrite an existing
+    // lead's client_id (see /api/leads/import), so a lead who already existed
+    // under another brand keeps that brand's persistedBrand above — relying
+    // on the prompt alone to override that "sticky brand" framing was not
+    // reliable, so this is enforced here instead of left to the model.
+    if (lead_id) {
+      const lastCampaignRes = await pool.query(`
+        SELECT clg.sent_at
+        FROM campaign_logs clg
+        JOIN campaigns camp ON camp.id = clg.campaign_id
+        JOIN templates t ON t.id = camp.template_id
+        WHERE clg.lead_id = $1 AND clg.status != 'failed' AND t.name = 'hiring_template'
+        ORDER BY clg.sent_at DESC
+        LIMIT 1
+      `, [lead_id]);
+
+      if (lastCampaignRes.rows.length > 0) {
+        const replyCountRes = await pool.query(`
+          SELECT COUNT(*) FROM messages m
+          JOIN conversations c ON c.id = m.conversation_id
+          WHERE c.lead_id = $1 AND m.direction = 'inbound' AND m.sent_at > $2
+        `, [lead_id, lastCampaignRes.rows[0].sent_at]);
+
+        if (parseInt(replyCountRes.rows[0].count, 10) === 1) {
+          const ai_reply = 'For more details, kindly call this number: 9403892971.';
+          return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
+        }
+      }
     }
 
     const firstName = getLeadFirstName(leadName);
@@ -1069,11 +1135,13 @@ router.post('/workflows/log', async (req, res) => {
 router.get('/workflows/logs', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT w.id, w.workflow, w.lead_id, w.status, w.message, w.created_at, l.name as lead_name
+      SELECT w.id, w.workflow, w.lead_id, w.status, w.message, w.created_at, 
+             l.name as lead_name, l.source, l.campaign_name, l.campaign_id, 
+             l.ad_name, l.ad_id, l.lead_ad_form_id, l.meta_lead_id, l.phone, l.email
       FROM workflow_logs w
       LEFT JOIN leads l ON w.lead_id = CAST(l.id AS TEXT)
       ORDER BY w.created_at DESC
-      LIMIT 100
+      LIMIT 1000
     `);
     res.json({ logs: result.rows });
   } catch (err) {
@@ -1193,11 +1261,13 @@ router.get('/followups/due', async (req, res) => {
     const MAX_FOLLOWUP_ATTEMPTS = 5; // Stop after 5 attempts
 
     const result = await pool.query(`
-      SELECT l.id as lead_id, COALESCE(c.name, 'ABM Groups') as brand, l.stage, COALESCE(l.touch_count, 0) as touch_count
+      SELECT l.id as lead_id, l.name, l.phone,
+             COALESCE(c.name, 'ABM Groups') as brand,
+             l.stage, COALESCE(l.touch_count, 0) as touch_count
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
       WHERE l.next_followup_due <= NOW()
-        AND l.status NOT IN ('converted', 'booked')
+        AND l.status NOT IN ('converted', 'booked', 'lost', 'opt-out')
         AND (l.status != 'opt-out' OR l.status IS NULL)
         AND l.call_booked_at IS NULL
         AND (l.touch_count IS NULL OR l.touch_count < $1)
@@ -1210,22 +1280,30 @@ router.get('/followups/due', async (req, res) => {
 router.post('/followups/rule', async (req, res) => {
   const { touch_count } = req.body;
   try {
-    // Escalate to a human after 5 ignored touches; fall back to email after 3; otherwise WhatsApp.
+    const cadenceHours = [4, 8, 12, 24, 72];
+    const currentTouch = Math.max(0, Number(touch_count) || 0);
+    const nextDelayHours = cadenceHours[currentTouch + 1] ?? null;
     let base_channel = 'whatsapp';
-    let template_id = touch_count > 1 ? 're_engagement' : 'welcome_followup';
-    let payload_template = touch_count > 1
+    let template_id = currentTouch > 1 ? 're_engagement' : 'welcome_followup';
+    let payload_template = currentTouch > 1
       ? "Hey! Just checking back in - still interested in learning more?"
       : "Hi there! Following up on your interest with us - any questions I can help with?";
-    let ai_prompt_template = `followup_attempt_${touch_count || 1}`;
+    let ai_prompt_template = `contextual_followup_attempt_${currentTouch + 1}`;
 
-    if (touch_count >= 5) {
+    if (currentTouch >= 5) {
       base_channel = 'internal_note';
-      payload_template = `Lead has ignored ${touch_count} automated follow-ups. Needs a manual call.`;
-    } else if (touch_count > 3) {
-      base_channel = 'email';
+      payload_template = 'Lead completed all five staged follow-ups without conversion. Review for a manual call or respectful close.';
     }
 
-    res.json({ ...req.body, delay_hours: 24, base_channel, template_id, payload_template, ai_prompt_template });
+    res.json({
+      ...req.body,
+      current_delay_hours: cadenceHours[currentTouch] ?? 4,
+      delay_hours: nextDelayHours,
+      base_channel,
+      template_id,
+      payload_template,
+      ai_prompt_template,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1288,12 +1366,49 @@ router.post('/ai/followup', async (req, res) => {
     `, [lead_id]);
     const lead = leadRes.rows[0];
     const brandName = lead?.brand_name || 'ABM Groups';
-    const touchCount = lead?.touch_count || 1;
+    const touchCount = lead?.touch_count ?? 0;
     const leadName = (lead?.name || '').split(' ')[0] || 'there';
+
+    if (!lead || ['converted', 'booked', 'opt-out', 'lost'].includes(lead.status) || lead.call_booked_at) {
+      return res.json({ ...req.body, success: true, delivered: false, skipped: true, reason: 'stop_condition' });
+    }
+
+    const historyRes = await pool.query(`
+      SELECT m.direction, m.content, m.sent_at
+      FROM messages m
+      JOIN conversations conversation ON conversation.id = m.conversation_id
+      WHERE conversation.lead_id = $1
+        AND m.content IS NOT NULL
+        AND BTRIM(m.content) <> ''
+      ORDER BY m.sent_at DESC
+      LIMIT 10
+    `, [lead_id]);
+    const recentHistory = historyRes.rows.reverse();
+    const latestMessage = recentHistory[recentHistory.length - 1];
+    if (!latestMessage || latestMessage.direction === 'inbound') {
+      return res.json({
+        ...req.body,
+        success: true,
+        delivered: false,
+        skipped: true,
+        reason: latestMessage ? 'customer_message_awaiting_reply' : 'no_conversation_history',
+      });
+    }
 
     let ai_reply = `Hi ${leadName}, are you still interested in our program?`;
     if (ai) {
-      const prompt = `Write a very short, polite WhatsApp follow-up message addressed to "${leadName}" for a lead who hasn't replied to '${brandName}'. This is follow-up attempt #${touchCount}. Use "${leadName}" directly in the greeting - do not use placeholder text like [Name] or [Lead Name].`;
+      const historyText = recentHistory
+        .map((item) => `${item.direction === 'inbound' ? 'Customer' : 'Assistant'}: ${item.content}`)
+        .join('\n');
+      const prompt = `You write conversion-focused WhatsApp follow-ups for ABM Groups.
+Brand: ${brandName}
+Lead first name: ${leadName}
+Follow-up attempt: ${touchCount + 1} of 5
+
+Latest conversation (oldest to newest):
+${historyText}
+
+Write one natural follow-up that continues the unfinished topic. Reference the specific course, service, job, property, trip, food order, admission, or charity topic already discussed. Never ask the lead to repeat information already present. Use a warm human tone, no pressure, no invented price, offer, availability, or deadline, and no more than 3 short sentences. End with exactly one easy question that moves toward the appropriate conversion step. Return only the message text.`;
       ai_reply = await generateGeminiContent(prompt);
     }
 
@@ -1652,10 +1767,25 @@ router.post('/leads/internal-note', async (req, res) => {
 });
 
 router.post('/leads/update-followup', async (req, res) => {
-  const { lead_id, touch_count_increment, delay_hours } = req.body;
+  const { lead_id, touch_count_increment } = req.body;
   try {
-    const query = `UPDATE leads SET next_followup_due = NOW() + ($1 || ' hours')::INTERVAL, touch_count = COALESCE(touch_count, 0) + $2 WHERE id = $3`;
-    await pool.query(query, [delay_hours || 24, touch_count_increment || 1, lead_id]);
+    const increment = touch_count_increment || 1;
+    const query = `
+      UPDATE leads
+      SET touch_count = COALESCE(touch_count, 0) + $1,
+          next_followup_due = CASE COALESCE(touch_count, 0) + $1
+            WHEN 1 THEN NOW() + INTERVAL '8 hours'
+            WHEN 2 THEN NOW() + INTERVAL '12 hours'
+            WHEN 3 THEN NOW() + INTERVAL '24 hours'
+            WHEN 4 THEN NOW() + INTERVAL '72 hours'
+            ELSE NULL
+          END,
+          updated_at = NOW()
+      WHERE id = $2
+        AND status NOT IN ('converted', 'booked', 'opt-out', 'lost')
+        AND call_booked_at IS NULL
+    `;
+    await pool.query(query, [increment, lead_id]);
     res.json({ ...req.body, success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1698,6 +1828,18 @@ router.get('/reports/reminder-bundle', async (req, res) => {
       + followups.rows.filter(r => r.owner === 'human_sales').length
       + overdue.rows.filter(r => r.owner === 'human_sales').length
       + hot.rows.filter(r => r.owner === 'human_sales').length;
+
+    // Sync tasks to sales_tasks table
+    const insertTask = async (lead_id, type) => {
+       const exists = await pool.query(`SELECT id FROM sales_tasks WHERE lead_id = $1 AND task_type = $2 AND DATE(created_at) = CURRENT_DATE`, [lead_id, type]);
+       if (exists.rows.length === 0) {
+         await pool.query(`INSERT INTO sales_tasks (lead_id, task_type) VALUES ($1, $2)`, [lead_id, type]);
+       }
+    };
+    for (const c of calls.rows) await insertTask(c.lead_id || c.id, 'call');
+    for (const f of followups.rows) await insertTask(f.lead_id || f.id, 'followup');
+    for (const o of overdue.rows) await insertTask(o.lead_id || o.id, 'overdue');
+    for (const h of hot.rows) await insertTask(h.lead_id || h.id, 'hot_lead');
 
     const salesperson_summaries = [{
       owner: 'human_sales',

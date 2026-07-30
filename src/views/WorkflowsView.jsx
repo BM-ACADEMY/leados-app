@@ -21,6 +21,7 @@ export const WorkflowsView = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
   const [expandedLog, setExpandedLog] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     fetchData();
@@ -53,6 +54,16 @@ export const WorkflowsView = () => {
   };
 
   const filteredLogs = filter === 'ALL' ? logs : logs.filter(l => (l.workflow || '').includes(filter));
+  
+  // Pagination logic
+  const logsPerPage = 10;
+  const totalPages = Math.ceil(filteredLogs.length / logsPerPage);
+  const paginatedLogs = filteredLogs.slice((currentPage - 1) * logsPerPage, currentPage * logsPerPage);
+
+  // Reset pagination when filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter]);
 
   return (
     <div style={{ padding: 24, height: '100%', overflowY: 'auto', maxWidth: 1200, margin: '0 auto' }}>
@@ -139,7 +150,7 @@ export const WorkflowsView = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredLogs.map((log) => (
+              {paginatedLogs.map((log) => (
                 <React.Fragment key={log.id}>
                   <tr 
                     style={{ borderBottom: expandedLog === log.id ? 'none' : `1px solid ${C.border}`, background: expandedLog === log.id ? C.card : 'transparent', cursor: 'pointer' }}
@@ -171,10 +182,93 @@ export const WorkflowsView = () => {
                     <tr style={{ borderBottom: `1px solid ${C.border}`, background: C.card }}>
                       <td colSpan={6} style={{ padding: '20px 40px' }}>
                         <div style={{ background: '#00000030', borderRadius: 8, padding: 16, border: `1px solid ${C.border}` }}>
-                          <h4 style={{ color: C.text, margin: '0 0 12px 0', fontSize: 14 }}>Advanced Telemetry Details</h4>
-                          <pre style={{ margin: 0, color: C.textDim, fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'monospace' }}>
-{JSON.stringify(log, null, 2)}
-                          </pre>
+                          <h4 style={{ color: C.text, margin: '0 0 16px 0', fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Activity size={18} color={C.accent} /> Advanced Telemetry Details
+                          </h4>
+                          
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+                            
+                            {/* Execution Info */}
+                            <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', borderRadius: 8, border: `1px solid ${C.border}` }}>
+                              <h5 style={{ color: C.textDim, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px 0' }}>Execution Info</h5>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                <div>
+                                  <div style={{ fontSize: 11, color: C.muted }}>Workflow Engine</div>
+                                  <div style={{ fontSize: 14, color: C.text, fontWeight: 500 }}>{log.workflow}</div>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: 11, color: C.muted }}>Status</div>
+                                  <div style={{ fontSize: 14, color: getStatusColor(log.status), fontWeight: 600, textTransform: 'uppercase' }}>{log.status || 'N/A'}</div>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: 11, color: C.muted }}>Timestamp</div>
+                                  <div style={{ fontSize: 14, color: C.text }}>{new Date(log.created_at).toLocaleString()}</div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Lead Data */}
+                            {(log.lead_name || log.phone || log.email || log.source) && (
+                              <div style={{ padding: 16, background: 'rgba(59, 130, 246, 0.05)', borderRadius: 8, border: '1px solid rgba(59, 130, 246, 0.1)' }}>
+                                <h5 style={{ color: C.blue, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px 0' }}>Lead Profile</h5>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                  {log.lead_name && (
+                                    <div>
+                                      <div style={{ fontSize: 11, color: C.muted }}>Name</div>
+                                      <div style={{ fontSize: 14, color: C.text }}>{log.lead_name}</div>
+                                    </div>
+                                  )}
+                                  {log.phone && (
+                                    <div>
+                                      <div style={{ fontSize: 11, color: C.muted }}>Phone</div>
+                                      <div style={{ fontSize: 14, color: C.text }}>{log.phone}</div>
+                                    </div>
+                                  )}
+                                  {log.source && (
+                                    <div style={{ gridColumn: '1 / -1' }}>
+                                      <div style={{ fontSize: 11, color: C.muted }}>Source</div>
+                                      <div style={{ fontSize: 14, color: C.text, textTransform: 'capitalize' }}>{log.source}</div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Campaign Data */}
+                            {(log.campaign_name || log.campaign_id || log.ad_name || log.lead_ad_form_id) && (
+                              <div style={{ padding: 16, background: 'rgba(233, 30, 99, 0.05)', borderRadius: 8, border: '1px solid rgba(233, 30, 99, 0.1)' }}>
+                                <h5 style={{ color: '#E91E63', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px 0' }}>Campaign Meta</h5>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                  {(log.campaign_name || log.campaign_id) && (
+                                    <div>
+                                      <div style={{ fontSize: 11, color: C.muted }}>Campaign</div>
+                                      <div style={{ fontSize: 14, color: C.text }}>{log.campaign_name || log.campaign_id}</div>
+                                    </div>
+                                  )}
+                                  {(log.ad_name || log.ad_id) && (
+                                    <div>
+                                      <div style={{ fontSize: 11, color: C.muted }}>Ad Details</div>
+                                      <div style={{ fontSize: 14, color: C.text }}>{log.ad_name || log.ad_id}</div>
+                                    </div>
+                                  )}
+                                  {log.lead_ad_form_id && (
+                                    <div>
+                                      <div style={{ fontSize: 11, color: C.muted }}>Form ID</div>
+                                      <div style={{ fontSize: 14, color: C.text }}>{log.lead_ad_form_id}</div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Message / Payload block */}
+                          <div style={{ marginTop: 16, padding: 16, background: 'rgba(255,255,255,0.02)', borderRadius: 8, border: `1px solid ${C.border}` }}>
+                            <h5 style={{ color: C.textDim, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 8px 0' }}>System Message / Payload</h5>
+                            <div style={{ fontSize: 14, color: C.text, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                              {log.message || 'No system message recorded.'}
+                            </div>
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -183,6 +277,31 @@ export const WorkflowsView = () => {
               ))}
             </tbody>
           </table>
+        )}
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16, padding: '16px 20px', borderTop: `1px solid ${C.border}` }}>
+            <span style={{ fontSize: 13, color: C.textDim }}>
+              Page {currentPage} of {totalPages}
+            </span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button 
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                style={{ background: C.card, border: `1px solid ${C.border}`, color: currentPage === 1 ? C.muted : C.text, padding: '6px 12px', borderRadius: 6, cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+              >
+                Previous
+              </button>
+              <button 
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                style={{ background: C.card, border: `1px solid ${C.border}`, color: currentPage === totalPages ? C.muted : C.text, padding: '6px 12px', borderRadius: 6, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>

@@ -954,28 +954,39 @@ Maps which PDF/document exists for each brand/program, so the AI Brain never pro
 ## NURTURE_SEQUENCE
 tags: internal, nurture, follow-up, ai-brain-only, all-brands
 
+WF02 checks due leads every 10 minutes, but never messages a lead every 10 minutes. Each lead gets at most five staged touches: +4 hours, then +8 hours, +12 hours, +24 hours, and +3 days after the preceding touch.
+
+Before every reminder, inspect the latest 10 messages from oldest to newest. Send only when the conversation is genuinely stuck after an assistant/outbound message. If the latest message is inbound and awaiting an answer, do not send a reminder; the sales conversation must answer it instead. Continue the exact active brand, course, service, job, property, trip, order, admission, or donation topic. Never ask the lead to repeat known information.
+
+Generate follow-ups dynamically from the conversation context: warm, human, specific, no pressure, no invented facts/offers/deadlines, maximum 3 short sentences, and exactly one easy next-step question. Optimize for the appropriate conversion: booking/demo/enrollment for BM Academy, consultation/client call for BM TechX, application/hiring step for CoreTalents, site visit for NPP, trip booking for TravellersNeed, order for Dada's Kitchen, admission consultation for EduConsultants, and donation/volunteer action for BM Foundation.
+
+WhatsApp policy is mandatory: AI free-text is allowed only inside the 24-hour customer-service window. Outside that window, use an approved brand template. Gemini may select the context and CTA but must not bypass the template requirement.
+
 Automates the waiting gaps in the existing enrollment funnel (Enquiry → Program Guide PDF → program-specific guide → placement question → timeline qualification → correct tier pitch → uncertain leads → **Kamar direct call, ~80% close rate**). This sequence keeps a lead warm between "asked a question" and "got on the call" — it does not replace the human close.
 
 **Touch 0 — Immediate (auto, on first inbound message):**
 Answer the question (KB retrieval) → send relevant PDF if one exists in \`DOCUMENT_LIBRARY\` → ask ONE qualifying question if not already known ("Job venuma illa business venuma?" / "Eppo start panna ready?").
 
-**Touch 1 — +4 to 6 hours, if no reply:**
+**Touch 1 — +4 hours, if no reply:**
 Soft nudge referencing what was sent. E.g., "Program guide paathinga ah? Edhachum doubt irundha kelunga 🙂" — no new information, just a gentle re-open.
 
-**Touch 2 — +Day 1–2, if still no booking:**
+**Touch 2 — +8 hours after Touch 1, if still stuck:**
 Send program-specific detail or proof (placement stat, testimonial, relevant guide if one exists) + a direct call CTA.
 
-**Touch 3 — +Day 3–4:**
+**Touch 3 — +12 hours after Touch 2:**
 Urgency/social proof angle (e.g., seats filling, batch starting) + directly ask for a good day/time for a call.
 
-**Touch 4 — +Day 7:**
-Final respectful check-in — "Innum interested-a? Illa na paravaala, edhachum venumna sollunga." If no response after this, move to a monthly re-engagement list (do not keep daily-pinging — this damages trust and WhatsApp deliverability).
+**Touch 4 — +24 hours after Touch 3:**
+Use an approved WhatsApp template because the service window may be closed. Keep the CTA aligned to the unfinished topic.
+
+**Touch 5 — +3 days after Touch 4:**
+Final respectful check-in. If no response after this, stop active automation and create a human-review task; do not keep daily-pinging.
 
 **Stop conditions (sequence ends immediately if any of these happen):**
 - Lead books a call/demo → stop, notify the brand owner, mark \`call_booked = true\`
 - Lead enrolls → stop, hand off to student/client lifecycle
 - Lead explicitly says not interested / opts out → stop immediately, send a respectful one-line exit, mark cold — never re-engage without an explicit later opt-in
-- Unresponsive past Touch 4 → move to monthly drip, exit the active nurture sequence
+- Unresponsive past Touch 5 → exit active automation and move to human review/monthly re-engagement only
 
 **Brand note:** this exact cadence is modeled on BM Academy's proven funnel. For other brands (BM TechX, CoreTalents, NPP, TravellersNeed), reuse the same touch-timing skeleton but swap in brand-appropriate proof/CTA — do not copy BM Academy's exact wording into a B2B or property context.
 

@@ -51,7 +51,512 @@ io.on('connection', (socket) => {
 
 // ── DB CONNECTION ─────────────────────────────────────────
 const pool = require('./db/connection');
+const { evaluateLeadBrandAndSchedule, evaluateStuckLeads } = require('./services/aiBrain');
 const { checkNewDriveVideos, publishPost } = require("./controllers/contentController");
+
+// ═══════════════════════════════════════════════════════════════════
+// CAMPAIGN MESSAGE QUEUE SYSTEM
+// Persistent queue with intelligent rate limiting to prevent
+// WhatsApp/Meta rate limits ("healthy ecosystem" errors)
+// ═══════════════════════════════════════════════════════════════════
+
+// Queue settings - safe defaults to avoid rate limiting
+const QUEUE_SETTINGS = {
+  MESSAGES_PER_MINUTE: 15,      // Max 15 messages per minute (Meta recommends 250/24h for new numbers)
+  MESSAGES_PER_HOUR: 500,        // Max 500 per hour
+  MESSAGES_PER_DAY: 5000,        // Max 5000 per day (well under Meta's 250k limit)
+  RETRY_DELAY_MS: 5000,         // Wait 5s before retry on rate limit
+  MAX_RETRIES: 3,               // Max 3 retries for failed messages
+  BATCH_SIZE: 10                 // Process 10 messages at a time
+};
+
+// Adaptive rate limiter state
+let rateLimiter = {
+  messagesThisMinute: 0,
+  messagesThisHour: 0,
+  messagesThisDay: 0,
+  lastResetMinute: Date.now(),
+  lastResetHour: Date.now(),
+  lastResetDay: Date.now(),
+  consecutiveRateLimits: 0,
+  currentDelayMs: 1000          // Start with 1s delay between messages
+};
+
+// Reset counters periodically
+function resetRateCounters() {
+  const now = Date.now();
+  if (now - rateLimiter.lastResetMinute > 60000) {
+    rateLimiter.messagesThisMinute = 0;
+    rateLimiter.lastResetMinute = now;
+  }
+  if (now - rateLimiter.lastResetHour > 3600000) {
+    rateLimiter.messagesThisHour = 0;
+    rateLimiter.lastResetHour = now;
+  }
+  if (now - rateLimiter.lastResetDay > 86400000) {
+    rateLimiter.messagesThisDay = 0;
+    rateLimiter.lastResetDay = now;
+  }
+}
+
+// Check if we can send a message
+function canSendMessage() {
+  resetRateCounters();
+
+  // Check all limits
+  if (rateLimiter.messagesThisMinute >= QUEUE_SETTINGS.MESSAGES_PER_MINUTE) return false;
+  if (rateLimiter.messagesThisHour >= QUEUE_SETTINGS.MESSAGES_PER_HOUR) return false;
+  if (rateLimiter.messagesThisDay >= QUEUE_SETTINGS.MESSAGES_PER_DAY) return false;
+
+  return true;
+}
+
+// Get recommended delay based on rate limit status
+function getRecommendedDelay() {
+  resetRateCounters();
+
+  // If we're hitting rate limits, increase delay
+  if (rateLimiter.consecutiveRateLimits > 0) {
+    // Exponential backoff: 2s, 4s, 8s, 16s...
+    return Math.min(rateLimiter.currentDelayMs * Math.pow(2, rateLimiter.consecutiveRateLimits), 30000);
+  }
+
+  // If we're close to limits, slow down
+  const minutePercent = rateLimiter.messagesThisMinute / QUEUE_SETTINGS.MESSAGES_PER_MINUTE;
+  if (minutePercent > 0.8) return 5000;
+  if (minutePercent > 0.6) return 3000;
+
+  // Default safe delay
+  return rateLimiter.currentDelayMs;
+}
+
+// Record a successful send
+function recordSendSuccess() {
+  rateLimiter.messagesThisMinute++;
+  rateLimiter.messagesThisHour++;
+  rateLimiter.messagesThisDay++;
+  rateLimiter.consecutiveRateLimits = 0;
+
+  // Gradually reduce delay if things are working well
+  if (rateLimiter.currentDelayMs > 1000 && rateLimiter.messagesThisMinute % 50 === 0) {
+    rateLimiter.currentDelayMs = Math.max(1000, rateLimiter.currentDelayMs - 100);
+  }
+}
+
+// Record a rate limit hit
+function recordRateLimit() {
+  rateLimiter.consecutiveRateLimits++;
+  // Increase delay significantly on rate limit
+  rateLimiter.currentDelayMs = Math.min(rateLimiter.currentDelayMs * 2, 30000);
+}
+
+// Initialize campaign queue table
+async function initCampaignQueue() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS campaign_message_queue (
+      id SERIAL PRIMARY KEY,
+      campaign_id BIGINT NOT NULL,
+      lead_id BIGINT NOT NULL,
+      phone VARCHAR(20) NOT NULL,
+      name VARCHAR(255),
+      template_name VARCHAR(255) NOT NULL,
+      template_body TEXT,
+      wa_token VARCHAR(500),
+      phone_number_id VARCHAR(100),
+      status VARCHAR(20) DEFAULT 'pending',
+      attempts INTEGER DEFAULT 0,
+      last_attempt_at TIMESTAMP,
+      error_message TEXT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      processed_at TIMESTAMP
+    )
+  `);
+
+  // Create indexes separately for PostgreSQL
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_status ON campaign_message_queue(status)`).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_campaign ON campaign_message_queue(campaign_id)`).catch(() => {});
+
+  // Create table to track daily/hourly counts
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS campaign_rate_stats (
+      id SERIAL PRIMARY KEY,
+      campaign_id BIGINT,
+      date DATE DEFAULT CURRENT_DATE,
+      messages_sent INTEGER DEFAULT 0,
+      messages_failed INTEGER DEFAULT 0,
+      rate_limited_count INTEGER DEFAULT 0,
+      UNIQUE(campaign_id, date)
+    )
+  `).catch(() => {});
+
+  console.log('[Campaign Queue] Database tables initialized');
+}
+
+// Add messages to queue
+async function addToCampaignQueue(campaign_id, leads, campaign) {
+  if (leads.length > 0) {
+    await pool.query(`
+      INSERT INTO campaign_message_queue
+      (campaign_id, lead_id, phone, name, template_name, template_body, wa_token, phone_number_id)
+      SELECT $1, audience.lead_id, audience.phone, audience.name,
+             $2, $3, $4, $5
+      FROM UNNEST($6::bigint[], $7::text[], $8::text[])
+        AS audience(lead_id, phone, name)
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM campaign_message_queue queued
+        WHERE queued.campaign_id = $1
+          AND queued.lead_id = audience.lead_id
+      )
+    `, [
+      campaign_id,
+      campaign.template_name,
+      campaign.template_body || '',
+      campaign.wa_access_token || '',
+      campaign.phone_number_id || '',
+      leads.map((lead) => lead.id),
+      leads.map((lead) => lead.phone),
+      leads.map((lead) => lead.name || ''),
+    ]);
+  }
+}
+
+// Process queue - runs continuously
+async function processCampaignQueue() {
+  try {
+    // Recover jobs abandoned by a crashed/restarted worker. A normal send has
+    // a 15-second HTTP timeout, so five minutes safely indicates a stale claim.
+    await pool.query(`
+      UPDATE campaign_message_queue
+      SET status = 'pending'
+      WHERE status = 'processing'
+        AND last_attempt_at < NOW() - INTERVAL '5 minutes'
+    `);
+
+    // Quarantine duplicate queue rows left by older executions before any
+    // recipient is claimed. Keep the oldest row as the canonical send.
+    await pool.query(`
+      WITH ranked AS (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY campaign_id, lead_id
+                 ORDER BY id
+               ) AS duplicate_rank
+        FROM campaign_message_queue
+        WHERE status IN ('pending', 'processing')
+      )
+      UPDATE campaign_message_queue queue
+      SET status = 'failed',
+          processed_at = NOW(),
+          error_message = 'Duplicate queue entry skipped before send'
+      FROM ranked
+      WHERE queue.id = ranked.id
+        AND (
+          ranked.duplicate_rank > 1
+          OR EXISTS (
+            SELECT 1
+            FROM campaign_message_queue sent
+            WHERE sent.campaign_id = queue.campaign_id
+              AND sent.lead_id = queue.lead_id
+              AND sent.status = 'sent'
+          )
+        )
+    `);
+
+    // Atomically claim rows before doing any network work. FOR UPDATE SKIP
+    // LOCKED prevents overlapping queue intervals (or multiple API instances)
+    // from sending the same recipient at the same time.
+    const { rows: pending } = await pool.query(`
+      WITH claimable AS (
+        SELECT id
+        FROM campaign_message_queue
+        WHERE status = 'pending'
+          AND attempts < ${QUEUE_SETTINGS.MAX_RETRIES}
+        ORDER BY created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${QUEUE_SETTINGS.BATCH_SIZE}
+      )
+      UPDATE campaign_message_queue queue
+      SET status = 'processing',
+          attempts = queue.attempts + 1,
+          last_attempt_at = NOW()
+      FROM claimable
+      WHERE queue.id = claimable.id
+      RETURNING queue.*
+    `);
+
+    if (pending.length === 0) return;
+
+    // Wait for rate limit if needed
+    while (!canSendMessage()) {
+      const delay = getRecommendedDelay();
+      console.log(`[Campaign Queue] Rate limited, waiting ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+      resetRateCounters();
+    }
+
+    // Process each message
+    for (const msg of pending) {
+      try {
+        // Check if we can send (rate limit check)
+        if (!canSendMessage()) {
+          await new Promise(r => setTimeout(r, getRecommendedDelay()));
+        }
+
+        const result = await sendWhatsAppMessage(msg);
+
+        if (result.success) {
+          // Mark as sent
+          await pool.query(`
+            UPDATE campaign_message_queue
+            SET status = 'sent', processed_at = NOW(), error_message = NULL
+            WHERE id = $1
+          `, [msg.id]);
+
+          // Update campaign log
+          await pool.query(`
+            INSERT INTO campaign_logs (campaign_id, lead_id, wa_message_id, status, sent_at)
+            VALUES ($1, $2, $3, 'sent', NOW())
+          `, [msg.campaign_id, msg.lead_id, result.messageId]);
+
+          // Mirror the successful WhatsApp send into the LeadOS Inbox. Keep
+          // this non-retryable: Meta has already accepted the message, so a CRM
+          // persistence error must never cause the recipient to receive it
+          // again.
+          try {
+            const renderedBody = String(msg.template_body || '')
+              .replace(/\{\{1\}\}/g, msg.name || 'Friend');
+            const conversationResult = await pool.query(`
+              INSERT INTO conversations
+                (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+              SELECT $1, campaign.client_id, $2, 'open', $3, NOW(), NOW()
+              FROM campaigns campaign
+              WHERE campaign.id = $4
+              ON CONFLICT (phone, tenant_id) DO UPDATE
+                SET lead_id = EXCLUDED.lead_id,
+                    status = 'open',
+                    last_message = EXCLUDED.last_message,
+                    last_message_at = NOW()
+              RETURNING id
+            `, [msg.lead_id, msg.phone, renderedBody, msg.campaign_id]);
+
+            const conversationId = conversationResult.rows[0]?.id;
+            if (conversationId) {
+              const messageResult = await pool.query(`
+                INSERT INTO messages
+                  (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
+                VALUES ($1, 'outbound', $2, 'template', $3, 'sent', false, NOW())
+                RETURNING id, conversation_id, direction, content,
+                          msg_type AS type, wa_msg_id, status, is_ai,
+                          sent_at AS timestamp
+              `, [conversationId, renderedBody, result.messageId]);
+
+              io.emit('outgoing_message', {
+                lead_id: Number(msg.lead_id),
+                message: {
+                  ...messageResult.rows[0],
+                  campaign_id: msg.campaign_id,
+                },
+              });
+            }
+          } catch (crmErr) {
+            console.error(
+              `[Campaign Queue] WhatsApp message ${result.messageId} sent, but Inbox sync failed:`,
+              crmErr.message
+            );
+          }
+
+          // Update stats
+          await pool.query(`
+            INSERT INTO campaign_rate_stats (campaign_id, date, messages_sent)
+            VALUES ($1, CURRENT_DATE, 1)
+            ON CONFLICT (campaign_id, date)
+            DO UPDATE SET messages_sent = campaign_rate_stats.messages_sent + 1
+          `, [msg.campaign_id]);
+
+          recordSendSuccess();
+        } else if (result.rateLimited) {
+          // Release the claim so a later queue pass can retry it.
+          await pool.query(`
+            UPDATE campaign_message_queue
+            SET status = 'pending', error_message = $2
+            WHERE id = $1
+          `, [msg.id, result.error]);
+          recordRateLimit();
+
+          // Update rate limit stat
+          await pool.query(`
+            INSERT INTO campaign_rate_stats (campaign_id, date, rate_limited_count)
+            VALUES ($1, CURRENT_DATE, 1)
+            ON CONFLICT (campaign_id, date)
+            DO UPDATE SET rate_limited_count = campaign_rate_stats.rate_limited_count + 1
+          `, [msg.campaign_id]);
+
+          console.warn(`[Campaign Queue] Rate limited: ${result.error}`);
+        } else {
+          // Permanent failure
+          await pool.query(`
+            UPDATE campaign_message_queue
+            SET status = 'failed', processed_at = NOW(),
+                error_message = $2
+            WHERE id = $1
+          `, [msg.id, result.error]);
+
+          // Log failure
+          await pool.query(`
+            INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
+            VALUES ($1, $2, 'failed', $3, NOW())
+          `, [msg.campaign_id, msg.lead_id, result.error]);
+
+          // Update stats
+          await pool.query(`
+            INSERT INTO campaign_rate_stats (campaign_id, date, messages_failed)
+            VALUES ($1, CURRENT_DATE, 1)
+            ON CONFLICT (campaign_id, date)
+            DO UPDATE SET messages_failed = campaign_rate_stats.messages_failed + 1
+          `, [msg.campaign_id]);
+        }
+
+        // Wait between messages
+        const delay = getRecommendedDelay();
+        await new Promise(r => setTimeout(r, delay));
+
+      } catch (err) {
+        console.error(`[Campaign Queue] Error processing message ${msg.id}:`, err.message);
+        // The external result is unknown for unexpected errors. Do not
+        // immediately release the row and risk a duplicate send; leave it
+        // claimed for stale-job review/recovery.
+        await pool.query(`
+          UPDATE campaign_message_queue
+          SET error_message = $2
+          WHERE id = $1
+        `, [msg.id, `Worker error after claim: ${err.message}`]).catch(() => {});
+      }
+    }
+
+    // A queue batch can contain more than one campaign.
+    for (const campaignId of [...new Set(pending.map((item) => item.campaign_id))]) {
+      await checkCampaignCompletion(campaignId);
+    }
+
+  } catch (err) {
+    console.error('[Campaign Queue] Queue processing error:', err.message);
+  }
+}
+
+// Send single WhatsApp message
+async function sendWhatsAppMessage(msg) {
+  try {
+    const digits = (msg.phone || '').replace(/\D/g, '');
+    if (digits.length < 10) {
+      return { success: false, error: 'Invalid phone number' };
+    }
+
+    const waToken = msg.wa_token || process.env.META_PAGE_ACCESS_TOKEN;
+    const phoneId = msg.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+
+    if (!waToken || !phoneId) {
+      return { success: false, error: 'Missing WhatsApp credentials' };
+    }
+
+    // Build template payload
+    const templatePayload = {
+      name: msg.template_name,
+      language: { code: 'en' }
+    };
+
+    const components = [];
+    if (msg.template_body && msg.template_body.includes('{{1}}')) {
+      components.push({
+        type: 'body',
+        parameters: [{ type: 'text', text: msg.name || 'Friend' }]
+      });
+    }
+    if (components.length > 0) {
+      templatePayload.components = components;
+    }
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: digits,
+      type: 'template',
+      template: templatePayload
+    };
+
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${waToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    return {
+      success: true,
+      messageId: response.data.messages?.[0]?.id
+    };
+
+  } catch (err) {
+    const status = err.response?.status;
+    const errorMsg = err.response?.data?.error?.message || err.message;
+
+    // Check for rate limit (429)
+    if (status === 429) {
+      return { success: false, rateLimited: true, error: errorMsg };
+    }
+
+    // Check for other retryable errors
+    if (status >= 500 && status < 600) {
+      return { success: false, rateLimited: true, error: errorMsg };
+    }
+
+    return { success: false, error: errorMsg };
+  }
+}
+
+// Check if campaign is complete
+async function checkCampaignCompletion(campaign_id) {
+  if (!campaign_id) return;
+
+  const [pending, sent, failed] = await Promise.all([
+    pool.query(`SELECT COUNT(*) FROM campaign_message_queue WHERE campaign_id = $1 AND status IN ('pending', 'processing')`, [campaign_id]),
+    pool.query(`SELECT COUNT(*) FROM campaign_message_queue WHERE campaign_id = $1 AND status = 'sent'`, [campaign_id]),
+    pool.query(`SELECT COUNT(*) FROM campaign_message_queue WHERE campaign_id = $1 AND status = 'failed'`, [campaign_id])
+  ]);
+
+  const pendingCount = parseInt(pending.rows[0].count);
+  const sentCount = parseInt(sent.rows[0].count);
+  const failedCount = parseInt(failed.rows[0].count);
+
+  if (pendingCount === 0) {
+    const finalStatus = sentCount > 0 ? 'completed' : 'failed';
+    await pool.query(`UPDATE campaigns SET status = $1 WHERE id = $2`, [finalStatus, campaign_id]);
+    console.log(`[Campaign ${campaign_id}] Completed: ${sentCount} sent, ${failedCount} failed`);
+  }
+}
+
+// Start queue processor
+let queueProcessorInterval;
+
+function startCampaignQueueProcessor() {
+  initCampaignQueue().then(() => {
+    // Run every 2 seconds
+    queueProcessorInterval = setInterval(processCampaignQueue, 2000);
+    console.log('[Campaign Queue] Processor started - running every 2s');
+  });
+}
+
+// Stop queue processor
+function stopCampaignQueueProcessor() {
+  if (queueProcessorInterval) {
+    clearInterval(queueProcessorInterval);
+    console.log('[Campaign Queue] Processor stopped');
+  }
+}
 
 // ── MIDDLEWARE ────────────────────────────────────────────
 app.use(morgan('dev')); // ← must be first so every request is logged
@@ -138,6 +643,17 @@ const internalAuth = (req, res, next) => {
   if (req.headers['x-internal-key'] === process.env.INTERNAL_API_KEY) return next();
   return auth(req, res, next);
 };
+
+// conversations.tenant_id is a foreign key into a legacy `tenants` table from
+// an earlier multi-tenant schema that was never actually populated per brand —
+// only tenants.id=1 exists. Every conversation-creating path in this app
+// relies on that same single seed row, whether intentionally (the inbound
+// webhook's `lead.tenant_id || 1`) or previously by accident (a query that
+// never selected tenant_id, so it fell through to `undefined`/`|| 1`).
+// Passing a brand's clients.id here instead violates that FK for any brand
+// whose id isn't coincidentally 1 — use this constant everywhere a
+// conversation row is created so the whole app stays on the same tenant.
+const DEFAULT_TENANT_ID = 1;
 
 // ── CONTENT OS ROUTES ─────────────────────────────────────
 app.use('/api/content', internalAuth, contentRoutes);
@@ -558,15 +1074,336 @@ app.get('/api/leads/template', (req, res) => {
   res.send(buffer);
 });
 
+// DEBUG: Check campaign import recipients
+app.get('/api/debug/campaign-imports', auth, async (req, res) => {
+  try {
+    const { batch_id } = req.query;
+
+    let query = `
+      SELECT cir.batch_id, cir.lead_id, cir.created_at, l.name, l.phone, l.client_id, l.status
+      FROM campaign_import_recipients cir
+      JOIN leads l ON cir.lead_id = l.id
+    `;
+    let params = [];
+
+    if (batch_id) {
+      query += ' WHERE cir.batch_id = $1';
+      params.push(batch_id);
+    }
+
+    query += ' ORDER BY cir.created_at DESC LIMIT 50';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      count: result.rows.length,
+      recipients: result.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/leads/sources', auth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT DISTINCT source FROM leads WHERE source IS NOT NULL AND source <> '' ORDER BY source`
     );
-    const sources = rows.map(r => r.source);
-    res.json({ sources });
+    
+    let rawSources = rows.map(r => r.source)
+                         .filter(s => !s.startsWith('Csv_') && !s.startsWith('={{') && s.toLowerCase() !== 'test');
+    
+    const uniqueSources = [];
+    const seen = new Set();
+    for (const s of rawSources) {
+      const lower = s.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        
+        // Custom formatting for common sources
+        if (lower === 'whatsapp') {
+          uniqueSources.push('WhatsApp');
+        } else if (lower === 'meta_ads') {
+          uniqueSources.push('Meta Ads');
+        } else if (lower === 'instagram dm') {
+          uniqueSources.push('Instagram DM');
+        } else {
+          uniqueSources.push(s.charAt(0).toUpperCase() + s.slice(1).toLowerCase());
+        }
+      }
+    }
+    
+    res.json({ sources: uniqueSources.sort() });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// FOLLOWUP ENGINE APIs (WF02)
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/followups/due - Get leads due for follow-up
+app.get('/api/followups/due', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        l.id as lead_id,
+        l.name,
+        l.phone,
+        l.email,
+        l.status as lead_status,
+        l.client_id,
+        l.touch_count,
+        l.next_follow_up,
+        l.last_contact,
+        c.name as brand
+      FROM leads l
+      LEFT JOIN clients c ON l.client_id = c.id
+      WHERE l.next_follow_up IS NOT NULL
+        AND l.next_follow_up <= NOW()
+        AND l.status NOT IN ('lost', 'converted')
+      ORDER BY l.next_follow_up ASC
+      LIMIT 100
+    `);
+    res.json({ followups: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/followups/rule - Get follow-up rule for a lead
+app.post('/api/followups/rule', auth, async (req, res) => {
+  try {
+    const { lead_id, brand, stage, touch_count } = req.body;
+
+    // Get follow-up rules for this brand and stage
+    const { rows } = await pool.query(`
+      SELECT * FROM followup_rules
+      WHERE client_id = (SELECT client_id FROM leads WHERE id = $1)
+        AND stage = $2
+        AND touch_count <= $3
+      ORDER BY touch_count DESC
+      LIMIT 1
+    `, [lead_id, stage || 'new', touch_count || 0]);
+
+    if (rows.length === 0) {
+      // Return default rule
+      return res.json({
+        action_type: 'whatsapp_text',
+        delay_hours: 24,
+        ai_prompt_template: 'Follow up with this lead about our services. Keep it brief and professional.'
+      });
+    }
+
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/whatsapp/check-24h - Check if 24h passed since last message
+app.post('/api/whatsapp/check-24h', auth, async (req, res) => {
+  try {
+    const { lead_id } = req.body;
+
+    // Get last message time for this lead
+    const { rows } = await pool.query(`
+      SELECT MAX(sent_at) as last_message_at
+      FROM messages m
+      JOIN conversations c ON m.conversation_id = c.id
+      WHERE c.lead_id = $1 AND m.direction = 'outbound'
+    `, [lead_id]);
+
+    const lastMessageAt = rows[0]?.last_message_at;
+    const canSend = !lastMessageAt || (Date.now() - new Date(lastMessageAt).getTime()) > 24 * 60 * 60 * 1000;
+
+    res.json({ can_send: canSend, last_message_at: lastMessageAt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/communication/send-template - Send WhatsApp template
+app.post('/api/communication/send-template', auth, async (req, res) => {
+  try {
+    const { lead_id, template_name, template_params } = req.body;
+
+    // Get lead details
+    const leadRes = await pool.query(`
+      SELECT l.*, c.wa_access_token, c.phone_number_id
+      FROM leads l
+      LEFT JOIN clients c ON l.client_id = c.id
+      WHERE l.id = $1
+    `, [lead_id]);
+
+    if (!leadRes.rows.length) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    const lead = leadRes.rows[0];
+    const waToken = lead.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+    const phoneId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+
+    if (!waToken || !phoneId) {
+      return res.status(400).json({ error: 'WhatsApp credentials not configured' });
+    }
+
+    // Build template payload
+    const digits = (lead.phone || '').replace(/\D/g, '');
+    const templatePayload = { name: template_name, language: { code: 'en' } };
+
+    const components = [];
+    if (template_params && typeof template_params === 'object') {
+      Object.values(template_params).forEach(val => {
+        components.push({ type: 'body', parameters: [{ type: 'text', text: val }] });
+      });
+    }
+    if (components.length > 0) templatePayload.components = components;
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: digits,
+      type: 'template',
+      template: templatePayload
+    };
+
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' }, timeout: 15000 }
+    );
+
+    res.json({ success: true, message_id: response.data.messages?.[0]?.id });
+  } catch (err) {
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
+  }
+});
+
+// POST /api/ai/followup - Generate and send AI follow-up text
+app.post('/api/ai/followup', auth, async (req, res) => {
+  try {
+    const { lead_id, prompt } = req.body;
+
+    // Get lead details
+    const leadRes = await pool.query('SELECT * FROM leads WHERE id = $1', [lead_id]);
+    if (!leadRes.rows.length) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    const lead = leadRes.rows[0];
+
+    // Generate AI response
+    const fullPrompt = `${prompt}\n\nLead Name: ${lead.name}\nLead Status: ${lead.status}\nBrand: ${lead.client_id}`;
+
+    let aiMessage = '';
+    if (gemini) {
+      const result = await gemini.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: fullPrompt,
+      });
+      aiMessage = result.text;
+    } else {
+      aiMessage = `Hi ${lead.name || 'there'}, just checking in on our conversation. Would love to hear from you!`;
+    }
+
+    // Send WhatsApp text
+    const waToken = process.env.META_PAGE_ACCESS_TOKEN;
+    const phoneId = process.env.WA_PHONE_NUMBER_ID;
+
+    if (waToken && phoneId && lead.phone) {
+      const digits = lead.phone.replace(/\D/g, '');
+      await axios.post(
+        `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          to: digits,
+          type: 'text',
+          text: { body: aiMessage }
+        },
+        { headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' }, timeout: 15000 }
+      );
+    }
+
+    res.json({ success: true, message: aiMessage });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/communication/send-email - Send follow-up email
+app.post('/api/communication/send-email', auth, async (req, res) => {
+  try {
+    const { lead_id, template_id } = req.body;
+
+    // Get lead details
+    const leadRes = await pool.query('SELECT * FROM leads WHERE id = $1', [lead_id]);
+    if (!leadRes.rows.length) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    // For now, just log - email sending would need SMTP configuration
+    console.log(`[Followup] Would send email to lead ${lead_id} using template ${template_id}`);
+
+    res.json({ success: true, message: 'Email queued' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/leads/internal-note - Create internal note
+app.post('/api/leads/internal-note', auth, async (req, res) => {
+  try {
+    const { lead_id, note } = req.body;
+
+    await pool.query(`
+      INSERT INTO lead_notes (lead_id, user_id, note, created_at)
+      VALUES ($1, $2, $3, NOW())
+    `, [lead_id, req.user.id, note]);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/leads/update-followup - Update lead follow-up info
+app.post('/api/leads/update-followup', auth, async (req, res) => {
+  try {
+    const { lead_id, touch_count_increment, delay_hours } = req.body;
+
+    // Increment touch count
+    if (touch_count_increment) {
+      await pool.query(`
+        UPDATE leads SET touch_count = COALESCE(touch_count, 0) + 1, updated_at = NOW()
+        WHERE id = $1
+      `, [lead_id]);
+    }
+
+    // Set next follow-up
+    if (delay_hours) {
+      await pool.query(`
+        UPDATE leads SET next_follow_up = NOW() + INTERVAL '${delay_hours} hours', last_contact = NOW(), updated_at = NOW()
+        WHERE id = $1
+      `, [lead_id]);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/workflows/log - Log workflow execution
+app.post('/api/workflows/log', auth, async (req, res) => {
+  try {
+    const { workflow, lead_id, status, error } = req.body;
+
+    console.log(`[Workflow ${workflow}] Lead ${lead_id}: ${status}${error ? ` - ${error}` : ''}`);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -608,7 +1445,7 @@ app.get('/api/leads', auth, async (req, res) => {
     }
     if (source && source !== 'all') {
       params.push(source);
-      q += ` AND l.source = $${params.length}`;
+      q += ` AND l.source ILIKE $${params.length}`;
     }
     if (search) {
       params.push(`%${search}%`);
@@ -723,6 +1560,8 @@ app.post('/api/leads', auth, async (req, res) => {
       }).catch(e => console.error('[n8n Webhook Error]', e.message));
     }
 
+    evaluateLeadBrandAndSchedule(rows[0].id).catch(console.error);
+
     res.status(201).json({ lead: rows[0] });
   } catch (err) {
     console.error(err);
@@ -802,6 +1641,14 @@ app.post('/api/leads/migrate-flow-step', auth, async (req, res) => {
 app.post('/api/whatsapp/send', auth, async (req, res) => {
   try {
     const { lead_id, message, media_url, msg_type, reply_to_wa_id, is_forwarded } = req.body;
+
+    // Admin manually intervened: cancel any pending AI reply for this lead
+    if (aiReplyQueue.has(lead_id)) {
+      clearTimeout(aiReplyQueue.get(lead_id));
+      aiReplyQueue.delete(lead_id);
+      io.emit('ai_typing', { lead_id: String(lead_id), typing: false });
+      console.log(`[AI Queue] Cancelled AI reply for lead ${lead_id} due to manual admin message.`);
+    }
 
     const leadRes = await pool.query(`
       SELECT l.*, c.phone_number_id, c.wa_access_token
@@ -932,7 +1779,7 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
             last_message = EXCLUDED.last_message,
             last_message_at = NOW()
       RETURNING id
-    `, [lead_id, lead.tenant_id, phone, message]);
+    `, [lead_id, DEFAULT_TENANT_ID, phone, message]);
     const conversationId = convRes.rows[0].id;
 
     // Insert message into messages table
@@ -959,6 +1806,7 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
 });
 
 // ── WHATSAPP WEBHOOK ──────────────────────────────────────
+const aiReplyQueue = new Map(); // Store timeouts for delayed AI replies
 
 // GET — Meta webhook verification
 app.get('/webhook/whatsapp', (req, res) => {
@@ -978,6 +1826,36 @@ app.post('/webhook/whatsapp', async (req, res) => {
     const body = req.body;
     fs.appendFileSync(path.join(__dirname, 'uploads', 'incoming_payloads.log'), `[${new Date().toISOString()}] ${JSON.stringify(body, null, 2)}\n\n`);
     
+    if (!body.object || body.object !== 'whatsapp_business_account') return;
+
+    // ── FILTER UNMANAGED PHONE NUMBERS ─────────────────────
+    let hasValidPhoneNumber = true; // Default true for non-message events
+    for (const entry of body.entry || []) {
+      for (const change of entry.changes || []) {
+        if (change.field === 'messages') {
+          hasValidPhoneNumber = false;
+          const phoneNumberId = change.value?.metadata?.phone_number_id;
+          if (phoneNumberId) {
+            if (phoneNumberId === process.env.WA_PHONE_NUMBER_ID) {
+              hasValidPhoneNumber = true;
+            } else {
+              const clientRes = await pool.query('SELECT id FROM clients WHERE phone_number_id = $1 LIMIT 1', [phoneNumberId]);
+              if (clientRes.rows.length > 0) {
+                hasValidPhoneNumber = true;
+              }
+            }
+          }
+        } else {
+          hasValidPhoneNumber = true; // Let template updates pass
+        }
+      }
+    }
+
+    if (!hasValidPhoneNumber) {
+      console.log('🚫 Ignored webhook for unmanaged phone_number_id');
+      return;
+    }
+
     // FORWARD TO N8N WEBHOOK
     // This allows the Node server to act as a proxy if needed.
     // If the request is already coming from n8n (source=n8n), we SKIP forwarding to prevent an infinite loop.
@@ -990,8 +1868,6 @@ app.post('/webhook/whatsapp', async (req, res) => {
         console.error('⚠️ Failed to forward payload to n8n:', n8nErr.message);
       }
     }
-    
-    if (!body.object || body.object !== 'whatsapp_business_account') return;
 
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {
@@ -1178,7 +2054,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
           const normalizedPhone = phoneDigits.slice(-10);
 
           // Upsert conversation thread
-          const tenantId = lead.tenant_id || 1;
+          const tenantId = DEFAULT_TENANT_ID;
           const convRes = await pool.query(`
             INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
             VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
@@ -1218,17 +2094,31 @@ app.post('/webhook/whatsapp', async (req, res) => {
             // WF00 continues through its synchronous transcription request.
             // Do not call it again and create a duplicate AI response.
             if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL && req.query.source !== 'n8n') {
-              // Let the Inbox show a typing indicator while n8n/Gemini composes
-              // the reply. /communication/send clears it once the reply is sent.
-              io.emit('ai_typing', { lead_id: String(lead.id), typing: true });
-              axios.post(process.env.N8N_WEBHOOK_URL, {
-                lead_id: lead.id,
-                phone,
-                message: text,
-                phone_number_id: lead.client_phone_number_id || phoneNumberId,
-                wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN,
-                gemini_api_key: process.env.GEMINI_API_KEY
-              }).catch(e => console.error('[n8n forward error]', e.message));
+              // Clear any existing waiting queue for this lead
+              if (aiReplyQueue.has(lead.id)) {
+                clearTimeout(aiReplyQueue.get(lead.id));
+              }
+
+              // Let the Inbox show a waiting indicator while the AI is in queue
+              io.emit('ai_typing', { lead_id: String(lead.id), typing: true, status: 'waiting' });
+
+              // Queue the new message with a 60 second wait period
+              const timer = setTimeout(() => {
+                aiReplyQueue.delete(lead.id);
+                // Update indicator to 'composing' once we actually forward to n8n
+                io.emit('ai_typing', { lead_id: String(lead.id), typing: true, status: 'composing' });
+                
+                axios.post(process.env.N8N_WEBHOOK_URL, {
+                  lead_id: lead.id,
+                  phone,
+                  message: text,
+                  phone_number_id: lead.client_phone_number_id || phoneNumberId,
+                  wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN,
+                  gemini_api_key: process.env.GEMINI_API_KEY
+                }).catch(e => console.error('[n8n forward error]', e.message));
+              }, 60000); // 60 seconds delay
+
+              aiReplyQueue.set(lead.id, timer);
             }
           }
         }
@@ -1699,6 +2589,63 @@ app.post('/api/templates/:id/submit', auth, async (req, res) => {
   }
 });
 
+// POST /api/templates/upload-media — upload sample media to Meta and get a handle
+const templateMediaMulter = multer({ dest: 'uploads/temp/' });
+app.post('/api/templates/upload-media', auth, templateMediaMulter.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const { client_id } = req.body;
+  let waToken = process.env.META_PAGE_ACCESS_TOKEN;
+  
+  try {
+    if (client_id && client_id !== 'null' && client_id !== 'undefined') {
+      const { rows } = await pool.query('SELECT wa_access_token FROM clients WHERE id = $1', [client_id]);
+      if (rows[0] && rows[0].wa_access_token) waToken = rows[0].wa_access_token;
+    }
+
+    // 1. Get App ID from the token
+    const appRes = await axios.get(`https://graph.facebook.com/v18.0/app?access_token=${waToken}`);
+    const appId = appRes.data.id;
+    if (!appId) throw new Error('Could not resolve App ID from token');
+
+    // 2. Initialize Resumable Upload Session
+    const fileStats = require('fs').statSync(req.file.path);
+    const sessionRes = await axios.post(
+      `https://graph.facebook.com/v18.0/${appId}/uploads?file_length=${fileStats.size}&file_type=${encodeURIComponent(req.file.mimetype)}`,
+      null,
+      { headers: { Authorization: `Bearer ${waToken}` } }
+    );
+    const sessionId = sessionRes.data.id;
+
+    // 3. Upload file data to session
+    const fileData = require('fs').readFileSync(req.file.path);
+    const uploadRes = await axios.post(
+      `https://graph.facebook.com/v18.0/${sessionId}`,
+      fileData,
+      {
+        headers: {
+          Authorization: `OAuth ${waToken}`,
+          'file_offset': '0',
+          'Content-Type': 'application/octet-stream'
+        }
+      }
+    );
+    
+    // Cleanup local file
+    require('fs').unlinkSync(req.file.path);
+    
+    res.json({ success: true, handle: uploadRes.data.h });
+  } catch (err) {
+    console.error('Meta Upload Error:', err.response?.data || err.message);
+    if (req.file && require('fs').existsSync(req.file.path)) {
+      require('fs').unlinkSync(req.file.path);
+    }
+    const metaErr = err.response?.data?.error;
+    res.status(500).json({ 
+      error: metaErr ? `Meta Error: ${metaErr.message}` : 'Failed to upload media to Meta'
+    });
+  }
+});
+
 // GET /api/templates/:id/sync — sync status from Meta
 app.get('/api/templates/:id/sync', auth, async (req, res) => {
   try {
@@ -2089,22 +3036,29 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
       `);
     }
 
-    // Pre-fetch clients and users for mapping
     const [clientsRes, usersRes] = await Promise.all([
       pool.query('SELECT id, name FROM clients'),
-      pool.query('SELECT id, name, email FROM users')
+      pool.query('SELECT id, name, email FROM users'),
     ]);
-    const clientsMap = {};
-    clientsRes.rows.forEach(c => clientsMap[c.name.toLowerCase()] = c.id);
+    const clientsMap = Object.fromEntries(
+      clientsRes.rows.map((client) => [client.name.toLowerCase(), client.id])
+    );
     const usersMap = {};
-    usersRes.rows.forEach(u => {
-      usersMap[u.name.toLowerCase()] = u.id;
-      usersMap[u.email.toLowerCase()] = u.id;
+    usersRes.rows.forEach((user) => {
+      if (user.name) usersMap[user.name.toLowerCase()] = user.id;
+      if (user.email) usersMap[user.email.toLowerCase()] = user.id;
     });
 
+    // Process each row
     let imported = 0;
+    let inserted = 0;
+    let existing = 0;
+    let duplicateRows = 0;
     let failed = 0;
     const importErrors = [];
+    const seenPhones = new Set();
+
+    console.log(`[Campaign Import] Starting - isCampaignBatch: ${isCampaignBatch}, force_source: ${req.body.force_source}, client_id: ${client_id}`);
 
     for (const row of results) {
       try {
@@ -2163,10 +3117,25 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
 
         if ((!phone && !email) || (phone && (phone.length < 10 || phone.length > 15))) {
           failed++;
+          if (importErrors.length < 20) {
+            importErrors.push({
+              row: imported + duplicateRows + failed + 1,
+              name,
+              phone: phoneText,
+              error: phoneText
+                ? 'Phone number must contain 10 to 15 digits'
+                : 'Phone number is missing or stored as unsafe scientific-notation text',
+            });
+          }
           continue;
         }
 
         const phoneDigits = phone ? phone.replace(/\D/g, '').slice(-10) : '';
+        if (phoneDigits && seenPhones.has(phoneDigits)) {
+          duplicateRows++;
+          continue;
+        }
+        if (phoneDigits) seenPhones.add(phoneDigits);
 
         // Check for existing lead by email or 10-digit phone
         let existingLead = null;
@@ -2174,7 +3143,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
            const existingRes = await pool.query(`
              SELECT id FROM leads 
              WHERE ($1::text != '' AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1)
-                OR ($2::text IS NOT NULL AND LOWER(email) = LOWER($2))
+                OR ($1::text = '' AND $2::text IS NOT NULL AND LOWER(email) = LOWER($2))
              LIMIT 1
            `, [phoneDigits, email]);
            existingLead = existingRes.rows[0];
@@ -2185,6 +3154,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
 
         if (existingLead) {
           importedLeadId = existingLead.id;
+          existing++;
           if (!isCampaignImport) {
             // Normal CRM imports may refresh an existing lead. A campaign list
             // only references it and must not alter its CRM fields.
@@ -2211,9 +3181,45 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
             RETURNING id
           `, [rowClientId, name, phone, email, status, source, score, interest, assignedTo]);
           importedLeadId = insertedLead.rows[0].id;
+          inserted++;
+
+          // ── Send welcome template for newly inserted leads (not existing ones) ──
+          if (!isCampaignImport && process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
+            // Stagger by 1s per lead to avoid WhatsApp rate limits on bulk import
+            const delay = inserted * 1000;
+            setTimeout(() => {
+              // Fetch client-specific credentials for this lead (if client_id set)
+              pool.query(
+                'SELECT c.phone_number_id, c.wa_access_token FROM clients c WHERE c.id = $1',
+                [rowClientId]
+              ).then(clientRes => {
+                const phoneNumberId = clientRes.rows[0]?.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+                const waAccessToken = clientRes.rows[0]?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+                axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
+                  lead_id: importedLeadId,
+                  name,
+                  phone,
+                  client_id: rowClientId,
+                  phone_number_id: phoneNumberId,
+                  wa_access_token: waAccessToken,
+                }).catch(e => console.error(`[Import Welcome] Failed for lead ${importedLeadId}:`, e.message));
+              }).catch(() => {
+                // fallback to default credentials
+                axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
+                  lead_id: importedLeadId,
+                  name,
+                  phone,
+                  client_id: rowClientId,
+                  phone_number_id: process.env.WA_PHONE_NUMBER_ID,
+                  wa_access_token: process.env.META_PAGE_ACCESS_TOKEN,
+                }).catch(e => console.error(`[Import Welcome Fallback] Failed for lead ${importedLeadId}:`, e.message));
+              });
+            }, delay);
+          }
         }
 
         if (isCampaignImport) {
+          console.log(`[Campaign Import] Linking lead ${importedLeadId} to batch ${req.body.force_source}`);
           await pool.query(`
             INSERT INTO campaign_import_recipients (batch_id, lead_id)
             VALUES ($1, $2)
@@ -2222,6 +3228,9 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         }
 
         imported++;
+        if (imported % 10 === 0) {
+          console.log(`[Campaign Import] Progress: ${imported} imported, ${failed} failed`);
+        }
       } catch (e) {
         console.error('Row import error for', row, e.message);
         failed++;
@@ -2246,7 +3255,15 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         errors: importErrors,
       });
     }
-    res.json({ success: true, imported, failed, errors: importErrors });
+    res.json({
+      success: true,
+      imported,
+      inserted,
+      existing,
+      duplicate_rows: duplicateRows,
+      failed,
+      errors: importErrors,
+    });
 
   } catch (err) {
     console.error('Import error:', err);
@@ -2354,13 +3371,30 @@ app.get('/api/campaigns', auth, async (req, res) => {
 });
 app.post('/api/campaigns', auth, async (req, res) => {
   try {
-    const { name, client_id, template_id, target_status, scheduled_at } = req.body;
+    const { name, client_id, template_id, target_status, scheduled_at, send_immediately } = req.body;
+
+    // Determine initial status
+    const initialStatus = scheduled_at && new Date(scheduled_at) > new Date() ? 'scheduled' : 'scheduled';
+
     const { rows } = await pool.query(`
       INSERT INTO campaigns (name, client_id, template_id, target_status, scheduled_at, status, created_by, created_at)
-      VALUES ($1, $2, $3, $4, $5, 'scheduled', $6, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
       RETURNING *
-    `, [name, client_id, template_id, target_status, scheduled_at, req.user.id]);
-    res.status(201).json({ campaign: rows[0] });
+    `, [name, client_id, template_id, target_status, scheduled_at, initialStatus, req.user.id]);
+
+    const campaign = rows[0];
+
+    // If send_immediately is true or no scheduled_at, trigger execution immediately
+    if (send_immediately || !scheduled_at) {
+      // Execute with delay to ensure campaign is created first
+      setTimeout(() => {
+        executeCampaign(campaign.id).catch(err => {
+          console.error('Auto-execute campaign error:', err);
+        });
+      }, 500);
+    }
+
+    res.status(201).json({ campaign });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -2378,15 +3412,15 @@ app.delete('/api/campaigns/:id', auth, async (req, res) => {
   }
 });
 
-// Background Campaign Execution Function
+// Background Campaign Execution Function - Now uses queue system
 async function executeCampaign(campaign_id) {
+  console.log(`[executeCampaign] Starting for campaign ${campaign_id}`);
   try {
-    // Failure details must be recordable even on databases created before the
-    // error_message column was introduced.
+    // Ensure error_message column exists
     await pool.query(`
       ALTER TABLE campaign_logs
       ADD COLUMN IF NOT EXISTS error_message TEXT
-    `);
+    `).catch(() => {}); // Ignore if already exists
 
     const campRes = await pool.query(`
       SELECT c.*, t.body as template_body, t.name as template_name, cl.wa_access_token, cl.phone_number_id
@@ -2396,167 +3430,97 @@ async function executeCampaign(campaign_id) {
       WHERE c.id = $1
     `, [campaign_id]);
 
-    if (!campRes.rows.length) return;
+    if (!campRes.rows.length) {
+      console.log(`[executeCampaign] Campaign ${campaign_id} not found`);
+      return;
+    }
     const campaign = campRes.rows[0];
 
-    await pool.query("UPDATE campaigns SET status = 'running' WHERE id = $1", [campaign_id]);
+    console.log(`[executeCampaign] Campaign: ${campaign.name}, target_status: ${campaign.target_status}, client_id: ${campaign.client_id}`);
 
-    // Bulk campaigns intentionally send to every lead in the selected audience.
-    // Do not suppress a recipient because they received an earlier campaign.
-    let leadsQuery = `SELECT id, phone, name
-      FROM leads
-      WHERE client_id = $1`;
-    const queryParams = [campaign.client_id];
+    // Atomically claim the campaign: only proceed if it's still 'scheduled' or 'failed'.
+    const claimRes = await pool.query(
+      "UPDATE campaigns SET status = 'running' WHERE id = $1 AND status IN ('scheduled', 'failed') RETURNING id",
+      [campaign_id]
+    );
+    if (claimRes.rowCount === 0) {
+      console.warn(`Campaign ${campaign_id}: skipped, already running/completed (not in 'scheduled' or 'failed' state).`);
+      return;
+    }
 
-    if (campaign.target_status && campaign.target_status !== 'all') {
-      if (campaign.target_status.startsWith('csv_')) {
-        // Include every number from the upload, including existing leads,
-        // without rewriting any of their CRM fields.
-        leadsQuery = `SELECT l.id, l.phone, l.name
-          FROM leads l
-          JOIN campaign_import_recipients cir ON cir.lead_id = l.id
-          WHERE cir.batch_id = $1`;
-        queryParams.splice(0, queryParams.length, campaign.target_status);
-      } else {
+    console.log(`[executeCampaign] Campaign claimed, finding leads...`);
+
+    // Build leads query
+    let leadsQuery = '';
+    const queryParams = [];
+
+    if (campaign.target_status && campaign.target_status.startsWith('csv_')) {
+      // A custom upload is an exact audience. Existing leads may belong to a
+      // different CRM brand, but the selected campaign brand supplies the
+      // WhatsApp credentials used for this send.
+      leadsQuery = `SELECT l.id, l.phone, l.name
+        FROM leads l
+        JOIN campaign_import_recipients cir ON cir.lead_id = l.id
+        WHERE cir.batch_id = $1
+          AND l.phone IS NOT NULL
+          AND BTRIM(l.phone) <> ''
+        ORDER BY cir.created_at, l.id`;
+      queryParams.push(campaign.target_status);
+    } else {
+      // Regular target status (new, warm, cold, etc.) or all leads
+      leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1`;
+      queryParams.push(campaign.client_id);
+
+      if (campaign.target_status && campaign.target_status !== 'all') {
         leadsQuery += ' AND status = $2';
         queryParams.push(campaign.target_status);
       }
     }
 
-    const leadsRes = await pool.query(leadsQuery, queryParams);
-    const leads = leadsRes.rows;
-    let sentCount = 0;
+    let leadsRes = await pool.query(leadsQuery, queryParams);
+    let leads = leadsRes.rows;
+
+    console.log(`[Campaign ${campaign_id}] Query: ${leadsQuery}`);
+    console.log(`[Campaign ${campaign_id}] Params: ${JSON.stringify(queryParams)}`);
+    console.log(`[Campaign ${campaign_id}] Found: ${leads.length} leads`);
 
     if (leads.length === 0) {
+      // Debug: check what's in the campaign_import_recipients table
+      let debugInfo = '';
+      if (campaign.target_status && campaign.target_status.startsWith('csv_')) {
+        const recipientsCheck = await pool.query(
+          `SELECT COUNT(*) as cnt FROM campaign_import_recipients WHERE batch_id = $1`,
+          [campaign.target_status]
+        );
+        debugInfo = ` (batch_id: ${campaign.target_status}, found: ${recipientsCheck.rows[0].cnt} recipients in campaign_import_recipients)`;
+      }
+
       await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
-      console.warn(`Campaign ${campaign_id} has no recipients matching its target.`);
+      console.warn(`Campaign ${campaign_id} has no recipients matching its target.${debugInfo}`);
       return;
     }
 
     const waToken = campaign.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
     const phoneId = campaign.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
 
-    // Process in batches of 50 for high performance
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < leads.length; i += BATCH_SIZE) {
-      const batch = leads.slice(i, i + BATCH_SIZE);
-
-      const promises = batch.map(async (lead) => {
-        try {
-          const templatePayload = {
-            name: campaign.template_name,
-            language: { code: 'en' }
-          };
-
-          const components = [];
-          if (campaign.template_body && campaign.template_body.includes('{{1}}')) {
-            components.push({
-              type: 'body',
-              parameters: [
-                { type: 'text', text: lead.name || 'Friend' }
-              ]
-            });
-          }
-          if (components.length > 0) {
-            templatePayload.components = components;
-          }
-
-          const waRes = await axios.post(
-            `https://graph.facebook.com/v18.0/${phoneId}/messages`,
-            {
-              messaging_product: 'whatsapp',
-              to: lead.phone.replace(/\D/g, ''),
-              type: 'template',
-              template: templatePayload
-            },
-            { headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' } }
-          );
-
-          return {
-            lead_id: lead.id,
-            phone: lead.phone,
-            wa_message_id: waRes.data.messages?.[0]?.id,
-            status: 'sent',
-            error: null
-          };
-        } catch (err) {
-          return {
-            lead_id: lead.id,
-            wa_message_id: null,
-            status: 'failed',
-            error: err.response?.data?.error?.message || err.message
-          };
-        }
-      });
-
-      const results = await Promise.all(promises);
-
-      // Bulk Insert Logs
-      for (const res of results) {
-        if (res.status === 'sent') {
-          await pool.query(`
-            INSERT INTO campaign_logs (campaign_id, lead_id, wa_message_id, status, sent_at)
-            VALUES ($1, $2, $3, 'sent', NOW())
-          `, [campaign_id, res.lead_id, res.wa_message_id]);
-
-          // Find (or create) the conversation this lead already chats in, so
-          // the campaign message lands in the same Inbox thread as any reply.
-          // Check by lead_id first (unambiguous — matches getOrUpsertConversation
-          // in routes/salesos.js), then fall back to the phone the inbound
-          // webhook normalizes to (last 10 digits) before creating a new one.
-          let convId;
-          const existingConvRes = await pool.query(
-            `SELECT id FROM conversations WHERE lead_id = $1 LIMIT 1`,
-            [res.lead_id]
-          );
-          if (existingConvRes.rows.length > 0) {
-            convId = existingConvRes.rows[0].id;
-            await pool.query(
-              `UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`,
-              [campaign.template_body, convId]
-            );
-          } else {
-            const normalizedConvPhone = res.phone.replace(/\D/g, '').slice(-10);
-            const convRes = await pool.query(`
-              INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
-              VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
-              ON CONFLICT (phone, tenant_id) DO UPDATE
-                SET lead_id = EXCLUDED.lead_id,
-                    last_message = EXCLUDED.last_message,
-                    last_message_at = NOW()
-              RETURNING id
-            `, [res.lead_id, campaign.client_id, normalizedConvPhone, campaign.template_body]);
-            convId = convRes.rows[0].id;
-          }
-
-          const { rows: campMsgRows } = await pool.query(`
-            INSERT INTO messages (conversation_id, direction, content, msg_type, wa_msg_id, status, is_ai, sent_at)
-            VALUES ($1, 'outbound', $2, 'template', $3, 'sent', false, NOW())
-            RETURNING id, direction, content, msg_type as type, wa_msg_id, status, is_ai, sent_at as timestamp
-          `, [convId, campaign.template_body, res.wa_message_id]);
-
-          // Push to an already-open Inbox chat in real time, same as manual
-          // sends (/api/whatsapp/send) and inbound webhook messages do.
-          io.emit('outgoing_message', { lead_id: String(res.lead_id), message: campMsgRows[0] });
-
-          sentCount++;
-        } else {
-          await pool.query(`
-            INSERT INTO campaign_logs (campaign_id, lead_id, status, error_message, sent_at)
-            VALUES ($1, $2, 'failed', $3, NOW())
-          `, [campaign_id, res.lead_id, res.error]);
-        }
-      }
-
-      // Respect Meta rate limits between batches
-      if (i + BATCH_SIZE < leads.length) {
-        await new Promise(res => setTimeout(res, 500));
-      }
+    // Validate credentials
+    if (!waToken || !phoneId) {
+      await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
+      console.error(`Campaign ${campaign_id}: missing WhatsApp credentials`);
+      return;
     }
 
-    const finalStatus = sentCount > 0 ? 'completed' : 'failed';
-    await pool.query("UPDATE campaigns SET status = $1 WHERE id = $2", [finalStatus, campaign_id]);
-    console.log(`Campaign ${campaign_id} ${finalStatus}. Sent ${sentCount} messages.`);
+    // Add all messages to the queue - the queue processor will send them with rate limiting
+    await addToCampaignQueue(campaign_id, leads, {
+      template_name: campaign.template_name,
+      template_body: campaign.template_body,
+      wa_access_token: waToken,
+      phone_number_id: phoneId
+    });
+
+    console.log(`Campaign ${campaign_id}: Added ${leads.length} messages to queue`);
+    console.log(`[Campaign Queue] Processing started - messages will be sent with rate limiting`);
+
   } catch (err) {
     console.error('Campaign execution error:', err);
     await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
@@ -2573,6 +3537,147 @@ app.post('/api/campaigns/execute', internalAuth, async (req, res) => {
   } catch (err) {
     console.error('Campaign execution trigger error:', err);
     res.status(500).json({ error: 'Failed to trigger campaign' });
+  }
+});
+
+// POST /api/campaigns/:id/retry - Retry a failed/stuck campaign
+app.post('/api/campaigns/:id/retry', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get campaign details
+    const campRes = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (!campRes.rows.length) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const campaign = campRes.rows[0];
+
+    // Check if there are already messages in queue for this campaign
+    const queueCheck = await pool.query(
+      'SELECT COUNT(*) as count FROM campaign_message_queue WHERE campaign_id = $1',
+      [id]
+    );
+
+    if (parseInt(queueCheck.rows[0].count) > 0) {
+      // Messages already in queue, just reset status to running
+      await pool.query("UPDATE campaigns SET status = 'running' WHERE id = $1", [id]);
+      return res.json({ success: true, message: 'Campaign already has messages in queue, status reset to running' });
+    }
+
+    // Re-execute the campaign (will add fresh messages to queue)
+    await pool.query("UPDATE campaigns SET status = 'scheduled' WHERE id = $1", [id]);
+
+    // Execute and wait for result
+    try {
+      await executeCampaign(id);
+      res.json({ success: true, message: 'Campaign retry initiated' });
+    } catch (execErr) {
+      console.error('Execute campaign error:', execErr);
+      // Reset status to failed
+      await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [id]);
+      res.status(500).json({ error: 'Failed to execute campaign: ' + execErr.message });
+    }
+  } catch (err) {
+    console.error('Campaign retry error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/campaigns/:id/queue - Get queue status for specific campaign
+app.get('/api/campaigns/:id/queue', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const stats = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'pending') as pending,
+        COUNT(*) FILTER (WHERE status = 'sent') as sent,
+        COUNT(*) FILTER (WHERE status = 'failed') as failed,
+        COUNT(*) as total
+      FROM campaign_message_queue
+      WHERE campaign_id = $1
+    `, [id]);
+
+    res.json({ queue: stats.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/campaigns/:id/debug - Debug campaign recipients
+app.get('/api/campaigns/:id/debug', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get campaign details
+    const campaign = await pool.query('SELECT * FROM campaigns WHERE id = $1', [id]);
+    if (!campaign.rows.length) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const c = campaign.rows[0];
+
+    // Check campaign_import_recipients
+    let recipients = [];
+    if (c.target_status && c.target_status.startsWith('csv_')) {
+      const recipientsRes = await pool.query(`
+        SELECT cir.*, l.name, l.phone, l.client_id
+        FROM campaign_import_recipients cir
+        JOIN leads l ON cir.lead_id = l.id
+        WHERE cir.batch_id = $1
+      `, [c.target_status]);
+      recipients = recipientsRes.rows;
+    }
+
+    // Check leads for this client
+    const leadsRes = await pool.query(`
+      SELECT id, name, phone, client_id, status
+      FROM leads
+      WHERE client_id = $1
+      LIMIT 10
+    `, [c.client_id]);
+
+    res.json({
+      campaign: {
+        id: c.id,
+        name: c.name,
+        client_id: c.client_id,
+        target_status: c.target_status,
+      },
+      csvRecipientsCount: recipients.length,
+      sampleRecipients: recipients.slice(0, 5),
+      leadsForClientCount: leadsRes.rows.length,
+      sampleLeads: leadsRes.rows.slice(0, 5)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/campaigns/queue/status - Get overall queue processing status
+app.get('/api/campaigns/queue/status', auth, async (req, res) => {
+  try {
+    const stats = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'pending') as pending,
+        COUNT(*) FILTER (WHERE status = 'sent') as sent,
+        COUNT(*) FILTER (WHERE status = 'failed') as failed,
+        COUNT(*) as total
+      FROM campaign_message_queue
+    `);
+
+    res.json({
+      queue: stats.rows[0],
+      rateLimiter: {
+        messagesThisMinute: rateLimiter.messagesThisMinute,
+        messagesThisHour: rateLimiter.messagesThisHour,
+        messagesThisDay: rateLimiter.messagesThisDay,
+        consecutiveRateLimits: rateLimiter.consecutiveRateLimits,
+        currentDelayMs: rateLimiter.currentDelayMs
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -2946,6 +4051,42 @@ cron.schedule('0 2 * * 0', async () => {
 // ── START ─────────────────────────────────────────────────
 httpServer.listen(PORT, () => {
   console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);
+
+  // Start campaign message queue processor
+  startCampaignQueueProcessor();
+
+  // Initialize followup tables
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS followup_rules (
+      id SERIAL PRIMARY KEY,
+      client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
+      stage VARCHAR(50) NOT NULL,
+      touch_count INTEGER NOT NULL DEFAULT 0,
+      action_type VARCHAR(50) NOT NULL,
+      template_id VARCHAR(255),
+      ai_prompt_template TEXT,
+      payload_template JSONB,
+      delay_hours INTEGER NOT NULL DEFAULT 24,
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(client_id, stage, touch_count)
+    );
+
+    CREATE TABLE IF NOT EXISTS lead_notes (
+      id SERIAL PRIMARY KEY,
+      lead_id BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+      user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      note TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    -- Add columns if they don't exist
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS touch_count INTEGER DEFAULT 0;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_follow_up TIMESTAMP;
+  `).then(() => {
+    console.log('[Startup] Followup tables initialized');
+  }).catch(err => {
+    console.error('[Startup] Error initializing followup tables:', err.message);
+  });
 
   // Reset any stuck publishing jobs on startup to prevent limbo states
   pool.query(`

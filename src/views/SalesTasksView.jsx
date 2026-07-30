@@ -9,6 +9,8 @@ export const SalesTasksView = () => {
   const [loading, setLoading] = useState(true);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const tasksPerPage = 10;
 
   useEffect(() => {
     fetchTasks();
@@ -155,11 +157,15 @@ export const SalesTasksView = () => {
               </tr>
             </thead>
             <tbody>
-              {tasks.map((task, idx) => {
-                const styles = getStatusStyles(task.status);
-                return (
-                  <tr 
-                    key={task.id} 
+              {(() => {
+                const indexOfLastTask = currentPage * tasksPerPage;
+                const indexOfFirstTask = indexOfLastTask - tasksPerPage;
+                const currentTasks = tasks.slice(indexOfFirstTask, indexOfLastTask);
+                return currentTasks.map((task, idx) => {
+                  const styles = getStatusStyles(task.status);
+                  return (
+                    <tr 
+                      key={task.id} 
                     style={{ 
                       borderBottom: '1px solid ' + C.border, 
                       background: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' 
@@ -252,12 +258,42 @@ export const SalesTasksView = () => {
                       </div>
                     </td>
                   </tr>
-                );
-              })}
+                  );
+                });
+              })()}
             </tbody>
           </table>
         )}
+
+        {/* Pagination Controls */}
+        {tasks.length > tasksPerPage && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', background: C.card, borderTop: '1px solid ' + C.border }}>
+            <span style={{ fontSize: 13, color: C.muted, fontWeight: 500 }}>
+              Showing {((currentPage - 1) * tasksPerPage) + 1} to {Math.min(currentPage * tasksPerPage, tasks.length)} of {tasks.length} entries
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <button 
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                style={{ padding: '6px 14px', background: 'transparent', border: '1px solid ' + C.border, borderRadius: 6, color: currentPage === 1 ? C.muted : C.text, cursor: currentPage === 1 ? 'not-allowed' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1, fontSize: 13, fontWeight: 500, transition: 'all 0.2s' }}
+              >
+                Previous
+              </button>
+              <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>
+                Page {currentPage} of {Math.ceil(tasks.length / tasksPerPage)}
+              </span>
+              <button 
+                disabled={currentPage === Math.ceil(tasks.length / tasksPerPage)}
+                onClick={() => setCurrentPage(p => Math.min(Math.ceil(tasks.length / tasksPerPage), p + 1))}
+                style={{ padding: '6px 14px', background: 'transparent', border: '1px solid ' + C.border, borderRadius: 6, color: currentPage === Math.ceil(tasks.length / tasksPerPage) ? C.muted : C.text, cursor: currentPage === Math.ceil(tasks.length / tasksPerPage) ? 'not-allowed' : 'pointer', opacity: currentPage === Math.ceil(tasks.length / tasksPerPage) ? 0.5 : 1, fontSize: 13, fontWeight: 500, transition: 'all 0.2s' }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>

@@ -6,7 +6,7 @@ import { Badge, ScoreBar } from '../components/ui.jsx';
 import { useLeads } from '../hooks/useLeads.js';
 import { api } from '../services/api.js';
 
-// ─── Add Lead Modal ────────────────────────────────────────
+
 
 const inp = {
   width: '100%', background: '#0d1117', border: '1px solid #2a2a3a',
@@ -364,7 +364,7 @@ function MetaLeadDetailsModal({ lead, onClose }) {
       <div onClick={e => e.stopPropagation()} style={{ background: C.card, padding: 24, borderRadius: 12, width: 440, maxWidth: '100%', border: '1px solid ' + C.border, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', position: 'relative' }}>
         <button onClick={onClose} style={{ position: 'absolute', top: 16, right: 16, background: 'transparent', border: 'none', cursor: 'pointer' }}><X size={18} color={C.muted} /></button>
         <h3 style={{ margin: '0 0 16px 0', fontSize: 18, fontWeight: 600, color: C.text }}>Campaign Details</h3>
-        
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ padding: 12, background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid ' + C.border }}>
             <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Source Platform</div>
@@ -407,8 +407,8 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [syncingFB, setSyncingFB] = useState(false);
   const itemsPerPage = 10;
 
-  const { leads: apiLeads, total, loading, error, refetch } = useLeads({ 
-    status: filter !== 'all' ? filter : undefined, 
+  const { leads: apiLeads, total, loading, error, refetch } = useLeads({
+    status: filter !== 'all' ? filter : undefined,
     search,
     source: sourceFilter !== 'all' ? sourceFilter : undefined,
     limit: itemsPerPage,
@@ -437,13 +437,13 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [paymentLead, setPaymentLead] = useState(null);
   const [metaLeadDetails, setMetaLeadDetails] = useState(null);
   const [modalClients, setModalClients] = useState([]);
-  const [modalUsers, setModalUsers]     = useState([]);
+  const [modalUsers, setModalUsers] = useState([]);
   const [modalSources, setModalSources] = useState([]);
 
   useEffect(() => {
-    api.getClients().then(d => setModalClients(Array.from(new Map((d.clients || []).map(c => [c.id, c])).values()))).catch(() => {});
-    api.getUsers().then(d => setModalUsers(Array.from(new Map((d.users || []).map(u => [u.id, u])).values()))).catch(() => {});
-    api.getSources().then(d => setModalSources([...new Set(d.sources || [])])).catch(() => {});
+    api.getClients().then(d => setModalClients(Array.from(new Map((d.clients || []).map(c => [c.id, c])).values()))).catch(() => { });
+    api.getUsers().then(d => setModalUsers(Array.from(new Map((d.users || []).map(u => [u.id, u])).values()))).catch(() => { });
+    api.getSources().then(d => setModalSources([...new Set(d.sources || [])])).catch(() => { });
   }, []);
 
   const handleExport = () => {
@@ -477,7 +477,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const handleDownloadTemplate = () => {
     // Columns must match exactly what the server import handler reads
     const headers = ['Name', 'Phone', 'Country Code', 'Source', 'Brand', 'Status', 'Score', 'Interest', 'Assigned', 'Last Contact'];
-    const dummy  = ['Rahul Sharma', '9876543210', '91', 'WhatsApp', 'BM Academy', 'new', '75', 'Web Development', 'Admin', new Date().toISOString().split('T')[0]];
+    const dummy = ['Rahul Sharma', '9876543210', '91', 'WhatsApp', 'BM Academy', 'new', '75', 'Web Development', 'Admin', new Date().toISOString().split('T')[0]];
     const csvContent = [headers.join(','), dummy.join(',')].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -653,7 +653,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 7px', borderRadius: 10 }}>{l.source || 'Manual'}</span>
                       {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && (
-                        <button 
+                        <button
                           onClick={(e) => { e.stopPropagation(); setMetaLeadDetails(l); }}
                           title="View Campaign Details"
                           style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted }}

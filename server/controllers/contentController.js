@@ -1487,6 +1487,18 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
     const pollResult = await waitForFacebookReel(video_id, pageAccessToken);
     console.log(`[publishReelToFacebook] Reel status check complete:`, pollResult);
 
+    // Set thumbnail after video is ready — more reliable than thumb_url in finish phase
+    if (coverUrl && pollResult.success) {
+      try {
+        await axios.post(`https://graph.facebook.com/v19.0/${video_id}`, null, {
+          params: { thumb_url: coverUrl, access_token: pageAccessToken }
+        });
+        console.log(`[publishReelToFacebook] Thumbnail set for video ${video_id}`);
+      } catch (thumbErr) {
+        console.warn(`[publishReelToFacebook] Thumbnail update failed (non-fatal): ${thumbErr.response?.data?.error?.message || thumbErr.message}`);
+      }
+    }
+
     return pollResult;
   } catch (err) {
     const fullError = err.response?.data ? JSON.stringify(err.response.data, null, 2) : err.message;

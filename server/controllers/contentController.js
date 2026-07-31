@@ -173,8 +173,10 @@ async function downloadDriveFileServiceAccount(fileId, destPath) {
 
 function transcodeVideo(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .outputOptions([
+    ffmpeg.ffprobe(inputPath, (probeErr, metadata) => {
+      const hasAudio = !probeErr && metadata.streams.some(s => s.codec_type === 'audio');
+
+      const cmd = ffmpeg(inputPath).outputOptions([
         '-map 0:v',
         '-c:v libx264',
         '-preset fast',
@@ -182,23 +184,31 @@ function transcodeVideo(inputPath, outputPath) {
         '-r 30',
         '-pix_fmt yuv420p',
         '-vf scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
-        '-map 0:a?',
         '-c:a aac',
         '-b:a 128k',
         '-ac 2',
         '-movflags +faststart'
-      ])
-      .output(outputPath)
-      .on('end', () => {
-        resolve();
-      })
-      .on('error', (err) => {
-        if (fs.existsSync(outputPath)) {
-          try { fs.unlinkSync(outputPath); } catch (_) {}
-        }
-        reject(err);
-      })
-      .run();
+      ]);
+
+      if (hasAudio) {
+        cmd.outputOptions(['-map 0:a']);
+      } else {
+        // Inject silent audio so Instagram/Facebook don't reject the video
+        cmd
+          .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+          .inputOptions(['-f lavfi'])
+          .outputOptions(['-map 1:a', '-shortest']);
+      }
+
+      cmd
+        .output(outputPath)
+        .on('end', resolve)
+        .on('error', (err) => {
+          if (fs.existsSync(outputPath)) try { fs.unlinkSync(outputPath); } catch (_) {}
+          reject(err);
+        })
+        .run();
+    });
   });
 }
 

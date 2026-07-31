@@ -3111,10 +3111,12 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
     let thumbnailWarning = null;
     if (localThumbnailPath && fs.existsSync(localThumbnailPath)) {
       try {
+        const thumbExt = path.extname(localThumbnailPath).toLowerCase();
+        const thumbMime = thumbExt === '.png' ? 'image/png' : 'image/jpeg';
         await youtube.thumbnails.set({
           videoId: videoId,
           media: {
-            mimeType: 'image/jpeg',
+            mimeType: thumbMime,
             body: fs.createReadStream(localThumbnailPath)
           }
         });

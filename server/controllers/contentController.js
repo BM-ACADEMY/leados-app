@@ -3108,9 +3108,12 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
     console.log(`[YouTube Publish] Upload success. Video ID: ${videoId}`);
 
     // Set custom thumbnail if provided
+    // Wait 15s for YouTube to finish processing the video before setting thumbnail
     let thumbnailWarning = null;
     if (localThumbnailPath && fs.existsSync(localThumbnailPath)) {
       try {
+        await new Promise(resolve => setTimeout(resolve, 15000));
+        console.log(`[YouTube Publish] Setting custom thumbnail for video ${videoId}...`);
         const thumbExt = path.extname(localThumbnailPath).toLowerCase();
         const thumbMime = thumbExt === '.png' ? 'image/png' : 'image/jpeg';
         await youtube.thumbnails.set({

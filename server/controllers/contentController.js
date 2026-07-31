@@ -2941,6 +2941,7 @@ function handleYoutubeAuth(req, res) {
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: [
+      'https://www.googleapis.com/auth/youtube',
       'https://www.googleapis.com/auth/youtube.upload',
       'https://www.googleapis.com/auth/youtube.readonly',
       'https://www.googleapis.com/auth/userinfo.profile'

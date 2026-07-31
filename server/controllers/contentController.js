@@ -3419,7 +3419,7 @@ async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl, co
       description: { text: caption.substring(0, 200) },
       title: { text: 'Video Post' }
     };
-    if (thumbnailAssetUrn) videoMediaEntry.thumbnails = [{ url: thumbnailAssetUrn }];
+    // LinkedIn v2 UGC Posts API does not support custom video thumbnail URNs in this field — omitted intentionally.
 
     const postRes = await axios.post(
       'https://api.linkedin.com/v2/ugcPosts',

@@ -1487,13 +1487,24 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
     const pollResult = await waitForFacebookReel(video_id, pageAccessToken);
     console.log(`[publishReelToFacebook] Reel status check complete:`, pollResult);
 
-    // Set thumbnail after video is ready using dedicated thumbnails endpoint
+    // Set thumbnail after video is ready using binary multipart upload (source_url not accepted)
     if (coverUrl && pollResult.success) {
       try {
-        const thumbRes = await axios.post(`https://graph.facebook.com/v19.0/${video_id}/thumbnails`, null, {
-          params: { is_preferred: true, source_url: coverUrl, access_token: pageAccessToken }
-        });
-        console.log(`[publishReelToFacebook] Thumbnail set via /thumbnails for video ${video_id}:`, JSON.stringify(thumbRes.data));
+        const FormData = require('form-data');
+        const imgResponse = await axios.get(coverUrl, { responseType: 'arraybuffer', timeout: 30000 });
+        const imgBuffer = Buffer.from(imgResponse.data);
+        const contentType = imgResponse.headers['content-type'] || 'image/jpeg';
+        const ext = contentType.includes('png') ? 'thumbnail.png' : 'thumbnail.jpg';
+        const form = new FormData();
+        form.append('is_preferred', 'true');
+        form.append('access_token', pageAccessToken);
+        form.append('source', imgBuffer, { filename: ext, contentType });
+        const thumbRes = await axios.post(
+          `https://graph.facebook.com/v19.0/${video_id}/thumbnails`,
+          form,
+          { headers: form.getHeaders() }
+        );
+        console.log(`[publishReelToFacebook] Thumbnail set via binary upload for video ${video_id}:`, JSON.stringify(thumbRes.data));
       } catch (thumbErr) {
         const thumbMsg = thumbErr.response?.data?.error?.message || thumbErr.message;
         console.warn(`[publishReelToFacebook] Thumbnail update failed (non-fatal): ${thumbMsg}`);

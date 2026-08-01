@@ -25,14 +25,15 @@ import { WorkflowsView } from './views/WorkflowsView.jsx';
 import { IntegrationsView } from './views/IntegrationsView.jsx';
 
 
-import { AllianceDashboard } from './views/AllianceDashboard.jsx';
-import { UploadLeads } from './views/UploadLeads.jsx';
-import { LeadList } from './views/LeadList.jsx';
-import { Pipeline } from './views/Pipeline.jsx';
-import { LeadProfile } from './views/LeadProfile.jsx';
-import { KnowledgeBase } from './views/KnowledgeBase.jsx';
-import { PromptManager } from './views/PromptManager.jsx';
-import { AllianceInboxView } from './views/AllianceInboxView.jsx';
+import { AllianceDashboard } from './views/alliance/AllianceDashboard.jsx';
+import { UploadLeads } from './views/alliance/UploadLeads.jsx';
+import { LeadList } from './views/alliance/LeadList.jsx';
+import { Pipeline } from './views/alliance/Pipeline.jsx';
+import { LeadProfile } from './views/alliance/LeadProfile.jsx';
+import { KnowledgeBase } from './views/alliance/KnowledgeBase.jsx';
+import { PromptManager } from './views/alliance/PromptManager.jsx';
+import { AllianceInboxView } from './views/alliance/AllianceInboxView.jsx';
+import { CampaignPlanner } from './views/alliance/CampaignPlanner.jsx';
 import ContentOSDashboard from '../contentos/ContentOSDashboard.jsx';
 
 import KeywordTracking from './views/thedal/KeywordTracking.jsx';
@@ -413,6 +414,14 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/knowledge-base" element={<KnowledgeBase />} />
               <Route path="/prompt-manager" element={<PromptManager />} />
               <Route path="/alliance-inbox" element={<AllianceInboxView />} />
+              <Route path="/alliance/planner" element={<CampaignPlanner />} />
+              <Route path="/alliance/prospects" element={<LeadList />} />
+              <Route path="/alliance/number-health" element={<Pipeline />} />
+              <Route path="/alliance/replies" element={<LeadProfile />} />
+              <Route path="/alliance/ai-brain" element={<KnowledgeBase />} />
+              <Route path="/alliance/prompts" element={<PromptManager />} />
+              <Route path="/alliance/analytics" element={<AllianceDashboard />} />
+              <Route path="/alliance/upload" element={<UploadLeads />} />
               <Route path="/admin/content-os/approval" element={<ContentOSDashboard defaultPage="approval" />} />
               <Route path="/admin/content-os/monitors" element={<ContentOSDashboard defaultPage="monitors" />} />
               <Route path="/admin/content-os/scheduler" element={<ContentOSDashboard defaultPage="scheduler" />} />

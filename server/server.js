@@ -22,7 +22,7 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { GoogleGenAI } = require('@google/genai');
+const openRouter = require('./services/openrouter');
 const cryptoHelper = require('./utils/crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -30,9 +30,6 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 const app = express();
 const httpServer = http.createServer(app);
 const PORT = process.env.PORT || 3600;
-const gemini = process.env.GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-  : null;
 
 // ── SOCKET.IO ─────────────────────────────────────────────
 const io = new SocketIOServer(httpServer, {
@@ -1351,9 +1348,9 @@ app.post('/api/ai/followup', auth, async (req, res) => {
     const fullPrompt = `${prompt}\n\nLead Name: ${lead.name}\nLead Status: ${lead.status}\nBrand: ${lead.client_id}`;
 
     let aiMessage = '';
-    if (gemini) {
-      const result = await gemini.models.generateContent({
-        model: 'gemini-2.0-flash',
+    if (openRouter.isConfigured) {
+      const result = await openRouter.models.generateContent({
+        model: openRouter.DEFAULT_MODEL,
         contents: fullPrompt,
       });
       aiMessage = result.text;
@@ -1466,7 +1463,7 @@ app.get('/api/leads', auth, async (req, res) => {
   try {
     const { status, brand, search, source, limit = 100, offset = 0 } = req.query;
     let q = `
-      SELECT l.*, c.name as brand_name, u.name as assigned_name,
+      SELECT l.*, COUNT(*) OVER() AS filtered_total, c.name as brand_name, u.name as assigned_name,
         COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id), 0) as unread,
         (SELECT MAX(last_message_at) FROM conversations WHERE lead_id = l.id) as last_contact,
         (
@@ -1491,7 +1488,13 @@ app.get('/api/leads', auth, async (req, res) => {
 
     if (status && status !== 'all') {
       params.push(status);
-      q += ` AND l.status = $${params.length}`;
+      if (String(status).toLowerCase() === 'cold') {
+        // Legacy leads with no status have always been displayed as Cold in the
+        // UI, so include them in the Cold tab as well.
+        q += ` AND COALESCE(NULLIF(LOWER(TRIM(l.status)), ''), 'cold') = LOWER($${params.length})`;
+      } else {
+        q += ` AND LOWER(TRIM(COALESCE(l.status, ''))) = LOWER($${params.length})`;
+      }
     }
     if (brand && brand !== 'All Brands') {
       params.push(`%${brand}%`);
@@ -1499,7 +1502,7 @@ app.get('/api/leads', auth, async (req, res) => {
     }
     if (source && source !== 'all') {
       params.push(source);
-      q += ` AND l.source ILIKE $${params.length}`;
+      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) = LOWER(TRIM($${params.length}))`;
     }
     if (search) {
       params.push(`%${search}%`);
@@ -1508,20 +1511,36 @@ app.get('/api/leads', auth, async (req, res) => {
       params.push(search);
       const searchParam = `$${params.length}`;
       
-      q += ` AND (l.name ILIKE ${likeParam} OR l.phone ILIKE ${likeParam} OR l.name % ${searchParam} OR l.phone % ${searchParam})`;
+      q += ` AND (
+        l.name ILIKE ${likeParam}
+        OR l.phone ILIKE ${likeParam}
+        OR l.name % ${searchParam}
+        OR (
+          REGEXP_REPLACE(${searchParam}, '[^0-9]', '', 'g') <> ''
+          AND REGEXP_REPLACE(COALESCE(l.phone, ''), '[^0-9]', '', 'g')
+            LIKE '%' || REGEXP_REPLACE(${searchParam}, '[^0-9]', '', 'g') || '%'
+        )
+      )`;
     }
 
     if (search) {
       const searchParamIndex = params.length; // points to the exact search term param
-      q += ` ORDER BY similarity(l.name, $${searchParamIndex}) DESC, similarity(l.phone, $${searchParamIndex}) DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+      q += ` ORDER BY
+        CASE WHEN REGEXP_REPLACE($${searchParamIndex}, '[^0-9]', '', 'g') <> ''
+          AND REGEXP_REPLACE(COALESCE(l.phone, ''), '[^0-9]', '', 'g')
+            LIKE '%' || REGEXP_REPLACE($${searchParamIndex}, '[^0-9]', '', 'g') || '%'
+          THEN 0 ELSE 1 END,
+        similarity(l.name, $${searchParamIndex}) DESC,
+        similarity(COALESCE(l.phone, ''), $${searchParamIndex}) DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     } else {
       q += ` ORDER BY COALESCE((SELECT MAX(last_message_at) FROM conversations WHERE lead_id = l.id), l.created_at) DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     }
     params.push(limit, offset);
 
     const { rows } = await pool.query(q, params);
-    const total = await pool.query('SELECT COUNT(*) FROM leads');
-    res.json({ leads: rows, total: parseInt(total.rows[0].count) });
+    const filteredTotal = rows.length ? parseInt(rows[0].filtered_total, 10) : 0;
+    res.json({ leads: rows, total: filteredTotal });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -2053,8 +2072,8 @@ app.post('/webhook/whatsapp', async (req, res) => {
           }
 
           // ── AUDIO TRANSCRIPTION ──────────────────────────────
-          console.log(`[DEBUG] Audio check: msg.type=${msg.type}, msg.audio?.id=${msg.audio?.id}, GEMINI_KEY=${!!process.env.GEMINI_API_KEY}`);
-          if (msg.type === 'audio' && msg.audio?.id && gemini) {
+          console.log(`[DEBUG] Audio check: msg.type=${msg.type}, msg.audio?.id=${msg.audio?.id}, OPENROUTER_KEY=${openRouter.isConfigured}`);
+          if (msg.type === 'audio' && msg.audio?.id && openRouter.isConfigured) {
             try {
               const waToken = lead.client_wa_token || client?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
               if (waToken) {
@@ -2071,9 +2090,9 @@ app.post('/webhook/whatsapp', async (req, res) => {
                   });
                   
                   const mimeType = mediaRes.data.mime_type || msg.audio?.mime_type || 'audio/ogg';
-                  console.log('[Audio] Transcribing with Gemini...');
-                  const transcription = await gemini.models.generateContent({
-                    model: process.env.GEMINI_AUDIO_MODEL || 'gemini-3.6-flash',
+                  console.log('[Audio] Transcribing with OpenRouter...');
+                  const transcription = await openRouter.models.generateContent({
+                    model: openRouter.AUDIO_MODEL,
                     contents: [
                       {
                         text: 'Transcribe this WhatsApp voice note precisely in its original language. Return only the spoken words, without commentary or formatting.',
@@ -2167,8 +2186,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
                   phone,
                   message: text,
                   phone_number_id: lead.client_phone_number_id || phoneNumberId,
-                  wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN,
-                  gemini_api_key: process.env.GEMINI_API_KEY
+                  wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN
                 }).catch(e => console.error('[n8n forward error]', e.message));
               }, 60000); // 60 seconds delay
 

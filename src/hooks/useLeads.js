@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api.js';
 
 export const useLeads = (filters = {}) => {
@@ -9,22 +9,26 @@ export const useLeads = (filters = {}) => {
 
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const fetchRequestIdRef = useRef(0);
 
   const limit = filters.limit || 20;
   const offset = filters.offset || 0;
 
   const fetchLeads = async () => {
+    const requestId = ++fetchRequestIdRef.current;
     setLoading(true);
     setError(null);
     try {
       const data = await api.getLeads({ ...filters, limit, offset });
+      if (requestId !== fetchRequestIdRef.current) return;
       setLeads(data.leads || []);
       setTotal(data.total || 0);
       setHasMore((data.leads || []).length === limit);
     } catch (err) {
+      if (requestId !== fetchRequestIdRef.current) return;
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (requestId === fetchRequestIdRef.current) setLoading(false);
     }
   };
 

@@ -7,9 +7,8 @@ const axios = require('axios');
 // WF00 - Lead Integrator Endpoints
 // ==========================================
 
-const { GoogleGenAI } = require('@google/genai');
-
-const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+const openRouter = require('../services/openrouter');
+const ai = openRouter.isConfigured ? openRouter : null;
 
 // Resolve a raw Meta WhatsApp payload synchronously so n8n can continue the
 // same execution with the spoken text instead of ending on an audio placeholder.
@@ -24,7 +23,7 @@ router.post('/whatsapp/transcribe', async (req, res) => {
     }
     if (!ai) {
       return res.status(503).json({
-        error: 'Voice transcription is not configured. Set GEMINI_API_KEY on the API server.',
+        error: 'Voice transcription is not configured. Set OPENROUTER_API_KEY on the API server.',
       });
     }
 
@@ -51,7 +50,7 @@ router.post('/whatsapp/transcribe', async (req, res) => {
     });
     const mimeType = mediaResponse.data?.mime_type || audio.mime_type || 'audio/ogg';
     const result = await ai.models.generateContent({
-      model: process.env.GEMINI_AUDIO_MODEL || 'gemini-3.6-flash',
+      model: openRouter.AUDIO_MODEL,
       contents: [
         {
           text: 'Transcribe this WhatsApp voice note precisely in its original language. Return only the spoken words, without commentary or formatting.',
@@ -83,13 +82,13 @@ router.post('/whatsapp/transcribe', async (req, res) => {
   }
 });
 
-const GEMINI_MODELS = (process.env.GEMINI_MODELS || 'gemini-3.5-flash,gemini-3.1-flash-lite')
+const OPENROUTER_MODELS = (process.env.OPENROUTER_MODELS || process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash-lite')
   .split(',')
   .map((model) => model.trim())
   .filter(Boolean);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const GEMINI_REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || 12000);
+const OPENROUTER_REQUEST_TIMEOUT_MS = Number(process.env.OPENROUTER_REQUEST_TIMEOUT_MS || 12000);
 
 const withTimeout = (promise, timeoutMs, label) => {
   let timer;
@@ -97,7 +96,7 @@ const withTimeout = (promise, timeoutMs, label) => {
     promise,
     new Promise((_, reject) => {
       timer = setTimeout(() => {
-        reject(new GeminiServiceError({
+        reject(new OpenRouterServiceError({
           message: `${label} timed out after ${timeoutMs}ms.`,
           status: 504,
           category: 'deadline_exceeded',
@@ -108,13 +107,13 @@ const withTimeout = (promise, timeoutMs, label) => {
   ]).finally(() => clearTimeout(timer));
 };
 
-const getGeminiStatus = (err) => {
+const getOpenRouterStatus = (err) => {
   const value = err?.status ?? err?.code ?? err?.response?.status;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const getGeminiCategory = (status) => {
+const getOpenRouterCategory = (status) => {
   if (status === 429) return 'quota_exceeded';
   if (status === 503) return 'temporarily_unavailable';
   if (status === 504) return 'deadline_exceeded';
@@ -125,10 +124,10 @@ const getGeminiCategory = (status) => {
   return 'network_or_unknown';
 };
 
-class GeminiServiceError extends Error {
+class OpenRouterServiceError extends Error {
   constructor({ message, status = 502, category, retryable = false, model = null, cause = null }) {
     super(message);
-    this.name = 'GeminiServiceError';
+    this.name = 'OpenRouterServiceError';
     this.httpStatus = status;
     this.category = category;
     this.retryable = retryable;
@@ -138,7 +137,7 @@ class GeminiServiceError extends Error {
 }
 
 const sendAiError = (res, err) => {
-  if (!(err instanceof GeminiServiceError)) {
+  if (!(err instanceof OpenRouterServiceError)) {
     console.error('[AI] Unexpected error:', err);
     return res.status(500).json({
       error: 'AI request failed due to an internal server error.',
@@ -200,10 +199,10 @@ For a voice note, ask the contact to type it. Send exactly one concise reply.`;
 
 // Gemini-only fallback chain (paid key — higher rate limits).
 // Tries 4 models in order: if one is busy/overloaded the next kicks in automatically.
-async function generateGeminiContent(prompt) {
+async function generateOpenRouterContent(prompt) {
   if (!ai) {
-    throw new GeminiServiceError({
-      message: 'GEMINI_API_KEY is not configured on the API server.',
+    throw new OpenRouterServiceError({
+      message: 'OPENROUTER_API_KEY is not configured on the API server.',
       status: 500,
       category: 'configuration_error',
     });
@@ -211,20 +210,20 @@ async function generateGeminiContent(prompt) {
 
   let lastFailure = null;
   const errors = [];
-  for (const model of GEMINI_MODELS) {
+  for (const model of OPENROUTER_MODELS) {
     // One bounded attempt per model keeps the entire API request below the
     // reverse-proxy timeout. The next configured model is the retry/fallback.
     for (let attempt = 1; attempt <= 1; attempt += 1) {
       try {
         const aiRes = await withTimeout(
           ai.models.generateContent({ model, contents: prompt }),
-          GEMINI_REQUEST_TIMEOUT_MS,
-          `Gemini ${model}`
+          OPENROUTER_REQUEST_TIMEOUT_MS,
+          `OpenRouter ${model}`
         );
         const text = aiRes?.text?.trim();
         if (!text) {
-          throw new GeminiServiceError({
-            message: `Gemini returned an empty response from ${model}.`,
+          throw new OpenRouterServiceError({
+            message: `OpenRouter returned an empty response from ${model}.`,
             status: 502,
             category: 'empty_response',
             retryable: true,
@@ -234,11 +233,11 @@ async function generateGeminiContent(prompt) {
         console.log(`[AI] ✅ Gemini (${model})`);
         return text;
       } catch (err) {
-        const upstreamStatus = getGeminiStatus(err);
-        const category = err instanceof GeminiServiceError
+        const upstreamStatus = getOpenRouterStatus(err);
+        const category = err instanceof OpenRouterServiceError
           ? err.category
-          : getGeminiCategory(upstreamStatus);
-        const retryable = err instanceof GeminiServiceError
+          : getOpenRouterCategory(upstreamStatus);
+        const retryable = err instanceof OpenRouterServiceError
           ? err.retryable
           : upstreamStatus === 429 || upstreamStatus === 503 ||
             upstreamStatus === 504 || (upstreamStatus !== null && upstreamStatus >= 500) ||
@@ -246,10 +245,10 @@ async function generateGeminiContent(prompt) {
         const msg = err?.message || category;
         errors.push(`${model}#${attempt}: ${category} (${upstreamStatus || 'unknown'})`);
 
-        lastFailure = err instanceof GeminiServiceError
+        lastFailure = err instanceof OpenRouterServiceError
           ? err
-          : new GeminiServiceError({
-              message: `Gemini request failed: ${category}.`,
+          : new OpenRouterServiceError({
+              message: `OpenRouter request failed: ${category}.`,
               status: upstreamStatus === 429 ? 429 : (retryable ? 503 : 502),
               category,
               retryable,
@@ -272,8 +271,8 @@ async function generateGeminiContent(prompt) {
   }
 
   console.error('[AI] ❌ All Gemini models exhausted:', errors.join(' | '));
-  throw lastFailure || new GeminiServiceError({
-    message: 'No Gemini models are configured.',
+  throw lastFailure || new OpenRouterServiceError({
+    message: 'No OpenRouter models are configured.',
     status: 500,
     category: 'configuration_error',
   });
@@ -586,7 +585,7 @@ router.post('/ai/intent', async (req, res) => {
     }
 
     const prompt = `Analyze this message in the locked brand '${effectiveBrand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
-    const output = await generateGeminiContent(prompt);
+    const output = await generateOpenRouterContent(prompt);
     const parts = output.split(',');
     const intent = parts[0] ? parts[0].trim() : 'GENERAL';
     const confidence = parts[1] ? parseInt(parts[1].trim()) : 50;
@@ -605,7 +604,7 @@ router.post('/ai/objections', async (req, res) => {
   const { message, brand, lead_id } = req.body;
   try {
     const prompt = `Analyze this message. Does the user have any objections? Choose one: [TOO_EXPENSIVE, NO_TIME, NOT_SURE, USING_COMPETITOR, NONE]. Message: "${message}". Reply ONLY with the objection type.`;
-    const objections = await generateGeminiContent(prompt);
+    const objections = await generateOpenRouterContent(prompt);
     res.json({ ...req.body, objections });
   } catch (err) {
     sendAiError(res, err);
@@ -875,7 +874,7 @@ router.post('/ai/response', async (req, res) => {
       }
       Respond ONLY with the JSON object, no markdown formatting, no backticks.`;
 
-    const rawAiResponse = await generateGeminiContent(prompt);
+    const rawAiResponse = await generateOpenRouterContent(prompt);
       
     let ai_reply = "I'm sorry, I couldn't process that. Can you repeat?";
     let extractedData = null;
@@ -904,7 +903,7 @@ router.post('/ai/response', async (req, res) => {
   } catch (err) {
     // Keep the WhatsApp workflow moving when every AI model is temporarily
     // slow/unavailable. HTTP 200 prevents an nginx/n8n 504 failure.
-    if (err instanceof GeminiServiceError && err.retryable) {
+    if (err instanceof OpenRouterServiceError && err.retryable) {
       console.error('[AI] Returning safe fallback after provider timeout:', err.message);
       return res.json({
         ...req.body,
@@ -1409,7 +1408,7 @@ Latest conversation (oldest to newest):
 ${historyText}
 
 Write one natural follow-up that continues the unfinished topic. Reference the specific course, service, job, property, trip, food order, admission, or charity topic already discussed. Never ask the lead to repeat information already present. Use a warm human tone, no pressure, no invented price, offer, availability, or deadline, and no more than 3 short sentences. End with exactly one easy question that moves toward the appropriate conversion step. Return only the message text.`;
-      ai_reply = await generateGeminiContent(prompt);
+      ai_reply = await generateOpenRouterContent(prompt);
     }
 
     let delivered = false;
@@ -1487,7 +1486,7 @@ ${JSON.stringify(data, null, 2)}
 
 Write exactly 3 bullet points. Use format: "• ₹X,XXX" for all currency values.`;
 
-    let summary = await generateGeminiContent(prompt);
+    let summary = await generateOpenRouterContent(prompt);
     console.log('[report-generator] Raw LLM response:', summary);
 
     // Post-process: Force INR currency - split on $ and rejoin with ₹
@@ -1850,7 +1849,7 @@ router.get('/reports/reminder-bundle', async (req, res) => {
     if (ai) {
       try {
         const prompt = `Summarize these daily sales metrics for a Founder Dashboard:\n${JSON.stringify(metrics)}\nWrite 3 short bullet points highlighting wins and risks (like SLA breaches or pending payments).`;
-        founder_summary = await generateGeminiContent(prompt);
+        founder_summary = await generateOpenRouterContent(prompt);
       } catch (e) { console.error('[reminder-bundle] Gemini summary failed:', e.message); }
     }
 

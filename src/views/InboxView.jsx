@@ -860,7 +860,7 @@ export const InboxView = () => {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: C.card, border: '1px solid ' + C.border, borderRadius: 7, padding: '7px 11px' }}>
             <Search size={11} color={C.muted} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', width: '100%' }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or phone..." style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', width: '100%' }} />
           </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>

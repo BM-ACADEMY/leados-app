@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { GoogleGenAI } = require('@google/genai');
+const openRouter = require('../services/openrouter');
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -11,7 +11,6 @@ const pool = new Pool({
   password: process.env.DB_PASS || 'LeadOS_DB@2026',
 });
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Helper to determine category based on positions
 const determineCategory = (clientPos, compPositions) => {
@@ -43,8 +42,8 @@ keyword (string), intent ("Informational"|"Commercial"|"Transactional"), volume 
 
 Ensure a realistic mix: some keywords where client ranks better (strong), some where competitors rank better (weak/missing), some shared, some unique to client, some untapped. Return ONLY the raw JSON array, no explanation.`;
 
-  const response = await genAI.models.generateContent({
-    model: 'gemini-2.5-flash',
+  const response = await openRouter.models.generateContent({
+    model: openRouter.DEFAULT_MODEL,
     contents: prompt,
     config: {
       temperature: 0.4,
@@ -214,7 +213,7 @@ router.post('/scan', async (req, res) => {
     const activeKeywords = new Set((trackedResult?.rows || []).map(r => r.keyword.toLowerCase()));
 
     // Generate AI data AFTER competitor list is resolved
-    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !process.env.GEMINI_API_KEY;
+    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !openRouter.isConfigured;
     let gapData;
     if (useDemoMode) {
       gapData = generateMockGapData(clientDomain, competitors);

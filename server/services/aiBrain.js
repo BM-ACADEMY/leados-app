@@ -1,18 +1,15 @@
-const { GoogleGenAI } = require('@google/genai');
+const openRouter = require('./openrouter');
 const db = require('../db/connection');
 require('dotenv').config();
 
-const gemini = process.env.GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-  : null;
 
 /**
  * AI Brain function to evaluate a lead, assign it to a brand, 
  * and set the initial next_follow_up date.
  */
 async function evaluateLeadBrandAndSchedule(leadId) {
-  if (!gemini) {
-    console.warn('[AI Brain] Gemini API key not set. Skipping AI evaluation.');
+  if (!openRouter.isConfigured) {
+    console.warn('[AI Brain] OpenRouter API key not set. Skipping AI evaluation.');
     return;
   }
 
@@ -58,8 +55,8 @@ FORMAT:
 }
 `;
 
-    const response = await gemini.models.generateContent({
-      model: 'gemini-3.5-flash',
+    const response = await openRouter.models.generateContent({
+      model: openRouter.DEFAULT_MODEL,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -95,7 +92,7 @@ FORMAT:
  * Scans for stuck leads every hour and determines next follow up
  */
 async function evaluateStuckLeads() {
-  if (!gemini) return;
+  if (!openRouter.isConfigured) return;
 
   try {
     const stuckLeads = await db.query(`
@@ -143,8 +140,8 @@ FORMAT:
 }
 `;
 
-      const response = await gemini.models.generateContent({
-        model: 'gemini-3.5-flash',
+      const response = await openRouter.models.generateContent({
+        model: openRouter.DEFAULT_MODEL,
         contents: prompt,
         config: {
           responseMimeType: "application/json",

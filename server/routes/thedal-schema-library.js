@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { Pool } = require('pg');
-const { GoogleGenAI } = require('@google/genai');
+const openRouter = require('../services/openrouter');
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
@@ -114,11 +114,9 @@ router.post('/generate', async (req, res) => {
   try {
     const { businessName, businessType, website, description } = req.body;
     
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+    if (!openRouter.isConfigured) {
+      return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
     }
-    
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     
     const prompt = `You are an expert SEO schema generator.
 Generate a perfect JSON-LD schema array for the following business:
@@ -130,8 +128,8 @@ Description: ${description || ''}
 Include both an 'Organization' schema and a '${businessType || 'LocalBusiness'}' schema if applicable.
 Return ONLY valid JSON. Do not include markdown formatting like \`\`\`json. Just the raw JSON object or array.`;
 
-    const response = await genAI.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const response = await openRouter.models.generateContent({
+      model: openRouter.DEFAULT_MODEL,
       contents: prompt,
     });
     
@@ -151,11 +149,9 @@ router.post('/validate', async (req, res) => {
   try {
     const { schema_data } = req.body;
     
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+    if (!openRouter.isConfigured) {
+      return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
     }
-    
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     
     const prompt = `You are a Google Search Central Schema Validator.
 Analyze the following JSON-LD schema and tell me if it is valid for Google Rich Results.
@@ -171,8 +167,8 @@ Return ONLY a JSON object with this exact structure (no markdown):
   "warnings": ["list of strings"]
 }`;
 
-    const response = await genAI.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const response = await openRouter.models.generateContent({
+      model: openRouter.DEFAULT_MODEL,
       contents: prompt,
     });
     

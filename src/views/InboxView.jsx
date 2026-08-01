@@ -178,7 +178,9 @@ export const InboxView = () => {
   // Message Search states
   const [showMessageSearchPanel, setShowMessageSearchPanel] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
-  const [highlightedMessageId, setHighlightedMessageId] = useState(null);
+  const [highlightedMessageKey, setHighlightedMessageKey] = useState(null);
+  const messageListRef = useRef(null);
+  const messageHighlightTimeoutRef = useRef(null);
 
   // Contact Info states
   const [showContactInfoPanel, setShowContactInfoPanel] = useState(false);
@@ -229,7 +231,11 @@ export const InboxView = () => {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      const preferredMimeTypes = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'];
+      const supportedMimeType = preferredMimeTypes.find((type) => MediaRecorder.isTypeSupported(type));
+      const mediaRecorder = supportedMimeType
+        ? new MediaRecorder(stream, { mimeType: supportedMimeType })
+        : new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -238,8 +244,10 @@ export const InboxView = () => {
       };
 
       mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const file = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
+        const recordedMimeType = mediaRecorder.mimeType || supportedMimeType || 'audio/webm';
+        const extension = recordedMimeType.includes('ogg') ? 'ogg' : recordedMimeType.includes('mp4') ? 'm4a' : 'webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: recordedMimeType });
+        const file = new File([audioBlob], `voice-message-${Date.now()}.${extension}`, { type: recordedMimeType });
         setAttachedFile(file);
         stream.getTracks().forEach(track => track.stop());
       };
@@ -763,6 +771,54 @@ export const InboxView = () => {
   const filteredMessages = localMessages.filter(m => !deletedForMeIds.includes(m.id));
   const messageFirstItemIndex = Math.max(0, 10000 - filteredMessages.length);
 
+  const focusSearchResult = (message) => {
+    const targetKey = getMessageIdentity(message);
+    if (!targetKey) return;
+
+    const messageIndex = filteredMessages.findIndex((candidate) =>
+      candidate === message || getMessageIdentity(candidate) === targetKey
+    );
+    if (messageIndex === -1) return;
+
+    if (messageHighlightTimeoutRef.current) {
+      clearTimeout(messageHighlightTimeoutRef.current);
+    }
+
+    // Virtuoso only mounts visible rows, so DOM-based scrollIntoView is
+    // unreliable for search results that are currently off screen.
+    setHighlightedMessageKey(targetKey);
+    messageListRef.current?.scrollToIndex({
+      // Imperative Virtuoso indexes are zero-based positions within `data`.
+      // `firstItemIndex` only offsets the index passed to itemContent; adding it
+      // here makes Virtuoso clamp the target to the final row.
+      index: messageIndex,
+      align: 'center',
+      behavior: 'auto'
+    });
+
+    // Once Virtuoso has mounted the requested row, center the exact keyed DOM
+    // element. The retry covers rows whose height is measured after mounting.
+    [50, 150].forEach((delay) => {
+      setTimeout(() => {
+        document.getElementById(`msg-${targetKey}`)?.scrollIntoView({
+          behavior: 'auto',
+          block: 'center'
+        });
+      }, delay);
+    });
+
+    messageHighlightTimeoutRef.current = setTimeout(() => {
+      setHighlightedMessageKey(null);
+      messageHighlightTimeoutRef.current = null;
+    }, 2500);
+  };
+
+  useEffect(() => () => {
+    if (messageHighlightTimeoutRef.current) {
+      clearTimeout(messageHighlightTimeoutRef.current);
+    }
+  }, []);
+
   const getGroupDateLabel = (dateStr) => {
     if (!dateStr) return '';
     const date = new Date(dateStr);
@@ -875,9 +931,6 @@ export const InboxView = () => {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
-            <button style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 7, padding: '5px 11px', color: C.muted, fontSize: 11 }}>Take Over</button>
-            <button style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 7, padding: '5px 11px', color: C.muted, fontSize: 11 }}>View Lead</button>
-            <div style={{ width: 1, height: 16, background: C.border, margin: '0 4px' }} />
             <button
               onClick={() => {
                 setShowMessageSearchPanel(!showMessageSearchPanel);
@@ -979,8 +1032,10 @@ export const InboxView = () => {
           )}
           {filteredMessages.length > 0 && (
             <Virtuoso
+              ref={messageListRef}
               style={{ flex: 1 }}
               data={filteredMessages}
+              computeItemKey={(_, message) => getMessageIdentity(message) || `message-${_}`}
               firstItemIndex={messageFirstItemIndex}
               initialTopMostItemIndex={filteredMessages.length - 1}
               startReached={() => {
@@ -1089,8 +1144,8 @@ export const InboxView = () => {
                     )}
                     
               <div
-                id={`msg-${m.id}`}
-                key={m.id || i}
+                id={`msg-${getMessageIdentity(m) || i}`}
+                key={getMessageIdentity(m) || i}
                 style={{ display: 'flex', justifyContent: isLead ? 'flex-start' : 'flex-end', opacity: isSending ? 0.6 : 1, transition: 'opacity 0.3s' }}
                 onMouseEnter={() => setHoveredMessage(m.id)}
                 onMouseLeave={() => setHoveredMessage(null)}
@@ -1111,12 +1166,12 @@ export const InboxView = () => {
                   <div
                     style={{
                       position: 'relative',
-                      background: highlightedMessageId === m.id
+                      background: highlightedMessageKey === getMessageIdentity(m)
                         ? C.accent + '55'
                         : isLead 
                           ? (selectedMessageIds.includes(m.id) ? C.accent + '30' : C.card) 
                           : (selectedMessageIds.includes(m.id) ? C.accent + '40' : C.accent + '20'),
-                      border: '1px solid ' + (highlightedMessageId === m.id ? C.accent : isLead ? C.border : C.accentDim),
+                      border: '1px solid ' + (highlightedMessageKey === getMessageIdentity(m) ? C.accent : isLead ? C.border : C.accentDim),
                       borderRadius: isLead ? '4px 13px 13px 13px' : '13px 4px 13px 13px',
                       padding: '9px 13px',
                       transition: 'all 0.3s ease'
@@ -1668,14 +1723,7 @@ export const InboxView = () => {
                     return (
                       <div
                         key={m.id}
-                        onClick={() => {
-                          const el = document.getElementById(`msg-${m.id}`);
-                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                          setHighlightedMessageId(m.id);
-                          setTimeout(() => {
-                            setHighlightedMessageId(null);
-                          }, 2000);
-                        }}
+                        onClick={() => focusSearchResult(m)}
                         style={{
                           background: C.card,
                           border: '1px solid ' + C.border,

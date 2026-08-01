@@ -16,6 +16,8 @@ const { Pool } = require('pg');
 const axios = require('axios');
 const cron = require('node-cron');
 const multer = require('multer');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const xlsx = require('xlsx');
 const fs = require('fs');
 const path = require('path');
@@ -23,6 +25,7 @@ const crypto = require('crypto');
 const { GoogleGenAI } = require('@google/genai');
 const cryptoHelper = require('./utils/crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -1063,10 +1066,43 @@ const mediaStorage = multer.diskStorage({
 });
 const mediaUpload = multer({ storage: mediaStorage });
 
-app.post('/api/messages/upload', auth, mediaUpload.single('file'), (req, res) => {
+app.post('/api/messages/upload', auth, mediaUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const fileUrl = `/uploads/media/${req.file.filename}`;
-  res.json({ success: true, fileUrl });
+
+  let uploadedFile = req.file;
+
+  // MediaRecorder in Chrome produces audio/webm, which WhatsApp Cloud API does
+  // not accept. Convert browser-recorded voice notes to mono OGG/Opus before
+  // exposing the URL that Meta downloads.
+  if (req.file.mimetype?.toLowerCase().startsWith('audio/webm')) {
+    const outputFilename = `${path.parse(req.file.filename).name}.ogg`;
+    const outputPath = path.join(req.file.destination, outputFilename);
+
+    try {
+      await new Promise((resolve, reject) => {
+        ffmpeg(req.file.path)
+          .noVideo()
+          .audioCodec('libopus')
+          .audioChannels(1)
+          .audioBitrate('32k')
+          .format('ogg')
+          .on('end', resolve)
+          .on('error', reject)
+          .save(outputPath);
+      });
+
+      await fs.promises.unlink(req.file.path).catch(() => {});
+      uploadedFile = { ...req.file, filename: outputFilename, path: outputPath, mimetype: 'audio/ogg' };
+    } catch (err) {
+      await fs.promises.unlink(req.file.path).catch(() => {});
+      await fs.promises.unlink(outputPath).catch(() => {});
+      console.error('[Media Upload] Voice-note conversion failed:', err.message);
+      return res.status(500).json({ error: 'Unable to prepare this voice note for WhatsApp. Please try recording it again.' });
+    }
+  }
+
+  const fileUrl = `/uploads/media/${uploadedFile.filename}`;
+  res.json({ success: true, fileUrl, mimeType: uploadedFile.mimetype });
 });
 
 // ══════════════════════════════════════════════════════════

@@ -541,20 +541,38 @@ async function checkCampaignCompletion(campaign_id) {
 
 // Start queue processor
 let queueProcessorInterval;
+let queueProcessorRetryTimeout;
 
 function startCampaignQueueProcessor() {
-  initCampaignQueue().then(() => {
-    // Run every 2 seconds
-    queueProcessorInterval = setInterval(processCampaignQueue, 2000);
-    console.log('[Campaign Queue] Processor started - running every 2s');
-  });
+  if (queueProcessorInterval || queueProcessorRetryTimeout) return;
+
+  initCampaignQueue()
+    .then(() => {
+      // Run every 2 seconds
+      queueProcessorInterval = setInterval(processCampaignQueue, 2000);
+      console.log('[Campaign Queue] Processor started - running every 2s');
+    })
+    .catch((err) => {
+      // Queue processing is a background feature. A temporarily unavailable DB
+      // must not terminate the HTTP server and turn every request into an nginx 502.
+      console.error('[Campaign Queue] Initialization failed; retrying in 30 seconds:', err.message);
+      queueProcessorRetryTimeout = setTimeout(() => {
+        queueProcessorRetryTimeout = null;
+        startCampaignQueueProcessor();
+      }, 30000);
+    });
 }
 
 // Stop queue processor
 function stopCampaignQueueProcessor() {
   if (queueProcessorInterval) {
     clearInterval(queueProcessorInterval);
+    queueProcessorInterval = null;
     console.log('[Campaign Queue] Processor stopped');
+  }
+  if (queueProcessorRetryTimeout) {
+    clearTimeout(queueProcessorRetryTimeout);
+    queueProcessorRetryTimeout = null;
   }
 }
 

@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Search, Send, ChevronLeft } from 'lucide-react';
-import { C } from '../constants/theme.js';
-import { useAllianceInbox, useAllianceLead } from '../hooks/useLeads.js';
-import { api } from '../services/api.js';
+import { C } from '../../constants/theme.js';
+import { useAllianceInbox, useAllianceLead } from '../../hooks/useLeads.js';
+import { api } from '../../services/api.js';
 
 export const AllianceInboxView = () => {
   const [search, setSearch] = useState('');

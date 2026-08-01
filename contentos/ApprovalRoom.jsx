@@ -1,8 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../src/services/api.js';
-import { generateThumbnail } from './thumbnailBrain/index.js';
-import { loadConfig } from './thumbnailBrain/thumbnailBrainConfig.js';
-import { renderTextOverlayCanvas } from '../src/utils/canvasTextOverlay.js';
 
 
 
@@ -45,14 +42,9 @@ export function ApprovalRoom({
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteResults, setDeleteResults] = useState(null);
-  const [thumbOptions, setThumbOptions] = useState([]);
-  const [thumbBestIndex, setThumbBestIndex] = useState(0);
-  const [extractingFrames, setExtractingFrames] = useState(false);
-  const [generatingPoster, setGeneratingPoster] = useState(false);
-  const [uploadingPosterOverlay, setUploadingPosterOverlay] = useState(false);
-  const [posterPreviewUrl, setPosterPreviewUrl] = useState('');
-  const [thumbError, setThumbError] = useState('');
-  const prevItemIdRef = useRef(null);
+  const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
+  const [thumbUploadError, setThumbUploadError] = useState('');
+  const thumbFileRef = useRef(null);
 
   const handleDeleteFromPlatforms = async () => {
     if (!selectedItem) return;
@@ -72,123 +64,43 @@ export function ApprovalRoom({
   // Sync edits if item changes
   useEffect(() => {
     if (selectedItem) {
-      setEditValues(prev => {
-        // If user is actively picking from generated frames, keep their selection
-        const preserveThumbUrl = thumbOptions.length > 0 && prev.thumbnail_url;
-        return {
-          caption: selectedItem.caption || '',
-          instagram_caption: selectedItem.instagram_caption || selectedItem.caption || '',
-          facebook_caption: selectedItem.facebook_caption || selectedItem.caption || '',
-          x_caption: selectedItem.x_caption || '',
-          linkedin_caption: selectedItem.linkedin_caption || '',
-          youtube_title: selectedItem.youtube_title || selectedItem.thumbnail_title || '',
-          youtube_description: selectedItem.youtube_description || selectedItem.description || selectedItem.caption || '',
-          thumbnail_title: selectedItem.thumbnail_title || '',
-          scheduled_at: selectedItem.scheduled_at || '',
-          platforms: [...(selectedItem.platforms || [])],
-          selected_accounts: selectedItem.selected_accounts || {},
-          hashtags: selectedItem.hashtags || '',
-          thumbnail_url: preserveThumbUrl ? prev.thumbnail_url : (selectedItem.thumbnail_url || '')
-        };
+      setEditValues({
+        caption: selectedItem.caption || '',
+        instagram_caption: selectedItem.instagram_caption || selectedItem.caption || '',
+        facebook_caption: selectedItem.facebook_caption || selectedItem.caption || '',
+        x_caption: selectedItem.x_caption || '',
+        linkedin_caption: selectedItem.linkedin_caption || '',
+        youtube_title: selectedItem.youtube_title || selectedItem.thumbnail_title || '',
+        youtube_description: selectedItem.youtube_description || selectedItem.description || selectedItem.caption || '',
+        thumbnail_title: selectedItem.thumbnail_title || '',
+        scheduled_at: selectedItem.scheduled_at || '',
+        platforms: [...(selectedItem.platforms || [])],
+        selected_accounts: selectedItem.selected_accounts || {},
+        hashtags: selectedItem.hashtags || '',
+        thumbnail_url: selectedItem.thumbnail_url || ''
       });
-    }
-    // Only reset thumbnail frame options when switching to a DIFFERENT item
-    // (not when the same item refreshes after a save)
-    if (selectedItem && selectedItem.id !== prevItemIdRef.current) {
-      prevItemIdRef.current = selectedItem.id;
-      setThumbOptions([]);
-      setThumbBestIndex(0);
-      setThumbError('');
-      setPosterPreviewUrl('');
     }
   }, [selectedItem, setEditValues]);
 
-  // Step: Extract frames from the video. No AI processing here — just frame extraction.
-  // User selects a frame, then calls Thumbnail Brain to generate the AI poster.
-  const handleExtractFrames = async () => {
-    if (!selectedItem) return;
-    setExtractingFrames(true);
-    setThumbError('');
+  const handleThumbnailUpload = async (file) => {
+    if (!file || !selectedItem) return;
+    setThumbUploadError('');
+    setUploadingThumbnail(true);
     try {
-      console.log('[ApprovalRoom] Extracting frames from video — no AI processing at this stage');
-      console.log('[ApprovalRoom] Content ID:', selectedItem.id);
-      const res = await api.generateThumbnails(selectedItem.id, '');
-      if (res.success && res.thumbnails?.length) {
-        const best = res.bestIndex ?? 0;
-        setThumbOptions(res.thumbnails);
-        setThumbBestIndex(best);
-        setEditValues(prev => ({ ...prev, thumbnail_url: res.thumbnails[best] }));
-      }
-    } catch (err) {
-      console.error('Frame extraction failed:', err);
-      setThumbError(err.message || 'Frame extraction failed. The video may still be processing.');
-    } finally {
-      setExtractingFrames(false);
-    }
-  };
-
-  // Step: Send selected frame + content context to Thumbnail Brain.
-  // Approval Room never builds the prompt, selects a model, or applies styles.
-  // All of that is handled entirely inside Thumbnail Brain.
-  const handleGenerateThumbnailBrainPoster = async () => {
-    if (!selectedItem || !editValues.thumbnail_url) return;
-    setGeneratingPoster(true);
-    setThumbError('');
-    setPosterPreviewUrl('');
-    try {
-      const res = await generateThumbnail({
-        contentId: selectedItem.id,
-        frameUrl: editValues.thumbnail_url,
-        videoTitle: editValues.youtube_title || editValues.thumbnail_title || '',
-        description: editValues.youtube_description || editValues.caption || '',
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
       });
-      if (res.success && res.poster_url) {
-        // Apply Typography overlay from Thumbnail Brain config
-        let previewUrl = res.poster_url;
-        try {
-          const thumbConfig = loadConfig();
-          const overlay = thumbConfig.textOverlay || {};
-          if (overlay.enabled !== false) {
-            const title = overlay.customHeadline || '';
-            const subtitle = overlay.subtitle || '';
-            const cta = overlay.ctaBadge || '';
-            previewUrl = await renderTextOverlayCanvas(res.poster_url, {
-              title,
-              subtitle: overlay.showSubtitle !== false ? subtitle : '',
-              ctaBadge: overlay.showCtaBadge !== false ? cta : '',
-              fontFamily: overlay.fontFamily || 'Anton',
-              fontSize: overlay.fontSize || 54,
-              textColor: overlay.textColor || '#FFFFFF',
-              strokeColor: overlay.strokeColor || '#000000',
-              strokeWidth: overlay.strokeWidth || 6,
-              bgColor: overlay.bgColor || 'rgba(249, 115, 22, 0.95)',
-              subBgColor: overlay.subBgColor || 'rgba(15, 23, 42, 0.9)',
-              subTextColor: overlay.subTextColor || '#E2E8F0',
-              ctaBgColor: overlay.ctaBgColor || '#10B981',
-              ctaTextColor: overlay.ctaTextColor || '#FFFFFF',
-              bgPadding: overlay.bgPadding || 14,
-              borderRadius: overlay.borderRadius || 8,
-              shadowColor: overlay.shadowColor || 'rgba(0, 0, 0, 0.75)',
-              shadowBlur: overlay.shadowBlur || 14,
-              position: overlay.position || 'top_left',
-              showBgPill: overlay.showBgPill !== false,
-              showSubtitle: overlay.showSubtitle !== false,
-              showCtaBadge: overlay.showCtaBadge !== false,
-              // canvasWidth/canvasHeight intentionally omitted — auto-detected from poster
-            });
-          }
-        } catch (overlayErr) {
-          console.warn('[Typography] Overlay failed, using raw poster:', overlayErr.message);
-          previewUrl = res.poster_url;
-        }
-        setPosterPreviewUrl(previewUrl);
-        // Keep the raw server URL as thumbnail_url for upload (not the canvas data URL)
-        setEditValues(prev => ({ ...prev, thumbnail_url: res.poster_url }));
-      }
+      const res = await api.uploadPosterOverlay(selectedItem.id, dataUrl);
+      const permanentUrl = res.poster_url || dataUrl;
+      setEditValues(prev => ({ ...prev, thumbnail_url: permanentUrl }));
     } catch (err) {
-      setThumbError(err.message || 'Thumbnail Brain poster generation failed. Try again.');
+      setThumbUploadError(err.message || 'Upload failed. Please try again.');
     } finally {
-      setGeneratingPoster(false);
+      setUploadingThumbnail(false);
+      if (thumbFileRef.current) thumbFileRef.current.value = '';
     }
   };
 
@@ -586,159 +498,68 @@ export function ApprovalRoom({
                 }))}
               </div>
 
-              {/* ─── STEP 2: Thumbnail — Extract Frames & Generate AI Poster ──────── */}
-              {/* Approval Room only: extracts frames + lets user pick one.            */}
-              {/* All AI generation is delegated to Thumbnail Brain via generateThumbnail(). */}
-              <div style={{ margin: '0 14px 0', borderTop: '1px solid var(--b1)' }}>
-                {/* Header row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 2px' }}>
+              {/* Thumbnail Upload */}
+              <div style={{ margin: '0 14px 14px', borderTop: '1px solid var(--b1)', paddingTop: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(139,114,240,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>🖼</div>
+                    <div style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(139,114,240,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>🖼</div>
                     <div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t1)' }}>Thumbnail</div>
                       <div style={{ fontSize: 10, color: 'var(--t3)' }}>
-                        {editValues.thumbnail_url ? 'Frame selected — click "Generate with Thumbnail Brain" to create poster' : 'Click "Extract Frames" to pull frames from the video'}
+                        {editValues.thumbnail_url ? 'Current thumbnail — upload a new one to replace' : 'No thumbnail set — upload an image'}
                       </div>
                     </div>
                   </div>
                   <button
-                    onClick={handleExtractFrames}
-                    disabled={extractingFrames}
+                    onClick={() => thumbFileRef.current?.click()}
+                    disabled={uploadingThumbnail}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 5,
                       padding: '6px 12px', fontSize: 11, fontWeight: 700, borderRadius: 7,
-                      background: extractingFrames ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(139,114,240,0.2), rgba(0,196,160,0.15))',
-                      color: extractingFrames ? 'var(--t3)' : 'var(--pur)',
-                      border: extractingFrames ? '1px solid var(--b1)' : '1px solid rgba(139,114,240,0.35)',
-                      cursor: extractingFrames ? 'not-allowed' : 'pointer'
+                      background: uploadingThumbnail ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(139,114,240,0.2), rgba(0,196,160,0.15))',
+                      color: uploadingThumbnail ? 'var(--t3)' : 'var(--pur)',
+                      border: uploadingThumbnail ? '1px solid var(--b1)' : '1px solid rgba(139,114,240,0.35)',
+                      cursor: uploadingThumbnail ? 'not-allowed' : 'pointer'
                     }}
                   >
-                    {extractingFrames ? (
-                      <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Extracting…</>
-                    ) : <>⬡ Extract Frames</>}
+                    {uploadingThumbnail
+                      ? <><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', border: '2px solid var(--t3)', borderTopColor: 'var(--pur)', animation: 'spin 0.8s linear infinite' }} /> Uploading…</>
+                      : '⬆ Upload Image'}
                   </button>
+                  <input
+                    ref={thumbFileRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleThumbnailUpload(f); }}
+                  />
                 </div>
 
-                {/* Error */}
-                {thumbError && (
+                {thumbUploadError && (
                   <div style={{ background: 'rgba(240,74,94,0.08)', border: '1px solid rgba(240,74,94,0.3)', borderRadius: 7, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--red)' }}>
-                    ✕ {thumbError}
+                    ✕ {thumbUploadError}
                   </div>
                 )}
 
-                {/* Frame grid — visible once frames are extracted */}
-                {thumbOptions.length > 0 && (
-                  <div style={{ paddingBottom: 10 }}>
-                    <div style={{ fontSize: 10, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 8 }}>
-                      ⬡ Select a frame to use as thumbnail seed
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                      {thumbOptions.map((url, i) => {
-                        const isSelected = editValues.thumbnail_url === url;
-                        const isAiPick = i === thumbBestIndex;
-                        return (
-                          <div key={i} onClick={() => { setEditValues(prev => ({ ...prev, thumbnail_url: url })); setPosterPreviewUrl(''); }}
-                            style={{
-                              position: 'relative', cursor: 'pointer', borderRadius: 7, overflow: 'hidden',
-                              aspectRatio: '16/9',
-                              border: isSelected ? '2px solid var(--teal)' : '2px solid var(--b1)',
-                              opacity: isSelected ? 1 : 0.65,
-                              transition: 'all 0.15s'
-                            }}
-                          >
-                            <img src={url} alt={`Frame ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                            {isAiPick && (
-                              <div style={{ position: 'absolute', top: 4, left: 4, background: 'var(--gold)', color: '#000', fontSize: 7, fontWeight: 800, padding: '2px 5px', borderRadius: 3, letterSpacing: '0.04em' }}>
-                                ✦ AI PICK
-                              </div>
-                            )}
-                            <div style={{ position: 'absolute', bottom: 3, left: 5, fontSize: 8, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.9)', background: 'rgba(0,0,0,0.5)', padding: '1px 5px', borderRadius: 3 }}>
-                              {isSelected ? '✓ Selected' : `Frame ${i + 1}`}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                {editValues.thumbnail_url && (
+                  <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--b1)', background: '#000' }}>
+                    <img
+                      src={editValues.thumbnail_url}
+                      alt="Thumbnail"
+                      style={{ width: '100%', height: 'auto', display: 'block', maxHeight: 260, objectFit: 'contain' }}
+                    />
+                    <button
+                      onClick={() => setEditValues(prev => ({ ...prev, thumbnail_url: '' }))}
+                      style={{
+                        position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.65)',
+                        border: 'none', color: '#fff', borderRadius: 5, padding: '3px 8px',
+                        fontSize: 10, fontWeight: 700, cursor: 'pointer'
+                      }}
+                    >
+                      ✕ Remove
+                    </button>
                   </div>
                 )}
-
-                {/* Selected frame large preview + Thumbnail Brain trigger */}
-                {editValues.thumbnail_url && thumbOptions.some(u => u === editValues.thumbnail_url) && (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', width: '100%', border: '2px solid var(--teal)', boxShadow: '0 0 0 3px rgba(0,196,160,0.15)', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <img
-                        src={editValues.thumbnail_url}
-                        alt="Selected thumbnail"
-                        style={{ width: '100%', height: 'auto', display: 'block', maxHeight: 420, objectFit: 'contain' }}
-                      />
-                      <div style={{ position: 'absolute', top: 8, left: 8, background: 'var(--teal)', color: 'var(--bg)', fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.05em' }}>
-                        ✓ SELECTED FRAME
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-                      <div style={{ fontSize: 10, color: 'var(--teal)' }}>Frame selected — Thumbnail Brain will apply style, prompt, and AI model</div>
-                      <button
-                        onClick={handleGenerateThumbnailBrainPoster}
-                        disabled={generatingPoster}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '6px 14px', fontSize: 11, fontWeight: 700, borderRadius: 7,
-                          background: generatingPoster ? 'var(--bg3)' : 'linear-gradient(135deg, rgba(139,114,240,0.35), rgba(0,196,160,0.25))',
-                          color: generatingPoster ? 'var(--t3)' : '#fff',
-                          border: generatingPoster ? '1px solid var(--b1)' : '1px solid rgba(139,114,240,0.4)',
-                          cursor: generatingPoster ? 'not-allowed' : 'pointer'
-                        }}
-                      >
-                        {generatingPoster
-                          ? <><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', animation: 'spin 0.8s linear infinite' }} /> 🧠 Generating Poster…</>
-                          : '🧠 Generate with Thumbnail Brain'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Thumbnail Brain Poster Preview — separate from the selected source frame */}
-                {posterPreviewUrl && (
-                  <div style={{ marginBottom: 10, borderRadius: 8, overflow: 'hidden', border: '2px solid rgba(139,114,240,0.45)', boxShadow: '0 0 0 3px rgba(139,114,240,0.15)' }}>
-                    <div style={{ background: 'rgba(139,114,240,0.12)', padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: 10, fontWeight: 800, color: '#8B72F0', letterSpacing: '0.05em' }}>🧠 THUMBNAIL BRAIN GENERATED POSTER</span>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button
-                          disabled={uploadingPosterOverlay}
-                          onClick={async () => {
-                            if (!posterPreviewUrl || !selectedItem?.id) return;
-                            setUploadingPosterOverlay(true);
-                            try {
-                              const res = await api.uploadPosterOverlay(selectedItem.id, posterPreviewUrl);
-                              const permanentUrl = res.poster_url || posterPreviewUrl;
-                              setEditValues(prev => ({ ...prev, thumbnail_url: permanentUrl }));
-                              setPosterPreviewUrl('');
-                            } catch (err) {
-                              console.error('[uploadPosterOverlay] Failed:', err);
-                              setEditValues(prev => ({ ...prev, thumbnail_url: posterPreviewUrl }));
-                              setPosterPreviewUrl('');
-                            } finally {
-                              setUploadingPosterOverlay(false);
-                            }
-                          }}
-                          style={{ fontSize: 10, fontWeight: 700, padding: '4px 12px', borderRadius: 5, background: uploadingPosterOverlay ? 'var(--bg3)' : 'linear-gradient(135deg, #8B72F0, #00C4A0)', color: uploadingPosterOverlay ? 'var(--t3)' : '#fff', border: 'none', cursor: uploadingPosterOverlay ? 'not-allowed' : 'pointer' }}
-                        >
-                          {uploadingPosterOverlay ? 'Saving…' : '✓ Use as Thumbnail'}
-                        </button>
-                        <button
-                          onClick={() => setPosterPreviewUrl('')}
-                          style={{ fontSize: 10, fontWeight: 600, padding: '4px 8px', borderRadius: 5, background: 'var(--bg3)', color: 'var(--t3)', border: '1px solid var(--b1)', cursor: 'pointer' }}
-                        >
-                          Discard
-                        </button>
-                      </div>
-                    </div>
-                    <div style={{ width: '100%', display: 'flex', justifyContent: 'center', background: '#090A0F', padding: 8 }}>
-                      <img src={posterPreviewUrl} alt="Thumbnail Brain AI Poster" style={{ maxWidth: '100%', maxHeight: 450, height: 'auto', objectFit: 'contain', display: 'block', borderRadius: 6 }} />
-                    </div>
-                  </div>
-                )}
-
               </div>
 
               {/* Status and reject notices */}

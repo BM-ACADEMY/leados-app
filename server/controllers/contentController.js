@@ -1487,6 +1487,30 @@ async function publishReelToFacebook(pageId, pageAccessToken, { caption, videoUr
     const pollResult = await waitForFacebookReel(video_id, pageAccessToken);
     console.log(`[publishReelToFacebook] Reel status check complete:`, pollResult);
 
+    // Set thumbnail after video is ready using binary multipart upload (source_url not accepted)
+    if (coverUrl && pollResult.success) {
+      try {
+        const FormData = require('form-data');
+        const imgResponse = await axios.get(coverUrl, { responseType: 'arraybuffer', timeout: 30000 });
+        const imgBuffer = Buffer.from(imgResponse.data);
+        const contentType = imgResponse.headers['content-type'] || 'image/jpeg';
+        const ext = contentType.includes('png') ? 'thumbnail.png' : 'thumbnail.jpg';
+        const form = new FormData();
+        form.append('is_preferred', 'true');
+        form.append('access_token', pageAccessToken);
+        form.append('source', imgBuffer, { filename: ext, contentType });
+        const thumbRes = await axios.post(
+          `https://graph.facebook.com/v19.0/${video_id}/thumbnails`,
+          form,
+          { headers: form.getHeaders() }
+        );
+        console.log(`[publishReelToFacebook] Thumbnail set via binary upload for video ${video_id}:`, JSON.stringify(thumbRes.data));
+      } catch (thumbErr) {
+        const thumbMsg = thumbErr.response?.data?.error?.message || thumbErr.message;
+        console.warn(`[publishReelToFacebook] Thumbnail update failed (non-fatal): ${thumbMsg}`);
+      }
+    }
+
     return pollResult;
   } catch (err) {
     const fullError = err.response?.data ? JSON.stringify(err.response.data, null, 2) : err.message;
@@ -2941,6 +2965,7 @@ function handleYoutubeAuth(req, res) {
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: [
+      'https://www.googleapis.com/auth/youtube',
       'https://www.googleapis.com/auth/youtube.upload',
       'https://www.googleapis.com/auth/youtube.readonly',
       'https://www.googleapis.com/auth/userinfo.profile'
@@ -3107,13 +3132,18 @@ async function publishVideoToYouTube(oauth2Client, { title, description, localVi
     console.log(`[YouTube Publish] Upload success. Video ID: ${videoId}`);
 
     // Set custom thumbnail if provided
+    // Wait 15s for YouTube to finish processing the video before setting thumbnail
     let thumbnailWarning = null;
     if (localThumbnailPath && fs.existsSync(localThumbnailPath)) {
       try {
+        await new Promise(resolve => setTimeout(resolve, 15000));
+        console.log(`[YouTube Publish] Setting custom thumbnail for video ${videoId}...`);
+        const thumbExt = path.extname(localThumbnailPath).toLowerCase();
+        const thumbMime = thumbExt === '.png' ? 'image/png' : 'image/jpeg';
         await youtube.thumbnails.set({
           videoId: videoId,
           media: {
-            mimeType: 'image/jpeg',
+            mimeType: thumbMime,
             body: fs.createReadStream(localThumbnailPath)
           }
         });
@@ -3419,7 +3449,7 @@ async function publishToLinkedIn(authorUrn, accessToken, { caption, videoUrl, co
       description: { text: caption.substring(0, 200) },
       title: { text: 'Video Post' }
     };
-    if (thumbnailAssetUrn) videoMediaEntry.thumbnails = [{ url: thumbnailAssetUrn }];
+    // LinkedIn v2 UGC Posts API does not support custom video thumbnail URNs in this field — omitted intentionally.
 
     const postRes = await axios.post(
       'https://api.linkedin.com/v2/ugcPosts',

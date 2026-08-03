@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Trash2, Check, AlertCircle, Loader2, Smartphone, ChevronDown, Image, Video, FileText, Link, MessageSquare, Type, RefreshCw, Search } from 'lucide-react';
+import { Plus, X, Trash2, Check, AlertCircle, Loader2, Smartphone, ChevronDown, Image, Video, FileText, Link, MessageSquare, Type, RefreshCw, Search, Phone } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { TBadge } from '../components/ui.jsx';
 import { useTemplates } from '../hooks/useTemplates.js';
@@ -154,15 +154,17 @@ const WaPreview = ({ form }) => {
             {/* Buttons */}
             {hasButtons && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
-                {form.buttons.map((btn, i) => (
-                  <div key={i} style={{
+                {form.buttons.map((btn, i) => {
+                  const PreviewTag = btn.type === 'URL' || btn.type === 'PHONE_NUMBER' ? 'a' : 'div';
+                  const previewHref = btn.type === 'URL' ? btn.url : btn.type === 'PHONE_NUMBER' ? `tel:${btn.phone_number || ''}` : undefined;
+                  return <PreviewTag key={i} href={previewHref} target={btn.type === 'URL' ? '_blank' : undefined} rel={btn.type === 'URL' ? 'noopener noreferrer' : undefined} style={{
                     background: '#005c4b', borderRadius: 8, padding: '7px 10px',
-                    textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5
+                    textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, textDecoration: 'none'
                   }}>
-                    {btn.type === 'URL' ? <Link size={10} color="#53bdeb" /> : <MessageSquare size={10} color="#53bdeb" />}
+                    {btn.type === 'URL' ? <Link size={10} color="#53bdeb" /> : btn.type === 'PHONE_NUMBER' ? <Phone size={10} color="#53bdeb" /> : <MessageSquare size={10} color="#53bdeb" />}
                     <span style={{ fontSize: 11, color: '#53bdeb', fontWeight: 600 }}>{btn.text || 'Button'}</span>
-                  </div>
-                ))}
+                  </PreviewTag>;
+                })}
               </div>
             )}
           </div>
@@ -203,6 +205,7 @@ const LANGUAGES = [
   { code: 'en', label: 'English' },
   { code: 'en_US', label: 'English (US)' },
   { code: 'hi', label: 'Hindi' },
+  { code: 'ta', label: 'Tamil' },
   { code: 'ar', label: 'Arabic' },
   { code: 'es', label: 'Spanish' },
   { code: 'pt_BR', label: 'Portuguese (Brazil)' },
@@ -285,7 +288,7 @@ export const TemplatesView = () => {
     if (form.buttons.length >= 3) return showToast('Maximum 3 buttons allowed', 'error');
     setForm(f => ({
       ...f,
-      buttons: [...f.buttons, { type, text: '', ...(type === 'URL' ? { url: '' } : {}) }]
+      buttons: [...f.buttons, { type, text: '', ...(type === 'URL' ? { url: '' } : {}), ...(type === 'PHONE_NUMBER' ? { phone_number: '' } : {}) }]
     }));
   };
 
@@ -398,6 +401,27 @@ export const TemplatesView = () => {
       }
     }
 
+    const normalizedButtons = [];
+    for (const button of form.buttons) {
+      if (!button.text?.trim()) return showToast('Every button requires a label', 'error');
+      if (button.type === 'URL') {
+        try {
+          const url = new URL(button.url);
+          if (!['http:', 'https:'].includes(url.protocol)) throw new Error('invalid protocol');
+          normalizedButtons.push({ ...button, text: button.text.trim(), url: url.toString() });
+        } catch {
+          return showToast('Enter a valid URL starting with https:// or http://', 'error');
+        }
+      } else if (button.type === 'PHONE_NUMBER') {
+        const digits = String(button.phone_number || '').replace(/\D/g, '');
+        if (digits.length < 10 || digits.length > 15) return showToast('Phone button requires a valid 10 to 15 digit number', 'error');
+        const internationalNumber = digits.length === 10 ? `+91${digits}` : `+${digits}`;
+        normalizedButtons.push({ ...button, text: button.text.trim(), phone_number: internationalNumber });
+      } else {
+        normalizedButtons.push({ ...button, text: button.text.trim() });
+      }
+    }
+
     setSubmitting(true);
     try {
       const payload = {
@@ -408,7 +432,7 @@ export const TemplatesView = () => {
         header: form.header_format === 'NONE' ? null : form.header || null,
         body: form.body,
         footer: form.footer || null,
-        buttons: form.buttons,
+        buttons: normalizedButtons,
         client_id: form.client_id || null,
         samples: form.samples,
       };
@@ -629,8 +653,7 @@ export const TemplatesView = () => {
           }}
         >
           <option value="all">Language</option>
-          <option value="en">English</option>
-          <option value="en_US">English (US)</option>
+          {LANGUAGES.map(language => <option key={language.code} value={language.code}>{language.label}</option>)}
         </select>
 
         {/* Status Custom Multi-Select Dropdown */}
@@ -1284,7 +1307,7 @@ export const TemplatesView = () => {
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                     <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8 }}>Buttons (Optional, max 3)</label>
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                       <button
                         onClick={() => addButton('QUICK_REPLY')}
                         disabled={form.buttons.length >= 3}
@@ -1299,23 +1322,35 @@ export const TemplatesView = () => {
                       >
                         <Link size={10} /> URL
                       </button>
+                      <button
+                        onClick={() => addButton('PHONE_NUMBER')}
+                        disabled={form.buttons.length >= 3}
+                        style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.muted, padding: '4px 10px', fontSize: 10, display: 'flex', alignItems: 'center', gap: 4 }}
+                      >
+                        <Phone size={10} /> Phone Number
+                      </button>
                     </div>
+                  </div>
+                  <div style={{ background: `${C.blue}0D`, border: `1px solid ${C.blue}30`, borderRadius: 8, padding: '10px 12px', marginBottom: 10, display: 'grid', gap: 5 }}>
+                    <p style={{ margin: 0, fontSize: 10, color: '#cbd5e1', lineHeight: 1.6 }}><strong style={{ color: C.green }}>Quick Reply:</strong> Sends the button label back as a WhatsApp reply. It does not call a number or open a website.</p>
+                    <p style={{ margin: 0, fontSize: 10, color: '#cbd5e1', lineHeight: 1.6 }}><strong style={{ color: C.blue }}>URL:</strong> Opens the specified website in the device browser. Use a complete address beginning with <code style={{ color: '#f1f5f9', background: '#172033', border: `1px solid ${C.border}`, padding: '1px 5px', borderRadius: 4 }}>https://</code>.</p>
+                    <p style={{ margin: 0, fontSize: 10, color: '#cbd5e1', lineHeight: 1.6 }}><strong style={{ color: C.accent }}>Phone Number:</strong> Opens the device dialer with the number pre-filled. Use the international country code; 10-digit Indian numbers receive <code style={{ color: '#f1f5f9', background: '#172033', border: `1px solid ${C.border}`, padding: '1px 5px', borderRadius: 4 }}>+91</code> automatically.</p>
                   </div>
                   {form.buttons.length === 0 && (
                     <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '12px', textAlign: 'center', color: C.dim, fontSize: 11 }}>
-                      No buttons added. Click Quick Reply or URL to add.
+                      No buttons added. Add a Quick Reply, URL, or Phone Number button.
                     </div>
                   )}
                   {form.buttons.map((btn, i) => (
                     <div key={i} style={{ background: '#0c1525', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', marginBottom: 8 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                        <span style={{ fontSize: 10, color: btn.type === 'URL' ? C.blue : C.green, fontWeight: 600 }}>
-                          {btn.type === 'URL' ? '🔗 URL Button' : '💬 Quick Reply'}
+                        <span style={{ fontSize: 10, color: btn.type === 'URL' ? C.blue : btn.type === 'PHONE_NUMBER' ? C.accent : C.green, fontWeight: 600 }}>
+                          {btn.type === 'URL' ? '🔗 URL Button' : btn.type === 'PHONE_NUMBER' ? '📞 Phone Number Button' : '💬 Quick Reply'}
                         </span>
                         <button onClick={() => removeButton(i)} style={{ background: 'none', border: 'none', color: C.red, padding: 0 }}><Trash2 size={12} /></button>
                       </div>
                       <input
-                        style={{ ...inp(), marginBottom: btn.type === 'URL' ? 8 : 0 }}
+                        style={{ ...inp(), marginBottom: ['URL', 'PHONE_NUMBER'].includes(btn.type) ? 8 : 0 }}
                         placeholder="Button label"
                         value={btn.text}
                         onChange={e => updateButton(i, 'text', e.target.value)}
@@ -1327,6 +1362,18 @@ export const TemplatesView = () => {
                           value={btn.url || ''}
                           onChange={e => updateButton(i, 'url', e.target.value)}
                         />
+                      )}
+                      {btn.type === 'PHONE_NUMBER' && (
+                        <>
+                          <input
+                            type="tel"
+                            style={inp()}
+                            placeholder="+918807226257"
+                            value={btn.phone_number || ''}
+                            onChange={e => updateButton(i, 'phone_number', e.target.value)}
+                          />
+                          <p style={{ fontSize: 9, color: C.dim, marginTop: 4 }}>10-digit Indian numbers automatically receive the +91 country code.</p>
+                        </>
                       )}
                     </div>
                   ))}

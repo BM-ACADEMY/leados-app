@@ -25,6 +25,18 @@ const demoReminderReady = pool.query(`
 `).catch(err => console.error('[Demo Reminders] Table initialization failed:', err.message));
 const salesTasksReady = pool.query(`ALTER TABLE sales_tasks ADD COLUMN IF NOT EXISTS unread BOOLEAN NOT NULL DEFAULT TRUE`)
   .catch(err => console.error('[Sales Tasks] Unread initialization failed:', err.message));
+const salesTrackingReady = pool.query(`
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS sales_status VARCHAR(30) DEFAULT 'new';
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS sales_followup_stopped BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS sales_followup_at TIMESTAMP;
+  CREATE TABLE IF NOT EXISTS sales_lead_notes (
+    id BIGSERIAL PRIMARY KEY,
+    lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    note TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_sales_lead_notes_lead_created ON sales_lead_notes(lead_id, created_at DESC);
+`).catch(err => console.error('[Sales Tracking] Initialization failed:', err.message));
 
 async function emitSalesTaskUpdate(req, event, task = null) {
   const countResult = await pool.query(`SELECT COUNT(*)::int AS count FROM sales_tasks WHERE unread = TRUE AND status <> 'completed'`);
@@ -1233,6 +1245,99 @@ router.get('/workflows/telemetry', async (req, res) => {
 // WF03 & WF06 - Reporting & Dashboard
 // ==========================================
 
+// Authoritative WF06 snapshot. Starting from clients guarantees that every
+// configured brand is present, including brands which currently have no data.
+router.get('/reports/founder-dashboard', async (req, res) => {
+  try {
+    const [brandResult, sourceResult] = await Promise.all([
+      pool.query(`
+        SELECT c.id AS brand_id, c.name AS brand, c.status AS brand_status,
+               COALESCE(l.total_leads, 0)::int AS leads,
+               COALESCE(l.new_today, 0)::int AS leads_today,
+               COALESCE(l.conversions, 0)::int AS conversions,
+               COALESCE(l.hot_leads, 0)::int AS hot_leads,
+               COALESCE(l.followups_pending, 0)::int AS followups_pending,
+               COALESCE(cv.conversations, 0)::int AS conversations,
+               COALESCE(cv.conversations_today, 0)::int AS conversations_today,
+               COALESCE(cp.campaigns, 0)::int AS campaigns,
+               COALESCE(cp.active_campaigns, 0)::int AS active_campaigns,
+               COALESCE(p.revenue, 0)::numeric AS revenue,
+               COALESCE(p.revenue_today, 0)::numeric AS revenue_today,
+               COALESCE(p.revenue_month, 0)::numeric AS revenue_month
+        FROM clients c
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS total_leads,
+                 COUNT(*) FILTER (WHERE leads.created_at >= CURRENT_DATE) AS new_today,
+                 COUNT(*) FILTER (WHERE LOWER(COALESCE(leads.status, '')) = 'converted') AS conversions,
+                 COUNT(*) FILTER (WHERE LOWER(COALESCE(leads.status, '')) = 'hot') AS hot_leads,
+                 COUNT(*) FILTER (WHERE leads.next_followup_due IS NOT NULL
+                   AND LOWER(COALESCE(leads.status, '')) NOT IN ('converted', 'closed', 'lost', 'opt-out')) AS followups_pending
+          FROM leads WHERE leads.client_id = c.id
+        ) l ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS conversations,
+                 COUNT(*) FILTER (WHERE conversations.created_at >= CURRENT_DATE) AS conversations_today
+          FROM conversations
+          JOIN leads conversation_leads ON conversation_leads.id = conversations.lead_id
+          WHERE conversation_leads.client_id = c.id
+        ) cv ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS campaigns,
+                 COUNT(*) FILTER (WHERE campaigns.status IN ('scheduled', 'running')) AS active_campaigns
+          FROM campaigns WHERE campaigns.client_id = c.id
+        ) cp ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(payments.amount) FILTER (WHERE payments.status = 'captured'), 0) AS revenue,
+                 COALESCE(SUM(payments.amount) FILTER (WHERE payments.status = 'captured'
+                   AND payments.created_at >= CURRENT_DATE), 0) AS revenue_today,
+                 COALESCE(SUM(payments.amount) FILTER (WHERE payments.status = 'captured'
+                   AND payments.created_at >= date_trunc('month', CURRENT_DATE)), 0) AS revenue_month
+          FROM payments
+          JOIN leads payment_leads ON payment_leads.id = payments.lead_id
+          WHERE payment_leads.client_id = c.id
+        ) p ON TRUE
+        ORDER BY c.name
+      `),
+      pool.query(`
+        SELECT COALESCE(c.name, 'Unassigned') AS brand,
+               COALESCE(NULLIF(TRIM(l.source), ''), 'Unknown') AS source,
+               COUNT(*)::int AS count
+        FROM leads l
+        LEFT JOIN clients c ON c.id = l.client_id
+        GROUP BY COALESCE(c.name, 'Unassigned'), COALESCE(NULLIF(TRIM(l.source), ''), 'Unknown')
+        ORDER BY brand, count DESC
+      `),
+    ]);
+
+    const brands = brandResult.rows.map(row => ({
+      ...row,
+      revenue: Number(row.revenue),
+      revenue_today: Number(row.revenue_today),
+      revenue_month: Number(row.revenue_month),
+      conversion_rate: row.leads ? Number(((row.conversions / row.leads) * 100).toFixed(2)) : 0,
+      lead_sources: sourceResult.rows.filter(source => source.brand === row.brand),
+    }));
+    const sum = key => brands.reduce((total, brand) => total + Number(brand[key] || 0), 0);
+    const totals = {
+      brands: brands.length,
+      active_brands: brands.filter(brand => brand.brand_status === 'active').length,
+      leads: sum('leads'), leads_today: sum('leads_today'),
+      conversations: sum('conversations'), conversations_today: sum('conversations_today'),
+      campaigns: sum('campaigns'), active_campaigns: sum('active_campaigns'),
+      conversions: sum('conversions'), hot_leads: sum('hot_leads'),
+      followups_pending: sum('followups_pending'), revenue: sum('revenue'),
+      revenue_today: sum('revenue_today'), revenue_month: sum('revenue_month'),
+    };
+    totals.conversion_rate = totals.leads
+      ? Number(((totals.conversions / totals.leads) * 100).toFixed(2)) : 0;
+
+    res.json({ generated_at: new Date().toISOString(), scope: 'all_brands', totals, brands });
+  } catch (err) {
+    console.error('[Founder Dashboard Report Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/reports/revenue-today', async (req, res) => {
   try {
     const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'converted' AND updated_at >= CURRENT_DATE`);
@@ -1300,6 +1405,7 @@ router.get('/reports/ai-performance', async (req, res) => {
 // ==========================================
 router.get('/followups/due', async (req, res) => {
   try {
+    await salesTrackingReady;
     const MAX_FOLLOWUP_ATTEMPTS = 5; // Stop after 5 attempts
 
     const result = await pool.query(`
@@ -1312,9 +1418,46 @@ router.get('/followups/due', async (req, res) => {
         AND l.status NOT IN ('converted', 'booked', 'lost', 'opt-out')
         AND (l.status != 'opt-out' OR l.status IS NULL)
         AND l.call_booked_at IS NULL
+        AND COALESCE(l.sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
+        AND (l.sales_followup_at IS NULL OR l.sales_followup_at <= NOW())
         AND (l.touch_count IS NULL OR l.touch_count < $1)
     `, [MAX_FOLLOWUP_ATTEMPTS]);
     res.json({ followups: result.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 2. Fetch Followup Rule
+router.post('/followups/sales-guard', async (req, res) => {
+  try {
+    await salesTrackingReady;
+    const result = await pool.query(`
+      SELECT l.id AS lead_id, COALESCE(l.sales_status, 'new') AS sales_status,
+             COALESCE(l.sales_followup_stopped, FALSE) AS sales_followup_stopped,
+             l.sales_followup_at,
+             COALESCE(json_agg(json_build_object('note', notes.note, 'created_at', notes.created_at)
+               ORDER BY notes.created_at DESC) FILTER (WHERE notes.id IS NOT NULL), '[]'::json) AS sales_notes
+      FROM leads l
+      LEFT JOIN LATERAL (
+        SELECT id, note, created_at FROM sales_lead_notes
+        WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 5
+      ) notes ON TRUE
+      WHERE l.id = $1
+      GROUP BY l.id
+    `, [req.body.lead_id]);
+    const lead = result.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const stoppedByStatus = ['converted', 'closed', 'not_interested'].includes(String(lead.sales_status).toLowerCase());
+    const waitingForScheduledTime = lead.sales_followup_at && new Date(lead.sales_followup_at) > new Date();
+    const proceed = !lead.sales_followup_stopped && !stoppedByStatus && !waitingForScheduledTime;
+    res.json({
+      ...req.body,
+      ...lead,
+      proceed,
+      guard_reason: lead.sales_followup_stopped ? 'stopped_by_sales_note'
+        : stoppedByStatus ? `stopped_by_status_${lead.sales_status}`
+          : waitingForScheduledTime ? 'waiting_for_note_schedule' : 'allowed',
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1411,7 +1554,9 @@ router.post('/ai/followup', async (req, res) => {
     const touchCount = lead?.touch_count ?? 0;
     const leadName = (lead?.name || '').split(' ')[0] || 'there';
 
-    if (!lead || ['converted', 'booked', 'opt-out', 'lost'].includes(lead.status) || lead.call_booked_at) {
+    if (!lead || ['converted', 'booked', 'opt-out', 'lost'].includes(lead.status) || lead.call_booked_at
+      || lead.sales_followup_stopped || ['converted', 'closed', 'not_interested'].includes(lead.sales_status)
+      || (lead.sales_followup_at && new Date(lead.sales_followup_at) > new Date())) {
       return res.json({ ...req.body, success: true, delivered: false, skipped: true, reason: 'stop_condition' });
     }
 
@@ -1426,6 +1571,8 @@ router.post('/ai/followup', async (req, res) => {
       LIMIT 10
     `, [lead_id]);
     const recentHistory = historyRes.rows.reverse();
+    const notesResult = await pool.query(`SELECT note, created_at FROM sales_lead_notes WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 5`, [lead_id]);
+    const salesNotes = notesResult.rows.map(item => `${item.created_at.toISOString?.() || item.created_at}: ${item.note}`).join('\n') || 'No sales notes';
     const latestMessage = recentHistory[recentHistory.length - 1];
     if (!latestMessage || latestMessage.direction === 'inbound') {
       return res.json({
@@ -1446,6 +1593,9 @@ router.post('/ai/followup', async (req, res) => {
 Brand: ${brandName}
 Lead first name: ${leadName}
 Follow-up attempt: ${touchCount + 1} of 5
+Sales representative status: ${lead.sales_status || 'new'}
+Latest sales notes:
+${salesNotes}
 
 Latest conversation (oldest to newest):
 ${historyText}
@@ -1491,6 +1641,7 @@ Write one natural follow-up that continues the unfinished topic. Reference the s
 router.get('/demo-reminders/due', async (req, res) => {
   try {
     await demoReminderReady;
+    await salesTrackingReady;
     const result = await pool.query(`
       SELECT l.id AS lead_id, l.name, l.phone, l.call_booked_at AS booking_time,
              c.name AS brand, reminder.minutes AS reminder_minutes
@@ -1499,6 +1650,9 @@ router.get('/demo-reminders/due', async (req, res) => {
       CROSS JOIN (VALUES (60, 30), (30, 10), (10, 0)) AS reminder(minutes, lower_minutes)
       WHERE l.call_booked_at > NOW()
         AND LOWER(COALESCE(l.status, '')) = 'booked'
+        AND COALESCE(l.sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
+        AND (l.sales_followup_at IS NULL OR l.sales_followup_at <= NOW())
         AND EXTRACT(EPOCH FROM (l.call_booked_at - NOW())) / 60 <= reminder.minutes
         AND EXTRACT(EPOCH FROM (l.call_booked_at - NOW())) / 60 > reminder.lower_minutes
         AND NOT EXISTS (
@@ -1520,6 +1674,7 @@ router.post('/demo-reminders/send', async (req, res) => {
   const { lead_id, booking_time, reminder_minutes } = req.body;
   try {
     await demoReminderReady;
+    await salesTrackingReady;
     if (!lead_id || !booking_time || ![60, 30, 10].includes(Number(reminder_minutes))) {
       return res.status(400).json({ error: 'Invalid demo reminder' });
     }
@@ -1530,6 +1685,9 @@ router.post('/demo-reminders/send', async (req, res) => {
       FROM leads l LEFT JOIN clients c ON c.id = l.client_id
       WHERE l.id = $1 AND l.call_booked_at = $2
         AND l.call_booked_at > NOW() AND LOWER(COALESCE(l.status, '')) = 'booked'
+        AND COALESCE(l.sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
+        AND (l.sales_followup_at IS NULL OR l.sales_followup_at <= NOW())
     `, [lead_id, booking_time]);
     const lead = leadResult.rows[0];
     if (!lead) return res.json({ success: true, skipped: true, reason: 'booking_changed_or_completed' });
@@ -1557,6 +1715,8 @@ router.post('/demo-reminders/send', async (req, res) => {
       ORDER BY m.sent_at DESC LIMIT 12
     `, [lead_id]);
     const history = historyResult.rows.reverse();
+    const demoNotesResult = await pool.query(`SELECT note, created_at FROM sales_lead_notes WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 5`, [lead_id]);
+    const demoSalesNotes = demoNotesResult.rows.map(item => `${item.created_at.toISOString?.() || item.created_at}: ${item.note}`).join('\n') || 'No sales notes';
     const latestInbound = [...history].reverse().find(item => item.direction === 'inbound');
     const within24Hours = Boolean(latestInbound)
       && Date.now() - new Date(latestInbound.sent_at).getTime() < 24 * 60 * 60 * 1000;
@@ -1572,6 +1732,9 @@ Lead first name: ${firstName}
 Brand: ${brand}
 Call time: ${scheduledTime}
 Time remaining: ${reminder_minutes} minutes
+Sales representative status: ${lead.sales_status || 'new'}
+Latest sales notes:
+${demoSalesNotes}
 Previous conversation (oldest to newest):
 ${conversationContext}
 
@@ -1676,17 +1839,20 @@ router.post('/ai/report-generator', async (req, res) => {
     if (!ai) return res.json({ summary: "Daily Summary generated." });
 
     // STRICT rules to prevent hallucination and force INR
-    const prompt = `You are a financial reporter for an Indian business. CRITICAL RULES:
+    const prompt = `You are a founder-level reporter for an Indian multi-brand business. CRITICAL RULES:
 1. ALL currency amounts MUST use Indian Rupees (₹) symbol - NEVER use $ or USD
 2. Do NOT invent any numbers, scores, or percentages not present in the data
 3. Use ONLY the exact metrics provided below
 4. If a metric is missing, state "Not available" - never make it up
-5. Output ONLY bullet points, no extra commentary
+5. Start with a CONSOLIDATED ALL-BRANDS section covering leads, conversations, campaigns, conversions, conversion rate, and revenue
+6. Then include a BRAND-WISE BREAKDOWN with one clearly labelled bullet for EVERY brand in the brands array, including zero-activity brands
+7. Never select, prioritize, or report only one brand
+8. Keep the report concise, but never omit a configured brand
 
 Data to summarize:
 ${JSON.stringify(data, null, 2)}
 
-Write exactly 3 bullet points. Use format: "• ₹X,XXX" for all currency values.`;
+Use clear headings and bullet points. Use Indian number formatting for all currency values.`;
 
     let summary = await generateOpenRouterContent(prompt);
     console.log('[report-generator] Raw LLM response:', summary);
@@ -1954,9 +2120,20 @@ router.post('/communication/send-email', (req, res) => {
   res.json({ ...req.body, success: true, delivered: true, channel: 'email' });
 });
 
-router.post('/communication/send-template', (req, res) => {
-  // Mock endpoint for sending WhatsApp templates (could integrate Meta API here)
-  res.json({ ...req.body, success: true, delivered: true, channel: 'whatsapp_template' });
+router.post('/communication/send-template', async (req, res) => {
+  try {
+    await salesTrackingReady;
+    if (req.body.lead_id) {
+      const result = await pool.query(`SELECT sales_status, sales_followup_stopped, sales_followup_at FROM leads WHERE id = $1`, [req.body.lead_id]);
+      const lead = result.rows[0];
+      if (!lead || lead.sales_followup_stopped || ['converted', 'closed', 'not_interested'].includes(lead.sales_status)
+        || (lead.sales_followup_at && new Date(lead.sales_followup_at) > new Date())) {
+        return res.json({ ...req.body, success: true, delivered: false, skipped: true, reason: 'sales_status_or_note_stop' });
+      }
+    }
+    // Mock endpoint for sending WhatsApp templates (could integrate Meta API here)
+    res.json({ ...req.body, success: true, delivered: true, channel: 'whatsapp_template' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.post('/leads/internal-note', async (req, res) => {
@@ -1985,6 +2162,8 @@ router.post('/leads/update-followup', async (req, res) => {
       WHERE id = $2
         AND status NOT IN ('converted', 'booked', 'opt-out', 'lost')
         AND call_booked_at IS NULL
+        AND COALESCE(sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
     `;
     const updated = await pool.query(query + ' RETURNING next_followup_due', [increment, lead_id]);
     if (updated.rows[0]?.next_followup_due) await ensureSalesTask(req, lead_id, 'followup');
@@ -2102,6 +2281,7 @@ router.post('/communication/notify-staff', async (req, res) => {
 router.get('/sales-tasks', async (req, res) => {
   try {
     await salesTasksReady;
+    await salesTrackingReady;
     // Keep one persistent task for every lead that currently needs sales action.
     // Completed tasks are intentionally not recreated for the same lead/type.
     const insertedTasks = await pool.query(`
@@ -2126,6 +2306,10 @@ router.get('/sales-tasks', async (req, res) => {
     const result = await pool.query(`
       SELECT st.*, l.id AS lead_id, l.name, l.phone, l.email,
              l.status AS lead_status, l.stage, l.source, l.interest, l.score,
+             COALESCE(l.sales_status, 'new') AS sales_status,
+             l.sales_followup_stopped, l.sales_followup_at,
+             (SELECT note FROM sales_lead_notes WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) AS latest_sales_note,
+             (SELECT created_at FROM sales_lead_notes WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) AS latest_sales_note_at,
              l.call_booked_at, l.next_followup_due,
              (SELECT MAX(conversation.last_message_at) FROM conversations conversation WHERE conversation.lead_id = l.id) AS last_contact,
              l.created_at AS lead_created_at,
@@ -2135,6 +2319,8 @@ router.get('/sales-tasks', async (req, res) => {
       LEFT JOIN clients c ON c.id = l.client_id
       LEFT JOIN users u ON u.id = l.assigned_to
       WHERE st.status <> 'completed'
+        AND COALESCE(l.sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
         AND (
           (st.task_type = 'call' AND l.call_booked_at IS NOT NULL AND LOWER(COALESCE(l.status, '')) = 'booked')
           OR (st.task_type = 'hot_lead' AND LOWER(COALESCE(l.status, '')) = 'hot')
@@ -2179,6 +2365,67 @@ router.put('/sales-tasks/lead/:leadId/read', async (req, res) => {
     await pool.query(`UPDATE sales_tasks SET unread = FALSE, updated_at = NOW() WHERE lead_id = $1 AND unread = TRUE`, [req.params.leadId]);
     await emitSalesTaskUpdate(req, 'read', { lead_id: Number(req.params.leadId) });
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/sales-tasks/lead/:leadId/sales-status', async (req, res) => {
+  try {
+    await salesTrackingReady;
+    const allowed = ['new', 'contacted', 'processing', 'follow_up', 'converted', 'not_interested', 'closed'];
+    const status = String(req.body.status || '').toLowerCase();
+    if (!allowed.includes(status)) return res.status(400).json({ error: 'Invalid sales status' });
+    const shouldStop = ['converted', 'not_interested', 'closed'].includes(status);
+    const result = await pool.query(`
+      UPDATE leads SET sales_status = $1,
+        sales_followup_stopped = $2,
+        sales_followup_at = CASE WHEN $2 THEN NULL ELSE sales_followup_at END,
+        next_followup_due = CASE WHEN $2 THEN NULL ELSE next_followup_due END,
+        updated_at = NOW()
+      WHERE id = $3 RETURNING id, sales_status, sales_followup_stopped, sales_followup_at
+    `, [status, shouldStop, req.params.leadId]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    await emitSalesTaskUpdate(req, 'lead_status_changed', { lead_id: Number(req.params.leadId), ...result.rows[0] });
+    res.json({ success: true, lead: result.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/sales-tasks/lead/:leadId/notes', async (req, res) => {
+  try {
+    await salesTrackingReady;
+    const note = String(req.body.note || '').trim();
+    if (!note) return res.status(400).json({ error: 'Note is required' });
+
+    const stopPattern = /(already\s+(enrolled|joined|purchased)|not\s+interested|do\s+not\s+contact|don['’]?t\s+contact|stop\s+(all\s+)?follow[- ]?ups?|no\s+more\s+(calls|messages))/i;
+    let shouldStop = stopPattern.test(note);
+    let followupAt = null;
+    if (ai) {
+      try {
+        const analysis = await generateOpenRouterContent(`Analyze this sales representative note. Current time is ${new Date().toISOString()} (Asia/Kolkata business timezone).
+Note: ${JSON.stringify(note)}
+Return only JSON: {"stop_followups":boolean,"followup_at":string|null}. Set stop_followups true for enrolled/converted/not interested/do-not-contact intent. Convert an explicit future callback time such as tomorrow at 5 PM to an ISO timestamp. Do not invent a time.`);
+        const parsed = JSON.parse(analysis.replace(/```json|```/gi, '').trim());
+        shouldStop = shouldStop || parsed.stop_followups === true;
+        if (parsed.followup_at && !Number.isNaN(new Date(parsed.followup_at).getTime()) && new Date(parsed.followup_at) > new Date()) {
+          followupAt = new Date(parsed.followup_at).toISOString();
+        }
+      } catch (analysisError) {
+        console.error('[Sales Note] AI analysis fallback:', analysisError.message);
+      }
+    }
+
+    const noteResult = await pool.query(`INSERT INTO sales_lead_notes (lead_id, note) VALUES ($1, $2) RETURNING *`, [req.params.leadId, note]);
+    const leadResult = await pool.query(`
+      UPDATE leads SET
+        sales_followup_stopped = $1,
+        sales_followup_at = $2::timestamp,
+        next_followup_due = CASE WHEN $1 THEN NULL WHEN $2::timestamp IS NOT NULL THEN $2::timestamp ELSE next_followup_due END,
+        sales_status = CASE WHEN $1 AND LOWER($3) LIKE '%not interested%' THEN 'not_interested' ELSE sales_status END,
+        updated_at = NOW()
+      WHERE id = $4
+      RETURNING id, sales_status, sales_followup_stopped, sales_followup_at, next_followup_due
+    `, [shouldStop, followupAt, note, req.params.leadId]);
+    await emitSalesTaskUpdate(req, 'note_added', { lead_id: Number(req.params.leadId), note: noteResult.rows[0], ...leadResult.rows[0] });
+    res.json({ success: true, note: noteResult.rows[0], lead: leadResult.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

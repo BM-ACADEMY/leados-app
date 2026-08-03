@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, RefreshCw, FileText, CheckCircle, Calendar, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Bot, RefreshCw, FileText, CheckCircle, Calendar, Trash2, ChevronLeft, ChevronRight, Users, MessageSquare, Megaphone, IndianRupee } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
@@ -11,6 +11,7 @@ export const FounderReportsView = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [reportToDelete, setReportToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [snapshot, setSnapshot] = useState(null);
 
   const ITEMS_PER_PAGE = 10;
   const totalPages = Math.ceil(logs.length / ITEMS_PER_PAGE);
@@ -35,10 +36,14 @@ export const FounderReportsView = () => {
     const fetchLogs = async () => {
       setLoading(true);
       try {
-        const res = await api.getWorkflowLogs();
+        const [res, snapshotRes] = await Promise.all([
+          api.getWorkflowLogs(),
+          api.getFounderDashboard(),
+        ]);
         // Filter only for WF06 - Founder Dashboard reports
         const founderReports = (res.logs || []).filter(log => log.workflow === 'WF06');
         setLogs(founderReports);
+        setSnapshot(snapshotRes);
       } catch (err) {
         console.error('Failed to fetch founder reports', err);
         toast.error('Failed to load founder reports');
@@ -137,6 +142,62 @@ export const FounderReportsView = () => {
 
       {/* Reports Feed */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {snapshot?.totals && (
+          <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, padding: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
+              <div>
+                <h2 style={{ margin: 0, color: C.text, fontSize: 18 }}>All Brands Overview</h2>
+                <p style={{ margin: '6px 0 0', color: C.muted, fontSize: 13 }}>{snapshot.totals.brands} configured brands · consolidated live data</p>
+              </div>
+              <span style={{ color: C.green, background: 'rgba(34,197,94,.1)', padding: '6px 10px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>ALL BRANDS</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
+              {[
+                [Users, 'Leads', snapshot.totals.leads],
+                [Users, 'New Leads Today', snapshot.totals.leads_today],
+                [Users, 'Hot Leads', snapshot.totals.hot_leads],
+                [Calendar, 'Pending Follow-ups', snapshot.totals.followups_pending],
+                [MessageSquare, 'Conversations', snapshot.totals.conversations],
+                [MessageSquare, 'Conversations Today', snapshot.totals.conversations_today],
+                [Megaphone, 'Campaigns', snapshot.totals.campaigns],
+                [Megaphone, 'Active Campaigns', snapshot.totals.active_campaigns],
+                [CheckCircle, 'Conversions', snapshot.totals.conversions],
+                [CheckCircle, 'Conversion Rate', `${snapshot.totals.conversion_rate || 0}%`],
+                [IndianRupee, 'Revenue', `₹${Number(snapshot.totals.revenue || 0).toLocaleString('en-IN')}`],
+                [IndianRupee, 'Revenue Today', `₹${Number(snapshot.totals.revenue_today || 0).toLocaleString('en-IN')}`],
+                [IndianRupee, 'Revenue This Month', `₹${Number(snapshot.totals.revenue_month || 0).toLocaleString('en-IN')}`],
+              ].map(([Icon, label, value]) => (
+                <div key={label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+                  <Icon size={16} color="#f97316" />
+                  <div style={{ color: C.text, fontSize: 20, fontWeight: 800, marginTop: 10 }}>{value}</div>
+                  <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>{label}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1800 }}>
+                <thead><tr>{['Brand', 'Status', 'Leads', 'New Today', 'Hot', 'Follow-ups', 'Conversations', 'Conv. Today', 'Campaigns', 'Active Campaigns', 'Conversions', 'Conversion Rate', 'Revenue', 'Today Revenue', 'Month Revenue', 'Lead Sources'].map(label => <th key={label} style={{ textAlign: ['Brand', 'Status', 'Lead Sources'].includes(label) ? 'left' : 'right', padding: '10px 12px', color: C.muted, fontSize: 11, borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>{label}</th>)}</tr></thead>
+                <tbody>{snapshot.brands.map(brand => (
+                  <tr key={brand.brand_id}>
+                    <td style={{ padding: 12, color: C.text, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>{brand.brand}</td>
+                    <td style={{ padding: 12, color: brand.brand_status === 'active' ? C.green : C.muted, borderBottom: `1px solid ${C.border}`, textTransform: 'capitalize' }}>{brand.brand_status || 'unknown'}</td>
+                    {[
+                      brand.leads, brand.leads_today, brand.hot_leads, brand.followups_pending,
+                      brand.conversations, brand.conversations_today, brand.campaigns, brand.active_campaigns,
+                      brand.conversions, `${brand.conversion_rate}%`,
+                      `₹${Number(brand.revenue || 0).toLocaleString('en-IN')}`,
+                      `₹${Number(brand.revenue_today || 0).toLocaleString('en-IN')}`,
+                      `₹${Number(brand.revenue_month || 0).toLocaleString('en-IN')}`,
+                    ].map((value, index) => <td key={index} style={{ padding: 12, color: C.text, textAlign: 'right', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>{value ?? 0}</td>)}
+                    <td style={{ padding: 12, color: C.muted, borderBottom: `1px solid ${C.border}`, minWidth: 180 }}>
+                      {brand.lead_sources?.length ? brand.lead_sources.map(source => `${source.source}: ${source.count}`).join(', ') : 'None: 0'}
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </div>
+        )}
         {loading && logs.length === 0 ? (
           <div style={{ padding: '40px', textAlign: 'center', color: C.muted, background: C.card, borderRadius: 16, border: `1px solid ${C.border}` }}>
             <RefreshCw size={24} className="spin" style={{ marginBottom: 12 }} />

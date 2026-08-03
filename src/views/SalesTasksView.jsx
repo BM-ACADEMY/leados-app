@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
-import { RefreshCw, User, Trash2, X, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, User, Trash2, X, AlertTriangle, ChevronDown, ChevronUp, MessageSquare, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { io as socketIO } from 'socket.io-client';
@@ -14,6 +14,10 @@ export const SalesTasksView = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedTaskId, setExpandedTaskId] = useState(null);
+  const [notesTask, setNotesTask] = useState(null);
+  const [noteText, setNoteText] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [search, setSearch] = useState('');
   const tasksPerPage = 10;
 
   useEffect(() => {
@@ -98,9 +102,43 @@ export const SalesTasksView = () => {
     }
   };
 
+  const updateLeadStatus = async (leadId, status) => {
+    try {
+      const res = await api.put(`/sales-tasks/lead/${leadId}/sales-status`, { status });
+      setTasks(current => current.map(task => task.lead_id === leadId ? { ...task, ...res.lead } : task));
+      toast.success('Lead status updated');
+    } catch (err) { toast.error('Failed to update lead status: ' + err.message); }
+  };
+
+  const saveNote = async () => {
+    if (!noteText.trim() || !notesTask) return toast.error('Enter a note');
+    setSavingNote(true);
+    try {
+      const res = await api.post(`/sales-tasks/lead/${notesTask.lead_id}/notes`, { note: noteText.trim() });
+      setTasks(current => current.map(task => task.lead_id === notesTask.lead_id ? {
+        ...task, ...res.lead, latest_sales_note: res.note.note, latest_sales_note_at: res.note.created_at,
+      } : task));
+      setNotesTask(null);
+      setNoteText('');
+      toast.success(res.lead.sales_followup_stopped ? 'Note saved — automated follow-ups stopped' : res.lead.sales_followup_at ? 'Note saved — follow-up rescheduled' : 'Note saved');
+    } catch (err) { toast.error('Failed to save note: ' + err.message); }
+    finally { setSavingNote(false); }
+  };
+
   const formatDateTime = (value) => value
     ? new Date(value).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
     : '—';
+
+  const normalizedSearch = search.trim().toLowerCase();
+  const searchDigits = search.replace(/\D/g, '');
+  const filteredTasks = tasks.filter(task => {
+    if (!normalizedSearch) return true;
+    const nameMatches = String(task.name || '').toLowerCase().includes(normalizedSearch);
+    const phoneDigits = String(task.phone || '').replace(/\D/g, '');
+    return nameMatches || Boolean(searchDigits && phoneDigits.includes(searchDigits));
+  });
+
+  useEffect(() => { setCurrentPage(1); }, [search]);
 
   return (
     <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%', background: C.bg, position: 'relative' }}>
@@ -131,6 +169,12 @@ export const SalesTasksView = () => {
           </p>
         </div>
 
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <div style={{ height: 38, minWidth: 240, display: 'flex', alignItems: 'center', gap: 7, padding: '0 11px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 9 }}>
+          <Search size={13} color={C.muted} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or phone..." style={{ width: '100%', background: 'transparent', border: 0, outline: 'none', color: C.text, fontSize: 11 }} />
+          {search && <button onClick={() => setSearch('')} title="Clear search" style={{ background: 'transparent', border: 0, padding: 2, cursor: 'pointer', display: 'flex' }}><X size={12} color={C.muted} /></button>}
+        </div>
         <button
           onClick={fetchTasks}
           style={{
@@ -153,6 +197,7 @@ export const SalesTasksView = () => {
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
           Refresh Tasks
         </button>
+        </div>
       </div>
 
       <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, border: `1px solid ${C.border}`, background: C.card, display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 10 }}>
@@ -166,16 +211,16 @@ export const SalesTasksView = () => {
       <div className="table-responsive" style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 14, overflow: 'hidden' }}>
         {loading && tasks.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 48, color: C.muted }}>Loading your tasks...</div>
-        ) : tasks.length === 0 ? (
+        ) : filteredTasks.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 48, color: C.muted, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
             <User size={36} color={C.border} />
-            <span style={{ fontSize: 13 }}>No active sales tasks. You're all caught up!</span>
+            <span style={{ fontSize: 13 }}>{search ? 'No leads match that name or phone number.' : "No active sales tasks. You're all caught up!"}</span>
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid ' + C.border }}>
-                {['Lead', 'Contact', 'Task Type', 'Status Action', 'Details'].map((h) => (
+                {['Lead', 'Contact', 'Lead Status', 'Task Type', 'Task Status', 'Notes', 'Details'].map((h) => (
                   <th key={h} style={{ padding: '12px 16px', fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8 }}>
                     {h}
                   </th>
@@ -186,7 +231,7 @@ export const SalesTasksView = () => {
               {(() => {
                 const indexOfLastTask = currentPage * tasksPerPage;
                 const indexOfFirstTask = indexOfLastTask - tasksPerPage;
-                const currentTasks = tasks.slice(indexOfFirstTask, indexOfLastTask);
+                const currentTasks = filteredTasks.slice(indexOfFirstTask, indexOfLastTask);
                 return currentTasks.map((task, idx) => {
                   const styles = getStatusStyles(task.status);
                   const isExpanded = expandedTaskId === task.id;
@@ -224,6 +269,13 @@ export const SalesTasksView = () => {
                     <td style={{ padding: '14px 16px' }}>
                       <p style={{ fontSize: 12, fontWeight: 500, color: C.text }}>{task.phone || '-'}</p>
                       <p style={{ fontSize: 10, color: C.muted }}>{task.email || 'No Email'}</p>
+                    </td>
+
+                    {/* Task Type */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <select value={task.sales_status || 'new'} onClick={e => e.stopPropagation()} onChange={e => updateLeadStatus(task.lead_id, e.target.value)} style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.text, borderRadius: 7, padding: '6px 8px', fontSize: 10, outline: 'none', cursor: 'pointer' }}>
+                        <option value="new">New</option><option value="contacted">Contacted</option><option value="processing">Processing</option><option value="follow_up">Follow-up</option><option value="converted">Converted</option><option value="not_interested">Not Interested</option><option value="closed">Closed</option>
+                      </select>
                     </td>
 
                     {/* Task Type */}
@@ -288,6 +340,9 @@ export const SalesTasksView = () => {
                       </div>
                     </td>
                     <td style={{ padding: '14px 16px' }}>
+                      <button onClick={e => { e.stopPropagation(); setNotesTask(task); setNoteText(''); }} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, borderRadius: 7, padding: '6px 9px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: 10 }}><MessageSquare size={12} /> Add Note</button>
+                    </td>
+                    <td style={{ padding: '14px 16px' }}>
                       <button
                         onClick={(e) => { e.stopPropagation(); setExpandedTaskId(isExpanded ? null : task.id); }}
                         aria-expanded={isExpanded}
@@ -300,7 +355,7 @@ export const SalesTasksView = () => {
                   </tr>
                   {isExpanded && (
                     <tr style={{ background: 'rgba(255,255,255,0.018)', borderBottom: `1px solid ${C.border}` }}>
-                      <td colSpan={5} style={{ padding: '0 16px 16px' }}>
+                      <td colSpan={7} style={{ padding: '0 16px 16px' }}>
                         <div onClick={e => e.stopPropagation()} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))', gap: 12, padding: 16, borderRadius: 10, background: C.surface, border: `1px solid ${C.border}` }}>
                           {[
                             ['Brand', task.brand_name || '—'],
@@ -311,6 +366,8 @@ export const SalesTasksView = () => {
                             [task.task_type === 'call' ? 'Demo Call' : 'Next Follow-up', formatDateTime(task.task_type === 'call' ? task.call_booked_at : task.next_followup_due)],
                             ['Lead Created', formatDateTime(task.lead_created_at)],
                             ['Last Contact', formatDateTime(task.last_contact)],
+                            ['Latest Sales Note', task.latest_sales_note || '—'],
+                            ['Next AI Follow-up', task.sales_followup_stopped ? 'Stopped' : formatDateTime(task.sales_followup_at || task.next_followup_due)],
                           ].map(([label, value]) => (
                             <div key={label}>
                               <p style={{ margin: 0, fontSize: 9, color: C.dim, textTransform: 'uppercase', letterSpacing: .6 }}>{label}</p>
@@ -331,10 +388,10 @@ export const SalesTasksView = () => {
         )}
 
         {/* Pagination Controls */}
-        {tasks.length > tasksPerPage && (
+        {filteredTasks.length > tasksPerPage && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', background: C.card, borderTop: '1px solid ' + C.border }}>
             <span style={{ fontSize: 13, color: C.muted, fontWeight: 500 }}>
-              Showing {((currentPage - 1) * tasksPerPage) + 1} to {Math.min(currentPage * tasksPerPage, tasks.length)} of {tasks.length} entries
+              Showing {((currentPage - 1) * tasksPerPage) + 1} to {Math.min(currentPage * tasksPerPage, filteredTasks.length)} of {filteredTasks.length} entries
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <button 
@@ -345,12 +402,12 @@ export const SalesTasksView = () => {
                 Previous
               </button>
               <span style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>
-                Page {currentPage} of {Math.ceil(tasks.length / tasksPerPage)}
+                Page {currentPage} of {Math.ceil(filteredTasks.length / tasksPerPage)}
               </span>
               <button 
-                disabled={currentPage === Math.ceil(tasks.length / tasksPerPage)}
-                onClick={() => setCurrentPage(p => Math.min(Math.ceil(tasks.length / tasksPerPage), p + 1))}
-                style={{ padding: '6px 14px', background: 'transparent', border: '1px solid ' + C.border, borderRadius: 6, color: currentPage === Math.ceil(tasks.length / tasksPerPage) ? C.muted : C.text, cursor: currentPage === Math.ceil(tasks.length / tasksPerPage) ? 'not-allowed' : 'pointer', opacity: currentPage === Math.ceil(tasks.length / tasksPerPage) ? 0.5 : 1, fontSize: 13, fontWeight: 500, transition: 'all 0.2s' }}
+                disabled={currentPage === Math.ceil(filteredTasks.length / tasksPerPage)}
+                onClick={() => setCurrentPage(p => Math.min(Math.ceil(filteredTasks.length / tasksPerPage), p + 1))}
+                style={{ padding: '6px 14px', background: 'transparent', border: '1px solid ' + C.border, borderRadius: 6, color: currentPage === Math.ceil(filteredTasks.length / tasksPerPage) ? C.muted : C.text, cursor: currentPage === Math.ceil(filteredTasks.length / tasksPerPage) ? 'not-allowed' : 'pointer', opacity: currentPage === Math.ceil(filteredTasks.length / tasksPerPage) ? 0.5 : 1, fontSize: 13, fontWeight: 500, transition: 'all 0.2s' }}
               >
                 Next
               </button>
@@ -358,6 +415,18 @@ export const SalesTasksView = () => {
           </div>
         )}
       </div>
+
+      {notesTask && (
+        <div onClick={() => !savingNote && setNotesTask(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', backdropFilter: 'blur(4px)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 480, background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><h3 style={{ margin: 0, color: C.text, fontSize: 15 }}>Add Sales Note</h3><p style={{ margin: '3px 0 0', color: C.muted, fontSize: 10 }}>{notesTask.name}</p></div><button onClick={() => setNotesTask(null)} style={{ background: 'transparent', border: 0, cursor: 'pointer' }}><X size={16} color={C.muted} /></button></div>
+            {notesTask.latest_sales_note && <div style={{ marginTop: 14, padding: 10, background: C.surface, borderRadius: 8, color: C.muted, fontSize: 10 }}><strong style={{ color: C.text }}>Latest note:</strong> {notesTask.latest_sales_note}</div>}
+            <textarea autoFocus value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Example: Customer requested a callback tomorrow at 5 PM." rows={5} style={{ width: '100%', marginTop: 14, resize: 'vertical', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 9, color: C.text, padding: 12, fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
+            <p style={{ color: C.dim, fontSize: 9, lineHeight: 1.5, marginTop: 7 }}>AI evaluates this note before future messages. “Already enrolled”, “Not interested”, or “Do not contact” stops automation. A future callback time reschedules it.</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 15 }}><button onClick={() => setNotesTask(null)} disabled={savingNote} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, padding: '8px 14px', borderRadius: 8, cursor: 'pointer' }}>Cancel</button><button onClick={saveNote} disabled={savingNote} style={{ background: C.accent, border: 0, color: '#fff', padding: '8px 16px', borderRadius: 8, fontWeight: 700, cursor: savingNote ? 'wait' : 'pointer' }}>{savingNote ? 'Analyzing & Saving...' : 'Save Note'}</button></div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (

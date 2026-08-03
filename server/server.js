@@ -4010,6 +4010,63 @@ app.get('/api/reports/summary', auth, async (req, res) => {
     const client_id = req.query.client_id;
     const filterBrand = client_id && client_id !== 'all' && client_id !== 'All Brands' && client_id !== 'undefined';
 
+    if (range === 'custom') {
+      const from = req.query.from;
+      const to = req.query.to;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(to || '') || from > to) {
+        return res.status(400).json({ error: 'Invalid custom date range' });
+      }
+      const brandId = filterBrand ? client_id : null;
+      const params = [from, to, brandId];
+      const [leadCounts, hot, convertedCounts, revenues, weekly, sources, funnel, revenueTrend, brands] = await Promise.all([
+        pool.query(`WITH bounds AS (
+          SELECT $1::date AS from_date, $2::date AS to_date, ($2::date - $1::date + 1) AS span
+        ) SELECT
+          COUNT(*) FILTER (WHERE l.created_at >= b.from_date AND l.created_at < b.to_date + INTERVAL '1 day') AS current_count,
+          COUNT(*) FILTER (WHERE l.created_at >= b.from_date - b.span * INTERVAL '1 day' AND l.created_at < b.from_date) AS previous_count
+        FROM leads l CROSS JOIN bounds b WHERE ($3::bigint IS NULL OR l.client_id = $3)`, params),
+        pool.query(`SELECT COUNT(*) AS count FROM leads WHERE status = 'hot' AND created_at >= $1::date AND created_at < $2::date + INTERVAL '1 day' AND ($3::bigint IS NULL OR client_id = $3)`, params),
+        pool.query(`WITH bounds AS (SELECT $1::date AS from_date, $2::date AS to_date, ($2::date - $1::date + 1) AS span)
+          SELECT COUNT(*) FILTER (WHERE l.updated_at >= b.from_date AND l.updated_at < b.to_date + INTERVAL '1 day') AS current_count,
+          COUNT(*) FILTER (WHERE l.updated_at >= b.from_date - b.span * INTERVAL '1 day' AND l.updated_at < b.from_date) AS previous_count
+          FROM leads l CROSS JOIN bounds b WHERE l.status = 'converted' AND ($3::bigint IS NULL OR l.client_id = $3)`, params),
+        pool.query(`WITH bounds AS (SELECT $1::date AS from_date, $2::date AS to_date, ($2::date - $1::date + 1) AS span)
+          SELECT COALESCE(SUM(p.amount) FILTER (WHERE p.created_at >= b.from_date AND p.created_at < b.to_date + INTERVAL '1 day'),0) AS current_amount,
+          COALESCE(SUM(p.amount) FILTER (WHERE p.created_at >= b.from_date - b.span * INTERVAL '1 day' AND p.created_at < b.from_date),0) AS previous_amount
+          FROM payments p LEFT JOIN leads l ON l.id = p.lead_id CROSS JOIN bounds b
+          WHERE p.status = 'captured' AND ($3::bigint IS NULL OR l.client_id = $3)`, params),
+        pool.query(`SELECT TO_CHAR(d.day, 'DD Mon') AS day, COUNT(l.id) AS leads,
+          COUNT(l.id) FILTER (WHERE l.status = 'converted') AS converted
+          FROM generate_series($1::date, $2::date, '1 day') d(day)
+          LEFT JOIN leads l ON DATE(l.created_at) = d.day AND ($3::bigint IS NULL OR l.client_id = $3)
+          GROUP BY d.day ORDER BY d.day`, params),
+        pool.query(`SELECT COALESCE(source, 'Other') AS source, COUNT(*) AS count FROM leads
+          WHERE created_at >= $1::date AND created_at < $2::date + INTERVAL '1 day' AND ($3::bigint IS NULL OR client_id = $3)
+          GROUP BY source ORDER BY count DESC LIMIT 6`, params),
+        pool.query(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status != 'new') AS contacted,
+          COUNT(*) FILTER (WHERE score >= 40) AS qualified, COUNT(*) FILTER (WHERE status = 'hot') AS hot,
+          COUNT(*) FILTER (WHERE status = 'converted') AS converted FROM leads
+          WHERE created_at >= $1::date AND created_at < $2::date + INTERVAL '1 day' AND ($3::bigint IS NULL OR client_id = $3)`, params),
+        pool.query(`SELECT TO_CHAR(d.day, 'DD Mon') AS m, COALESCE(SUM(p.amount),0) AS r
+          FROM generate_series($1::date, $2::date, '1 day') d(day)
+          LEFT JOIN payments p ON DATE(p.created_at) = d.day AND p.status = 'captured'
+          LEFT JOIN leads l ON l.id = p.lead_id
+          WHERE ($3::bigint IS NULL OR l.client_id = $3 OR p.id IS NULL)
+          GROUP BY d.day ORDER BY d.day`, params),
+        pool.query(`SELECT c.id, c.name, COUNT(l.id) AS lead_count FROM clients c
+          LEFT JOIN leads l ON l.client_id = c.id AND l.created_at >= $1::date AND l.created_at < $2::date + INTERVAL '1 day'
+          WHERE ($3::bigint IS NULL OR c.id = $3) GROUP BY c.id, c.name ORDER BY lead_count DESC`, params),
+      ]);
+      return res.json({
+        leads_today: Number(leadCounts.rows[0].current_count), leads_yesterday: Number(leadCounts.rows[0].previous_count),
+        hot_leads: Number(hot.rows[0].count), converted_today: Number(convertedCounts.rows[0].current_count),
+        converted_yesterday: Number(convertedCounts.rows[0].previous_count), revenue_month: Number(revenues.rows[0].current_amount),
+        revenue_last_month: Number(revenues.rows[0].previous_amount), weekly: weekly.rows, sources: sources.rows,
+        funnel: funnel.rows[0], revenue_trend: revenueTrend.rows.map(row => ({ m: row.m, r: Number(row.r) })), brands: brands.rows,
+        date_range: { from, to },
+      });
+    }
+
     let days = 30;
     let dateFormat = 'DD Mon';
     if (range === '7d') {

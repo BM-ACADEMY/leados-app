@@ -514,6 +514,10 @@ class LeadOSAPI {
     return this.request(`/api/reports/summary${query ? '?' + query : ''}`);
   }
 
+  async getFounderDashboard() {
+    return this.request('/api/reports/founder-dashboard');
+  }
+
   // ─── ALLIANCE OS ────────────────────────
   async uploadAllianceCSV(formData) {
     const token = localStorage.getItem('leados_token');

@@ -16,159 +16,19 @@
       "name": "Cron Daily",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        0,
-        0
-      ]
+      "position": [0, 0]
     },
     {
       "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/revenue-today",
+        "url": "https://leados-api.abmgroups.org/api/reports/founder-dashboard",
         "method": "GET",
         "options": {}
       },
-      "id": "69c4f4d0-f185-4919-bee4-d9cc83151c51",
-      "name": "Get Revenue Today",
+      "id": "5dd53f4e-7cb9-4cc8-a7d8-ccf9056f3dd0",
+      "name": "Get All Brand Metrics",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        260,
-        -400
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/revenue-month",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "922c6c32-7376-4dc9-a048-c3e2195be051",
-      "name": "Get Revenue Month",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        -300
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/brand-revenue",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "e8c06bc5-c69e-4df3-ab49-31c31a62dc56",
-      "name": "Get Brand Revenue",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        -200
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/lead-sources",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "f2e19a6b-24ee-4c32-960b-279239b9422c",
-      "name": "Get Lead Sources",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        -100
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/conversion-rate",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "480ec783-1804-48a9-9563-537e6c0859b8",
-      "name": "Get Conversion Rate",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/pending-payments",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "8b972953-b0be-4a5d-a354-a9aba7f660aa",
-      "name": "Get Pending Payments",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        100
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/followups-pending",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "923503fc-10a6-49ea-baf8-39357403a605",
-      "name": "Get Followups Pending",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/sla-breaches",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "7f657c97-fb2a-4903-8f31-511ae1faf6d9",
-      "name": "Get SLA Breaches",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/reports/ai-performance",
-        "method": "GET",
-        "options": {}
-      },
-      "id": "c55b5519-6652-4626-97ca-11bb2d8b4e3c",
-      "name": "Get AI Performance",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        260,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{ json: { revenueToday: $items('Get Revenue Today')[0].json, revenueMonth: $items('Get Revenue Month')[0].json, brandRevenue: $items('Get Brand Revenue')[0].json, leadSources: $items('Get Lead Sources')[0].json, conversionRate: $items('Get Conversion Rate')[0].json, pendingPayments: $items('Get Pending Payments')[0].json, followupsPending: $items('Get Followups Pending')[0].json, slaBreaches: $items('Get SLA Breaches')[0].json, aiPerformance: $items('Get AI Performance')[0].json } }];",
-        "mode": "runOnceForAllItems"
-      },
-      "id": "5144ccca-2b97-4986-9464-b878281f3f43",
-      "name": "Aggregate Metrics",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        520,
-        0
-      ]
+      "position": [280, 0]
     },
     {
       "parameters": {
@@ -180,13 +40,20 @@
         "jsonBody": "={{ JSON.stringify({ metrics: $json }) }}"
       },
       "id": "efc4878c-e308-4c08-800f-4170146039fe",
-      "name": "Generate Summary",
+      "name": "Generate Multi-Brand Summary",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        780,
-        0
-      ]
+      "position": [560, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const metrics = $items('Get All Brand Metrics')[0].json;\nconst aiSummary = $items('Generate Multi-Brand Summary')[0].json.summary || '';\nif (metrics.scope !== 'all_brands' || !Array.isArray(metrics.brands)) {\n  throw new Error('WF06 expected an all_brands snapshot with a brands array');\n}\nconst number = value => Number(value || 0);\nconst money = value => `₹${number(value).toLocaleString('en-IN')}`;\nconst totals = metrics.totals || {};\nconst consolidated = [\n  '**CONSOLIDATED ALL-BRANDS**',\n  `• Configured brands: ${number(totals.brands) || metrics.brands.length} | Active brands: ${number(totals.active_brands)}`,\n  `• Leads: ${number(totals.leads)} | New today: ${number(totals.leads_today)} | Hot leads: ${number(totals.hot_leads)} | Pending follow-ups: ${number(totals.followups_pending)}`,\n  `• Conversations: ${number(totals.conversations)} | Conversations today: ${number(totals.conversations_today)}`,\n  `• Campaigns: ${number(totals.campaigns)} | Active campaigns: ${number(totals.active_campaigns)}`,\n  `• Conversions: ${number(totals.conversions)} | Conversion rate: ${number(totals.conversion_rate)}%`,\n  `• Total revenue: ${money(totals.revenue)} | Revenue today: ${money(totals.revenue_today)} | Revenue this month: ${money(totals.revenue_month)}`,\n  '',\n  '**BRAND-WISE BREAKDOWN**',\n  ...metrics.brands.flatMap(brand => {\n    const sources = Array.isArray(brand.lead_sources) && brand.lead_sources.length\n      ? brand.lead_sources.map(source => `${source.source}: ${number(source.count)}`).join(', ')\n      : 'None: 0';\n    return [\n      `• **${brand.brand}** (${brand.brand_status || 'unknown'})`,\n      `  Leads: ${number(brand.leads)} | New today: ${number(brand.leads_today)} | Hot: ${number(brand.hot_leads)} | Pending follow-ups: ${number(brand.followups_pending)}`,\n      `  Conversations: ${number(brand.conversations)} | Today: ${number(brand.conversations_today)}`,\n      `  Campaigns: ${number(brand.campaigns)} | Active: ${number(brand.active_campaigns)}`,\n      `  Conversions: ${number(brand.conversions)} | Rate: ${number(brand.conversion_rate)}%`,\n      `  Revenue: ${money(brand.revenue)} | Today: ${money(brand.revenue_today)} | Month: ${money(brand.revenue_month)}`,\n      `  Lead sources: ${sources}`,\n    ];\n  }),\n];\nreturn [{ json: { summary: `${consolidated.join('\\n')}\\n\\n**AI EXECUTIVE INSIGHT**\\n${aiSummary}` } }];"
+      },
+      "id": "4c6e3e49-b994-42cc-b170-e96941fbd55a",
+      "name": "Enforce Every Brand",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 0]
     },
     {
       "parameters": {
@@ -201,144 +68,21 @@
       "name": "Send To Founder",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1040,
-        0
-      ]
+      "position": [1120, 0]
     }
   ],
   "connections": {
     "Cron Daily": {
-      "main": [
-        [
-          {
-            "node": "Get Revenue Today",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Get All Brand Metrics", "type": "main", "index": 0}]]
     },
-    "Get Revenue Today": {
-      "main": [
-        [
-          {
-            "node": "Get Revenue Month",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Get All Brand Metrics": {
+      "main": [[{"node": "Generate Multi-Brand Summary", "type": "main", "index": 0}]]
     },
-    "Get Revenue Month": {
-      "main": [
-        [
-          {
-            "node": "Get Brand Revenue",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Generate Multi-Brand Summary": {
+      "main": [[{"node": "Enforce Every Brand", "type": "main", "index": 0}]]
     },
-    "Get Brand Revenue": {
-      "main": [
-        [
-          {
-            "node": "Get Lead Sources",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Lead Sources": {
-      "main": [
-        [
-          {
-            "node": "Get Conversion Rate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Conversion Rate": {
-      "main": [
-        [
-          {
-            "node": "Get Pending Payments",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Pending Payments": {
-      "main": [
-        [
-          {
-            "node": "Get Followups Pending",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Followups Pending": {
-      "main": [
-        [
-          {
-            "node": "Get SLA Breaches",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get SLA Breaches": {
-      "main": [
-        [
-          {
-            "node": "Get AI Performance",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get AI Performance": {
-      "main": [
-        [
-          {
-            "node": "Aggregate Metrics",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Aggregate Metrics": {
-      "main": [
-        [
-          {
-            "node": "Generate Summary",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Generate Summary": {
-      "main": [
-        [
-          {
-            "node": "Send To Founder",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+    "Enforce Every Brand": {
+      "main": [[{"node": "Send To Founder", "type": "main", "index": 0}]]
     }
   },
   "active": false,
@@ -346,7 +90,7 @@
     "executionOrder": "v1"
   },
   "pinData": {},
-  "versionId": "214cc61e-4e31-4569-a614-07a65cb9646f",
+  "versionId": "c75e1412-8158-4a93-93ae-46cd0acff608",
   "meta": {
     "templateCredsSetupCompleted": false,
     "instanceId": "f5edd513-c7d9-4cd6-93fe-ea178e445a2a"

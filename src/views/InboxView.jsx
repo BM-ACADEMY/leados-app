@@ -300,6 +300,12 @@ export const InboxView = () => {
     setLocalMessages([]);
   }, [activeLeadId]);
 
+  // Opening a lead conversation also clears its Sales Task unread state for
+  // every connected user through the server's Socket.IO update.
+  useEffect(() => {
+    if (activeLeadId) api.put(`/sales-tasks/lead/${activeLeadId}/read`, {}).catch(() => {});
+  }, [activeLeadId]);
+
   // Removed old auto-scroll as Virtuoso handles it natively
 
   // Refs to hold latest values for socket listeners without causing re-connects

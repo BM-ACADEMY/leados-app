@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { io as socketIO } from 'socket.io-client';
 import { Home, Users, LineChart, Inbox, Zap, FileText, Brain, BarChart2, Building2, Settings, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Layers, UploadCloud, Columns, Sparkles, List, User, BookOpen, CheckSquare, MonitorPlay, Search, Activity, FileSearch, ShieldAlert, FileOutput, MapPin, Share2, Eye, FileJson, GitPullRequest, Link as LinkIcon, Target, Shield, UserPlus, Heart, Megaphone, Globe, ClipboardList, Wand2 } from 'lucide-react';
 import { C } from '../../constants/theme.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
+import { api } from '../../services/api.js';
 
 const NAV = [
   { path: '/dashboard', Icon: Home, label: 'Dashboard' },
   { path: '/leads', Icon: Users, label: 'Leads' },
-  { path: '/sales-tasks', Icon: User, label: 'Sales Task' },
+  { path: '/sales-tasks', Icon: User, label: 'Sales Task', taskBadge: true },
   { path: '/inbox', Icon: Inbox, label: 'Inbox', showBadge: true },
   { path: '/campaigns', Icon: Zap, label: 'Campaigns' },
   { path: '/templates', Icon: FileText, label: 'Templates' },
@@ -20,14 +22,39 @@ const NAV = [
 ];
 
 export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }) => {
+  const navigate = useNavigate();
   const [isExpanded, setIsExpanded] = useState(window.innerWidth > 768);
   const [allianceOpen, setAllianceOpen] = useState(false);
   const [contentOsOpen, setContentOsOpen] = useState(false);
   const [thedalOsOpen, setThedalOsOpen] = useState(false);
   const [mafiyaOpen, setMafiyaOpen] = useState(false);
   const [rankDropCount, setRankDropCount] = useState(0);
+  const [taskUnreadCount, setTaskUnreadCount] = useState(0);
 
   const { clients, plans, activeClient, setActiveClient } = useClient();
+
+  useEffect(() => {
+    const loadUnread = () => api.get('/sales-tasks/unread-count')
+      .then(data => setTaskUnreadCount(data.count || 0))
+      .catch(() => {});
+    loadUnread();
+
+    const socket = socketIO(api.baseUrl, { transports: ['websocket', 'polling'] });
+    socket.on('sales_task_update', data => {
+      setTaskUnreadCount(data.unread_count || 0);
+      if (data.event === 'created' && data.task && 'Notification' in window && Notification.permission === 'granted') {
+        const labels = { call: 'New demo call booked', hot_lead: 'New hot lead', followup: 'New follow-up task', overdue: 'Overdue follow-up' };
+        const notification = new Notification(labels[data.task.task_type] || 'New sales task', { body: 'Click to open the lead conversation.', tag: `sales-task-${data.task.id}` });
+        notification.onclick = async () => {
+          window.focus();
+          await api.put(`/sales-tasks/lead/${data.task.lead_id}/read`, {}).catch(() => {});
+          navigate('/inbox', { state: { leadId: data.task.lead_id } });
+          notification.close();
+        };
+      }
+    });
+    return () => socket.disconnect();
+  }, [navigate]);
 
   // Fetch unread rank drop alert count
   useEffect(() => {
@@ -64,7 +91,10 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const handleNavClick = () => {
+  const handleNavClick = (item) => {
+    if (item?.path === '/sales-tasks' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
     if (window.innerWidth <= 768) {
       setMobileOpen(false);
     }
@@ -128,12 +158,13 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, width: '100%', padding: isExpanded ? '0 12px' : '0 7px' }}>
           {NAV.map((item) => {
             const Icon = item.Icon;
-            const displayBadge = item.showBadge && unreadCount > 0;
+            const badgeCount = item.taskBadge ? taskUnreadCount : unreadCount;
+            const displayBadge = (item.showBadge || item.taskBadge) && badgeCount > 0;
             return (
               <NavLink
                 key={item.path}
                 to={item.path}
-                onClick={handleNavClick}
+                onClick={() => handleNavClick(item)}
                 title={!isExpanded ? item.label : undefined}
                 style={({ isActive }) => ({
                   width: '100%',
@@ -156,8 +187,8 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
                     <Icon size={17} color={isActive ? C.accent : C.muted} />
                     {isExpanded && <span style={{ marginLeft: 12, fontSize: 13, fontWeight: isActive ? 600 : 500, color: isActive ? C.accent : C.text }}>{item.label}</span>}
                     {displayBadge && (
-                      <div style={{ position: 'absolute', top: 6, right: isExpanded ? 12 : 6, width: 13, height: 13, borderRadius: '50%', background: C.accent, fontSize: 8, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
-                        {unreadCount}
+                      <div style={{ position: 'absolute', top: 5, right: isExpanded ? 10 : 3, minWidth: 17, height: 17, padding: '0 4px', borderRadius: 9, background: C.accent, fontSize: 8, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, boxSizing: 'border-box' }}>
+                        {badgeCount > 99 ? '99+' : badgeCount}
                       </div>
                     )}
                   </>

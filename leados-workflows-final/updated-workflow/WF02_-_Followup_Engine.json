@@ -7,13 +7,13 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "*/10 * * * *"
+              "expression": "* * * * *"
             }
           ]
         }
       },
       "id": "1ca6c5f2-3ef3-498f-855c-9bd31421fafe",
-      "name": "Check Every 10 Minutes",
+      "name": "Check Every Minute",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
@@ -327,14 +327,66 @@
         2160,
         200
       ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/demo-reminders/due",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "d6e5f401-1000-4b00-9000-000000000001",
+      "name": "Find Due Demo Reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "reminders",
+        "options": {}
+      },
+      "id": "d6e5f401-1000-4b00-9000-000000000002",
+      "name": "Split Demo Reminders",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        520,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/demo-reminders/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, booking_time: $json.booking_time, reminder_minutes: Number($json.reminder_minutes) }) }}"
+      },
+      "id": "d6e5f401-1000-4b00-9000-000000000003",
+      "name": "Send AI Demo Reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        420
+      ]
     }
   ],
   "connections": {
-    "Check Every 10 Minutes": {
+    "Check Every Minute": {
       "main": [
         [
           {
             "node": "Find Due Followups",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Find Due Demo Reminders",
             "type": "main",
             "index": 0
           }
@@ -500,6 +552,28 @@
         [
           {
             "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Due Demo Reminders": {
+      "main": [
+        [
+          {
+            "node": "Split Demo Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Demo Reminders": {
+      "main": [
+        [
+          {
+            "node": "Send AI Demo Reminder",
             "type": "main",
             "index": 0
           }

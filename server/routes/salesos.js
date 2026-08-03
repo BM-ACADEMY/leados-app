@@ -9,6 +9,39 @@ const axios = require('axios');
 
 const openRouter = require('../services/openrouter');
 const ai = openRouter.isConfigured ? openRouter : null;
+const demoReminderReady = pool.query(`
+  CREATE TABLE IF NOT EXISTS demo_call_reminders (
+    id BIGSERIAL PRIMARY KEY,
+    lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    booking_time TIMESTAMP NOT NULL,
+    reminder_minutes INTEGER NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'processing',
+    message TEXT,
+    wa_message_id TEXT,
+    sent_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (lead_id, booking_time, reminder_minutes)
+  )
+`).catch(err => console.error('[Demo Reminders] Table initialization failed:', err.message));
+const salesTasksReady = pool.query(`ALTER TABLE sales_tasks ADD COLUMN IF NOT EXISTS unread BOOLEAN NOT NULL DEFAULT TRUE`)
+  .catch(err => console.error('[Sales Tasks] Unread initialization failed:', err.message));
+
+async function emitSalesTaskUpdate(req, event, task = null) {
+  const countResult = await pool.query(`SELECT COUNT(*)::int AS count FROM sales_tasks WHERE unread = TRUE AND status <> 'completed'`);
+  req.app.get('io')?.emit('sales_task_update', { event, task, unread_count: countResult.rows[0].count });
+}
+
+async function ensureSalesTask(req, leadId, taskType) {
+  await salesTasksReady;
+  const result = await pool.query(`
+    INSERT INTO sales_tasks (lead_id, task_type, unread)
+    SELECT $1, $2, TRUE
+    WHERE NOT EXISTS (SELECT 1 FROM sales_tasks WHERE lead_id = $1 AND task_type = $2)
+    RETURNING id, lead_id, task_type, status, unread, created_at
+  `, [leadId, taskType]);
+  if (result.rows[0]) await emitSalesTaskUpdate(req, 'created', result.rows[0]);
+  return result.rows[0] || null;
+}
 
 // Resolve a raw Meta WhatsApp payload synchronously so n8n can continue the
 // same execution with the spoken text instead of ending on an audio placeholder.
@@ -891,6 +924,14 @@ router.post('/ai/response', async (req, res) => {
          if (extractedData.extracted_booking_time) {
            // When a booking time is extracted, set status to 'booked' to STOP follow-ups
            await pool.query(`UPDATE leads SET call_booked_at = $1, status = 'booked', updated_at = NOW() WHERE id = $2`, [extractedData.extracted_booking_time, lead_id]);
+           await salesTasksReady;
+           const taskResult = await pool.query(`
+             INSERT INTO sales_tasks (lead_id, task_type, unread)
+             SELECT $1, 'call', TRUE
+             WHERE NOT EXISTS (SELECT 1 FROM sales_tasks WHERE lead_id = $1 AND task_type = 'call')
+             RETURNING id, lead_id, task_type, status, unread, created_at
+           `, [lead_id]);
+           if (taskResult.rows[0]) await emitSalesTaskUpdate(req, 'created', taskResult.rows[0]);
            console.log(`[AI Booking] Lead ${lead_id} booked for ${extractedData.extracted_booking_time} - follow-ups STOPPED`);
          }
       }
@@ -967,6 +1008,7 @@ router.post('/leads/assign-owner', async (req, res) => {
     }
 
     await pool.query(`UPDATE leads SET owner = $1 WHERE id = $2`, [owner, lead_id]);
+    if (lead_score >= 75) await ensureSalesTask(req, lead_id, 'hot_lead');
     res.json({ ...req.body, owner });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -986,6 +1028,7 @@ router.post('/leads/update', async (req, res) => {
       `UPDATE leads SET status = COALESCE($1, status), owner = COALESCE($2, owner), updated_at = NOW() WHERE id = $3`,
       [status, owner, lead_id]
     );
+    if (status === 'hot') await ensureSalesTask(req, lead_id, 'hot_lead');
     res.json({ ...req.body, success: true, status });
   } catch (err) {
     console.error(err);
@@ -1443,6 +1486,165 @@ Write one natural follow-up that continues the unfinished topic. Reference the s
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Demo-call reminder branch used by WF02. Each reminder is claimed with a
+// database uniqueness key, so a repeated n8n execution cannot double-send it.
+router.get('/demo-reminders/due', async (req, res) => {
+  try {
+    await demoReminderReady;
+    const result = await pool.query(`
+      SELECT l.id AS lead_id, l.name, l.phone, l.call_booked_at AS booking_time,
+             c.name AS brand, reminder.minutes AS reminder_minutes
+      FROM leads l
+      LEFT JOIN clients c ON c.id = l.client_id
+      CROSS JOIN (VALUES (60, 30), (30, 10), (10, 0)) AS reminder(minutes, lower_minutes)
+      WHERE l.call_booked_at > NOW()
+        AND LOWER(COALESCE(l.status, '')) = 'booked'
+        AND EXTRACT(EPOCH FROM (l.call_booked_at - NOW())) / 60 <= reminder.minutes
+        AND EXTRACT(EPOCH FROM (l.call_booked_at - NOW())) / 60 > reminder.lower_minutes
+        AND NOT EXISTS (
+          SELECT 1 FROM demo_call_reminders sent
+          WHERE sent.lead_id = l.id
+            AND sent.booking_time = l.call_booked_at
+            AND sent.reminder_minutes = reminder.minutes
+            AND sent.status IN ('processing', 'sent')
+        )
+      ORDER BY l.call_booked_at ASC
+    `);
+    res.json({ reminders: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/demo-reminders/send', async (req, res) => {
+  const { lead_id, booking_time, reminder_minutes } = req.body;
+  try {
+    await demoReminderReady;
+    if (!lead_id || !booking_time || ![60, 30, 10].includes(Number(reminder_minutes))) {
+      return res.status(400).json({ error: 'Invalid demo reminder' });
+    }
+
+    const leadResult = await pool.query(`
+      SELECT l.*, c.name AS brand_name, c.phone_number_id,
+             c.wa_access_token AS client_wa_token
+      FROM leads l LEFT JOIN clients c ON c.id = l.client_id
+      WHERE l.id = $1 AND l.call_booked_at = $2
+        AND l.call_booked_at > NOW() AND LOWER(COALESCE(l.status, '')) = 'booked'
+    `, [lead_id, booking_time]);
+    const lead = leadResult.rows[0];
+    if (!lead) return res.json({ success: true, skipped: true, reason: 'booking_changed_or_completed' });
+
+    const claim = await pool.query(`
+      INSERT INTO demo_call_reminders (lead_id, booking_time, reminder_minutes, status)
+      VALUES ($1, $2, $3, 'processing')
+      ON CONFLICT (lead_id, booking_time, reminder_minutes) DO UPDATE
+        SET status = 'processing'
+        WHERE demo_call_reminders.status = 'failed'
+      RETURNING id
+    `, [lead_id, booking_time, Number(reminder_minutes)]);
+    if (!claim.rows.length) return res.json({ success: true, skipped: true, reason: 'already_sent_or_processing' });
+
+    const firstName = (lead.name || '').split(' ')[0] || 'there';
+    const brand = lead.brand_name || 'our team';
+    const scheduledTime = new Date(lead.call_booked_at).toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short',
+    });
+    const historyResult = await pool.query(`
+      SELECT m.direction, m.content, m.sent_at
+      FROM messages m
+      JOIN conversations conversation ON conversation.id = m.conversation_id
+      WHERE conversation.lead_id = $1 AND m.content IS NOT NULL AND BTRIM(m.content) <> ''
+      ORDER BY m.sent_at DESC LIMIT 12
+    `, [lead_id]);
+    const history = historyResult.rows.reverse();
+    const latestInbound = [...history].reverse().find(item => item.direction === 'inbound');
+    const within24Hours = Boolean(latestInbound)
+      && Date.now() - new Date(latestInbound.sent_at).getTime() < 24 * 60 * 60 * 1000;
+
+    let message = `Hi ${firstName}, friendly reminder that your demo call with ${brand} starts in ${reminder_minutes} minutes at ${scheduledTime}. We look forward to speaking with you!`;
+    if (within24Hours && ai) {
+      try {
+        const conversationContext = history
+          .map(item => `${item.direction === 'inbound' ? 'Lead' : 'Assistant'}: ${item.content}`)
+          .join('\n');
+        message = await generateOpenRouterContent(`Write one personalized WhatsApp demo-call reminder using the previous conversation context.
+Lead first name: ${firstName}
+Brand: ${brand}
+Call time: ${scheduledTime}
+Time remaining: ${reminder_minutes} minutes
+Previous conversation (oldest to newest):
+${conversationContext}
+
+Naturally reference relevant details already discussed when useful. Do not invent facts, prices, offers, links, or meeting details. Be warm and professional, use at most 2 short sentences, and return only the message.`);
+      } catch (aiErr) {
+        console.error('[Demo Reminder] AI generation fallback:', aiErr.message);
+      }
+    }
+
+    let delivered = false;
+    let waMessageId = null;
+    const phoneNumberId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+    const waAccessToken = lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN;
+    if (lead.phone && phoneNumberId && waAccessToken) {
+      try {
+        let messagePayload;
+        if (within24Hours) {
+          messagePayload = { messaging_product: 'whatsapp', to: lead.phone.replace(/\D/g, ''), type: 'text', text: { body: message } };
+        } else {
+          const templateResult = await pool.query(`
+            SELECT name, language, body
+            FROM templates
+            WHERE LOWER(status) = 'approved'
+              AND UPPER(category) = 'UTILITY'
+              AND (client_id = $1 OR client_id IS NULL)
+              AND (name ILIKE ANY(ARRAY['%demo%', '%appointment%', '%reminder%', '%followup%'])
+                   OR body ILIKE ANY(ARRAY['%demo%', '%appointment%', '%reminder%', '%call%']))
+            ORDER BY (client_id = $1) DESC, approved_at DESC NULLS LAST, created_at DESC
+            LIMIT 1
+          `, [lead.client_id]);
+          const template = templateResult.rows[0];
+          if (!template) throw new Error('No approved demo/reminder utility template is available for this brand');
+
+          const placeholderNumbers = [...String(template.body || '').matchAll(/\{\{(\d+)\}\}/g)].map(match => Number(match[1]));
+          const parameterCount = placeholderNumbers.length ? Math.max(...placeholderNumbers) : 0;
+          const baseParameterValues = [firstName, brand, scheduledTime, String(reminder_minutes)];
+          const parameterValues = Array.from({ length: parameterCount }, (_, index) => baseParameterValues[index] || scheduledTime);
+          message = String(template.body || '').replace(/\{\{(\d+)\}\}/g, (_, number) => parameterValues[Number(number) - 1] || '');
+          messagePayload = {
+              messaging_product: 'whatsapp',
+              to: lead.phone.replace(/\D/g, ''),
+              type: 'template',
+              template: {
+                name: template.name,
+                language: { code: template.language || 'en' },
+                ...(parameterCount ? { components: [{ type: 'body', parameters: parameterValues.map(text => ({ type: 'text', text })) }] } : {}),
+              },
+            };
+        }
+        const waRes = await axios.post(
+          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+          messagePayload,
+          { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+        );
+        waMessageId = waRes.data?.messages?.[0]?.id || null;
+        delivered = true;
+      } catch (waErr) {
+        console.error('[Demo Reminder] WhatsApp send failed:', waErr.response?.data || waErr.message);
+      }
+    }
+
+    const conversationId = await getOrUpsertConversation(lead_id);
+    await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`, [message, conversationId]);
+    await pool.query(`INSERT INTO messages (conversation_id, direction, msg_type, content, wa_msg_id, status, is_ai, sent_at) VALUES ($1, 'outbound', 'text', $2, $3, $4, $5, NOW())`, [conversationId, message, waMessageId, delivered ? 'sent' : 'failed', within24Hours]);
+    await pool.query(`UPDATE demo_call_reminders SET status = $1, message = $2, wa_message_id = $3, sent_at = CASE WHEN $1 = 'sent' THEN NOW() END WHERE id = $4`, [delivered ? 'sent' : 'failed', message, waMessageId, claim.rows[0].id]);
+
+    if (!delivered) return res.status(502).json({ success: false, error: 'WhatsApp reminder could not be delivered' });
+    res.json({ success: true, delivered: true, reminder_minutes, message });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ==========================================
 // WF03 - Reminder Engine
 // ==========================================
@@ -1784,7 +1986,8 @@ router.post('/leads/update-followup', async (req, res) => {
         AND status NOT IN ('converted', 'booked', 'opt-out', 'lost')
         AND call_booked_at IS NULL
     `;
-    await pool.query(query, [increment, lead_id]);
+    const updated = await pool.query(query + ' RETURNING next_followup_due', [increment, lead_id]);
+    if (updated.rows[0]?.next_followup_due) await ensureSalesTask(req, lead_id, 'followup');
     res.json({ ...req.body, success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1832,7 +2035,7 @@ router.get('/reports/reminder-bundle', async (req, res) => {
     const insertTask = async (lead_id, type) => {
        const exists = await pool.query(`SELECT id FROM sales_tasks WHERE lead_id = $1 AND task_type = $2 AND DATE(created_at) = CURRENT_DATE`, [lead_id, type]);
        if (exists.rows.length === 0) {
-         await pool.query(`INSERT INTO sales_tasks (lead_id, task_type) VALUES ($1, $2)`, [lead_id, type]);
+         await ensureSalesTask(req, lead_id, type);
        }
     };
     for (const c of calls.rows) await insertTask(c.lead_id || c.id, 'call');
@@ -1898,12 +2101,46 @@ router.post('/communication/notify-staff', async (req, res) => {
 // ==========================================
 router.get('/sales-tasks', async (req, res) => {
   try {
+    await salesTasksReady;
+    // Keep one persistent task for every lead that currently needs sales action.
+    // Completed tasks are intentionally not recreated for the same lead/type.
+    const insertedTasks = await pool.query(`
+      INSERT INTO sales_tasks (lead_id, task_type)
+      SELECT l.id, task.task_type
+      FROM leads l
+      CROSS JOIN LATERAL (
+        VALUES
+          (CASE WHEN l.call_booked_at IS NOT NULL AND LOWER(COALESCE(l.status, '')) = 'booked' THEN 'call' END),
+          (CASE WHEN LOWER(COALESCE(l.status, '')) = 'hot' THEN 'hot_lead' END),
+          (CASE WHEN l.next_followup_due IS NOT NULL AND LOWER(COALESCE(l.status, '')) NOT IN ('converted', 'booked', 'lost', 'opt-out') THEN 'followup' END)
+      ) AS task(task_type)
+      WHERE task.task_type IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM sales_tasks existing
+          WHERE existing.lead_id = l.id AND existing.task_type = task.task_type
+        )
+      RETURNING id, lead_id, task_type, status, unread, created_at
+    `);
+    for (const task of insertedTasks.rows) await emitSalesTaskUpdate(req, 'created', task);
+
     const result = await pool.query(`
-      SELECT st.*, l.name, l.phone, l.email, l.status as lead_status 
+      SELECT st.*, l.id AS lead_id, l.name, l.phone, l.email,
+             l.status AS lead_status, l.stage, l.source, l.interest, l.score,
+             l.call_booked_at, l.next_followup_due,
+             (SELECT MAX(conversation.last_message_at) FROM conversations conversation WHERE conversation.lead_id = l.id) AS last_contact,
+             l.created_at AS lead_created_at,
+             c.name AS brand_name, u.name AS assigned_name
       FROM sales_tasks st
       JOIN leads l ON st.lead_id = l.id
-      WHERE DATE(st.created_at) = CURRENT_DATE
-      ORDER BY st.status DESC, st.created_at DESC
+      LEFT JOIN clients c ON c.id = l.client_id
+      LEFT JOIN users u ON u.id = l.assigned_to
+      WHERE st.status <> 'completed'
+        AND (
+          (st.task_type = 'call' AND l.call_booked_at IS NOT NULL AND LOWER(COALESCE(l.status, '')) = 'booked')
+          OR (st.task_type = 'hot_lead' AND LOWER(COALESCE(l.status, '')) = 'hot')
+          OR (st.task_type IN ('followup', 'overdue') AND l.next_followup_due IS NOT NULL AND LOWER(COALESCE(l.status, '')) NOT IN ('converted', 'booked', 'lost', 'opt-out'))
+        )
+      ORDER BY st.created_at DESC, st.id DESC
     `);
     res.json({ success: true, tasks: result.rows });
   } catch (err) {
@@ -1913,6 +2150,7 @@ router.get('/sales-tasks', async (req, res) => {
 
 router.put('/sales-tasks/:id/status', async (req, res) => {
   try {
+    await salesTasksReady;
     const { status } = req.body;
     let query = `UPDATE sales_tasks SET status = $1, updated_at = NOW()`;
     if (status === 'completed') {
@@ -1920,15 +2158,35 @@ router.put('/sales-tasks/:id/status', async (req, res) => {
     }
     query += ` WHERE id = $2 RETURNING *`;
     const result = await pool.query(query, [status, req.params.id]);
+    await emitSalesTaskUpdate(req, 'status_changed', result.rows[0]);
     res.json({ success: true, task: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+router.get('/sales-tasks/unread-count', async (req, res) => {
+  try {
+    await salesTasksReady;
+    const result = await pool.query(`SELECT COUNT(*)::int AS count FROM sales_tasks WHERE unread = TRUE AND status <> 'completed'`);
+    res.json({ success: true, count: result.rows[0].count });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/sales-tasks/lead/:leadId/read', async (req, res) => {
+  try {
+    await salesTasksReady;
+    await pool.query(`UPDATE sales_tasks SET unread = FALSE, updated_at = NOW() WHERE lead_id = $1 AND unread = TRUE`, [req.params.leadId]);
+    await emitSalesTaskUpdate(req, 'read', { lead_id: Number(req.params.leadId) });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.delete('/sales-tasks/:id', async (req, res) => {
   try {
-    await pool.query(`DELETE FROM sales_tasks WHERE id = $1`, [req.params.id]);
+    await salesTasksReady;
+    const result = await pool.query(`DELETE FROM sales_tasks WHERE id = $1 RETURNING id, lead_id, task_type`, [req.params.id]);
+    await emitSalesTaskUpdate(req, 'deleted', result.rows[0] || null);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1956,6 +2214,15 @@ router.post('/leads/book-call', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: "Lead not found" });
     }
+
+    await salesTasksReady;
+    const taskResult = await pool.query(`
+      INSERT INTO sales_tasks (lead_id, task_type, unread)
+      SELECT $1, 'call', TRUE
+      WHERE NOT EXISTS (SELECT 1 FROM sales_tasks WHERE lead_id = $1 AND task_type = 'call')
+      RETURNING id, lead_id, task_type, status, unread, created_at
+    `, [lead_id]);
+    if (taskResult.rows[0]) await emitSalesTaskUpdate(req, 'created', taskResult.rows[0]);
 
     console.log(`[Book Call] Lead ${lead_id} booked for ${booking_time} - follow-ups will STOP`);
     res.json({ success: true, lead: result.rows[0], message: "Call booked! Follow-ups have been stopped for this lead." });

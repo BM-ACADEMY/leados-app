@@ -14,6 +14,13 @@ const inp = {
   outline: 'none', boxSizing: 'border-box', transition: 'border-color .2s',
 };
 
+const SOURCE_FILTERS = [
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'website', label: 'Website' },
+  { value: 'xls_sheet', label: 'XLS Sheet' },
+];
+
 function AddLeadModal({ open, onClose, onSaved, clients, users, sources }) {
   const [form, setForm] = useState({ name: '', phone: '', source: '', interest: '', client_id: '', assigned_to: '' });
   const [saving, setSaving] = useState(false);
@@ -398,6 +405,106 @@ function MetaLeadDetailsModal({ lead, onClose }) {
   );
 }
 
+function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress }) {
+  const [mode, setMode] = useState('all');
+  const [source, setSource] = useState('facebook');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [selectedCount, setSelectedCount] = useState(null);
+  const [counting, setCounting] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setMode('all');
+      setSource('facebook');
+      setFrom('');
+      setTo('');
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    if (mode === 'date' && (!from || !to || new Date(from) > new Date(to))) {
+      setSelectedCount(null);
+      setCounting(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setCounting(true);
+      try {
+        const filters = { limit: 1, offset: 0 };
+        if (mode === 'source') filters.source = source;
+        if (mode === 'date') {
+          filters.from = new Date(from).toISOString();
+          filters.to = new Date(to).toISOString();
+        }
+        const data = await api.getLeads(filters);
+        if (!cancelled) setSelectedCount(data.total || 0);
+      } catch {
+        if (!cancelled) setSelectedCount(null);
+      } finally {
+        if (!cancelled) setCounting(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [open, mode, source, from, to]);
+
+  if (!open) return null;
+
+  const optionStyle = (active) => ({
+    padding: 12, borderRadius: 9, cursor: 'pointer', display: 'flex', gap: 9, alignItems: 'center',
+    background: active ? `${C.accent}18` : C.surface,
+    border: `1px solid ${active ? C.accent : C.border}`, color: active ? C.text : C.muted,
+  });
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (mode === 'date' && (!from || !to)) return toast.error('Select both From and To date/time');
+    if (mode === 'date' && new Date(from) > new Date(to)) return toast.error('From date must be before To date');
+    onExport({ mode, source, from, to });
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.68)', backdropFilter: 'blur(4px)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <form onSubmit={submit} onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, background: C.card, border: `1px solid ${C.border}`, borderRadius: 15, padding: 24, boxShadow: '0 24px 64px rgba(0,0,0,.6)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+          <div><h2 style={{ margin: 0, color: C.text, fontSize: 17 }}>Export Leads</h2><p style={{ margin: '3px 0 0', color: C.muted, fontSize: 11 }}>Choose which records to download</p></div>
+          <button type="button" onClick={onClose} style={{ background: 'transparent', border: 0, cursor: 'pointer' }}><X size={17} color={C.muted} /></button>
+        </div>
+        <div style={{ display: 'grid', gap: 9 }}>
+          <label style={optionStyle(mode === 'all')}><input type="radio" name="exportMode" checked={mode === 'all'} onChange={() => setMode('all')} /> <span><strong>Export All</strong><small style={{ display: 'block', marginTop: 2 }}>Every lead across all pages</small></span></label>
+          <label style={optionStyle(mode === 'source')}><input type="radio" name="exportMode" checked={mode === 'source'} onChange={() => setMode('source')} /> <span><strong>Export by Source</strong><small style={{ display: 'block', marginTop: 2 }}>Only leads from one selected source</small></span></label>
+          {mode === 'source' && <select value={source} onChange={e => setSource(e.target.value)} style={{ ...inp, marginTop: -3 }}>
+            {SOURCE_FILTERS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select>}
+          <label style={optionStyle(mode === 'date')}><input type="radio" name="exportMode" checked={mode === 'date'} onChange={() => setMode('date')} /> <span><strong>Export by Custom Date Range</strong><small style={{ display: 'block', marginTop: 2 }}>Leads created within a date/time period</small></span></label>
+          {mode === 'date' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <label style={{ color: C.muted, fontSize: 11 }}>From<input type="datetime-local" value={from} onChange={e => setFrom(e.target.value)} style={{ ...inp, marginTop: 5 }} /></label>
+            <label style={{ color: C.muted, fontSize: 11 }}>To<input type="datetime-local" value={to} onChange={e => setTo(e.target.value)} style={{ ...inp, marginTop: 5 }} /></label>
+          </div>}
+        </div>
+        <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 8, background: `${C.accent}10`, border: `1px solid ${C.accent}35`, color: C.text, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ color: C.muted }}>{exporting ? 'Export progress' : 'Selected leads'}</span>
+          <strong style={{ color: C.accent, fontSize: 15 }}>{exporting
+            ? `${(exportProgress.processed || 0).toLocaleString()} / ${(exportProgress.total || selectedCount || 0).toLocaleString()} (${exportProgress.percent || 0}%)`
+            : counting ? 'Counting...' : selectedCount === null ? '—' : selectedCount.toLocaleString()}</strong>
+        </div>
+        {exporting && <div style={{ height: 5, marginTop: 7, background: C.surface, borderRadius: 5, overflow: 'hidden' }}><div style={{ width: `${exportProgress.percent || 0}%`, height: '100%', background: C.accent, transition: 'width .3s' }} /></div>}
+        <div style={{ display: 'flex', gap: 9, marginTop: 20 }}>
+          <button type="button" onClick={onClose} style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, color: C.muted, borderRadius: 8, padding: 10, cursor: 'pointer' }}>{exporting ? 'Close' : 'Cancel'}</button>
+          <button type="submit" disabled={exporting} style={{ flex: 2, background: C.accent, border: 0, color: '#fff', borderRadius: 8, padding: 10, fontWeight: 700, cursor: exporting ? 'wait' : 'pointer', opacity: exporting ? .7 : 1 }}>{exporting ? 'Preparing export...' : 'Download CSV'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 // ─── Main View ─────────────────────────────────────────────
 export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [filter, setFilter] = useState('all');
@@ -405,6 +512,9 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [syncingFB, setSyncingFB] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState({ processed: 0, total: 0, percent: 0 });
   const itemsPerPage = 10;
 
   const { leads: apiLeads, total, loading, error, refetch } = useLeads({
@@ -446,32 +556,41 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
     api.getSources().then(d => setModalSources([...new Set(d.sources || [])])).catch(() => { });
   }, []);
 
-  const handleExport = () => {
-    if (!filtered || filtered.length === 0) return toast.error('No leads to export.');
-    const headers = ['Name', 'Phone', 'Source', 'Brand', 'Status', 'Score', 'Assigned', 'Interest', 'Last Contact'];
-    const csvContent = [
-      headers.join(','),
-      ...filtered.map(l => [
-        `"${l.name || ''}"`,
-        `="${l.phone || ''}"`,
-        `"${l.source || ''}"`,
-        `"${l.brand_name || ''}"`,
-        `"${l.status || ''}"`,
-        `${l.score || 0}`,
-        `"${l.assigned_name || ''}"`,
-        `"${(l.interest || '').replace(/"/g, '""')}"`,
-        `"${l.last_contact ? new Date(l.last_contact).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}"`
-      ].join(','))
-    ].join('\n');
+  const handleExport = async ({ mode, source, from, to }) => {
+    setExporting(true);
+    setExportProgress({ processed: 0, total: 0, percent: 0 });
+    try {
+      const job = await api.createLeadExport({ mode, source, from, to });
+      if (!job.total_records) throw new Error('No leads found for this export.');
+      setExportProgress({ processed: 0, total: job.total_records, percent: 0 });
+      toast.success(`Export scheduled for ${Number(job.total_records).toLocaleString()} leads`);
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `leads_export_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      let status = job;
+      while (!['completed', 'failed'].includes(status.status)) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        status = await api.getLeadExport(job.id);
+        const processed = Number(status.processed_records || 0);
+        const total = Number(status.total_records || job.total_records);
+        setExportProgress({ processed, total, percent: total ? Math.min(100, Math.round((processed / total) * 100)) : 0 });
+      }
+      if (status.status === 'failed') throw new Error(status.error_message || 'Background export failed');
+
+      const blob = await api.downloadLeadExport(job.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `leads_export_${mode}_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setShowExportModal(false);
+      toast.success(`Exported ${Number(status.processed_records).toLocaleString()} leads`);
+    } catch (err) {
+      toast.error('Export failed: ' + err.message);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleDownloadTemplate = () => {
@@ -498,6 +617,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('force_source', 'XLS Sheet');
       const res = await api.importLeads(formData);
       toast.success(`Successfully imported ${res.imported} leads!`);
       if (refetch) refetch();
@@ -542,6 +662,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
       />
       <PaymentLinkModal lead={paymentLead} onClose={() => setPaymentLead(null)} />
       <MetaLeadDetailsModal lead={metaLeadDetails} onClose={() => setMetaLeadDetails(null)} />
+      <ExportLeadsModal open={showExportModal} onClose={() => setShowExportModal(false)} onExport={handleExport} exporting={exporting} exportProgress={exportProgress} />
 
       <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
         <div>
@@ -560,7 +681,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
             <FileSpreadsheet size={12} /> Template
           </button>
           <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', opacity: importing ? 0.6 : 1 }}><Upload size={12} />{importing ? 'Importing...' : 'Import CSV'}</button>
-          <button onClick={handleExport} style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}><Download size={12} />Export</button>
+          <button onClick={() => setShowExportModal(true)} style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}><Download size={12} />Export</button>
           <button
             onClick={async () => {
               if (syncingFB) return;
@@ -618,8 +739,8 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
           <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36, display: 'flex', alignItems: 'center' }}>
             <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', cursor: 'pointer', textTransform: 'capitalize' }}>
               <option value="all" style={{ background: C.card, color: C.text }}>All Sources</option>
-              {modalSources.map(s => (
-                <option key={s} value={s} style={{ background: C.card, color: C.text }}>{s}</option>
+              {SOURCE_FILTERS.map(source => (
+                <option key={source.value} value={source.value} style={{ background: C.card, color: C.text }}>{source.label}</option>
               ))}
             </select>
           </div>

@@ -1458,10 +1458,209 @@ app.post('/api/workflows/log', auth, async (req, res) => {
   }
 });
 
+const LEAD_EXPORT_DIR = path.join(__dirname, 'uploads', 'lead-exports');
+const activeLeadExports = new Set();
+const leadExportReady = pool.query(`
+  CREATE TABLE IF NOT EXISTS lead_export_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT,
+    mode VARCHAR(20) NOT NULL,
+    filters JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status VARCHAR(20) NOT NULL DEFAULT 'queued',
+    total_records INTEGER NOT NULL DEFAULT 0,
+    processed_records INTEGER NOT NULL DEFAULT 0,
+    file_path TEXT,
+    error_message TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP
+  )
+`).then(() => pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_export_jobs_user_created ON lead_export_jobs(user_id, created_at DESC)`));
+
+function addLeadExportFilters(filter, params) {
+  let sql = '';
+  const source = String(filter.source || '').toLowerCase();
+  if (source === 'facebook') {
+    sql += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'`;
+  } else if (source === 'whatsapp') {
+    sql += ` AND LOWER(TRIM(COALESCE(l.source, ''))) LIKE '%whatsapp%'`;
+  } else if (source === 'website') {
+    sql += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(website|web site)%'`;
+  } else if (source === 'xls_sheet') {
+    sql += ` AND (LOWER(TRIM(COALESCE(l.source, ''))) IN ('xls sheet', 'xlsx sheet', 'excel sheet', 'csv import') OR LOWER(TRIM(COALESCE(l.source, ''))) LIKE 'csv\\_%' ESCAPE '\\')`;
+  }
+  if (filter.from) {
+    params.push(filter.from);
+    sql += ` AND l.created_at >= $${params.length}`;
+  }
+  if (filter.to) {
+    params.push(filter.to);
+    sql += ` AND l.created_at <= $${params.length}`;
+  }
+  return sql;
+}
+
+function csvCell(value) {
+  const text = value == null ? '' : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function formatLeadExportDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }).format(date);
+}
+
+async function processLeadExportJob(jobId) {
+  if (activeLeadExports.has(jobId)) return;
+  activeLeadExports.add(jobId);
+  let stream;
+  try {
+    await leadExportReady;
+    const { rows } = await pool.query('SELECT * FROM lead_export_jobs WHERE id = $1', [jobId]);
+    const job = rows[0];
+    if (!job || job.status !== 'queued') return;
+
+    await pool.query(`UPDATE lead_export_jobs SET status = 'processing', started_at = NOW() WHERE id = $1`, [jobId]);
+    fs.mkdirSync(LEAD_EXPORT_DIR, { recursive: true });
+    const filePath = path.join(LEAD_EXPORT_DIR, `${jobId}.csv`);
+    stream = fs.createWriteStream(filePath, { encoding: 'utf8' });
+    stream.write('\uFEFFName,Phone,Source,Brand,Status,Score,Assigned,Interest,Created At\n');
+
+    const filter = job.filters || {};
+    let lastId = 0;
+    let processed = 0;
+    const batchSize = 2000;
+    while (true) {
+      const params = [lastId];
+      const where = addLeadExportFilters(filter, params);
+      params.push(batchSize);
+      const batch = await pool.query(`
+        SELECT l.id, l.name, l.phone, l.source, c.name AS brand_name, l.status,
+               l.score, u.name AS assigned_name, l.interest, l.created_at
+        FROM leads l
+        LEFT JOIN clients c ON c.id = l.client_id
+        LEFT JOIN users u ON u.id = l.assigned_to
+        WHERE l.id > $1 ${where}
+        ORDER BY l.id ASC
+        LIMIT $${params.length}
+      `, params);
+      if (!batch.rows.length) break;
+
+      for (const lead of batch.rows) {
+        stream.write([
+          lead.name, lead.phone, lead.source, lead.brand_name, lead.status, lead.score,
+          lead.assigned_name, lead.interest, formatLeadExportDate(lead.created_at),
+        ].map(csvCell).join(',') + '\n');
+      }
+      if (stream.writableNeedDrain) {
+        await new Promise((resolve, reject) => {
+          stream.once('drain', resolve);
+          stream.once('error', reject);
+        });
+      }
+      processed += batch.rows.length;
+      lastId = batch.rows[batch.rows.length - 1].id;
+      await pool.query('UPDATE lead_export_jobs SET processed_records = $1 WHERE id = $2', [processed, jobId]);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+
+    await new Promise((resolve, reject) => {
+      stream.on('error', reject);
+      stream.end(resolve);
+    });
+    stream = null;
+    await pool.query(`UPDATE lead_export_jobs SET status = 'completed', processed_records = $1, file_path = $2, completed_at = NOW() WHERE id = $3`, [processed, filePath, jobId]);
+  } catch (err) {
+    if (stream) stream.destroy();
+    console.error(`[Lead Export ${jobId}]`, err);
+    await pool.query(`UPDATE lead_export_jobs SET status = 'failed', error_message = $1, completed_at = NOW() WHERE id = $2`, [err.message, jobId]).catch(() => {});
+  } finally {
+    activeLeadExports.delete(jobId);
+  }
+}
+
+app.post('/api/leads/exports', auth, async (req, res) => {
+  try {
+    await leadExportReady;
+    const { mode = 'all', source, from, to } = req.body || {};
+    if (!['all', 'source', 'date'].includes(mode)) return res.status(400).json({ error: 'Invalid export mode' });
+    if (mode === 'source' && !['facebook', 'whatsapp', 'website', 'xls_sheet'].includes(source)) return res.status(400).json({ error: 'Invalid source' });
+    if (mode === 'date' && (!from || !to || Number.isNaN(new Date(from).getTime()) || Number.isNaN(new Date(to).getTime()) || new Date(from) > new Date(to))) {
+      return res.status(400).json({ error: 'Invalid date range' });
+    }
+    const filters = mode === 'source' ? { source } : mode === 'date' ? { from: new Date(from).toISOString(), to: new Date(to).toISOString() } : {};
+    const countParams = [];
+    const where = addLeadExportFilters(filters, countParams);
+    const countResult = await pool.query(`SELECT COUNT(*)::int AS count FROM leads l WHERE 1=1 ${where}`, countParams);
+    const totalRecords = countResult.rows[0].count;
+    const userId = req.user.id || req.user.user_id || null;
+    const result = await pool.query(`
+      INSERT INTO lead_export_jobs (user_id, mode, filters, total_records)
+      VALUES ($1, $2, $3::jsonb, $4) RETURNING id, status, total_records
+    `, [userId, mode, JSON.stringify(filters), totalRecords]);
+    const job = result.rows[0];
+    setImmediate(() => processLeadExportJob(job.id));
+    res.status(202).json(job);
+  } catch (err) {
+    console.error('Create lead export error:', err);
+    res.status(500).json({ error: 'Could not start export' });
+  }
+});
+
+app.get('/api/leads/exports/:id', auth, async (req, res) => {
+  await leadExportReady;
+  const userId = req.user.id || req.user.user_id || null;
+  const { rows } = await pool.query(`SELECT id, status, total_records, processed_records, error_message, created_at, completed_at FROM lead_export_jobs WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2`, [req.params.id, userId]);
+  if (!rows.length) return res.status(404).json({ error: 'Export not found' });
+  res.json(rows[0]);
+});
+
+app.get('/api/leads/exports/:id/download', auth, async (req, res) => {
+  await leadExportReady;
+  const userId = req.user.id || req.user.user_id || null;
+  const { rows } = await pool.query(`SELECT status, file_path, mode FROM lead_export_jobs WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2`, [req.params.id, userId]);
+  const job = rows[0];
+  if (!job) return res.status(404).json({ error: 'Export not found' });
+  if (job.status !== 'completed' || !job.file_path || !fs.existsSync(job.file_path)) return res.status(409).json({ error: 'Export is not ready' });
+  res.download(job.file_path, `leads_export_${job.mode}_${new Date().toISOString().slice(0, 10)}.csv`);
+});
+
+// Resume interrupted jobs after a server restart.
+leadExportReady.then(async () => {
+  await pool.query(`UPDATE lead_export_jobs SET status = 'queued', error_message = NULL WHERE status = 'processing'`);
+  const { rows } = await pool.query(`SELECT id FROM lead_export_jobs WHERE status = 'queued' ORDER BY created_at ASC`);
+  for (const row of rows) setImmediate(() => processLeadExportJob(row.id));
+}).catch(err => console.error('[Lead Export] Startup recovery failed:', err.message));
+
+// Export files are temporary. Clean up completed/failed jobs after 48 hours.
+cron.schedule('17 */6 * * *', async () => {
+  try {
+    await leadExportReady;
+    const { rows } = await pool.query(`SELECT id, file_path FROM lead_export_jobs WHERE created_at < NOW() - INTERVAL '48 hours'`);
+    for (const job of rows) {
+      if (job.file_path && fs.existsSync(job.file_path)) fs.unlinkSync(job.file_path);
+    }
+    await pool.query(`DELETE FROM lead_export_jobs WHERE created_at < NOW() - INTERVAL '48 hours'`);
+  } catch (err) {
+    console.error('[Lead Export] Cleanup failed:', err.message);
+  }
+});
+
 // GET /api/leads
 app.get('/api/leads', auth, async (req, res) => {
   try {
-    const { status, brand, search, source, limit = 100, offset = 0 } = req.query;
+    const { status, brand, search, source, from, to, limit = 100, offset = 0 } = req.query;
     let q = `
       SELECT l.*, COUNT(*) OVER() AS filtered_total, c.name as brand_name, u.name as assigned_name,
         COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id), 0) as unread,
@@ -1501,8 +1700,34 @@ app.get('/api/leads', auth, async (req, res) => {
       q += ` AND c.name ILIKE $${params.length}`;
     }
     if (source && source !== 'all') {
-      params.push(source);
-      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) = LOWER(TRIM($${params.length}))`;
+      const normalizedSource = String(source).toLowerCase();
+      if (normalizedSource === 'facebook') {
+        q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'`;
+      } else if (normalizedSource === 'whatsapp') {
+        q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) LIKE '%whatsapp%'`;
+      } else if (normalizedSource === 'website') {
+        q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(website|web site)%'`;
+      } else if (normalizedSource === 'xls_sheet') {
+        q += ` AND (
+          LOWER(TRIM(COALESCE(l.source, ''))) IN ('xls sheet', 'xlsx sheet', 'excel sheet', 'csv import')
+          OR LOWER(TRIM(COALESCE(l.source, ''))) LIKE 'csv\\_%' ESCAPE '\\'
+        )`;
+      } else {
+        params.push(source);
+        q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) = LOWER(TRIM($${params.length}))`;
+      }
+    }
+    if (from) {
+      const fromDate = new Date(from);
+      if (Number.isNaN(fromDate.getTime())) return res.status(400).json({ error: 'Invalid from date' });
+      params.push(fromDate.toISOString());
+      q += ` AND l.created_at >= $${params.length}`;
+    }
+    if (to) {
+      const toDate = new Date(to);
+      if (Number.isNaN(toDate.getTime())) return res.status(400).json({ error: 'Invalid to date' });
+      params.push(toDate.toISOString());
+      q += ` AND l.created_at <= $${params.length}`;
     }
     if (search) {
       params.push(`%${search}%`);
@@ -3157,7 +3382,11 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         }
 
         const status = req.body.force_status || (row.status || row.Status || 'new').toLowerCase();
-        const source = req.body.force_source || row.source || row.Source || 'CSV Import';
+        // Campaign imports use force_source as an internal recipient batch ID;
+        // expose their actual lead source consistently as XLS Sheet.
+        const source = isCampaignBatch
+          ? 'XLS Sheet'
+          : (req.body.force_source || row.source || row.Source || 'XLS Sheet');
         const score = parseInt(row.score || row.Score) || 0;
         const interest = row.interest || row.Interest || null;
 

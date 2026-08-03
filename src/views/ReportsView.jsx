@@ -19,17 +19,20 @@ export const ReportsView = () => {
   const [timeRange, setTimeRange] = useState('30d'); // '7d' | '30d' | '90d' | '12m'
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [appliedRange, setAppliedRange] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
         const [statsRes, clientsRes] = await Promise.all([
-          api.getDashboardStats({ range: timeRange }),
+          api.getDashboardStats(appliedRange ? { range: 'custom', from: appliedRange.from, to: appliedRange.to } : { range: timeRange }),
           api.getClients()
         ]);
         setStats(statsRes);
-        setClients(clientsRes.clients || []);
+        setClients(statsRes.brands || clientsRes.clients || []);
       } catch (err) {
         console.error('Error fetching reports data', err);
       } finally {
@@ -37,7 +40,21 @@ export const ReportsView = () => {
       }
     };
     fetchData();
-  }, [timeRange]);
+  }, [timeRange, appliedRange]);
+
+  const applyCustomRange = () => {
+    if (!fromDate || !toDate) return;
+    if (fromDate > toDate) return;
+    setAppliedRange({ from: fromDate, to: toDate });
+    setTimeRange('custom');
+  };
+
+  const resetCustomRange = () => {
+    setFromDate('');
+    setToDate('');
+    setAppliedRange(null);
+    setTimeRange('30d');
+  };
 
   const handleExport = () => {
     setExporting(true);
@@ -56,7 +73,7 @@ export const ReportsView = () => {
       const element = document.getElementById('reports-content-to-export');
       const opt = {
         margin:       10,
-        filename:     `LeadOS-Reports-Analytics-${timeRange}.pdf`,
+        filename:     `LeadOS-Reports-Analytics-${appliedRange ? `${appliedRange.from}-to-${appliedRange.to}` : timeRange}.pdf`,
         image:        { type: 'jpeg', quality: 0.98 },
         html2canvas:  { 
           scale: 2, 
@@ -152,10 +169,11 @@ export const ReportsView = () => {
           <p style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>
             Advanced analytical dashboard for brand conversion, scoring & revenue mapping.
           </p>
+          {appliedRange && <p style={{ color: C.accent, fontSize: 10, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}><Calendar size={11} />Custom range: {new Date(`${appliedRange.from}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' })} – {new Date(`${appliedRange.to}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</p>}
         </div>
         
         {/* Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, alignSelf: 'stretch', justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, alignSelf: 'stretch', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 2 }}>
             {[
               { id: '7d', label: '7D' },
@@ -164,10 +182,10 @@ export const ReportsView = () => {
             ].map(btn => (
               <button
                 key={btn.id}
-                onClick={() => setTimeRange(btn.id)}
+                onClick={() => { setTimeRange(btn.id); setAppliedRange(null); }}
                 style={{
-                  background: timeRange === btn.id ? C.card : 'transparent',
-                  color: timeRange === btn.id ? C.text : C.muted,
+                  background: !appliedRange && timeRange === btn.id ? C.card : 'transparent',
+                  color: !appliedRange && timeRange === btn.id ? C.text : C.muted,
                   border: 'none', padding: '5px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
                   transition: 'all 0.2s ease'
                 }}
@@ -175,6 +193,16 @@ export const ReportsView = () => {
                 {btn.label}
               </button>
             ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 7, padding: '7px 9px', background: C.surface, border: `1px solid ${appliedRange ? C.accent : C.border}`, borderRadius: 9, flexWrap: 'wrap' }}>
+            {[['From Date', fromDate, setFromDate], ['To Date', toDate, setToDate]].map(([label, value, setter]) => (
+              <label key={label} style={{ display: 'flex', flexDirection: 'column', gap: 3, color: C.muted, fontSize: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: .5 }}>
+                {label}
+                <input type="date" value={value} max={label === 'From Date' ? toDate || undefined : undefined} min={label === 'To Date' ? fromDate || undefined : undefined} onChange={e => setter(e.target.value)} style={{ colorScheme: 'dark', background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, padding: '5px 7px', fontSize: 10, outline: 'none', fontFamily: 'inherit' }} />
+              </label>
+            ))}
+            <button onClick={applyCustomRange} disabled={!fromDate || !toDate || fromDate > toDate} style={{ background: C.accent, color: '#fff', border: 0, borderRadius: 6, padding: '7px 10px', fontSize: 9, fontWeight: 700, cursor: 'pointer', opacity: !fromDate || !toDate || fromDate > toDate ? .45 : 1 }}>Apply</button>
+            <button onClick={resetCustomRange} style={{ background: 'transparent', color: C.muted, border: `1px solid ${C.border}`, borderRadius: 6, padding: '6px 9px', fontSize: 9, fontWeight: 600, cursor: 'pointer' }}>Reset</button>
           </div>
           
           <button 
@@ -199,7 +227,7 @@ export const ReportsView = () => {
           <div style={{ position: 'absolute', top: 18, right: 18, background: `${C.blue}15`, padding: 8, borderRadius: 8 }}>
             <Users size={16} color={C.blue} />
           </div>
-          <p style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Leads Today</p>
+          <p style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{appliedRange ? 'Leads in Range' : 'Leads Today'}</p>
           <h2 style={{ fontSize: 26, fontWeight: 800, color: C.text, margin: '8px 0 4px 0', fontFamily: "'Syne',sans-serif" }}>
             {loading ? '-' : stats?.leads_today}
           </h2>
@@ -209,7 +237,7 @@ export const ReportsView = () => {
             ) : (
               <span style={{ color: C.red, display: 'inline-flex', alignItems: 'center', fontWeight: 600 }}><TrendingDown size={12} style={{ marginRight: 2 }} />-{leadIngestPercentage.val}%</span>
             )}
-            <span style={{ color: C.muted }}>vs yesterday ({stats?.leads_yesterday})</span>
+            <span style={{ color: C.muted }}>vs {appliedRange ? 'previous period' : 'yesterday'} ({stats?.leads_yesterday})</span>
           </div>
         </div>
 
@@ -218,7 +246,7 @@ export const ReportsView = () => {
           <div style={{ position: 'absolute', top: 18, right: 18, background: `${C.green}15`, padding: 8, borderRadius: 8 }}>
             <DollarSign size={16} color={C.green} />
           </div>
-          <p style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Monthly Revenue</p>
+          <p style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{appliedRange ? 'Revenue in Range' : 'Monthly Revenue'}</p>
           <h2 style={{ fontSize: 26, fontWeight: 800, color: C.text, margin: '8px 0 4px 0', fontFamily: "'Syne',sans-serif" }}>
             {loading ? '-' : `₹${Math.round(stats?.revenue_month || 0).toLocaleString()}`}
           </h2>
@@ -228,7 +256,7 @@ export const ReportsView = () => {
             ) : (
               <span style={{ color: C.red, display: 'inline-flex', alignItems: 'center', fontWeight: 600 }}><TrendingDown size={12} style={{ marginRight: 2 }} />-{revenuePercentage.val}%</span>
             )}
-            <span style={{ color: C.muted }}>vs last month</span>
+            <span style={{ color: C.muted }}>vs {appliedRange ? 'previous period' : 'last month'}</span>
           </div>
         </div>
 
@@ -252,7 +280,7 @@ export const ReportsView = () => {
           <div style={{ position: 'absolute', top: 18, right: 18, background: `${C.purple}15`, padding: 8, borderRadius: 8 }}>
             <Award size={16} color={C.purple} />
           </div>
-          <p style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Conversions Today</p>
+          <p style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{appliedRange ? 'Conversions in Range' : 'Conversions Today'}</p>
           <h2 style={{ fontSize: 26, fontWeight: 800, color: C.text, margin: '8px 0 4px 0', fontFamily: "'Syne',sans-serif" }}>
             {loading ? '-' : stats?.converted_today}
           </h2>
@@ -262,7 +290,7 @@ export const ReportsView = () => {
             ) : (
               <span style={{ color: C.red, display: 'inline-flex', alignItems: 'center', fontWeight: 600 }}><TrendingDown size={12} style={{ marginRight: 2 }} />-{conversionPercentage.val}%</span>
             )}
-            <span style={{ color: C.muted }}>vs yesterday ({stats?.converted_yesterday})</span>
+            <span style={{ color: C.muted }}>vs {appliedRange ? 'previous period' : 'yesterday'} ({stats?.converted_yesterday})</span>
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { GoogleGenAI } = require('@google/genai');
+const openRouter = require('../services/openrouter');
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -11,7 +11,6 @@ const pool = new Pool({
   password: process.env.DB_PASS || 'LeadOS_DB@2026',
 });
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Ensure tables are altered for Content Factory columns
 const initDb = async () => {
@@ -85,7 +84,7 @@ router.post('/:clientId/generate-blog', async (req, res) => {
     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
     const client = clientRes.rows[0];
 
-    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !process.env.GEMINI_API_KEY;
+    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !openRouter.isConfigured;
     if (useDemoMode) {
       const aiRes = {
         title: `${keyword.toUpperCase()} - The Definitive Guide`,
@@ -154,8 +153,8 @@ router.post('/:clientId/generate-blog', async (req, res) => {
       "secondaryKeywords": ["...", "..."]
     }`;
 
-    const response = await genAI.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const response = await openRouter.models.generateContent({
+      model: openRouter.DEFAULT_MODEL,
       contents: prompt,
     });
 
@@ -185,7 +184,7 @@ router.post('/:clientId/rewrite-meta', async (req, res) => {
     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
     const client = clientRes.rows[0];
 
-    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !process.env.GEMINI_API_KEY;
+    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !openRouter.isConfigured;
     if (useDemoMode) {
       return res.json({
         result: {
@@ -222,8 +221,8 @@ router.post('/:clientId/rewrite-meta', async (req, res) => {
       "improvement": "why this version is better"
     }`;
 
-    const response = await genAI.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const response = await openRouter.models.generateContent({
+      model: openRouter.DEFAULT_MODEL,
       contents: prompt,
     });
 
@@ -245,7 +244,7 @@ router.post('/:clientId/topic-ideas', async (req, res) => {
     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
     const client = clientRes.rows[0];
 
-    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !process.env.GEMINI_API_KEY;
+    const useDemoMode = req.headers['x-data-mode'] === 'demo' || !openRouter.isConfigured;
     if (useDemoMode) {
       const topics = [];
       for (let i = 1; i <= count; i++) {
@@ -293,8 +292,8 @@ router.post('/:clientId/topic-ideas', async (req, res) => {
       ]
     }`;
 
-    const response = await genAI.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const response = await openRouter.models.generateContent({
+      model: openRouter.DEFAULT_MODEL,
       contents: prompt,
     });
 

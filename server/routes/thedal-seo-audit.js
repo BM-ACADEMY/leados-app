@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const cheerio = require('cheerio');
-const { GoogleGenAI } = require('@google/genai');
+const openRouter = require('../services/openrouter');
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -1254,13 +1254,12 @@ router.post('/', async (req, res) => {
     const lcMax = localChecks.reduce((a, c) => a + c.maxPoints, 0);
     const localScore = lcMax > 0 ? Math.round((lcEarned / lcMax) * 100) : 0;
 
-    // ─── AI RECOMMENDATIONS (GEMINI) ───────────────────────────────
+    // ─── AI RECOMMENDATIONS (OPENROUTER) ───────────────────────────
     let aiRecommendations = [];
     let contentScore = 0;
     
-    if (process.env.GEMINI_API_KEY) {
+    if (openRouter.isConfigured) {
       try {
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         const prompt = `Act as an Expert SEO Auditor. Analyze the following text extracted from a website: "${targetUrl}".
         Text content:
         ${pageText.substring(0, 8000)}
@@ -1276,8 +1275,8 @@ router.post('/', async (req, res) => {
           "recommendations": ["Recommendation 1", "Recommendation 2", "Recommendation 3"]
         }`;
 
-        const genRes = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+        const genRes = await openRouter.models.generateContent({
+          model: openRouter.DEFAULT_MODEL,
           contents: prompt
         });
 
@@ -1286,11 +1285,11 @@ router.post('/', async (req, res) => {
         contentScore = aiData.score || 0;
         aiRecommendations = aiData.recommendations || [];
       } catch (aiErr) {
-        console.error('Gemini AI error:', aiErr);
+        console.error('OpenRouter AI error:', aiErr);
         aiRecommendations = ["AI Analysis temporarily unavailable. Check API Key credentials."];
       }
     } else {
-      aiRecommendations = ["GEMINI_API_KEY not configured. Content analysis limited."];
+      aiRecommendations = ["OPENROUTER_API_KEY not configured. Content analysis limited."];
     }
 
     // ─── OVERALL RESPONSE PAYLOAD ──────────────────────────────────

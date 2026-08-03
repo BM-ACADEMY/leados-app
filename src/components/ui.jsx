@@ -10,7 +10,10 @@ export const Badge = ({status}) => {
     converted: {bg: '#0a2018', tc: '#34d399', l: 'Converted'},
     lost: {bg: '#1a0f2e', tc: '#a78bfa', l: 'Lost'},
   };
-  const s = M[status] || M.cold;
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  const s = M[normalizedStatus] || (normalizedStatus
+    ? { bg: '#161b22', tc: '#9ca3af', l: normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1) }
+    : M.cold);
   return (
     <span style={{background:s.bg,color:s.tc,padding:'3px 9px',borderRadius:20,fontSize:11,fontWeight:600,display:'inline-flex',alignItems:'center',gap:5}}>
       <span style={{width:5,height:5,borderRadius:'50%',background:s.tc}} />

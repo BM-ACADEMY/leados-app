@@ -7,13 +7,13 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "*/10 * * * *"
+              "expression": "* * * * *"
             }
           ]
         }
       },
       "id": "1ca6c5f2-3ef3-498f-855c-9bd31421fafe",
-      "name": "Check Every 10 Minutes",
+      "name": "Check Every Minute",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
@@ -66,12 +66,49 @@
     },
     {
       "parameters": {
-        "url": "https://leados-api.abmgroups.org/api/followups/rule",
+        "url": "https://leados-api.abmgroups.org/api/followups/sales-guard",
         "method": "POST",
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, stage: $json.stage, touch_count: $json.touch_count }) }}"
+      },
+      "id": "f0200001-4000-4000-8000-000000000001",
+      "name": "Check Sales Status And Notes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [
+            {
+              "id": "f0200003-4000-4000-8000-000000000003",
+              "leftValue": "={{ $json.proceed }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f0200002-4000-4000-8000-000000000002",
+      "name": "Followup Allowed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1010, -80]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/followups/rule",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, stage: $json.stage, touch_count: $json.touch_count, sales_status: $json.sales_status, sales_notes: $json.sales_notes, sales_followup_at: $json.sales_followup_at }) }}"
       },
       "id": "66a45e03-260a-485e-bd20-e975de9aef88",
       "name": "Fetch Followup Rule",
@@ -89,7 +126,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, stage: $json.stage, touch_count: $json.touch_count, base_channel: $json.base_channel, template_id: $json.template_id, payload_template: $json.payload_template, ai_prompt_template: $json.ai_prompt_template, delay_hours: $json.delay_hours }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, stage: $json.stage, touch_count: $json.touch_count, base_channel: $json.base_channel, template_id: $json.template_id, payload_template: $json.payload_template, ai_prompt_template: $json.ai_prompt_template, delay_hours: $json.delay_hours, sales_status: $json.sales_status, sales_notes: $json.sales_notes, sales_followup_at: $json.sales_followup_at }) }}"
       },
       "id": "b2aacbf1-e6d2-4d8f-b43f-24b06f6c18d2",
       "name": "Check 24h Window",
@@ -231,7 +268,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, delay_hours: $json.delay_hours, prompt: $json.action.ai_prompt_template }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, delay_hours: $json.delay_hours, prompt: $json.action.ai_prompt_template, sales_status: $json.sales_status, sales_notes: $json.sales_notes }) }}"
       },
       "id": "896d9474-f92e-4610-bc88-cb14321a1d79",
       "name": "Generate And Send Text",
@@ -327,14 +364,66 @@
         2160,
         200
       ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/demo-reminders/due",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "d6e5f401-1000-4b00-9000-000000000001",
+      "name": "Find Due Demo Reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "reminders",
+        "options": {}
+      },
+      "id": "d6e5f401-1000-4b00-9000-000000000002",
+      "name": "Split Demo Reminders",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        520,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://leados-api.abmgroups.org/api/demo-reminders/send",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, booking_time: $json.booking_time, reminder_minutes: Number($json.reminder_minutes) }) }}"
+      },
+      "id": "d6e5f401-1000-4b00-9000-000000000003",
+      "name": "Send AI Demo Reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        420
+      ]
     }
   ],
   "connections": {
-    "Check Every 10 Minutes": {
+    "Check Every Minute": {
       "main": [
         [
           {
             "node": "Find Due Followups",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Find Due Demo Reminders",
             "type": "main",
             "index": 0
           }
@@ -368,7 +457,36 @@
         [],
         [
           {
+            "node": "Check Sales Status And Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Sales Status And Notes": {
+      "main": [
+        [
+          {
+            "node": "Followup Allowed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Followup Allowed": {
+      "main": [
+        [
+          {
             "node": "Fetch Followup Rule",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Back Marker",
             "type": "main",
             "index": 0
           }
@@ -500,6 +618,28 @@
         [
           {
             "node": "Loop Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Due Demo Reminders": {
+      "main": [
+        [
+          {
+            "node": "Split Demo Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Demo Reminders": {
+      "main": [
+        [
+          {
+            "node": "Send AI Demo Reminder",
             "type": "main",
             "index": 0
           }

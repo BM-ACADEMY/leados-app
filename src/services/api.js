@@ -120,12 +120,37 @@ class LeadOSAPI {
       ...(filters.brand && { brand: filters.brand }),
       ...(filters.search && { search: filters.search }),
       ...(filters.source && { source: filters.source }),
+      ...(filters.from && { from: filters.from }),
+      ...(filters.to && { to: filters.to }),
     });
     return this.request(`/api/leads?${params}`);
   }
 
   async getLead(id) {
     return this.request(`/api/leads/${id}`);
+  }
+
+  async createLeadExport(options) {
+    return this.request('/api/leads/exports', {
+      method: 'POST',
+      body: JSON.stringify(options),
+    });
+  }
+
+  async getLeadExport(id) {
+    return this.request(`/api/leads/exports/${id}`);
+  }
+
+  async downloadLeadExport(id) {
+    const token = localStorage.getItem('leados_token');
+    const response = await fetch(`${API_URL}/api/leads/exports/${id}/download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Export download failed');
+    }
+    return response.blob();
   }
 
   async createLead(leadData) {
@@ -487,6 +512,10 @@ class LeadOSAPI {
     });
     const query = new URLSearchParams(cleanParams).toString();
     return this.request(`/api/reports/summary${query ? '?' + query : ''}`);
+  }
+
+  async getFounderDashboard() {
+    return this.request('/api/reports/founder-dashboard');
   }
 
   // ─── ALLIANCE OS ────────────────────────

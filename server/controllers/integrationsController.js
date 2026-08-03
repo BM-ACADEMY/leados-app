@@ -3,6 +3,14 @@ const cryptoHelper = require('../utils/crypto');
 const axios = require('axios');
 const { evaluateLeadBrandAndSchedule } = require('../services/aiBrain');
 
+const META_NEW_LEAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+const getMetaLeadStatus = (createdTime) => {
+  const createdAt = createdTime ? new Date(createdTime) : new Date();
+  if (Number.isNaN(createdAt.getTime())) return 'new';
+  return Date.now() - createdAt.getTime() <= META_NEW_LEAD_MAX_AGE_MS ? 'new' : 'cold';
+};
+
 async function linkMetaAccount(req, res) {
   const { brand_name, platform, account_name, account_id, facebook_page_id, instagram_business_id, access_token } = req.body;
 
@@ -183,8 +191,9 @@ async function handleMetaWebhook(req, res) {
 
             await db.query(`
               INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, lead_ad_form_id, campaign_id, campaign_name, ad_name, ad_id)
-              VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5, $6, $7, $8, $9, $10)
+              VALUES ($1, $2, $3, 'facebook', 'new', 10, $4, $5, $5, $6, $7, $8, $9, $10)
               ON CONFLICT (leadgen_id) DO UPDATE SET 
+                  status = COALESCE(NULLIF(TRIM(leads.status), ''), 'new'),
                   lead_ad_form_id = COALESCE(EXCLUDED.lead_ad_form_id, leads.lead_ad_form_id),
                   campaign_id = COALESCE(EXCLUDED.campaign_id, leads.campaign_id),
                   campaign_name = COALESCE(EXCLUDED.campaign_name, leads.campaign_name),
@@ -266,30 +275,44 @@ async function syncHistoricalLeads(req, res) {
         if (phone.startsWith('0')) phone = phone.substring(1);
         if (!phone.startsWith('91') && phone.length === 10) phone = '91' + phone;
 
+        const formIdStr = leadData.form_id || formId;
+        const campaignIdStr = leadData.campaign_id || null;
+        const campaignNameStr = leadData.campaign_name || null;
+        const adNameStr = leadData.ad_name || null;
+        const adIdStr = leadData.ad_id || null;
+        const syncedStatus = getMetaLeadStatus(leadData.created_time);
+
         // Ensure no phone conflict
         if (phone) {
            const pcRes = await db.query('SELECT id FROM leads WHERE phone = $1 AND client_id = $2', [phone, clientId]);
            if (pcRes.rows.length > 0) {
-              await db.query('UPDATE leads SET leadgen_id = $1, meta_lead_id = $1 WHERE id = $2', [leadgenId, pcRes.rows[0].id]);
+              await db.query(
+                `UPDATE leads SET leadgen_id = $1, meta_lead_id = $1,
+                  status = COALESCE(NULLIF(TRIM(status), ''), $2),
+                  lead_ad_form_id = COALESCE($3, lead_ad_form_id),
+                  campaign_id = COALESCE($4, campaign_id),
+                  campaign_name = COALESCE($5, campaign_name),
+                  ad_name = COALESCE($6, ad_name),
+                  ad_id = COALESCE($7, ad_id)
+                WHERE id = $8`,
+                [leadgenId, syncedStatus, formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr, pcRes.rows[0].id]
+              );
               continue;
            }
         }
 
-        const formIdStr = leadData.form_id || formId;
-        const campaignIdStr = leadData.campaign_id || null;
-        const adNameStr = leadData.ad_name || leadData.campaign_name || null;
-        const adIdStr = leadData.ad_id || null;
-
         try {
           await db.query(`
-            INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, created_at, lead_ad_form_id, campaign_id, ad_name, ad_id)
-            VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5, $6, $7, $8, $9, $10)
+            INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, created_at, lead_ad_form_id, campaign_id, campaign_name, ad_name, ad_id)
+            VALUES ($1, $2, $3, 'facebook', $4, 10, $5, $6, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (leadgen_id) DO UPDATE SET 
+                  status = COALESCE(NULLIF(TRIM(leads.status), ''), EXCLUDED.status),
                   lead_ad_form_id = COALESCE(EXCLUDED.lead_ad_form_id, leads.lead_ad_form_id),
                   campaign_id = COALESCE(EXCLUDED.campaign_id, leads.campaign_id),
+                  campaign_name = COALESCE(EXCLUDED.campaign_name, leads.campaign_name),
                   ad_name = COALESCE(EXCLUDED.ad_name, leads.ad_name),
                   ad_id = COALESCE(EXCLUDED.ad_id, leads.ad_id)
-          `, [name || 'FB Lead', phone, email, clientId, leadgenId, new Date(leadData.created_time || Date.now()), formIdStr, campaignIdStr, adNameStr, adIdStr]);
+          `, [name || 'FB Lead', phone, email, syncedStatus, clientId, leadgenId, new Date(leadData.created_time || Date.now()), formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr]);
           totalSynced++;
           if (!exists) {
             const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]); 
@@ -371,32 +394,44 @@ async function syncAllHistoricalLeads(req, res) {
               // Truncate to fit database constraints
               if (phone.length > 20) phone = phone.substring(0, 20);
 
-              if (phone) {
-                 const pcRes = await db.query('SELECT id FROM leads WHERE phone = $1 AND client_id = $2', [phone, clientId]);
-                 if (pcRes.rows.length > 0) {
-                    await db.query('UPDATE leads SET leadgen_id = $1, meta_lead_id = $1 WHERE id = $2', [leadgenId, pcRes.rows[0].id]);
-                    continue;
-                 }
-              }
-
               const formIdStr = leadData.form_id || formId;
               const campaignIdStr = leadData.campaign_id || null;
               const campaignNameStr = leadData.campaign_name || null;
               const adNameStr = leadData.ad_name || null;
               const adIdStr = leadData.ad_id || null;
+              const syncedStatus = getMetaLeadStatus(leadData.created_time);
+
+              if (phone) {
+                 const pcRes = await db.query('SELECT id FROM leads WHERE phone = $1 AND client_id = $2', [phone, clientId]);
+                 if (pcRes.rows.length > 0) {
+                    await db.query(
+                      `UPDATE leads SET leadgen_id = $1, meta_lead_id = $1,
+                        status = COALESCE(NULLIF(TRIM(status), ''), $2),
+                        lead_ad_form_id = COALESCE($3, lead_ad_form_id),
+                        campaign_id = COALESCE($4, campaign_id),
+                        campaign_name = COALESCE($5, campaign_name),
+                        ad_name = COALESCE($6, ad_name),
+                        ad_id = COALESCE($7, ad_id)
+                      WHERE id = $8`,
+                      [leadgenId, syncedStatus, formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr, pcRes.rows[0].id]
+                    );
+                    continue;
+                 }
+              }
 
               if (phone) {
                 try {
                   await db.query(`
                     INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, created_at, lead_ad_form_id, campaign_id, campaign_name, ad_name, ad_id)
-                    VALUES ($1, $2, $3, 'facebook', 'New', 10, $4, $5, $5, $6, $7, $8, $9, $10, $11)
+                    VALUES ($1, $2, $3, 'facebook', $4, 10, $5, $6, $6, $7, $8, $9, $10, $11, $12)
                     ON CONFLICT (leadgen_id) DO UPDATE SET 
+                      status = COALESCE(NULLIF(TRIM(leads.status), ''), EXCLUDED.status),
                       lead_ad_form_id = COALESCE(EXCLUDED.lead_ad_form_id, leads.lead_ad_form_id),
                       campaign_id = COALESCE(EXCLUDED.campaign_id, leads.campaign_id),
                       campaign_name = COALESCE(EXCLUDED.campaign_name, leads.campaign_name),
                       ad_name = COALESCE(EXCLUDED.ad_name, leads.ad_name),
                       ad_id = COALESCE(EXCLUDED.ad_id, leads.ad_id)
-                  `, [name || 'FB Lead', phone, email, clientId, leadgenId, new Date(leadData.created_time || Date.now()), formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr]);
+                  `, [name || 'FB Lead', phone, email, syncedStatus, clientId, leadgenId, new Date(leadData.created_time || Date.now()), formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr]);
                   totalSynced++;
                   if (!exists) {
                     const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]); 

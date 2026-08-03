@@ -7,9 +7,53 @@ const axios = require('axios');
 // WF00 - Lead Integrator Endpoints
 // ==========================================
 
-const { GoogleGenAI } = require('@google/genai');
+const openRouter = require('../services/openrouter');
+const ai = openRouter.isConfigured ? openRouter : null;
+const demoReminderReady = pool.query(`
+  CREATE TABLE IF NOT EXISTS demo_call_reminders (
+    id BIGSERIAL PRIMARY KEY,
+    lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    booking_time TIMESTAMP NOT NULL,
+    reminder_minutes INTEGER NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'processing',
+    message TEXT,
+    wa_message_id TEXT,
+    sent_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE (lead_id, booking_time, reminder_minutes)
+  )
+`).catch(err => console.error('[Demo Reminders] Table initialization failed:', err.message));
+const salesTasksReady = pool.query(`ALTER TABLE sales_tasks ADD COLUMN IF NOT EXISTS unread BOOLEAN NOT NULL DEFAULT TRUE`)
+  .catch(err => console.error('[Sales Tasks] Unread initialization failed:', err.message));
+const salesTrackingReady = pool.query(`
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS sales_status VARCHAR(30) DEFAULT 'new';
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS sales_followup_stopped BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS sales_followup_at TIMESTAMP;
+  CREATE TABLE IF NOT EXISTS sales_lead_notes (
+    id BIGSERIAL PRIMARY KEY,
+    lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    note TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_sales_lead_notes_lead_created ON sales_lead_notes(lead_id, created_at DESC);
+`).catch(err => console.error('[Sales Tracking] Initialization failed:', err.message));
 
-const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+async function emitSalesTaskUpdate(req, event, task = null) {
+  const countResult = await pool.query(`SELECT COUNT(*)::int AS count FROM sales_tasks WHERE unread = TRUE AND status <> 'completed'`);
+  req.app.get('io')?.emit('sales_task_update', { event, task, unread_count: countResult.rows[0].count });
+}
+
+async function ensureSalesTask(req, leadId, taskType) {
+  await salesTasksReady;
+  const result = await pool.query(`
+    INSERT INTO sales_tasks (lead_id, task_type, unread)
+    SELECT $1, $2, TRUE
+    WHERE NOT EXISTS (SELECT 1 FROM sales_tasks WHERE lead_id = $1 AND task_type = $2)
+    RETURNING id, lead_id, task_type, status, unread, created_at
+  `, [leadId, taskType]);
+  if (result.rows[0]) await emitSalesTaskUpdate(req, 'created', result.rows[0]);
+  return result.rows[0] || null;
+}
 
 // Resolve a raw Meta WhatsApp payload synchronously so n8n can continue the
 // same execution with the spoken text instead of ending on an audio placeholder.
@@ -24,7 +68,7 @@ router.post('/whatsapp/transcribe', async (req, res) => {
     }
     if (!ai) {
       return res.status(503).json({
-        error: 'Voice transcription is not configured. Set GEMINI_API_KEY on the API server.',
+        error: 'Voice transcription is not configured. Set OPENROUTER_API_KEY on the API server.',
       });
     }
 
@@ -51,7 +95,7 @@ router.post('/whatsapp/transcribe', async (req, res) => {
     });
     const mimeType = mediaResponse.data?.mime_type || audio.mime_type || 'audio/ogg';
     const result = await ai.models.generateContent({
-      model: process.env.GEMINI_AUDIO_MODEL || 'gemini-3.6-flash',
+      model: openRouter.AUDIO_MODEL,
       contents: [
         {
           text: 'Transcribe this WhatsApp voice note precisely in its original language. Return only the spoken words, without commentary or formatting.',
@@ -83,13 +127,13 @@ router.post('/whatsapp/transcribe', async (req, res) => {
   }
 });
 
-const GEMINI_MODELS = (process.env.GEMINI_MODELS || 'gemini-3.5-flash,gemini-3.1-flash-lite')
+const OPENROUTER_MODELS = (process.env.OPENROUTER_MODELS || process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash-lite')
   .split(',')
   .map((model) => model.trim())
   .filter(Boolean);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const GEMINI_REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || 12000);
+const OPENROUTER_REQUEST_TIMEOUT_MS = Number(process.env.OPENROUTER_REQUEST_TIMEOUT_MS || 12000);
 
 const withTimeout = (promise, timeoutMs, label) => {
   let timer;
@@ -97,7 +141,7 @@ const withTimeout = (promise, timeoutMs, label) => {
     promise,
     new Promise((_, reject) => {
       timer = setTimeout(() => {
-        reject(new GeminiServiceError({
+        reject(new OpenRouterServiceError({
           message: `${label} timed out after ${timeoutMs}ms.`,
           status: 504,
           category: 'deadline_exceeded',
@@ -108,13 +152,13 @@ const withTimeout = (promise, timeoutMs, label) => {
   ]).finally(() => clearTimeout(timer));
 };
 
-const getGeminiStatus = (err) => {
+const getOpenRouterStatus = (err) => {
   const value = err?.status ?? err?.code ?? err?.response?.status;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const getGeminiCategory = (status) => {
+const getOpenRouterCategory = (status) => {
   if (status === 429) return 'quota_exceeded';
   if (status === 503) return 'temporarily_unavailable';
   if (status === 504) return 'deadline_exceeded';
@@ -125,10 +169,10 @@ const getGeminiCategory = (status) => {
   return 'network_or_unknown';
 };
 
-class GeminiServiceError extends Error {
+class OpenRouterServiceError extends Error {
   constructor({ message, status = 502, category, retryable = false, model = null, cause = null }) {
     super(message);
-    this.name = 'GeminiServiceError';
+    this.name = 'OpenRouterServiceError';
     this.httpStatus = status;
     this.category = category;
     this.retryable = retryable;
@@ -138,7 +182,7 @@ class GeminiServiceError extends Error {
 }
 
 const sendAiError = (res, err) => {
-  if (!(err instanceof GeminiServiceError)) {
+  if (!(err instanceof OpenRouterServiceError)) {
     console.error('[AI] Unexpected error:', err);
     return res.status(500).json({
       error: 'AI request failed due to an internal server error.',
@@ -200,10 +244,10 @@ For a voice note, ask the contact to type it. Send exactly one concise reply.`;
 
 // Gemini-only fallback chain (paid key — higher rate limits).
 // Tries 4 models in order: if one is busy/overloaded the next kicks in automatically.
-async function generateGeminiContent(prompt) {
+async function generateOpenRouterContent(prompt) {
   if (!ai) {
-    throw new GeminiServiceError({
-      message: 'GEMINI_API_KEY is not configured on the API server.',
+    throw new OpenRouterServiceError({
+      message: 'OPENROUTER_API_KEY is not configured on the API server.',
       status: 500,
       category: 'configuration_error',
     });
@@ -211,20 +255,20 @@ async function generateGeminiContent(prompt) {
 
   let lastFailure = null;
   const errors = [];
-  for (const model of GEMINI_MODELS) {
+  for (const model of OPENROUTER_MODELS) {
     // One bounded attempt per model keeps the entire API request below the
     // reverse-proxy timeout. The next configured model is the retry/fallback.
     for (let attempt = 1; attempt <= 1; attempt += 1) {
       try {
         const aiRes = await withTimeout(
           ai.models.generateContent({ model, contents: prompt }),
-          GEMINI_REQUEST_TIMEOUT_MS,
-          `Gemini ${model}`
+          OPENROUTER_REQUEST_TIMEOUT_MS,
+          `OpenRouter ${model}`
         );
         const text = aiRes?.text?.trim();
         if (!text) {
-          throw new GeminiServiceError({
-            message: `Gemini returned an empty response from ${model}.`,
+          throw new OpenRouterServiceError({
+            message: `OpenRouter returned an empty response from ${model}.`,
             status: 502,
             category: 'empty_response',
             retryable: true,
@@ -234,11 +278,11 @@ async function generateGeminiContent(prompt) {
         console.log(`[AI] ✅ Gemini (${model})`);
         return text;
       } catch (err) {
-        const upstreamStatus = getGeminiStatus(err);
-        const category = err instanceof GeminiServiceError
+        const upstreamStatus = getOpenRouterStatus(err);
+        const category = err instanceof OpenRouterServiceError
           ? err.category
-          : getGeminiCategory(upstreamStatus);
-        const retryable = err instanceof GeminiServiceError
+          : getOpenRouterCategory(upstreamStatus);
+        const retryable = err instanceof OpenRouterServiceError
           ? err.retryable
           : upstreamStatus === 429 || upstreamStatus === 503 ||
             upstreamStatus === 504 || (upstreamStatus !== null && upstreamStatus >= 500) ||
@@ -246,10 +290,10 @@ async function generateGeminiContent(prompt) {
         const msg = err?.message || category;
         errors.push(`${model}#${attempt}: ${category} (${upstreamStatus || 'unknown'})`);
 
-        lastFailure = err instanceof GeminiServiceError
+        lastFailure = err instanceof OpenRouterServiceError
           ? err
-          : new GeminiServiceError({
-              message: `Gemini request failed: ${category}.`,
+          : new OpenRouterServiceError({
+              message: `OpenRouter request failed: ${category}.`,
               status: upstreamStatus === 429 ? 429 : (retryable ? 503 : 502),
               category,
               retryable,
@@ -272,8 +316,8 @@ async function generateGeminiContent(prompt) {
   }
 
   console.error('[AI] ❌ All Gemini models exhausted:', errors.join(' | '));
-  throw lastFailure || new GeminiServiceError({
-    message: 'No Gemini models are configured.',
+  throw lastFailure || new OpenRouterServiceError({
+    message: 'No OpenRouter models are configured.',
     status: 500,
     category: 'configuration_error',
   });
@@ -586,7 +630,7 @@ router.post('/ai/intent', async (req, res) => {
     }
 
     const prompt = `Analyze this message in the locked brand '${effectiveBrand}'. What is the user's core intent? Choose one: [PRICING, MORE_INFO, BOOK_CALL, NOT_INTERESTED, GENERAL_CHAT, COMPLAINT]. Message: "${message}". Reply ONLY with the intent and confidence score separated by a comma (e.g. PRICING, 95).`;
-    const output = await generateGeminiContent(prompt);
+    const output = await generateOpenRouterContent(prompt);
     const parts = output.split(',');
     const intent = parts[0] ? parts[0].trim() : 'GENERAL';
     const confidence = parts[1] ? parseInt(parts[1].trim()) : 50;
@@ -605,7 +649,7 @@ router.post('/ai/objections', async (req, res) => {
   const { message, brand, lead_id } = req.body;
   try {
     const prompt = `Analyze this message. Does the user have any objections? Choose one: [TOO_EXPENSIVE, NO_TIME, NOT_SURE, USING_COMPETITOR, NONE]. Message: "${message}". Reply ONLY with the objection type.`;
-    const objections = await generateGeminiContent(prompt);
+    const objections = await generateOpenRouterContent(prompt);
     res.json({ ...req.body, objections });
   } catch (err) {
     sendAiError(res, err);
@@ -875,7 +919,7 @@ router.post('/ai/response', async (req, res) => {
       }
       Respond ONLY with the JSON object, no markdown formatting, no backticks.`;
 
-    const rawAiResponse = await generateGeminiContent(prompt);
+    const rawAiResponse = await generateOpenRouterContent(prompt);
       
     let ai_reply = "I'm sorry, I couldn't process that. Can you repeat?";
     let extractedData = null;
@@ -892,6 +936,14 @@ router.post('/ai/response', async (req, res) => {
          if (extractedData.extracted_booking_time) {
            // When a booking time is extracted, set status to 'booked' to STOP follow-ups
            await pool.query(`UPDATE leads SET call_booked_at = $1, status = 'booked', updated_at = NOW() WHERE id = $2`, [extractedData.extracted_booking_time, lead_id]);
+           await salesTasksReady;
+           const taskResult = await pool.query(`
+             INSERT INTO sales_tasks (lead_id, task_type, unread)
+             SELECT $1, 'call', TRUE
+             WHERE NOT EXISTS (SELECT 1 FROM sales_tasks WHERE lead_id = $1 AND task_type = 'call')
+             RETURNING id, lead_id, task_type, status, unread, created_at
+           `, [lead_id]);
+           if (taskResult.rows[0]) await emitSalesTaskUpdate(req, 'created', taskResult.rows[0]);
            console.log(`[AI Booking] Lead ${lead_id} booked for ${extractedData.extracted_booking_time} - follow-ups STOPPED`);
          }
       }
@@ -904,7 +956,7 @@ router.post('/ai/response', async (req, res) => {
   } catch (err) {
     // Keep the WhatsApp workflow moving when every AI model is temporarily
     // slow/unavailable. HTTP 200 prevents an nginx/n8n 504 failure.
-    if (err instanceof GeminiServiceError && err.retryable) {
+    if (err instanceof OpenRouterServiceError && err.retryable) {
       console.error('[AI] Returning safe fallback after provider timeout:', err.message);
       return res.json({
         ...req.body,
@@ -968,6 +1020,7 @@ router.post('/leads/assign-owner', async (req, res) => {
     }
 
     await pool.query(`UPDATE leads SET owner = $1 WHERE id = $2`, [owner, lead_id]);
+    if (lead_score >= 75) await ensureSalesTask(req, lead_id, 'hot_lead');
     res.json({ ...req.body, owner });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -987,6 +1040,7 @@ router.post('/leads/update', async (req, res) => {
       `UPDATE leads SET status = COALESCE($1, status), owner = COALESCE($2, owner), updated_at = NOW() WHERE id = $3`,
       [status, owner, lead_id]
     );
+    if (status === 'hot') await ensureSalesTask(req, lead_id, 'hot_lead');
     res.json({ ...req.body, success: true, status });
   } catch (err) {
     console.error(err);
@@ -1191,6 +1245,99 @@ router.get('/workflows/telemetry', async (req, res) => {
 // WF03 & WF06 - Reporting & Dashboard
 // ==========================================
 
+// Authoritative WF06 snapshot. Starting from clients guarantees that every
+// configured brand is present, including brands which currently have no data.
+router.get('/reports/founder-dashboard', async (req, res) => {
+  try {
+    const [brandResult, sourceResult] = await Promise.all([
+      pool.query(`
+        SELECT c.id AS brand_id, c.name AS brand, c.status AS brand_status,
+               COALESCE(l.total_leads, 0)::int AS leads,
+               COALESCE(l.new_today, 0)::int AS leads_today,
+               COALESCE(l.conversions, 0)::int AS conversions,
+               COALESCE(l.hot_leads, 0)::int AS hot_leads,
+               COALESCE(l.followups_pending, 0)::int AS followups_pending,
+               COALESCE(cv.conversations, 0)::int AS conversations,
+               COALESCE(cv.conversations_today, 0)::int AS conversations_today,
+               COALESCE(cp.campaigns, 0)::int AS campaigns,
+               COALESCE(cp.active_campaigns, 0)::int AS active_campaigns,
+               COALESCE(p.revenue, 0)::numeric AS revenue,
+               COALESCE(p.revenue_today, 0)::numeric AS revenue_today,
+               COALESCE(p.revenue_month, 0)::numeric AS revenue_month
+        FROM clients c
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS total_leads,
+                 COUNT(*) FILTER (WHERE leads.created_at >= CURRENT_DATE) AS new_today,
+                 COUNT(*) FILTER (WHERE LOWER(COALESCE(leads.status, '')) = 'converted') AS conversions,
+                 COUNT(*) FILTER (WHERE LOWER(COALESCE(leads.status, '')) = 'hot') AS hot_leads,
+                 COUNT(*) FILTER (WHERE leads.next_followup_due IS NOT NULL
+                   AND LOWER(COALESCE(leads.status, '')) NOT IN ('converted', 'closed', 'lost', 'opt-out')) AS followups_pending
+          FROM leads WHERE leads.client_id = c.id
+        ) l ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS conversations,
+                 COUNT(*) FILTER (WHERE conversations.created_at >= CURRENT_DATE) AS conversations_today
+          FROM conversations
+          JOIN leads conversation_leads ON conversation_leads.id = conversations.lead_id
+          WHERE conversation_leads.client_id = c.id
+        ) cv ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS campaigns,
+                 COUNT(*) FILTER (WHERE campaigns.status IN ('scheduled', 'running')) AS active_campaigns
+          FROM campaigns WHERE campaigns.client_id = c.id
+        ) cp ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(payments.amount) FILTER (WHERE payments.status = 'captured'), 0) AS revenue,
+                 COALESCE(SUM(payments.amount) FILTER (WHERE payments.status = 'captured'
+                   AND payments.created_at >= CURRENT_DATE), 0) AS revenue_today,
+                 COALESCE(SUM(payments.amount) FILTER (WHERE payments.status = 'captured'
+                   AND payments.created_at >= date_trunc('month', CURRENT_DATE)), 0) AS revenue_month
+          FROM payments
+          JOIN leads payment_leads ON payment_leads.id = payments.lead_id
+          WHERE payment_leads.client_id = c.id
+        ) p ON TRUE
+        ORDER BY c.name
+      `),
+      pool.query(`
+        SELECT COALESCE(c.name, 'Unassigned') AS brand,
+               COALESCE(NULLIF(TRIM(l.source), ''), 'Unknown') AS source,
+               COUNT(*)::int AS count
+        FROM leads l
+        LEFT JOIN clients c ON c.id = l.client_id
+        GROUP BY COALESCE(c.name, 'Unassigned'), COALESCE(NULLIF(TRIM(l.source), ''), 'Unknown')
+        ORDER BY brand, count DESC
+      `),
+    ]);
+
+    const brands = brandResult.rows.map(row => ({
+      ...row,
+      revenue: Number(row.revenue),
+      revenue_today: Number(row.revenue_today),
+      revenue_month: Number(row.revenue_month),
+      conversion_rate: row.leads ? Number(((row.conversions / row.leads) * 100).toFixed(2)) : 0,
+      lead_sources: sourceResult.rows.filter(source => source.brand === row.brand),
+    }));
+    const sum = key => brands.reduce((total, brand) => total + Number(brand[key] || 0), 0);
+    const totals = {
+      brands: brands.length,
+      active_brands: brands.filter(brand => brand.brand_status === 'active').length,
+      leads: sum('leads'), leads_today: sum('leads_today'),
+      conversations: sum('conversations'), conversations_today: sum('conversations_today'),
+      campaigns: sum('campaigns'), active_campaigns: sum('active_campaigns'),
+      conversions: sum('conversions'), hot_leads: sum('hot_leads'),
+      followups_pending: sum('followups_pending'), revenue: sum('revenue'),
+      revenue_today: sum('revenue_today'), revenue_month: sum('revenue_month'),
+    };
+    totals.conversion_rate = totals.leads
+      ? Number(((totals.conversions / totals.leads) * 100).toFixed(2)) : 0;
+
+    res.json({ generated_at: new Date().toISOString(), scope: 'all_brands', totals, brands });
+  } catch (err) {
+    console.error('[Founder Dashboard Report Error]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/reports/revenue-today', async (req, res) => {
   try {
     const result = await pool.query(`SELECT COUNT(*) * 500 as revenue FROM leads WHERE status = 'converted' AND updated_at >= CURRENT_DATE`);
@@ -1258,6 +1405,7 @@ router.get('/reports/ai-performance', async (req, res) => {
 // ==========================================
 router.get('/followups/due', async (req, res) => {
   try {
+    await salesTrackingReady;
     const MAX_FOLLOWUP_ATTEMPTS = 5; // Stop after 5 attempts
 
     const result = await pool.query(`
@@ -1270,9 +1418,46 @@ router.get('/followups/due', async (req, res) => {
         AND l.status NOT IN ('converted', 'booked', 'lost', 'opt-out')
         AND (l.status != 'opt-out' OR l.status IS NULL)
         AND l.call_booked_at IS NULL
+        AND COALESCE(l.sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
+        AND (l.sales_followup_at IS NULL OR l.sales_followup_at <= NOW())
         AND (l.touch_count IS NULL OR l.touch_count < $1)
     `, [MAX_FOLLOWUP_ATTEMPTS]);
     res.json({ followups: result.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 2. Fetch Followup Rule
+router.post('/followups/sales-guard', async (req, res) => {
+  try {
+    await salesTrackingReady;
+    const result = await pool.query(`
+      SELECT l.id AS lead_id, COALESCE(l.sales_status, 'new') AS sales_status,
+             COALESCE(l.sales_followup_stopped, FALSE) AS sales_followup_stopped,
+             l.sales_followup_at,
+             COALESCE(json_agg(json_build_object('note', notes.note, 'created_at', notes.created_at)
+               ORDER BY notes.created_at DESC) FILTER (WHERE notes.id IS NOT NULL), '[]'::json) AS sales_notes
+      FROM leads l
+      LEFT JOIN LATERAL (
+        SELECT id, note, created_at FROM sales_lead_notes
+        WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 5
+      ) notes ON TRUE
+      WHERE l.id = $1
+      GROUP BY l.id
+    `, [req.body.lead_id]);
+    const lead = result.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const stoppedByStatus = ['converted', 'closed', 'not_interested'].includes(String(lead.sales_status).toLowerCase());
+    const waitingForScheduledTime = lead.sales_followup_at && new Date(lead.sales_followup_at) > new Date();
+    const proceed = !lead.sales_followup_stopped && !stoppedByStatus && !waitingForScheduledTime;
+    res.json({
+      ...req.body,
+      ...lead,
+      proceed,
+      guard_reason: lead.sales_followup_stopped ? 'stopped_by_sales_note'
+        : stoppedByStatus ? `stopped_by_status_${lead.sales_status}`
+          : waitingForScheduledTime ? 'waiting_for_note_schedule' : 'allowed',
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1369,7 +1554,9 @@ router.post('/ai/followup', async (req, res) => {
     const touchCount = lead?.touch_count ?? 0;
     const leadName = (lead?.name || '').split(' ')[0] || 'there';
 
-    if (!lead || ['converted', 'booked', 'opt-out', 'lost'].includes(lead.status) || lead.call_booked_at) {
+    if (!lead || ['converted', 'booked', 'opt-out', 'lost'].includes(lead.status) || lead.call_booked_at
+      || lead.sales_followup_stopped || ['converted', 'closed', 'not_interested'].includes(lead.sales_status)
+      || (lead.sales_followup_at && new Date(lead.sales_followup_at) > new Date())) {
       return res.json({ ...req.body, success: true, delivered: false, skipped: true, reason: 'stop_condition' });
     }
 
@@ -1384,6 +1571,8 @@ router.post('/ai/followup', async (req, res) => {
       LIMIT 10
     `, [lead_id]);
     const recentHistory = historyRes.rows.reverse();
+    const notesResult = await pool.query(`SELECT note, created_at FROM sales_lead_notes WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 5`, [lead_id]);
+    const salesNotes = notesResult.rows.map(item => `${item.created_at.toISOString?.() || item.created_at}: ${item.note}`).join('\n') || 'No sales notes';
     const latestMessage = recentHistory[recentHistory.length - 1];
     if (!latestMessage || latestMessage.direction === 'inbound') {
       return res.json({
@@ -1404,12 +1593,15 @@ router.post('/ai/followup', async (req, res) => {
 Brand: ${brandName}
 Lead first name: ${leadName}
 Follow-up attempt: ${touchCount + 1} of 5
+Sales representative status: ${lead.sales_status || 'new'}
+Latest sales notes:
+${salesNotes}
 
 Latest conversation (oldest to newest):
 ${historyText}
 
 Write one natural follow-up that continues the unfinished topic. Reference the specific course, service, job, property, trip, food order, admission, or charity topic already discussed. Never ask the lead to repeat information already present. Use a warm human tone, no pressure, no invented price, offer, availability, or deadline, and no more than 3 short sentences. End with exactly one easy question that moves toward the appropriate conversion step. Return only the message text.`;
-      ai_reply = await generateGeminiContent(prompt);
+      ai_reply = await generateOpenRouterContent(prompt);
     }
 
     let delivered = false;
@@ -1444,6 +1636,178 @@ Write one natural follow-up that continues the unfinished topic. Reference the s
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Demo-call reminder branch used by WF02. Each reminder is claimed with a
+// database uniqueness key, so a repeated n8n execution cannot double-send it.
+router.get('/demo-reminders/due', async (req, res) => {
+  try {
+    await demoReminderReady;
+    await salesTrackingReady;
+    const result = await pool.query(`
+      SELECT l.id AS lead_id, l.name, l.phone, l.call_booked_at AS booking_time,
+             c.name AS brand, reminder.minutes AS reminder_minutes
+      FROM leads l
+      LEFT JOIN clients c ON c.id = l.client_id
+      CROSS JOIN (VALUES (60, 30), (30, 10), (10, 0)) AS reminder(minutes, lower_minutes)
+      WHERE l.call_booked_at > NOW()
+        AND LOWER(COALESCE(l.status, '')) = 'booked'
+        AND COALESCE(l.sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
+        AND (l.sales_followup_at IS NULL OR l.sales_followup_at <= NOW())
+        AND EXTRACT(EPOCH FROM (l.call_booked_at - NOW())) / 60 <= reminder.minutes
+        AND EXTRACT(EPOCH FROM (l.call_booked_at - NOW())) / 60 > reminder.lower_minutes
+        AND NOT EXISTS (
+          SELECT 1 FROM demo_call_reminders sent
+          WHERE sent.lead_id = l.id
+            AND sent.booking_time = l.call_booked_at
+            AND sent.reminder_minutes = reminder.minutes
+            AND sent.status IN ('processing', 'sent')
+        )
+      ORDER BY l.call_booked_at ASC
+    `);
+    res.json({ reminders: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/demo-reminders/send', async (req, res) => {
+  const { lead_id, booking_time, reminder_minutes } = req.body;
+  try {
+    await demoReminderReady;
+    await salesTrackingReady;
+    if (!lead_id || !booking_time || ![60, 30, 10].includes(Number(reminder_minutes))) {
+      return res.status(400).json({ error: 'Invalid demo reminder' });
+    }
+
+    const leadResult = await pool.query(`
+      SELECT l.*, c.name AS brand_name, c.phone_number_id,
+             c.wa_access_token AS client_wa_token
+      FROM leads l LEFT JOIN clients c ON c.id = l.client_id
+      WHERE l.id = $1 AND l.call_booked_at = $2
+        AND l.call_booked_at > NOW() AND LOWER(COALESCE(l.status, '')) = 'booked'
+        AND COALESCE(l.sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
+        AND (l.sales_followup_at IS NULL OR l.sales_followup_at <= NOW())
+    `, [lead_id, booking_time]);
+    const lead = leadResult.rows[0];
+    if (!lead) return res.json({ success: true, skipped: true, reason: 'booking_changed_or_completed' });
+
+    const claim = await pool.query(`
+      INSERT INTO demo_call_reminders (lead_id, booking_time, reminder_minutes, status)
+      VALUES ($1, $2, $3, 'processing')
+      ON CONFLICT (lead_id, booking_time, reminder_minutes) DO UPDATE
+        SET status = 'processing'
+        WHERE demo_call_reminders.status = 'failed'
+      RETURNING id
+    `, [lead_id, booking_time, Number(reminder_minutes)]);
+    if (!claim.rows.length) return res.json({ success: true, skipped: true, reason: 'already_sent_or_processing' });
+
+    const firstName = (lead.name || '').split(' ')[0] || 'there';
+    const brand = lead.brand_name || 'our team';
+    const scheduledTime = new Date(lead.call_booked_at).toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short',
+    });
+    const historyResult = await pool.query(`
+      SELECT m.direction, m.content, m.sent_at
+      FROM messages m
+      JOIN conversations conversation ON conversation.id = m.conversation_id
+      WHERE conversation.lead_id = $1 AND m.content IS NOT NULL AND BTRIM(m.content) <> ''
+      ORDER BY m.sent_at DESC LIMIT 12
+    `, [lead_id]);
+    const history = historyResult.rows.reverse();
+    const demoNotesResult = await pool.query(`SELECT note, created_at FROM sales_lead_notes WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 5`, [lead_id]);
+    const demoSalesNotes = demoNotesResult.rows.map(item => `${item.created_at.toISOString?.() || item.created_at}: ${item.note}`).join('\n') || 'No sales notes';
+    const latestInbound = [...history].reverse().find(item => item.direction === 'inbound');
+    const within24Hours = Boolean(latestInbound)
+      && Date.now() - new Date(latestInbound.sent_at).getTime() < 24 * 60 * 60 * 1000;
+
+    let message = `Hi ${firstName}, friendly reminder that your demo call with ${brand} starts in ${reminder_minutes} minutes at ${scheduledTime}. We look forward to speaking with you!`;
+    if (within24Hours && ai) {
+      try {
+        const conversationContext = history
+          .map(item => `${item.direction === 'inbound' ? 'Lead' : 'Assistant'}: ${item.content}`)
+          .join('\n');
+        message = await generateOpenRouterContent(`Write one personalized WhatsApp demo-call reminder using the previous conversation context.
+Lead first name: ${firstName}
+Brand: ${brand}
+Call time: ${scheduledTime}
+Time remaining: ${reminder_minutes} minutes
+Sales representative status: ${lead.sales_status || 'new'}
+Latest sales notes:
+${demoSalesNotes}
+Previous conversation (oldest to newest):
+${conversationContext}
+
+Naturally reference relevant details already discussed when useful. Do not invent facts, prices, offers, links, or meeting details. Be warm and professional, use at most 2 short sentences, and return only the message.`);
+      } catch (aiErr) {
+        console.error('[Demo Reminder] AI generation fallback:', aiErr.message);
+      }
+    }
+
+    let delivered = false;
+    let waMessageId = null;
+    const phoneNumberId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+    const waAccessToken = lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN;
+    if (lead.phone && phoneNumberId && waAccessToken) {
+      try {
+        let messagePayload;
+        if (within24Hours) {
+          messagePayload = { messaging_product: 'whatsapp', to: lead.phone.replace(/\D/g, ''), type: 'text', text: { body: message } };
+        } else {
+          const templateResult = await pool.query(`
+            SELECT name, language, body
+            FROM templates
+            WHERE LOWER(status) = 'approved'
+              AND UPPER(category) = 'UTILITY'
+              AND (client_id = $1 OR client_id IS NULL)
+              AND (name ILIKE ANY(ARRAY['%demo%', '%appointment%', '%reminder%', '%followup%'])
+                   OR body ILIKE ANY(ARRAY['%demo%', '%appointment%', '%reminder%', '%call%']))
+            ORDER BY (client_id = $1) DESC, approved_at DESC NULLS LAST, created_at DESC
+            LIMIT 1
+          `, [lead.client_id]);
+          const template = templateResult.rows[0];
+          if (!template) throw new Error('No approved demo/reminder utility template is available for this brand');
+
+          const placeholderNumbers = [...String(template.body || '').matchAll(/\{\{(\d+)\}\}/g)].map(match => Number(match[1]));
+          const parameterCount = placeholderNumbers.length ? Math.max(...placeholderNumbers) : 0;
+          const baseParameterValues = [firstName, brand, scheduledTime, String(reminder_minutes)];
+          const parameterValues = Array.from({ length: parameterCount }, (_, index) => baseParameterValues[index] || scheduledTime);
+          message = String(template.body || '').replace(/\{\{(\d+)\}\}/g, (_, number) => parameterValues[Number(number) - 1] || '');
+          messagePayload = {
+              messaging_product: 'whatsapp',
+              to: lead.phone.replace(/\D/g, ''),
+              type: 'template',
+              template: {
+                name: template.name,
+                language: { code: template.language || 'en' },
+                ...(parameterCount ? { components: [{ type: 'body', parameters: parameterValues.map(text => ({ type: 'text', text })) }] } : {}),
+              },
+            };
+        }
+        const waRes = await axios.post(
+          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+          messagePayload,
+          { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+        );
+        waMessageId = waRes.data?.messages?.[0]?.id || null;
+        delivered = true;
+      } catch (waErr) {
+        console.error('[Demo Reminder] WhatsApp send failed:', waErr.response?.data || waErr.message);
+      }
+    }
+
+    const conversationId = await getOrUpsertConversation(lead_id);
+    await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`, [message, conversationId]);
+    await pool.query(`INSERT INTO messages (conversation_id, direction, msg_type, content, wa_msg_id, status, is_ai, sent_at) VALUES ($1, 'outbound', 'text', $2, $3, $4, $5, NOW())`, [conversationId, message, waMessageId, delivered ? 'sent' : 'failed', within24Hours]);
+    await pool.query(`UPDATE demo_call_reminders SET status = $1, message = $2, wa_message_id = $3, sent_at = CASE WHEN $1 = 'sent' THEN NOW() END WHERE id = $4`, [delivered ? 'sent' : 'failed', message, waMessageId, claim.rows[0].id]);
+
+    if (!delivered) return res.status(502).json({ success: false, error: 'WhatsApp reminder could not be delivered' });
+    res.json({ success: true, delivered: true, reminder_minutes, message });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ==========================================
 // WF03 - Reminder Engine
 // ==========================================
@@ -1475,19 +1839,22 @@ router.post('/ai/report-generator', async (req, res) => {
     if (!ai) return res.json({ summary: "Daily Summary generated." });
 
     // STRICT rules to prevent hallucination and force INR
-    const prompt = `You are a financial reporter for an Indian business. CRITICAL RULES:
+    const prompt = `You are a founder-level reporter for an Indian multi-brand business. CRITICAL RULES:
 1. ALL currency amounts MUST use Indian Rupees (₹) symbol - NEVER use $ or USD
 2. Do NOT invent any numbers, scores, or percentages not present in the data
 3. Use ONLY the exact metrics provided below
 4. If a metric is missing, state "Not available" - never make it up
-5. Output ONLY bullet points, no extra commentary
+5. Start with a CONSOLIDATED ALL-BRANDS section covering leads, conversations, campaigns, conversions, conversion rate, and revenue
+6. Then include a BRAND-WISE BREAKDOWN with one clearly labelled bullet for EVERY brand in the brands array, including zero-activity brands
+7. Never select, prioritize, or report only one brand
+8. Keep the report concise, but never omit a configured brand
 
 Data to summarize:
 ${JSON.stringify(data, null, 2)}
 
-Write exactly 3 bullet points. Use format: "• ₹X,XXX" for all currency values.`;
+Use clear headings and bullet points. Use Indian number formatting for all currency values.`;
 
-    let summary = await generateGeminiContent(prompt);
+    let summary = await generateOpenRouterContent(prompt);
     console.log('[report-generator] Raw LLM response:', summary);
 
     // Post-process: Force INR currency - split on $ and rejoin with ₹
@@ -1753,9 +2120,20 @@ router.post('/communication/send-email', (req, res) => {
   res.json({ ...req.body, success: true, delivered: true, channel: 'email' });
 });
 
-router.post('/communication/send-template', (req, res) => {
-  // Mock endpoint for sending WhatsApp templates (could integrate Meta API here)
-  res.json({ ...req.body, success: true, delivered: true, channel: 'whatsapp_template' });
+router.post('/communication/send-template', async (req, res) => {
+  try {
+    await salesTrackingReady;
+    if (req.body.lead_id) {
+      const result = await pool.query(`SELECT sales_status, sales_followup_stopped, sales_followup_at FROM leads WHERE id = $1`, [req.body.lead_id]);
+      const lead = result.rows[0];
+      if (!lead || lead.sales_followup_stopped || ['converted', 'closed', 'not_interested'].includes(lead.sales_status)
+        || (lead.sales_followup_at && new Date(lead.sales_followup_at) > new Date())) {
+        return res.json({ ...req.body, success: true, delivered: false, skipped: true, reason: 'sales_status_or_note_stop' });
+      }
+    }
+    // Mock endpoint for sending WhatsApp templates (could integrate Meta API here)
+    res.json({ ...req.body, success: true, delivered: true, channel: 'whatsapp_template' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.post('/leads/internal-note', async (req, res) => {
@@ -1784,8 +2162,11 @@ router.post('/leads/update-followup', async (req, res) => {
       WHERE id = $2
         AND status NOT IN ('converted', 'booked', 'opt-out', 'lost')
         AND call_booked_at IS NULL
+        AND COALESCE(sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
     `;
-    await pool.query(query, [increment, lead_id]);
+    const updated = await pool.query(query + ' RETURNING next_followup_due', [increment, lead_id]);
+    if (updated.rows[0]?.next_followup_due) await ensureSalesTask(req, lead_id, 'followup');
     res.json({ ...req.body, success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1833,7 +2214,7 @@ router.get('/reports/reminder-bundle', async (req, res) => {
     const insertTask = async (lead_id, type) => {
        const exists = await pool.query(`SELECT id FROM sales_tasks WHERE lead_id = $1 AND task_type = $2 AND DATE(created_at) = CURRENT_DATE`, [lead_id, type]);
        if (exists.rows.length === 0) {
-         await pool.query(`INSERT INTO sales_tasks (lead_id, task_type) VALUES ($1, $2)`, [lead_id, type]);
+         await ensureSalesTask(req, lead_id, type);
        }
     };
     for (const c of calls.rows) await insertTask(c.lead_id || c.id, 'call');
@@ -1850,7 +2231,7 @@ router.get('/reports/reminder-bundle', async (req, res) => {
     if (ai) {
       try {
         const prompt = `Summarize these daily sales metrics for a Founder Dashboard:\n${JSON.stringify(metrics)}\nWrite 3 short bullet points highlighting wins and risks (like SLA breaches or pending payments).`;
-        founder_summary = await generateGeminiContent(prompt);
+        founder_summary = await generateOpenRouterContent(prompt);
       } catch (e) { console.error('[reminder-bundle] Gemini summary failed:', e.message); }
     }
 
@@ -1899,12 +2280,53 @@ router.post('/communication/notify-staff', async (req, res) => {
 // ==========================================
 router.get('/sales-tasks', async (req, res) => {
   try {
+    await salesTasksReady;
+    await salesTrackingReady;
+    // Keep one persistent task for every lead that currently needs sales action.
+    // Completed tasks are intentionally not recreated for the same lead/type.
+    const insertedTasks = await pool.query(`
+      INSERT INTO sales_tasks (lead_id, task_type)
+      SELECT l.id, task.task_type
+      FROM leads l
+      CROSS JOIN LATERAL (
+        VALUES
+          (CASE WHEN l.call_booked_at IS NOT NULL AND LOWER(COALESCE(l.status, '')) = 'booked' THEN 'call' END),
+          (CASE WHEN LOWER(COALESCE(l.status, '')) = 'hot' THEN 'hot_lead' END),
+          (CASE WHEN l.next_followup_due IS NOT NULL AND LOWER(COALESCE(l.status, '')) NOT IN ('converted', 'booked', 'lost', 'opt-out') THEN 'followup' END)
+      ) AS task(task_type)
+      WHERE task.task_type IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM sales_tasks existing
+          WHERE existing.lead_id = l.id AND existing.task_type = task.task_type
+        )
+      RETURNING id, lead_id, task_type, status, unread, created_at
+    `);
+    for (const task of insertedTasks.rows) await emitSalesTaskUpdate(req, 'created', task);
+
     const result = await pool.query(`
-      SELECT st.*, l.name, l.phone, l.email, l.status as lead_status 
+      SELECT st.*, l.id AS lead_id, l.name, l.phone, l.email,
+             l.status AS lead_status, l.stage, l.source, l.interest, l.score,
+             COALESCE(l.sales_status, 'new') AS sales_status,
+             l.sales_followup_stopped, l.sales_followup_at,
+             (SELECT note FROM sales_lead_notes WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) AS latest_sales_note,
+             (SELECT created_at FROM sales_lead_notes WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) AS latest_sales_note_at,
+             l.call_booked_at, l.next_followup_due,
+             (SELECT MAX(conversation.last_message_at) FROM conversations conversation WHERE conversation.lead_id = l.id) AS last_contact,
+             l.created_at AS lead_created_at,
+             c.name AS brand_name, u.name AS assigned_name
       FROM sales_tasks st
       JOIN leads l ON st.lead_id = l.id
-      WHERE DATE(st.created_at) = CURRENT_DATE
-      ORDER BY st.status DESC, st.created_at DESC
+      LEFT JOIN clients c ON c.id = l.client_id
+      LEFT JOIN users u ON u.id = l.assigned_to
+      WHERE st.status <> 'completed'
+        AND COALESCE(l.sales_followup_stopped, FALSE) = FALSE
+        AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
+        AND (
+          (st.task_type = 'call' AND l.call_booked_at IS NOT NULL AND LOWER(COALESCE(l.status, '')) = 'booked')
+          OR (st.task_type = 'hot_lead' AND LOWER(COALESCE(l.status, '')) = 'hot')
+          OR (st.task_type IN ('followup', 'overdue') AND l.next_followup_due IS NOT NULL AND LOWER(COALESCE(l.status, '')) NOT IN ('converted', 'booked', 'lost', 'opt-out'))
+        )
+      ORDER BY st.created_at DESC, st.id DESC
     `);
     res.json({ success: true, tasks: result.rows });
   } catch (err) {
@@ -1914,6 +2336,7 @@ router.get('/sales-tasks', async (req, res) => {
 
 router.put('/sales-tasks/:id/status', async (req, res) => {
   try {
+    await salesTasksReady;
     const { status } = req.body;
     let query = `UPDATE sales_tasks SET status = $1, updated_at = NOW()`;
     if (status === 'completed') {
@@ -1921,15 +2344,96 @@ router.put('/sales-tasks/:id/status', async (req, res) => {
     }
     query += ` WHERE id = $2 RETURNING *`;
     const result = await pool.query(query, [status, req.params.id]);
+    await emitSalesTaskUpdate(req, 'status_changed', result.rows[0]);
     res.json({ success: true, task: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+router.get('/sales-tasks/unread-count', async (req, res) => {
+  try {
+    await salesTasksReady;
+    const result = await pool.query(`SELECT COUNT(*)::int AS count FROM sales_tasks WHERE unread = TRUE AND status <> 'completed'`);
+    res.json({ success: true, count: result.rows[0].count });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/sales-tasks/lead/:leadId/read', async (req, res) => {
+  try {
+    await salesTasksReady;
+    await pool.query(`UPDATE sales_tasks SET unread = FALSE, updated_at = NOW() WHERE lead_id = $1 AND unread = TRUE`, [req.params.leadId]);
+    await emitSalesTaskUpdate(req, 'read', { lead_id: Number(req.params.leadId) });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/sales-tasks/lead/:leadId/sales-status', async (req, res) => {
+  try {
+    await salesTrackingReady;
+    const allowed = ['new', 'contacted', 'processing', 'follow_up', 'converted', 'not_interested', 'closed'];
+    const status = String(req.body.status || '').toLowerCase();
+    if (!allowed.includes(status)) return res.status(400).json({ error: 'Invalid sales status' });
+    const shouldStop = ['converted', 'not_interested', 'closed'].includes(status);
+    const result = await pool.query(`
+      UPDATE leads SET sales_status = $1,
+        sales_followup_stopped = $2,
+        sales_followup_at = CASE WHEN $2 THEN NULL ELSE sales_followup_at END,
+        next_followup_due = CASE WHEN $2 THEN NULL ELSE next_followup_due END,
+        updated_at = NOW()
+      WHERE id = $3 RETURNING id, sales_status, sales_followup_stopped, sales_followup_at
+    `, [status, shouldStop, req.params.leadId]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    await emitSalesTaskUpdate(req, 'lead_status_changed', { lead_id: Number(req.params.leadId), ...result.rows[0] });
+    res.json({ success: true, lead: result.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/sales-tasks/lead/:leadId/notes', async (req, res) => {
+  try {
+    await salesTrackingReady;
+    const note = String(req.body.note || '').trim();
+    if (!note) return res.status(400).json({ error: 'Note is required' });
+
+    const stopPattern = /(already\s+(enrolled|joined|purchased)|not\s+interested|do\s+not\s+contact|don['’]?t\s+contact|stop\s+(all\s+)?follow[- ]?ups?|no\s+more\s+(calls|messages))/i;
+    let shouldStop = stopPattern.test(note);
+    let followupAt = null;
+    if (ai) {
+      try {
+        const analysis = await generateOpenRouterContent(`Analyze this sales representative note. Current time is ${new Date().toISOString()} (Asia/Kolkata business timezone).
+Note: ${JSON.stringify(note)}
+Return only JSON: {"stop_followups":boolean,"followup_at":string|null}. Set stop_followups true for enrolled/converted/not interested/do-not-contact intent. Convert an explicit future callback time such as tomorrow at 5 PM to an ISO timestamp. Do not invent a time.`);
+        const parsed = JSON.parse(analysis.replace(/```json|```/gi, '').trim());
+        shouldStop = shouldStop || parsed.stop_followups === true;
+        if (parsed.followup_at && !Number.isNaN(new Date(parsed.followup_at).getTime()) && new Date(parsed.followup_at) > new Date()) {
+          followupAt = new Date(parsed.followup_at).toISOString();
+        }
+      } catch (analysisError) {
+        console.error('[Sales Note] AI analysis fallback:', analysisError.message);
+      }
+    }
+
+    const noteResult = await pool.query(`INSERT INTO sales_lead_notes (lead_id, note) VALUES ($1, $2) RETURNING *`, [req.params.leadId, note]);
+    const leadResult = await pool.query(`
+      UPDATE leads SET
+        sales_followup_stopped = $1,
+        sales_followup_at = $2::timestamp,
+        next_followup_due = CASE WHEN $1 THEN NULL WHEN $2::timestamp IS NOT NULL THEN $2::timestamp ELSE next_followup_due END,
+        sales_status = CASE WHEN $1 AND LOWER($3) LIKE '%not interested%' THEN 'not_interested' ELSE sales_status END,
+        updated_at = NOW()
+      WHERE id = $4
+      RETURNING id, sales_status, sales_followup_stopped, sales_followup_at, next_followup_due
+    `, [shouldStop, followupAt, note, req.params.leadId]);
+    await emitSalesTaskUpdate(req, 'note_added', { lead_id: Number(req.params.leadId), note: noteResult.rows[0], ...leadResult.rows[0] });
+    res.json({ success: true, note: noteResult.rows[0], lead: leadResult.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.delete('/sales-tasks/:id', async (req, res) => {
   try {
-    await pool.query(`DELETE FROM sales_tasks WHERE id = $1`, [req.params.id]);
+    await salesTasksReady;
+    const result = await pool.query(`DELETE FROM sales_tasks WHERE id = $1 RETURNING id, lead_id, task_type`, [req.params.id]);
+    await emitSalesTaskUpdate(req, 'deleted', result.rows[0] || null);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1957,6 +2461,15 @@ router.post('/leads/book-call', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: "Lead not found" });
     }
+
+    await salesTasksReady;
+    const taskResult = await pool.query(`
+      INSERT INTO sales_tasks (lead_id, task_type, unread)
+      SELECT $1, 'call', TRUE
+      WHERE NOT EXISTS (SELECT 1 FROM sales_tasks WHERE lead_id = $1 AND task_type = 'call')
+      RETURNING id, lead_id, task_type, status, unread, created_at
+    `, [lead_id]);
+    if (taskResult.rows[0]) await emitSalesTaskUpdate(req, 'created', taskResult.rows[0]);
 
     console.log(`[Book Call] Lead ${lead_id} booked for ${booking_time} - follow-ups will STOP`);
     res.json({ success: true, lead: result.rows[0], message: "Call booked! Follow-ups have been stopped for this lead." });

@@ -1,6 +1,7 @@
 const express = require('express');
 const { Pool } = require('pg');
 const axios = require('axios');
+const openRouter = require('../services/openrouter');
 const router = express.Router();
 
 const pool = new Pool({
@@ -11,17 +12,10 @@ const pool = new Pool({
   password: process.env.DB_PASS
 });
 
-// Helper: Get Gemini Embedding
+// Helper: Get OpenRouter Embedding
 async function getEmbedding(text) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error('GEMINI_API_KEY missing');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`;
-    const response = await axios.post(url, {
-      model: 'models/text-embedding-004',
-      content: { parts: [{ text }] }
-    });
-    return response.data.embedding.values;
+    return await openRouter.createEmbedding(text, 768);
   } catch (error) {
     console.error('Error getting embedding:', error.response?.data || error.message);
     return null;
@@ -150,17 +144,8 @@ router.post('/chat', async (req, res) => {
           
           const prompt = `You are the assistant. Answer ONLY using the CONTEXT below. Do not use outside knowledge or make anything up. If the answer isn't in the CONTEXT, reply exactly: "I don't have that detail right now — please try again later or I'll connect you with our team 🙏"\n\nCONTEXT:\n${retrieved_chunks_joined}\n\nUSER QUESTION:\n${message}\n\nReply in 3-4 lines max, warm conversational tone, end with exactly one question.`;
           
-          // Call Gemini
-          const apiKey = process.env.GEMINI_API_KEY;
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-          
-          const aiCall = await axios.post(url, {
-             contents: [{ role: 'user', parts: [{ text: prompt }] }]
-          });
-          
-          if (aiCall.data && aiCall.data.candidates && aiCall.data.candidates.length > 0) {
-             aiResponse = aiCall.data.candidates[0].content.parts[0].text;
-          }
+          const aiCall = await openRouter.generateContent({ contents: prompt });
+          if (aiCall.text) aiResponse = aiCall.text;
         }
       }
       

@@ -6,7 +6,6 @@ import { ClientModal } from '../components/ClientModal.jsx';
 import { ClientDashboardModal } from '../components/ClientDashboardModal.jsx';
 import { ClientsTable } from '../components/ClientsTable.jsx';
 import toast from 'react-hot-toast';
-import { launchMetaEmbeddedSignup } from '../utils/metaEmbeddedSignup.js';
 
 export const ClientsView = () => {
   const [clients, setClients] = useState([]);
@@ -80,27 +79,26 @@ export const ClientsView = () => {
     }
   };
 
-  const addPhoneToSelectedWaba = async () => {
+  const addPhoneToSelectedWaba = () => {
     if (!selectedWaba) return toast.error('Select a WABA first');
-    if (metaSyncing) return;
-    setMetaSyncing(true);
-    const toastId = toast.loading(`Opening Meta for WABA ${selectedWaba.waba_id}...`);
-    try {
-      const config = await api.getMetaEmbeddedSignupConfig();
-      if (!config.enabled) throw new Error('Meta Embedded Signup is not configured');
-      const result = await launchMetaEmbeddedSignup(config);
-      if (String(result.waba_id || '') !== String(selectedWaba.waba_id)) {
-        throw new Error(`Wrong WABA selected in Meta. Choose ${selectedWaba.name} (${selectedWaba.waba_id}); Meta returned ${result.waba_id || 'no WABA ID'}.`);
-      }
-      if (!result.phone_number_id) throw new Error('Meta did not return the new Phone Number ID');
-      const synced = await api.syncMetaWhatsApp();
-      toast.success(`Phone verified under ${selectedWaba.name}. Synced ${synced.phone_numbers} numbers.`, { id: toastId });
-      await fetchClients();
-    } catch (error) {
-      toast.error(error.message || 'Meta phone onboarding failed', { id: toastId });
-    } finally {
-      setMetaSyncing(false);
+    if (!selectedWaba.business_id) {
+      return toast.error('This WABA has no Business Portfolio ID. Run a full Meta sync first.');
     }
+    const url = new URL('https://business.facebook.com/wa/manage/phone-numbers/');
+    url.searchParams.set('business_id', selectedWaba.business_id);
+    url.searchParams.set('waba_id', selectedWaba.waba_id);
+    const width = 900;
+    const height = 820;
+    const left = Math.max(0, window.screenX + (window.outerWidth - width) / 2);
+    const top = Math.max(0, window.screenY + (window.outerHeight - height) / 2);
+    const metaWindow = window.open(
+      url.toString(),
+      'leados-meta-add-phone',
+      `popup=yes,width=${width},height=${height},left=${Math.round(left)},top=${Math.round(top)},resizable=yes,scrollbars=yes`
+    );
+    if (!metaWindow) return toast.error('Allow popups for LeadOS, then try again');
+    metaWindow.focus();
+    toast.success(`Opened ${selectedWaba.name} (${selectedWaba.waba_id}). Click Add phone number in Meta, complete OTP, then return and sync.`);
   };
 
   const mapPhone = async (phoneId) => {

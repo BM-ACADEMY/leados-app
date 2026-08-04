@@ -67,10 +67,7 @@ function buildPlatformUrl(platform, entry) {
     }
     return `https://www.facebook.com/watch?v=${postId}`;
   }
-  if (p.includes("instagram")) {
-    const shortcode = instagramMediaIdToShortcode(postId);
-    return shortcode ? `https://www.instagram.com/p/${shortcode}/` : null;
-  }
+  if (p.includes("instagram")) return null;
   return null;
 }
 

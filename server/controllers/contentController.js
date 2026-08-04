@@ -2144,7 +2144,28 @@ async function updateOverallPostStatus(postId) {
 
     for (const job of allJobs) {
       if (job.status === 'success') {
-        platformPostIds.push({ platform: job.channel, post_id: job.post_id });
+        const entry = { platform: job.channel, post_id: job.post_id };
+
+        // Fetch Instagram permalink so frontend can link directly to the post
+        if (job.channel && job.channel.includes('instagram') && !job.channel.includes('story') && job.post_id) {
+          try {
+            const accRes = await pool.query(
+              `SELECT access_token FROM brand_social_accounts WHERE LOWER(REPLACE(REPLACE(brand_name, ' ', '_'), '-', '_')) = LOWER($1) AND platform = 'instagram' LIMIT 1`,
+              [post.brand_id]
+            );
+            if (accRes.rows.length > 0) {
+              const tok = cryptoHelper.decrypt(accRes.rows[0].access_token);
+              const plRes = await axios.get(`https://graph.facebook.com/v19.0/${job.post_id}`, {
+                params: { fields: 'permalink', access_token: tok }
+              });
+              if (plRes.data.permalink) entry.url = plRes.data.permalink;
+            }
+          } catch (e) {
+            console.warn(`[updateOverallPostStatus] Could not fetch Instagram permalink for ${job.post_id}:`, e.message);
+          }
+        }
+
+        platformPostIds.push(entry);
       } else if (job.status === 'failed') {
         errors.push(`Failed to publish to ${job.channel}: ${job.error_message}`);
       }

@@ -133,4 +133,57 @@ router.post("/debug/delete-transcode", async (req, res) => {
   }
 });
 
+// One-time fix: fetch Instagram permalinks for all existing published posts
+router.post('/fix-instagram-urls', async (req, res) => {
+  const axios = require('axios');
+  const cryptoHelper = require('../utils/crypto');
+  let fixed = 0, skipped = 0, failed = 0;
+  const errors = [];
+  try {
+    const { rows: posts } = await pool.query(
+      `SELECT id, brand_id, platform_post_ids FROM content_queue
+       WHERE status IN ('PUBLISHED','PARTIAL','published','partial')
+       AND platform_post_ids IS NOT NULL AND platform_post_ids != '[]'`
+    );
+
+    for (const post of posts) {
+      let ids = [];
+      try { ids = typeof post.platform_post_ids === 'string' ? JSON.parse(post.platform_post_ids) : post.platform_post_ids; } catch(_) { continue; }
+      if (!Array.isArray(ids)) continue;
+
+      const igEntry = ids.find(e => e && e.platform && e.platform.includes('instagram') && !e.platform.includes('story') && e.post_id);
+      if (!igEntry || igEntry.url) { skipped++; continue; }
+
+      try {
+        const { rows: accs } = await pool.query(
+          `SELECT access_token FROM brand_social_accounts WHERE LOWER(REPLACE(REPLACE(brand_name, ' ', '_'), '-', '_')) = LOWER($1) AND platform = 'instagram' LIMIT 1`,
+          [post.brand_id]
+        );
+        if (!accs.length) { skipped++; errors.push({ id: post.id, reason: `no instagram account found for brand_id=${post.brand_id}` }); continue; }
+
+        const tok = cryptoHelper.decrypt(accs[0].access_token);
+        const plRes = await axios.get(`https://graph.facebook.com/v19.0/${igEntry.post_id}`, {
+          params: { fields: 'permalink', access_token: tok }
+        });
+        if (!plRes.data.permalink) { skipped++; errors.push({ id: post.id, reason: `no permalink in API response`, data: plRes.data }); continue; }
+
+        igEntry.url = plRes.data.permalink;
+        await pool.query(
+          `UPDATE content_queue SET platform_post_ids = $1 WHERE id = $2`,
+          [JSON.stringify(ids), post.id]
+        );
+        fixed++;
+      } catch(e) {
+        const detail = e.response?.data || e.message;
+        errors.push({ id: post.id, brand_id: post.brand_id, post_id: igEntry?.post_id, error: detail });
+        failed++;
+      }
+    }
+
+    res.json({ success: true, fixed, skipped, failed, errors });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

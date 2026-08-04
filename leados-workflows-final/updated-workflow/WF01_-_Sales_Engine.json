@@ -25,7 +25,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: $json.body.message, name: $json.body.name, phone: $json.body.phone, brand: $json.body.brand, lead_id: $json.body.lead_id, source: $json.body.source, campaign_id: $json.body.campaign_id }) }}"
+        "jsonBody": "={{ JSON.stringify({ message: String($json.body.message || ''), name: $json.body.name, phone: $json.body.phone, brand: ['bm academy', 'bm-academy', 'bmacademy'].includes(String($json.body.brand || '').trim().toLowerCase()) ? 'BM Academy' : String($json.body.brand || 'ABM Groups').trim(), lead_id: Number($json.body.lead_id), source: $json.body.source, campaign_id: $json.body.campaign_id, chat_history: $json.body.chat_history || [] }) }}"
       },
       "id": "11463102-1b24-40c2-84ae-8605a8263798",
       "name": "Intent Detection",
@@ -43,7 +43,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: $json.message, brand: $json.brand, lead_id: $json.lead_id, intent: $json.intent, confidence: $json.confidence }) }}"
+        "jsonBody": "={{ JSON.stringify({ message: String($json.message || ''), brand: String($json.brand || 'ABM Groups'), lead_id: Number($json.lead_id), intent: $json.intent, confidence: Number($json.confidence || 0), chat_history: $json.chat_history || [] }) }}"
       },
       "id": "894e8b99-a212-4523-82de-f1bbefbf022e",
       "name": "Objection Detection",
@@ -61,7 +61,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, query: $json.message, message: $json.message, lead_id: $json.lead_id, intent: $json.intent, objections: $json.objections, program: $json.program }) }}"
+        "jsonBody": "={{ JSON.stringify({ brand: String($json.brand || 'ABM Groups').trim(), query: String($json.message || ''), message: String($json.message || ''), lead_id: Number($json.lead_id), intent: $json.intent, objections: $json.objections, program: $json.program || null, chat_history: $json.chat_history || [] }) }}"
       },
       "id": "ed856d41-1144-4d5e-a252-5eaed34906f2",
       "name": "Knowledge Retrieval",
@@ -79,7 +79,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brand: $json.brand, name: $json.name, phone: $json.phone, intent: $json.intent, message: $json.message, kb_snippets: $json.kb_snippets, system_instructions: $json.system_instructions, chat_history: $json.chat_history, lead_id: $json.lead_id, objections: $json.objections }) }}"
+        "jsonBody": "={{ JSON.stringify({ brand: String($json.brand || 'ABM Groups').trim(), name: $json.name, phone: $json.phone, intent: $json.intent, message: String($json.message || ''), kb_snippets: $json.kb_snippets, system_instructions: $json.system_instructions, chat_history: $json.chat_history || [], lead_id: Number($json.lead_id), objections: $json.objections, program: $json.program || null }) }}"
       },
       "id": "55923ed8-d688-4403-a5ca-d99434383d4a",
       "name": "Generate AI Response",
@@ -97,7 +97,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, message: $json.message, intent: $json.intent, objections: $json.objections }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: Number($json.lead_id), brand: String($json.brand || 'ABM Groups').trim(), message: String($json.message || ''), intent: $json.intent, objections: $json.objections }) }}"
       },
       "id": "37957624-77ac-4467-80f0-4429f548a752",
       "name": "Qualify And Score",
@@ -115,7 +115,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ lead_id: $json.lead_id, brand: $json.brand, lead_score: $json.lead_score, intent: $json.intent }) }}"
+        "jsonBody": "={{ JSON.stringify({ lead_id: Number($json.lead_id), brand: String($json.brand || 'ABM Groups').trim(), lead_score: Number($json.lead_score || 0), intent: $json.intent }) }}"
       },
       "id": "c57e06c1-fe81-4e7a-942f-e69749494268",
       "name": "Assign Owner",

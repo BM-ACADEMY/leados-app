@@ -19,9 +19,11 @@ const multer = require('multer');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const xlsx = require('xlsx');
+const Jimp = require('jimp');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const openRouter = require('./services/openrouter');
 const cryptoHelper = require('./utils/crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
@@ -51,6 +53,272 @@ io.on('connection', (socket) => {
 
 // ── DB CONNECTION ─────────────────────────────────────────
 const pool = require('./db/connection');
+const clientsWhatsAppStatusReady = pool.query(`
+  ALTER TABLE clients ADD COLUMN IF NOT EXISTS whatsapp_status VARCHAR(30) NOT NULL DEFAULT 'not_configured';
+  ALTER TABLE clients ADD COLUMN IF NOT EXISTS whatsapp_verified_at TIMESTAMP;
+  ALTER TABLE clients ADD COLUMN IF NOT EXISTS whatsapp_verification_error TEXT;
+  ALTER TABLE clients ADD COLUMN IF NOT EXISTS brand_tag TEXT;
+  ALTER TABLE clients ADD COLUMN IF NOT EXISTS brand_voice TEXT;
+  ALTER TABLE clients ADD COLUMN IF NOT EXISTS industry TEXT;
+  ALTER TABLE clients ADD COLUMN IF NOT EXISTS target_audience TEXT;
+`).catch(err => console.error('[Clients] WhatsApp status migration failed:', err.message));
+const metaInventoryReady = pool.query(`
+  CREATE TABLE IF NOT EXISTS meta_whatsapp_accounts (
+    waba_id VARCHAR(100) PRIMARY KEY, business_id VARCHAR(100), name TEXT,
+    currency VARCHAR(10), timezone_id VARCHAR(30), template_namespace TEXT,
+    ownership_type VARCHAR(20), raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    last_synced_at TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS meta_whatsapp_phone_numbers (
+    phone_number_id VARCHAR(100) PRIMARY KEY,
+    waba_id VARCHAR(100) REFERENCES meta_whatsapp_accounts(waba_id) ON DELETE CASCADE,
+    client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+    display_phone_number TEXT, verified_name TEXT, verification_status TEXT,
+    connection_status TEXT, quality_rating TEXT, platform_type TEXT,
+    raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    last_synced_at TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS meta_whatsapp_templates (
+    template_id VARCHAR(100) PRIMARY KEY, waba_id VARCHAR(100), name TEXT,
+    language VARCHAR(20), status VARCHAR(30), category VARCHAR(30),
+    components JSONB NOT NULL DEFAULT '[]'::jsonb,
+    raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    last_synced_at TIMESTAMP NOT NULL DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS meta_whatsapp_sync_runs (
+    id BIGSERIAL PRIMARY KEY, status VARCHAR(20), wabas_count INT DEFAULT 0,
+    phones_count INT DEFAULT 0, templates_count INT DEFAULT 0,
+    error TEXT, started_at TIMESTAMP DEFAULT NOW(), completed_at TIMESTAMP
+  );
+  ALTER TABLE meta_whatsapp_phone_numbers ADD COLUMN IF NOT EXISTS profile_picture_url TEXT;
+  ALTER TABLE meta_whatsapp_phone_numbers ADD COLUMN IF NOT EXISTS profile_about TEXT;
+  ALTER TABLE meta_whatsapp_phone_numbers ADD COLUMN IF NOT EXISTS profile_address TEXT;
+  ALTER TABLE meta_whatsapp_phone_numbers ADD COLUMN IF NOT EXISTS profile_description TEXT;
+  ALTER TABLE meta_whatsapp_phone_numbers ADD COLUMN IF NOT EXISTS profile_email TEXT;
+  ALTER TABLE meta_whatsapp_phone_numbers ADD COLUMN IF NOT EXISTS profile_websites JSONB NOT NULL DEFAULT '[]'::jsonb;
+  ALTER TABLE meta_whatsapp_phone_numbers ADD COLUMN IF NOT EXISTS profile_vertical TEXT;
+`).catch(err => console.error('[Meta Inventory] Migration failed:', err.message));
+
+const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
+const profileLogoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, callback) => callback(null, ['image/jpeg', 'image/png'].includes(file.mimetype))
+});
+const graphPageData = async (url, token, params = {}) => {
+  const rows = [];
+  let next = url;
+  let nextParams = params;
+  while (next) {
+    const response = await axios.get(next, { params: nextParams, headers: { Authorization: `Bearer ${token}` } });
+    rows.push(...(response.data?.data || []));
+    next = response.data?.paging?.next || null;
+    nextParams = {};
+  }
+  return rows;
+};
+
+const META_PROFILE_FIELDS = ['wa_category', 'wa_description', 'wa_address', 'wa_email', 'wa_website'];
+const META_VERTICALS = {
+  'Matrimonial service': 'MATRIMONIAL',
+  'Finance and banking': 'FINANCE',
+  'Food and groceries': 'GROCERY',
+  'Alcoholic drinks': 'ALCOHOL',
+  Government: 'GOVT',
+  'Hotel and lodging': 'HOTEL',
+  'Medical and health': 'HEALTH',
+  'Over-the-counter medicine': 'MEDICAL',
+  Charity: 'NONPROFIT',
+  'Professional services': 'PROF_SERVICES',
+  'Shopping and retail': 'RETAIL',
+  'Travel and transportation': 'TRAVEL',
+  Restaurant: 'RESTAURANT',
+  OTHER: 'OTHER',
+};
+
+const metaProfilePayload = client => ({
+  messaging_product: 'whatsapp',
+  vertical: META_VERTICALS[client.wa_category] || client.wa_category || 'OTHER',
+  address: client.wa_address || '',
+  description: client.wa_description || '',
+  email: client.wa_email || '',
+  websites: client.wa_website ? [client.wa_website] : [],
+});
+
+const resolveClientMetaConfig = client => ({
+  wabaId: client.wa_business_id || process.env.WA_BUSINESS_ACCOUNT_ID,
+  // Phone Number IDs are unique per Meta phone asset and must never fall back
+  // to the platform's default number for a different brand.
+  phoneId: client.phone_number_id || null,
+  token: client.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN,
+});
+
+const normalizedPhoneDigits = value => String(value || '').replace(/\D/g, '');
+
+async function assertPhoneBelongsToWaba(client) {
+  const config = resolveClientMetaConfig(client);
+  if (!config.wabaId || !config.phoneId || !config.token) {
+    throw new Error('WABA ID, Phone Number ID, and System User Token are required for Meta synchronization');
+  }
+  const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+  const phones = await graphPageData(`${base}/${config.wabaId}/phone_numbers`, config.token, {
+    fields: 'id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status'
+  });
+  const phone = phones.find(item => String(item.id) === String(config.phoneId));
+  if (!phone) {
+    throw new Error(`Phone Number ID ${config.phoneId} does not exist under WABA ${config.wabaId}. Add and verify the number in Meta first, then sync it to LeadOS.`);
+  }
+  const savedDigits = normalizedPhoneDigits(client.whatsapp_number);
+  const metaDigits = normalizedPhoneDigits(phone.display_phone_number);
+  if (savedDigits && metaDigits && savedDigits !== metaDigits) {
+    throw new Error(`The WhatsApp number does not match Phone Number ID ${config.phoneId} in WABA ${config.wabaId}`);
+  }
+  return { ...config, phone };
+}
+
+async function updateWhatsAppBusinessProfile(client) {
+  const config = await assertPhoneBelongsToWaba(client);
+  const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+  await axios.post(
+    `${base}/${config.phoneId}/whatsapp_business_profile`,
+    metaProfilePayload(client),
+    { headers: { Authorization: `Bearer ${config.token}` } }
+  );
+
+  // Refresh the cached Meta values used by the expanded client panel.
+  const profileResponse = await axios.get(`${base}/${config.phoneId}/whatsapp_business_profile`, {
+    params: { fields: 'about,address,description,email,profile_picture_url,websites,vertical' },
+    headers: { Authorization: `Bearer ${config.token}` }
+  });
+  const profileRow = profileResponse.data?.data?.[0] || {};
+  const profile = profileRow.business_profile || profileRow;
+  await pool.query(`UPDATE meta_whatsapp_phone_numbers SET
+    profile_picture_url=$1,profile_about=$2,profile_address=$3,profile_description=$4,
+    profile_email=$5,profile_websites=$6,profile_vertical=$7,raw_data=raw_data || $8::jsonb,last_synced_at=NOW()
+    WHERE phone_number_id=$9`, [profile.profile_picture_url || null, profile.about || null,
+    profile.address || null, profile.description || null, profile.email || null,
+    JSON.stringify(profile.websites || []), profile.vertical || null,
+    JSON.stringify({ business_profile: profile }), String(config.phoneId)]);
+  if (client.id) {
+    await pool.query('UPDATE meta_whatsapp_phone_numbers SET client_id=$1 WHERE phone_number_id=$2', [client.id, config.phoneId]);
+  }
+  return { profile, phone: config.phone };
+}
+
+async function cacheMetaBusinessProfile(phoneId, token) {
+  const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+  const response = await axios.get(`${base}/${phoneId}/whatsapp_business_profile`, {
+    params: { fields: 'about,address,description,email,profile_picture_url,websites,vertical' },
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const row = response.data?.data?.[0] || {};
+  const profile = row.business_profile || row;
+  await pool.query(`UPDATE meta_whatsapp_phone_numbers SET
+    profile_picture_url=$1,profile_about=$2,profile_address=$3,profile_description=$4,
+    profile_email=$5,profile_websites=$6,profile_vertical=$7,raw_data=raw_data || $8::jsonb,last_synced_at=NOW()
+    WHERE phone_number_id=$9`, [profile.profile_picture_url || null, profile.about || null,
+    profile.address || null, profile.description || null, profile.email || null,
+    JSON.stringify(profile.websites || []), profile.vertical || null,
+    JSON.stringify({ business_profile: profile }), String(phoneId)]);
+  return profile;
+}
+
+async function syncMetaWhatsAppInventory() {
+  await Promise.all([clientsWhatsAppStatusReady, metaInventoryReady]);
+  const businessId = process.env.META_BUSINESS_ID || process.env.WA_META_BUSINESS_ID;
+  const token = process.env.META_SYSTEM_USER_ACCESS_TOKEN || process.env.META_PAGE_ACCESS_TOKEN;
+  if (!businessId) throw new Error('META_BUSINESS_ID is required (Meta Business Portfolio ID, not WABA ID)');
+  if (!token) throw new Error('META_SYSTEM_USER_ACCESS_TOKEN or META_PAGE_ACCESS_TOKEN is required');
+  const run = await pool.query(`INSERT INTO meta_whatsapp_sync_runs (status) VALUES ('running') RETURNING id`);
+  try {
+    const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+    const [owned, client] = await Promise.all([
+      graphPageData(`${base}/${businessId}/owned_whatsapp_business_accounts`, token),
+      graphPageData(`${base}/${businessId}/client_whatsapp_business_accounts`, token).catch(() => []),
+    ]);
+    const wabaMap = new Map();
+    owned.forEach(item => wabaMap.set(String(item.id), { ...item, ownership_type: 'owned' }));
+    client.forEach(item => wabaMap.set(String(item.id), { ...item, ownership_type: 'client' }));
+    let phoneCount = 0;
+    let templateCount = 0;
+    for (const waba of wabaMap.values()) {
+      await pool.query(`INSERT INTO meta_whatsapp_accounts
+        (waba_id, business_id, name, currency, timezone_id, template_namespace, ownership_type, raw_data, last_synced_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT (waba_id) DO UPDATE SET
+        business_id=EXCLUDED.business_id,name=EXCLUDED.name,currency=EXCLUDED.currency,
+        timezone_id=EXCLUDED.timezone_id,template_namespace=EXCLUDED.template_namespace,
+        ownership_type=EXCLUDED.ownership_type,raw_data=EXCLUDED.raw_data,last_synced_at=NOW()`,
+      [String(waba.id), businessId, waba.name, waba.currency, waba.timezone_id,
+        waba.message_template_namespace, waba.ownership_type, JSON.stringify(waba)]);
+      const [phones, templates] = await Promise.all([
+        graphPageData(`${base}/${waba.id}/phone_numbers`, token,
+          { fields: 'id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status' })
+          .catch(() => graphPageData(`${base}/${waba.id}/phone_numbers`, token)),
+        graphPageData(`${base}/${waba.id}/message_templates`, token),
+      ]);
+      for (const phone of phones) {
+        let profile = {};
+        try {
+          const profileResponse = await axios.get(`${base}/${phone.id}/whatsapp_business_profile`, {
+            params: { fields: 'about,address,description,email,profile_picture_url,websites,vertical' },
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const profileRow = profileResponse.data?.data?.[0] || {};
+          profile = profileRow.business_profile || profileRow;
+        } catch (profileError) {
+          console.warn(`[Meta Inventory] Profile unavailable for phone ${phone.id}:`, profileError.response?.data?.error?.message || profileError.message);
+        }
+        await pool.query(`INSERT INTO meta_whatsapp_phone_numbers
+          (phone_number_id,waba_id,display_phone_number,verified_name,verification_status,connection_status,quality_rating,platform_type,profile_picture_url,profile_about,profile_address,profile_description,profile_email,profile_websites,profile_vertical,raw_data,last_synced_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW()) ON CONFLICT (phone_number_id) DO UPDATE SET
+          waba_id=EXCLUDED.waba_id,display_phone_number=EXCLUDED.display_phone_number,
+          verified_name=EXCLUDED.verified_name,verification_status=EXCLUDED.verification_status,
+          connection_status=EXCLUDED.connection_status,quality_rating=EXCLUDED.quality_rating,
+          platform_type=EXCLUDED.platform_type,profile_picture_url=EXCLUDED.profile_picture_url,
+          profile_about=EXCLUDED.profile_about,profile_address=EXCLUDED.profile_address,
+          profile_description=EXCLUDED.profile_description,profile_email=EXCLUDED.profile_email,
+          profile_websites=EXCLUDED.profile_websites,profile_vertical=EXCLUDED.profile_vertical,
+          raw_data=EXCLUDED.raw_data,last_synced_at=NOW()`,
+        [String(phone.id), String(waba.id), phone.display_phone_number, phone.verified_name,
+          phone.code_verification_status, phone.status, phone.quality_rating, phone.platform_type,
+          profile.profile_picture_url, profile.about, profile.address, profile.description, profile.email,
+          JSON.stringify(profile.websites || []), profile.vertical, JSON.stringify({ ...phone, business_profile: profile })]);
+      }
+      for (const template of templates) {
+        await pool.query(`INSERT INTO meta_whatsapp_templates
+          (template_id,waba_id,name,language,status,category,components,raw_data,last_synced_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT (template_id) DO UPDATE SET
+          waba_id=EXCLUDED.waba_id,name=EXCLUDED.name,language=EXCLUDED.language,status=EXCLUDED.status,
+          category=EXCLUDED.category,components=EXCLUDED.components,raw_data=EXCLUDED.raw_data,last_synced_at=NOW()`,
+        [String(template.id), String(waba.id), template.name, template.language, template.status,
+          template.category, JSON.stringify(template.components || []), JSON.stringify(template)]);
+      }
+      phoneCount += phones.length;
+      templateCount += templates.length;
+    }
+    await pool.query(`UPDATE clients client SET
+      wa_business_id=phone.waba_id, phone_number_id=phone.phone_number_id,
+      whatsapp_number=phone.display_phone_number,
+      whatsapp_status=CASE WHEN UPPER(COALESCE(phone.connection_status,''))='CONNECTED'
+        OR UPPER(COALESCE(phone.verification_status,''))='VERIFIED' THEN 'verified' ELSE 'verification_pending' END,
+      whatsapp_verified_at=CASE WHEN UPPER(COALESCE(phone.connection_status,''))='CONNECTED'
+        OR UPPER(COALESCE(phone.verification_status,''))='VERIFIED'
+        THEN COALESCE(client.whatsapp_verified_at,NOW()) ELSE NULL END,
+      updated_at=NOW()
+      FROM meta_whatsapp_phone_numbers phone WHERE phone.client_id=client.id`);
+    await pool.query(`UPDATE meta_whatsapp_sync_runs SET status='success',wabas_count=$1,
+      phones_count=$2,templates_count=$3,completed_at=NOW() WHERE id=$4`,
+    [wabaMap.size, phoneCount, templateCount, run.rows[0].id]);
+    return { wabas: wabaMap.size, phone_numbers: phoneCount, templates: templateCount };
+  } catch (error) {
+    const message = error.response?.data?.error?.message || error.message;
+    await pool.query(`UPDATE meta_whatsapp_sync_runs SET status='failed',error=$1,completed_at=NOW() WHERE id=$2`, [message, run.rows[0].id]);
+    throw new Error(message);
+  }
+}
+
+cron.schedule('*/15 * * * *', () => syncMetaWhatsAppInventory().catch(err =>
+  console.error('[Meta Inventory Sync]', err.message)));
 const { evaluateLeadBrandAndSchedule, evaluateStuckLeads } = require('./services/aiBrain');
 const { checkNewDriveVideos, publishPost } = require("./controllers/contentController");
 
@@ -1282,7 +1550,7 @@ app.post('/api/communication/send-template', auth, async (req, res) => {
 
     // Get lead details
     const leadRes = await pool.query(`
-      SELECT l.*, c.wa_access_token, c.phone_number_id
+      SELECT l.*, c.wa_access_token, c.phone_number_id, c.whatsapp_status
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
       WHERE l.id = $1
@@ -1293,6 +1561,9 @@ app.post('/api/communication/send-template', auth, async (req, res) => {
     }
 
     const lead = leadRes.rows[0];
+    if (lead.client_id && lead.whatsapp_status !== 'verified') {
+      return res.status(403).json({ error: 'WhatsApp is disabled for this brand until verification succeeds' });
+    }
     const waToken = lead.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
     const phoneId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
 
@@ -1949,7 +2220,7 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
     }
 
     const leadRes = await pool.query(`
-      SELECT l.*, c.phone_number_id, c.wa_access_token
+      SELECT l.*, c.phone_number_id, c.wa_access_token, c.whatsapp_status
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
       WHERE l.id = $1
@@ -1957,6 +2228,10 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
 
     if (!leadRes.rows.length) return res.status(404).json({ error: 'Lead not found.' });
     const lead = leadRes.rows[0];
+
+    if (lead.client_id && lead.whatsapp_status !== 'verified') {
+      return res.status(403).json({ error: 'WhatsApp is disabled for this brand until verification succeeds' });
+    }
 
     const phoneNumberId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
     const waAccessToken = lead.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
@@ -3107,13 +3382,173 @@ app.delete('/api/templates/:id', auth, async (req, res) => {
 // ══════════════════════════════════════════════════════════
 // CLIENTS
 // ══════════════════════════════════════════════════════════
+app.get('/api/meta/embedded-signup/config', auth, (req, res) => {
+  const appId = process.env.META_APP_ID || '';
+  const configId = process.env.META_EMBEDDED_SIGNUP_CONFIG_ID || '';
+  res.json({ enabled: Boolean(appId && configId), app_id: appId, config_id: configId,
+    waba_id: process.env.WA_BUSINESS_ACCOUNT_ID || '', graph_version: META_GRAPH_VERSION });
+});
+
+app.post('/api/clients/:id/meta-embedded-signup/complete', auth, async (req, res) => {
+  try {
+    await metaInventoryReady;
+    const { waba_id: wabaId, phone_number_id: phoneId, expected_whatsapp_number: expectedNumber,
+      name, wa_category: waCategory, wa_description: waDescription } = req.body;
+    if (!wabaId || !phoneId) return res.status(400).json({ error: 'Meta did not return a WABA ID and Phone Number ID' });
+    const configuredWaba = process.env.WA_BUSINESS_ACCOUNT_ID;
+    if (configuredWaba && String(wabaId) !== String(configuredWaba)) {
+      return res.status(400).json({ error: `Select WABA ${configuredWaba} in Meta Embedded Signup` });
+    }
+    const token = process.env.META_PAGE_ACCESS_TOKEN;
+    if (!token) return res.status(503).json({ error: 'META_PAGE_ACCESS_TOKEN is not configured' });
+    const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+    const phones = await graphPageData(`${base}/${wabaId}/phone_numbers`, token, {
+      fields: 'id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status'
+    });
+    const phone = phones.find(item => String(item.id) === String(phoneId));
+    if (!phone) return res.status(400).json({ error: 'The new phone number is not accessible under the selected WABA' });
+    if (expectedNumber && normalizedPhoneDigits(phone.display_phone_number) !== normalizedPhoneDigits(expectedNumber)) {
+      return res.status(400).json({ error: 'The number verified in Meta does not match the number entered in LeadOS' });
+    }
+    const duplicate = await pool.query('SELECT id,name FROM clients WHERE phone_number_id=$1 AND id<>$2 LIMIT 1', [phoneId, req.params.id]);
+    if (duplicate.rows.length) return res.status(409).json({ error: `This phone is already assigned to ${duplicate.rows[0].name}` });
+    const connected = String(phone.status || '').toUpperCase() === 'CONNECTED';
+    const updated = await pool.query(`UPDATE clients SET wa_business_id=$1,phone_number_id=$2,
+      whatsapp_number=$3,whatsapp_status=$4,whatsapp_verified_at=$5,
+      name=COALESCE(NULLIF(TRIM($6::text),''),name),wa_category=COALESCE($7,wa_category),
+      wa_description=$8,whatsapp_verification_error=NULL,updated_at=NOW() WHERE id=$9 RETURNING *`,
+    [wabaId, phoneId, normalizedPhoneDigits(phone.display_phone_number), connected ? 'verified' : 'verification_pending',
+      connected ? new Date() : null, name || null, waCategory || null, waDescription || null, req.params.id]);
+    if (!updated.rows.length) return res.status(404).json({ error: 'Client not found' });
+    await pool.query('UPDATE meta_whatsapp_phone_numbers SET client_id=$1 WHERE phone_number_id=$2', [req.params.id, phoneId]);
+    let profileSynced = false;
+    try {
+      await updateWhatsAppBusinessProfile(updated.rows[0]);
+      profileSynced = true;
+    } catch (profileError) {
+      console.warn(`[Clients] New Meta phone mapped but profile sync is pending for client ${req.params.id}:`, profileError.response?.data?.error?.message || profileError.message);
+    }
+    res.json({ success: true, client: updated.rows[0], meta_phone: phone, profile_synced: profileSynced });
+  } catch (error) {
+    const message = error.response?.data?.error?.message || error.message || 'Embedded Signup completion failed';
+    console.error(`[Clients] Embedded Signup completion failed for client ${req.params.id}:`, message);
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post('/api/clients/:id/meta-profile-logo', auth, profileLogoUpload.single('logo'), async (req, res) => {
+  try {
+    await metaInventoryReady;
+    if (!req.file) return res.status(400).json({ error: 'Select a JPEG or PNG logo image' });
+    if (!process.env.META_APP_ID) {
+      return res.status(503).json({ error: 'META_APP_ID is required in server/.env to upload a Meta profile logo' });
+    }
+    const clientResult = await pool.query('SELECT * FROM clients WHERE id=$1', [req.params.id]);
+    const client = clientResult.rows[0];
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    if (!client.phone_number_id) {
+      return res.status(400).json({ error: 'Add this brand’s real Meta Phone Number ID before uploading its profile logo' });
+    }
+    const config = await assertPhoneBelongsToWaba(client);
+    const duplicatePhone = await pool.query(
+      'SELECT id, name FROM clients WHERE phone_number_id=$1 AND id<>$2 LIMIT 1',
+      [config.phoneId, client.id]
+    );
+    if (duplicatePhone.rows.length) {
+      return res.status(409).json({ error: `This Meta Phone Number ID is already assigned to ${duplicatePhone.rows[0].name}` });
+    }
+
+    const image = await Jimp.read(req.file.buffer);
+    const logoBuffer = await image.cover(640, 640).quality(90).getBufferAsync(Jimp.MIME_JPEG);
+    const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+    const sessionResponse = await axios.post(`${base}/${process.env.META_APP_ID}/uploads`, null, {
+      params: { file_name: `client-${client.id}-logo.jpg`, file_length: logoBuffer.length, file_type: 'image/jpeg' },
+      headers: { Authorization: `Bearer ${config.token}` }
+    });
+    const uploadId = sessionResponse.data?.id;
+    if (!uploadId) throw new Error('Meta did not return an upload session ID');
+    const uploadResponse = await axios.post(`${base}/${uploadId}`, logoBuffer, {
+      headers: { Authorization: `Bearer ${config.token}`, file_offset: '0', 'Content-Type': 'image/jpeg' },
+      maxBodyLength: 6 * 1024 * 1024
+    });
+    const handle = uploadResponse.data?.h;
+    if (!handle) throw new Error('Meta did not return a profile-picture handle');
+    await axios.post(`${base}/${config.phoneId}/whatsapp_business_profile`, {
+      messaging_product: 'whatsapp', profile_picture_handle: handle
+    }, { headers: { Authorization: `Bearer ${config.token}` } });
+    await pool.query('UPDATE meta_whatsapp_phone_numbers SET client_id=$1 WHERE phone_number_id=$2', [client.id, config.phoneId]);
+    const profile = await cacheMetaBusinessProfile(config.phoneId, config.token);
+    res.json({ success: true, profile_picture_url: profile.profile_picture_url || null });
+  } catch (error) {
+    const message = error.response?.data?.error?.message || error.message || 'Meta logo upload failed';
+    console.error(`[Clients] Meta logo upload failed for client ${req.params.id}:`, message);
+    res.status(400).json({ error: `Meta logo upload failed: ${message}` });
+  }
+});
+
+app.get('/api/meta/whatsapp/inventory', auth, async (req, res) => {
+  try {
+    await metaInventoryReady;
+    const [wabas, phones, templates, templateSummary, lastRun] = await Promise.all([
+      pool.query(`SELECT account.*, COUNT(phone.phone_number_id)::int AS phone_count FROM meta_whatsapp_accounts account LEFT JOIN meta_whatsapp_phone_numbers phone ON phone.waba_id=account.waba_id GROUP BY account.waba_id ORDER BY account.name`),
+      pool.query(`SELECT phone.*, account.name AS waba_name, client.name AS client_name FROM meta_whatsapp_phone_numbers phone JOIN meta_whatsapp_accounts account ON account.waba_id=phone.waba_id LEFT JOIN clients client ON client.id=phone.client_id ORDER BY phone.client_id NULLS FIRST, phone.verified_name`),
+      pool.query(`SELECT template_id,waba_id,name,language,status,category,components,last_synced_at FROM meta_whatsapp_templates ORDER BY name,language`),
+      pool.query(`SELECT waba_id,COUNT(*)::int AS total,COUNT(*) FILTER (WHERE status='APPROVED')::int AS approved,COUNT(*) FILTER (WHERE status<>'APPROVED')::int AS other FROM meta_whatsapp_templates GROUP BY waba_id`),
+      pool.query(`SELECT * FROM meta_whatsapp_sync_runs ORDER BY id DESC LIMIT 1`),
+    ]);
+    res.json({ wabas: wabas.rows, phone_numbers: phones.rows, templates: templates.rows, template_summary: templateSummary.rows, last_sync: lastRun.rows[0] || null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/meta/whatsapp/sync', auth, async (req, res) => {
+  try { res.json({ success: true, ...(await syncMetaWhatsAppInventory()) }); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.patch('/api/meta/whatsapp/phone-numbers/:phoneId/map', auth, async (req, res) => {
+  const db = await pool.connect();
+  try {
+    await Promise.all([clientsWhatsAppStatusReady, metaInventoryReady]);
+    const { client_id } = req.body;
+    await db.query('BEGIN');
+    const phoneResult = await db.query(`SELECT * FROM meta_whatsapp_phone_numbers WHERE phone_number_id=$1 FOR UPDATE`, [req.params.phoneId]);
+    if (!phoneResult.rows.length) { await db.query('ROLLBACK'); return res.status(404).json({ error: 'Meta phone number not found' }); }
+    if (client_id === null || client_id === undefined || client_id === '') {
+      await db.query(`UPDATE meta_whatsapp_phone_numbers SET client_id=NULL WHERE phone_number_id=$1`, [req.params.phoneId]);
+      await db.query('COMMIT'); return res.json({ success: true });
+    }
+    const clientResult = await db.query('SELECT id FROM clients WHERE id=$1 FOR UPDATE', [client_id]);
+    if (!clientResult.rows.length) { await db.query('ROLLBACK'); return res.status(404).json({ error: 'Brand not found' }); }
+    const phone = phoneResult.rows[0];
+    await db.query(`UPDATE meta_whatsapp_phone_numbers SET client_id=NULL WHERE client_id=$1`, [client_id]);
+    await db.query(`UPDATE meta_whatsapp_phone_numbers SET client_id=$1 WHERE phone_number_id=$2`, [client_id, phone.phone_number_id]);
+    const metaVerified = String(phone.connection_status || '').toUpperCase() === 'CONNECTED' || String(phone.verification_status || '').toUpperCase() === 'VERIFIED';
+    await db.query(`UPDATE clients SET wa_business_id=$1,phone_number_id=$2,whatsapp_number=$3,whatsapp_status=$4,whatsapp_verified_at=$5,whatsapp_verification_error=NULL,updated_at=NOW() WHERE id=$6`,
+      [phone.waba_id, phone.phone_number_id, phone.display_phone_number, metaVerified ? 'verified' : 'verification_pending', metaVerified ? new Date() : null, client_id]);
+    await db.query('COMMIT'); res.json({ success: true });
+  } catch (err) { await db.query('ROLLBACK'); res.status(500).json({ error: err.message }); }
+  finally { db.release(); }
+});
+
 app.get('/api/clients', auth, async (req, res) => {
   try {
+    await Promise.all([clientsWhatsAppStatusReady, metaInventoryReady]);
     const { rows } = await pool.query(`
       SELECT c.*,
+        meta_phone.profile_picture_url AS meta_profile_picture_url,
+        meta_phone.verified_name AS meta_verified_name,
+        meta_phone.profile_about AS meta_profile_about,
+        COALESCE(meta_phone.profile_address, c.wa_address) AS meta_profile_address,
+        COALESCE(meta_phone.profile_description, c.wa_description) AS meta_profile_description,
+        COALESCE(meta_phone.profile_email, c.wa_email) AS meta_profile_email,
+        COALESCE(meta_phone.profile_websites, CASE WHEN c.wa_website IS NOT NULL THEN jsonb_build_array(c.wa_website) END) AS meta_profile_websites,
+        COALESCE(meta_phone.profile_vertical, c.wa_category) AS meta_profile_vertical,
+        meta_phone.quality_rating AS meta_quality_rating,
+        meta_phone.connection_status AS meta_connection_status,
         (SELECT COUNT(*) FROM leads l WHERE l.client_id = c.id) as lead_count,
         (SELECT COUNT(*) FROM leads l WHERE l.client_id = c.id AND l.status = 'converted') as converted_count
       FROM clients c
+      LEFT JOIN meta_whatsapp_phone_numbers meta_phone ON meta_phone.client_id = c.id
       ORDER BY c.created_at DESC
     `);
     res.json({ clients: rows });
@@ -3124,12 +3559,14 @@ app.get('/api/clients', auth, async (req, res) => {
 
 app.post('/api/clients', auth, async (req, res) => {
   try {
-    const { name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, brand_tag, brand_voice, industry, target_audience } = req.body;
+    await clientsWhatsAppStatusReady;
+    const { name, wa_category, wa_description, wa_address, wa_email, wa_website } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Business name is required' });
     const { rows } = await pool.query(`
-      INSERT INTO clients (name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, brand_tag, brand_voice, industry, target_audience, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'active', NOW())
+      INSERT INTO clients (name, wa_category, wa_description, wa_address, wa_email, wa_website, status, whatsapp_status, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, 'active', 'not_configured', NOW())
       RETURNING *
-    `, [name, type, plan, phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, brand_tag, brand_voice, industry, target_audience]);
+    `, [name.trim(), wa_category || 'OTHER', wa_description || null, wa_address || null, wa_email || null, wa_website || null]);
     res.status(201).json({ client: rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -3138,28 +3575,74 @@ app.post('/api/clients', auth, async (req, res) => {
 
 app.patch('/api/clients/:id', auth, async (req, res) => {
   try {
-    const { phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status, brand_tag, brand_voice, industry, target_audience } = req.body;
-    await pool.query(`
-      UPDATE clients SET
-        phone_number_id = COALESCE($1, phone_number_id),
-        wa_access_token = COALESCE($2, wa_access_token),
-        wa_business_id = COALESCE($3, wa_business_id),
-        whatsapp_number = COALESCE($4, whatsapp_number),
-        wa_category = COALESCE($5, wa_category),
-        wa_description = COALESCE($6, wa_description),
-        wa_address = COALESCE($7, wa_address),
-        wa_email = COALESCE($8, wa_email),
-        wa_website = COALESCE($9, wa_website),
-        status = COALESCE($10, status),
-        brand_tag = COALESCE($11, brand_tag),
-        brand_voice = COALESCE($12, brand_voice),
-        industry = COALESCE($13, industry),
-        target_audience = COALESCE($14, target_audience),
-        updated_at = NOW()
-      WHERE id = $15
-    `, [phone_number_id, wa_access_token, wa_business_id, whatsapp_number, wa_category, wa_description, wa_address, wa_email, wa_website, status, brand_tag || null, brand_voice || null, industry || null, target_audience || null, req.params.id]);
-    res.json({ success: true });
+    await Promise.all([clientsWhatsAppStatusReady, metaInventoryReady]);
+    if (req.body.whatsapp_number !== undefined && String(req.body.whatsapp_number).trim()) {
+      const rawPhone = String(req.body.whatsapp_number).trim();
+      const parsedPhone = parsePhoneNumberFromString(rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`);
+      if (!/^\+?[\d\s().-]+$/.test(rawPhone) || !parsedPhone?.isValid()) {
+        return res.status(400).json({ error: 'Enter a valid WhatsApp number with country calling code, for example +91 98765 43210' });
+      }
+      req.body.whatsapp_number = parsedPhone.number.slice(1);
+    }
+    const existingResult = await pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+    const existing = existingResult.rows[0];
+    if (!existing) return res.status(404).json({ error: 'Client not found' });
+
+    const allowed = ['name', 'phone_number_id', 'wa_access_token',
+      'wa_business_id', 'whatsapp_number', 'wa_category', 'wa_description', 'wa_address', 'wa_email',
+      'wa_website', 'status'];
+    const entries = allowed.filter(field => req.body[field] !== undefined).map(field => [field, req.body[field]]);
+    if (req.body.name !== undefined && !String(req.body.name).trim()) {
+      return res.status(400).json({ error: 'Business name is required' });
+    }
+    if (!entries.length) return res.json({ success: true, client: existing });
+
+    const credentialFields = ['phone_number_id', 'wa_access_token', 'wa_business_id', 'whatsapp_number'];
+    const credentialsChanged = credentialFields.some(field =>
+      req.body[field] !== undefined && String(req.body[field] || '') !== String(existing[field] || '')
+    );
+    const next = { ...existing, ...Object.fromEntries(entries) };
+    const nextMetaConfig = resolveClientMetaConfig(next);
+    const metaProfileChanged = META_PROFILE_FIELDS.some(field =>
+      req.body[field] !== undefined && String(req.body[field] || '') !== String(existing[field] || '')
+    );
+    let metaProfile = null;
+    if (metaProfileChanged && nextMetaConfig.phoneId) {
+      try {
+        const duplicatePhone = await pool.query(
+          'SELECT id, name FROM clients WHERE phone_number_id = $1 AND id <> $2 LIMIT 1',
+          [nextMetaConfig.phoneId, req.params.id]
+        );
+        if (duplicatePhone.rows.length) {
+          return res.status(409).json({ error: `This Meta Phone Number ID is already assigned to ${duplicatePhone.rows[0].name}` });
+        }
+        const metaResult = await updateWhatsAppBusinessProfile(next);
+        metaProfile = metaResult.profile;
+      } catch (metaError) {
+        const message = metaError.response?.data?.error?.message || metaError.message || 'Meta profile update failed';
+        console.error(`[Clients] Meta profile update failed for client ${req.params.id}:`, message);
+        return res.status(400).json({ error: `Meta profile update failed: ${message}` });
+      }
+    }
+    const hasRequiredCredentials = nextMetaConfig.phoneId && nextMetaConfig.token && next.whatsapp_number;
+    if (credentialsChanged) {
+      entries.push(['whatsapp_status', hasRequiredCredentials ? 'verification_pending' : 'not_configured']);
+      entries.push(['whatsapp_verified_at', null]);
+      entries.push(['whatsapp_verification_error', null]);
+    }
+    const assignments = entries.map(([field], index) => `${field} = $${index + 1}`);
+    const values = entries.map(([, value]) => value === '' ? null : value);
+    const result = await pool.query(`UPDATE clients SET ${assignments.join(', ')}, updated_at = NOW()
+      WHERE id = $${values.length + 1} RETURNING *`, [...values, req.params.id]);
+    res.json({
+      success: true,
+      client: result.rows[0],
+      meta_profile_synced: Boolean(metaProfile),
+      meta_profile_pending: metaProfileChanged && !nextMetaConfig.phoneId,
+      meta_profile: metaProfile
+    });
   } catch (err) {
+    console.error(`[Clients] PATCH /api/clients/${req.params.id} failed:`, err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -3209,68 +3692,58 @@ app.delete('/api/clients/:id', auth, async (req, res) => {
 // POST /api/clients/:id/whatsapp-setup
 app.post('/api/clients/:id/whatsapp-setup', auth, async (req, res) => {
   try {
+    await clientsWhatsAppStatusReady;
     const { rows } = await pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     const client = rows[0];
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
-    if (!client.phone_number_id || !client.wa_access_token || !client.whatsapp_number) {
-      return res.status(400).json({ error: 'Missing WhatsApp API credentials' });
+    const metaConfig = resolveClientMetaConfig(client);
+    if (!metaConfig.phoneId || !metaConfig.token || !metaConfig.wabaId || !client.whatsapp_number) {
+      return res.status(400).json({ error: 'Real WhatsApp number and its Meta Phone Number ID are required before verification' });
+    }
+
+    await pool.query(`UPDATE clients SET whatsapp_status = 'verification_pending',
+      whatsapp_verified_at = NULL, whatsapp_verification_error = NULL WHERE id = $1`, [client.id]);
+
+    const ownership = await assertPhoneBelongsToWaba(client);
+    const phoneResponse = { data: ownership.phone };
+    const savedDigits = String(client.whatsapp_number).replace(/\D/g, '');
+    const metaDigits = String(phoneResponse.data?.display_phone_number || '').replace(/\D/g, '');
+    if (!metaDigits || (savedDigits !== metaDigits && !savedDigits.endsWith(metaDigits) && !metaDigits.endsWith(savedDigits))) {
+      throw new Error('The WhatsApp number does not match the supplied Meta Phone Number ID');
     }
 
     // 1. Update Business Profile
-    const profileData = {
-      messaging_product: "whatsapp",
-      vertical: client.wa_category || "OTHER",
-    };
-    if (client.wa_address) profileData.address = client.wa_address;
-    if (client.wa_description) profileData.description = client.wa_description;
-    if (client.wa_email) profileData.email = client.wa_email;
-    if (client.wa_website) profileData.websites = [client.wa_website];
-
     try {
-      await axios.post(
-        `https://graph.facebook.com/v19.0/${client.phone_number_id}/whatsapp_business_profile`,
-        profileData,
-        { headers: { Authorization: `Bearer ${client.wa_access_token}` } }
-      );
-    } catch (e) {
-      console.error('Meta Profile Update Error:', e.response?.data || e.message);
-      // Non-fatal, continue to register
+      await updateWhatsAppBusinessProfile(client);
+    } catch (profileError) {
+      // Profile fields are optional and must not invalidate ownership/registration.
+      console.warn('[WhatsApp Profile Update]', profileError.response?.data || profileError.message);
     }
 
-    // 2. Register Number
-    try {
+    // 2. Register only assets that Meta has not already connected.
+    if (String(ownership.phone.status || '').toUpperCase() !== 'CONNECTED') {
+      if (!process.env.WA_REGISTRATION_PIN) {
+        throw new Error('WA_REGISTRATION_PIN is required to register this phone number with Cloud API');
+      }
       await axios.post(
-        `https://graph.facebook.com/v19.0/${client.phone_number_id}/register`,
-        { messaging_product: "whatsapp", pin: "123456" },
-        { headers: { Authorization: `Bearer ${client.wa_access_token}` } }
+        `https://graph.facebook.com/${META_GRAPH_VERSION}/${metaConfig.phoneId}/register`,
+        { messaging_product: 'whatsapp', pin: process.env.WA_REGISTRATION_PIN },
+        { headers: { Authorization: `Bearer ${metaConfig.token}` } }
       );
-    } catch (e) {
-      console.error('Meta Register Error:', e.response?.data || e.message);
     }
 
-    // 3. Send Dummy Message to verify
-    try {
-      const toPhone = client.whatsapp_number.replace(/\D/g, '');
-      await axios.post(
-        `https://graph.facebook.com/v19.0/${client.phone_number_id}/messages`,
-        {
-          messaging_product: 'whatsapp',
-          to: toPhone,
-          type: 'text',
-          text: { body: '✅ Your WhatsApp Business API integration is successful!' }
-        },
-        { headers: { Authorization: `Bearer ${client.wa_access_token}` } }
-      );
-    } catch (e) {
-      console.error('Meta Dummy Message Error:', e.response?.data || e.message);
-      return res.status(400).json({ error: 'Failed to send dummy message. Check Meta permissions or OTP verification status.' });
-    }
-
-    res.json({ success: true, message: 'WhatsApp Setup & Verification completed successfully!' });
+    const verified = await pool.query(`UPDATE clients SET whatsapp_status = 'verified',
+      whatsapp_verified_at = NOW(), whatsapp_verification_error = NULL, updated_at = NOW()
+      WHERE id = $1 RETURNING *`, [client.id]);
+    res.json({ success: true, message: 'WhatsApp verified and enabled successfully', client: verified.rows[0] });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error during setup' });
+    const message = err.response?.data?.error?.message || err.message || 'WhatsApp verification failed';
+    await pool.query(`UPDATE clients SET whatsapp_status = 'verification_failed',
+      whatsapp_verified_at = NULL, whatsapp_verification_error = $1, updated_at = NOW()
+      WHERE id = $2`, [message, req.params.id]).catch(() => {});
+    console.error('[WhatsApp Verification]', err.response?.data || err);
+    res.status(400).json({ error: message });
   }
 });
 
@@ -3724,7 +4197,7 @@ async function executeCampaign(campaign_id) {
     `).catch(() => {}); // Ignore if already exists
 
     const campRes = await pool.query(`
-      SELECT c.*, t.body as template_body, t.name as template_name, cl.wa_access_token, cl.phone_number_id
+      SELECT c.*, t.body as template_body, t.name as template_name, cl.wa_access_token, cl.phone_number_id, cl.whatsapp_status
       FROM campaigns c
       JOIN templates t ON c.template_id = t.id
       LEFT JOIN clients cl ON c.client_id = cl.id
@@ -3736,6 +4209,12 @@ async function executeCampaign(campaign_id) {
       return;
     }
     const campaign = campRes.rows[0];
+
+    if (campaign.client_id && campaign.whatsapp_status !== 'verified') {
+      await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
+      console.error(`Campaign ${campaign_id}: WhatsApp is not verified for this brand`);
+      return;
+    }
 
     console.log(`[executeCampaign] Campaign: ${campaign.name}, target_status: ${campaign.target_status}, client_id: ${campaign.client_id}`);
 

@@ -47,8 +47,13 @@ async function ensureSalesTask(req, leadId, taskType) {
   await salesTasksReady;
   const result = await pool.query(`
     INSERT INTO sales_tasks (lead_id, task_type, unread)
-    SELECT $1, $2, TRUE
-    WHERE NOT EXISTS (SELECT 1 FROM sales_tasks WHERE lead_id = $1 AND task_type = $2)
+    SELECT $1::bigint, $2::text, TRUE
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM sales_tasks
+      WHERE lead_id = $1::bigint
+        AND task_type = $2::text
+    )
     RETURNING id, lead_id, task_type, status, unread, created_at
   `, [leadId, taskType]);
   if (result.rows[0]) await emitSalesTaskUpdate(req, 'created', result.rows[0]);
@@ -784,7 +789,11 @@ router.post('/kb/search', async (req, res) => {
       ? `BM ACADEMY COURSE LIST RULE:
 When asked for available courses or the full course list, include every PROGRAM entry in the knowledge base, not only the first four. The catalogue has 23 courses. Group the names under Flagship & Placement, Digital Marketing, Creator & Video, Design & Web, AI Tools, and Kids & Teens. Show names first, then ask which course needs details.`
       : '';
-    const system_instructions = [...trainingDocs, bmAcademyCourseRule]
+    const bmAcademySyllabusRule = isBmAcademy
+      ? `BM ACADEMY SYLLABUS RULE:
+When the user asks for a syllabus, resolve the active BM Academy course from the current message and chat history. Return the syllabus URL exactly as stored in the KNOWLEDGE BASE REFERENCE for that course. Never substitute a link from another brand or course, alter the URL, or invent a URL. If no syllabus URL for the active course is present in the retrieved knowledge, ask one short course clarification question instead.`
+      : '';
+    const system_instructions = [...trainingDocs, bmAcademyCourseRule, bmAcademySyllabusRule]
       .filter(Boolean)
       .join('\n\n')
       .slice(0, 8000);

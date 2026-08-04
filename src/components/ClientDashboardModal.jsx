@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { X, Building, Smartphone, Globe, Mail, MapPin, Layers, Award, Flame, Users, Calendar } from 'lucide-react';
+import { X, Building, Smartphone, Globe, Mail, MapPin, Layers, Award, Flame, Users } from 'lucide-react';
 import { C } from '../constants/theme.js';
 
 export const ClientDashboardModal = ({ client, onClose }) => {
@@ -8,11 +8,11 @@ export const ClientDashboardModal = ({ client, onClose }) => {
   const leads = parseInt(client.lead_count ?? client.leads ?? 0);
   const converted = parseInt(client.converted_count ?? client.conv ?? 0);
   const convRate = leads > 0 ? Math.round((converted / leads) * 100) + '%' : '0%';
-  const joinedDate = new Date(client.joined_at || client.created_at || Date.now()).toLocaleDateString('en-US', {
+  const joinedDate = client.joined_at || client.created_at ? new Date(client.joined_at || client.created_at).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric'
-  });
+  }) : 'Unknown';
 
   const detailItemStyle = {
     display: 'flex',
@@ -42,7 +42,7 @@ export const ClientDashboardModal = ({ client, onClose }) => {
                 </span>
               </div>
               <p style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
-                Joined on {joinedDate} • {client.type || 'Standard Business'}
+                Joined on {joinedDate}
               </p>
             </div>
           </div>
@@ -55,6 +55,16 @@ export const ClientDashboardModal = ({ client, onClose }) => {
         <div style={{ overflowY: 'auto', padding: 28, display: 'flex', flexDirection: 'column', gap: 24 }}>
           
           {/* Key Metrics Section */}
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ color: C.text, fontSize: 13, fontWeight: 700 }}>WhatsApp Service</div>
+              <div style={{ color: C.muted, fontSize: 11, marginTop: 3 }}>{client.whatsapp_status === 'verified' ? `Verified ${client.whatsapp_verified_at ? `on ${new Date(client.whatsapp_verified_at).toLocaleDateString()}` : ''}` : 'Messaging remains disabled until Meta verification succeeds.'}</div>
+            </div>
+            <span style={{ color: client.whatsapp_status === 'verified' ? C.green : client.whatsapp_status === 'verification_failed' ? C.red : C.muted, fontSize: 11, fontWeight: 800 }}>
+              {client.whatsapp_status === 'verified' ? 'ENABLED' : client.whatsapp_status === 'verification_pending' ? 'PENDING' : client.whatsapp_status === 'verification_failed' ? 'FAILED' : 'NOT CONFIGURED'}
+            </span>
+          </div>
+
           <div>
             <h3 style={{ fontSize: 12, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>Conversion Statistics</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>

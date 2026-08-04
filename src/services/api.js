@@ -446,6 +446,44 @@ class LeadOSAPI {
     });
   }
 
+  async uploadClientMetaLogo(id, file) {
+    const formData = new FormData();
+    formData.append('logo', file);
+    const response = await fetch(`${API_URL}/api/clients/${id}/meta-profile-logo`, {
+      method: 'POST',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+      body: formData,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Failed to upload Meta profile logo');
+    return data;
+  }
+
+  async getMetaEmbeddedSignupConfig() {
+    return this.request('/api/meta/embedded-signup/config');
+  }
+
+  async completeMetaEmbeddedSignup(id, data) {
+    return this.request(`/api/clients/${id}/meta-embedded-signup/complete`, {
+      method: 'POST', body: JSON.stringify(data)
+    });
+  }
+
+  async getMetaWhatsAppInventory() {
+    return this.request('/api/meta/whatsapp/inventory');
+  }
+
+  async syncMetaWhatsApp() {
+    return this.request('/api/meta/whatsapp/sync', { method: 'POST' });
+  }
+
+  async mapMetaPhoneNumber(phoneId, clientId) {
+    return this.request(`/api/meta/whatsapp/phone-numbers/${phoneId}/map`, {
+      method: 'PATCH', body: JSON.stringify({ client_id: clientId })
+    });
+  }
+
+
   async importLeads(formData, forceStatus = null) {
     const token = localStorage.getItem('leados_token');
     if (!token) throw new Error('No authentication token found');

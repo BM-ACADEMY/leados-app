@@ -404,7 +404,8 @@ const CONTENT_COLUMNS = `
   platforms, selected_accounts, scheduled_at, status,
   approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
   error_message, created_at, published_at, description, hashtags, thumbnail_options,
-  key_moments, drive_file_id, brand_id, video_name, transcript
+  key_moments, drive_file_id, brand_id, video_name, transcript,
+  platform_post_ids
 `;
 
 // ---------------------------------------------------------------

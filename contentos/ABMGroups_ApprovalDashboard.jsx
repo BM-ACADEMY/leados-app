@@ -22,17 +22,66 @@ function getPlatformConfig(platform) {
   if (!platform) return { label: "Unknown", icon: "🌐", color: "#6B6B80" };
   const p = platform.toLowerCase();
   const known = {
-    instagram:  { label: "Instagram", icon: "📸", color: "#E1306C" },
-    youtube:    { label: "YouTube",   icon: "▶️", color: "#FF0000" },
-    facebook:   { label: "Facebook",  icon: "👍", color: "#1877F2" },
-    x_twitter:  { label: "X",         icon: "𝕏", color: "#000000" },
-    linkedin:   { label: "LinkedIn",  icon: "in", color: "#0A66C2" },
+    instagram:       { label: "Instagram Post", icon: "📸", color: "#E1306C" },
+    instagram_post:  { label: "Instagram Post", icon: "📸", color: "#E1306C" },
+    instagram_reel:  { label: "Instagram Reel", icon: "📸", color: "#E1306C" },
+    instagram_story: { label: "Instagram Story", icon: "📸", color: "#E1306C" },
+    youtube:         { label: "YouTube Short",  icon: "▶️", color: "#FF0000" },
+    youtube_short:   { label: "YouTube Short",  icon: "▶️", color: "#FF0000" },
+    youtube_video:   { label: "YouTube Video",  icon: "▶️", color: "#FF0000" },
+    facebook:        { label: "Facebook Post",  icon: "👍", color: "#1877F2" },
+    facebook_post:   { label: "Facebook Post",  icon: "👍", color: "#1877F2" },
+    facebook_reel:   { label: "Facebook Reel",  icon: "👍", color: "#1877F2" },
+    x_twitter:       { label: "X",              icon: "𝕏", color: "#000000" },
+    linkedin:        { label: "LinkedIn",        icon: "in", color: "#0A66C2" },
   };
   if (known[p]) return known[p];
-  
+
   let hash = 0;
   for (let i = 0; i < p.length; i++) hash = p.charCodeAt(i) + ((hash << 5) - hash);
   return { label: platform, icon: "🌐", color: COLORS[Math.abs(hash) % COLORS.length].c };
+}
+
+function instagramMediaIdToShortcode(mediaId) {
+  const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let code = '';
+  try {
+    let n = BigInt(mediaId);
+    while (n > 0n) { code = alpha[Number(n % 64n)] + code; n = n / 64n; }
+  } catch (_) { return null; }
+  return code || null;
+}
+
+function buildPlatformUrl(platform, entry) {
+  if (!entry) return null;
+  if (entry.url) return entry.url;
+  const postId = entry.post_id;
+  if (!postId) return null;
+  const p = (platform || "").toLowerCase();
+  if (p.includes("youtube")) return `https://www.youtube.com/watch?v=${postId}`;
+  if (p.includes("linkedin")) return `https://www.linkedin.com/feed/update/${postId}/`;
+  if (p.includes("facebook")) {
+    if (postId.includes("_")) {
+      const [pageId, pid] = postId.split("_");
+      return `https://www.facebook.com/permalink.php?story_fbid=${pid}&id=${pageId}`;
+    }
+    return `https://www.facebook.com/watch?v=${postId}`;
+  }
+  if (p.includes("instagram")) {
+    const shortcode = instagramMediaIdToShortcode(postId);
+    return shortcode ? `https://www.instagram.com/p/${shortcode}/` : null;
+  }
+  return null;
+}
+
+function normalizePlatform(p) {
+  return (p || "").toLowerCase().replace(/_(post|reel|short|story|video)$/, "");
+}
+
+function getPlatformPostEntry(platform, platformPostIds) {
+  if (!Array.isArray(platformPostIds) || !platform) return null;
+  const norm = normalizePlatform(platform);
+  return platformPostIds.find(e => e && normalizePlatform(e.platform) === norm) || null;
 }
 
 export default function ApprovalDashboard() {
@@ -344,9 +393,28 @@ export default function ApprovalDashboard() {
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                     {(item.platforms || []).map(p => {
                       const pConf = getPlatformConfig(p);
-                      return (
-                        <span key={p} style={{ fontSize: 10, padding: "1px 6px", background: "#F0EFF8", borderRadius: 4, color: "#6B6B80" }}>
+                      const entry = getPlatformPostEntry(p, item.platform_post_ids);
+                      const url = item.status === "PUBLISHED" ? buildPlatformUrl(p, entry) : null;
+                      const isPublished = item.status === "PUBLISHED";
+                      const style = {
+                        fontSize: 10, padding: "3px 8px", borderRadius: 6,
+                        background: isPublished ? (pConf.color + "15") : "#F0EFF8",
+                        border: isPublished ? `1px solid ${pConf.color}44` : "1px solid transparent",
+                        color: isPublished ? pConf.color : "#6B6B80",
+                        fontWeight: isPublished ? 600 : 400,
+                        cursor: url ? "pointer" : "default",
+                        textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3
+                      };
+                      return url ? (
+                        <a key={p} href={url} target="_blank" rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()}
+                          style={style}>
+                          {pConf.icon} {pConf.label} ↗
+                        </a>
+                      ) : (
+                        <span key={p} style={style}>
                           {pConf.icon} {pConf.label}
+                          {isPublished && entry && <span style={{ fontSize: 9, opacity: 0.6 }}> ✓</span>}
                         </span>
                       );
                     })}
@@ -564,8 +632,31 @@ export default function ApprovalDashboard() {
                               <span style={{ fontSize: 14 }}>{p.icon}</span>
                               <span style={{ fontSize: 12, fontWeight: 600, color: active ? p.color : "#6B6B80" }}>{p.label}</span>
                             </div>
-                            <div style={{ width: 16, height: 16, borderRadius: 4, background: active ? p.color : "#E5E4F0", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              {active && <span style={{ color: "#fff", fontSize: 10, fontWeight: 700 }}>✓</span>}
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              {(() => {
+                                if (selected.status !== "PUBLISHED" || !active) return null;
+                                const entry = getPlatformPostEntry(key, selected.platform_post_ids);
+                                const url = buildPlatformUrl(key, entry);
+                                if (!url && !entry) return null;
+                                return url ? (
+                                  <a href={url} target="_blank" rel="noopener noreferrer"
+                                    onClick={e => e.stopPropagation()}
+                                    style={{
+                                      fontSize: 10, padding: "2px 8px", borderRadius: 20,
+                                      background: p.color, color: "#fff",
+                                      fontWeight: 700, textDecoration: "none", display: "inline-block"
+                                    }}>
+                                    View Post ↗
+                                  </a>
+                                ) : (
+                                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#10B98122", color: "#10B981", fontWeight: 700 }}>
+                                    ✓ Published
+                                  </span>
+                                );
+                              })()}
+                              <div style={{ width: 16, height: 16, borderRadius: 4, background: active ? p.color : "#E5E4F0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                {active && <span style={{ color: "#fff", fontSize: 10, fontWeight: 700 }}>✓</span>}
+                              </div>
                             </div>
                           </div>
 

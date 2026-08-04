@@ -1,16 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../src/services/api.js';
 
-function instagramMediaIdToShortcode(mediaId) {
-  const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-  let code = '';
-  try {
-    let n = BigInt(mediaId);
-    while (n > 0n) { code = alpha[Number(n % 64n)] + code; n = n / 64n; }
-  } catch (_) { return null; }
-  return code || null;
-}
-
 function normPlatform(p) {
   return (p || '').toLowerCase().replace(/_(post|reel|short|story|video)$/, '');
 }
@@ -36,10 +26,7 @@ function buildPostUrl(platform, entry) {
     }
     return `https://www.facebook.com/watch?v=${id}`;
   }
-  if (p.includes('instagram')) {
-    const sc = instagramMediaIdToShortcode(id);
-    return sc ? `https://www.instagram.com/p/${sc}/` : null;
-  }
+  if (p.includes('instagram')) return null;
   return null;
 }
 
@@ -264,7 +251,7 @@ export function ApprovalRoom({
                     <div className="qfmts">
                       {(item.platforms || []).map(p => {
                         const pf = getPlatformConfig(p);
-                        const isPublished = (item.status || '').toUpperCase() === 'PUBLISHED';
+                        const isPublished = ['PUBLISHED','PARTIAL'].includes((item.status || '').toUpperCase());
                         const entry = isPublished ? getPostEntry(p, item.platform_post_ids) : null;
                         const url = isPublished ? buildPostUrl(p, entry) : null;
                         return url ? (
@@ -790,7 +777,7 @@ export function ApprovalRoom({
                         </button>
 
                         {(() => {
-                          const isPublished = (selectedItem.status || '').toUpperCase() === 'PUBLISHED';
+                          const isPublished = ['PUBLISHED','PARTIAL'].includes((selectedItem.status || '').toUpperCase());
                           if (!isPublished || !active) return null;
                           const entry = getPostEntry(platformKey, selectedItem.platform_post_ids);
                           const url = buildPostUrl(platformKey, entry);

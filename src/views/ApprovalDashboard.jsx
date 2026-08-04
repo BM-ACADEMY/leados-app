@@ -39,6 +39,48 @@ function getPlatformConfig(platform) {
   return { label: platform, icon: "🌐", color: COLORS[Math.abs(hash) % COLORS.length].c };
 }
 
+function instagramMediaIdToShortcode(mediaId) {
+  const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let code = '';
+  try {
+    let n = BigInt(mediaId);
+    while (n > 0n) { code = alpha[Number(n % 64n)] + code; n = n / 64n; }
+  } catch (_) { return null; }
+  return code || null;
+}
+
+function normalizePlatform(p) {
+  return (p || "").toLowerCase().replace(/_(post|reel|short|story|video)$/, "");
+}
+
+function getPlatformPostEntry(platform, platformPostIds) {
+  if (!Array.isArray(platformPostIds) || !platform) return null;
+  const norm = normalizePlatform(platform);
+  return platformPostIds.find(e => e && normalizePlatform(e.platform) === norm) || null;
+}
+
+function buildPlatformUrl(platform, entry) {
+  if (!entry) return null;
+  if (entry.url) return entry.url;
+  const postId = entry.post_id;
+  if (!postId) return null;
+  const p = (platform || "").toLowerCase();
+  if (p.includes("youtube")) return `https://www.youtube.com/watch?v=${postId}`;
+  if (p.includes("linkedin")) return `https://www.linkedin.com/feed/update/${postId}/`;
+  if (p.includes("facebook")) {
+    if (postId.includes("_")) {
+      const [pageId, pid] = postId.split("_");
+      return `https://www.facebook.com/permalink.php?story_fbid=${pid}&id=${pageId}`;
+    }
+    return `https://www.facebook.com/watch?v=${postId}`;
+  }
+  if (p.includes("instagram")) {
+    const shortcode = instagramMediaIdToShortcode(postId);
+    return shortcode ? `https://www.instagram.com/p/${shortcode}/` : null;
+  }
+  return null;
+}
+
 function extractDriveFileId(url) {
   if (!url) return null;
   const patterns = [
@@ -56,7 +98,7 @@ function extractDriveFileId(url) {
 function parseItemJsonFields(item) {
   if (!item) return item;
   const parsed = { ...item };
-  const jsonFields = ["platforms", "selected_accounts", "thumbnail_options", "key_moments"];
+  const jsonFields = ["platforms", "selected_accounts", "thumbnail_options", "key_moments", "platform_post_ids"];
   for (const field of jsonFields) {
     if (parsed[field] !== undefined && parsed[field] !== null) {
       if (typeof parsed[field] === 'string') {
@@ -881,9 +923,27 @@ export default function ApprovalDashboard() {
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                     {(item.platforms || []).map(p => {
                       const pConf = getPlatformConfig(p);
-                      return (
-                        <span key={p} style={{ fontSize: 10, padding: "1px 6px", background: "#F0EFF8", borderRadius: 4, color: "#6B6B80" }}>
+                      const isPublished = item.status === "PUBLISHED" || item.status === "published";
+                      const entry = isPublished ? getPlatformPostEntry(p, item.platform_post_ids) : null;
+                      const url = isPublished ? buildPlatformUrl(p, entry) : null;
+                      const style = {
+                        fontSize: 10, padding: "3px 8px", borderRadius: 6,
+                        background: isPublished ? (pConf.color + "15") : "#F0EFF8",
+                        border: isPublished ? `1px solid ${pConf.color}44` : "1px solid transparent",
+                        color: isPublished ? pConf.color : "#6B6B80",
+                        fontWeight: isPublished ? 600 : 400,
+                        cursor: url ? "pointer" : "default",
+                        textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3
+                      };
+                      return url ? (
+                        <a key={p} href={url} target="_blank" rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()} style={style}>
+                          {pConf.icon} {pConf.label} ↗
+                        </a>
+                      ) : (
+                        <span key={p} style={style}>
                           {pConf.icon} {pConf.label}
+                          {isPublished && entry && <span style={{ fontSize: 9, opacity: 0.6 }}> ✓</span>}
                         </span>
                       );
                     })}
@@ -1543,8 +1603,32 @@ export default function ApprovalDashboard() {
                               <span style={{ fontSize: 14 }}>{p.icon}</span>
                               <span style={{ fontSize: 12, fontWeight: 600, color: active ? p.color : "#6B6B80" }}>{p.label}</span>
                             </div>
-                            <div style={{ width: 16, height: 16, borderRadius: 4, background: active ? p.color : "#E5E4F0", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              {active && <span style={{ color: "#fff", fontSize: 10, fontWeight: 700 }}>✓</span>}
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              {(() => {
+                                const isPublished = selected.status === "PUBLISHED" || selected.status === "published";
+                                if (!isPublished || !active) return null;
+                                const entry = getPlatformPostEntry(key, selected.platform_post_ids);
+                                const url = buildPlatformUrl(key, entry);
+                                if (!url && !entry) return null;
+                                return url ? (
+                                  <a href={url} target="_blank" rel="noopener noreferrer"
+                                    onClick={e => e.stopPropagation()}
+                                    style={{
+                                      fontSize: 10, padding: "2px 8px", borderRadius: 20,
+                                      background: p.color, color: "#fff",
+                                      fontWeight: 700, textDecoration: "none", display: "inline-block"
+                                    }}>
+                                    View Post ↗
+                                  </a>
+                                ) : (
+                                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#10B98122", color: "#10B981", fontWeight: 700 }}>
+                                    ✓ Published
+                                  </span>
+                                );
+                              })()}
+                              <div style={{ width: 16, height: 16, borderRadius: 4, background: active ? p.color : "#E5E4F0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                {active && <span style={{ color: "#fff", fontSize: 10, fontWeight: 700 }}>✓</span>}
+                              </div>
                             </div>
                           </div>
 

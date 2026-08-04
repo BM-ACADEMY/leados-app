@@ -86,7 +86,7 @@ function extractDriveFileId(url) {
 function parseItemJsonFields(item) {
   if (!item) return item;
   const parsed = { ...item };
-  const jsonFields = ["platforms", "selected_accounts", "thumbnail_options", "key_moments"];
+  const jsonFields = ["platforms", "selected_accounts", "thumbnail_options", "key_moments", "platform_post_ids"];
   for (const field of jsonFields) {
     if (parsed[field] !== undefined && parsed[field] !== null) {
       if (typeof parsed[field] === 'string') {

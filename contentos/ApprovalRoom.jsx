@@ -1,7 +1,47 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../src/services/api.js';
 
+function instagramMediaIdToShortcode(mediaId) {
+  const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let code = '';
+  try {
+    let n = BigInt(mediaId);
+    while (n > 0n) { code = alpha[Number(n % 64n)] + code; n = n / 64n; }
+  } catch (_) { return null; }
+  return code || null;
+}
 
+function normPlatform(p) {
+  return (p || '').toLowerCase().replace(/_(post|reel|short|story|video)$/, '');
+}
+
+function getPostEntry(platform, platformPostIds) {
+  if (!Array.isArray(platformPostIds) || !platform) return null;
+  const norm = normPlatform(platform);
+  return platformPostIds.find(e => e && normPlatform(e.platform) === norm) || null;
+}
+
+function buildPostUrl(platform, entry) {
+  if (!entry) return null;
+  if (entry.url) return entry.url;
+  const id = entry.post_id;
+  if (!id) return null;
+  const p = (platform || '').toLowerCase();
+  if (p.includes('youtube')) return `https://www.youtube.com/watch?v=${id}`;
+  if (p.includes('linkedin')) return `https://www.linkedin.com/feed/update/${id}/`;
+  if (p.includes('facebook')) {
+    if (id.includes('_')) {
+      const [pageId, pid] = id.split('_');
+      return `https://www.facebook.com/permalink.php?story_fbid=${pid}&id=${pageId}`;
+    }
+    return `https://www.facebook.com/watch?v=${id}`;
+  }
+  if (p.includes('instagram')) {
+    const sc = instagramMediaIdToShortcode(id);
+    return sc ? `https://www.instagram.com/p/${sc}/` : null;
+  }
+  return null;
+}
 
 export function ApprovalRoom({
   items,
@@ -224,7 +264,22 @@ export function ApprovalRoom({
                     <div className="qfmts">
                       {(item.platforms || []).map(p => {
                         const pf = getPlatformConfig(p);
-                        return <span key={p} className="fmt">{pf.icon} {pf.label}</span>;
+                        const isPublished = (item.status || '').toUpperCase() === 'PUBLISHED';
+                        const entry = isPublished ? getPostEntry(p, item.platform_post_ids) : null;
+                        const url = isPublished ? buildPostUrl(p, entry) : null;
+                        return url ? (
+                          <a key={p} href={url} target="_blank" rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            className="fmt"
+                            style={{ textDecoration: 'none', color: '#4ade80', borderColor: 'rgba(74,222,128,0.3)', cursor: 'pointer' }}>
+                            {pf.icon} {pf.label} ↗
+                          </a>
+                        ) : (
+                          <span key={p} className="fmt"
+                            style={isPublished && entry ? { color: '#4ade80', borderColor: 'rgba(74,222,128,0.3)' } : {}}>
+                            {pf.icon} {pf.label}{isPublished && entry ? ' ✓' : ''}
+                          </span>
+                        );
                       })}
                     </div>
                   </button>
@@ -733,6 +788,32 @@ export function ApprovalRoom({
                           </div>
                           <div className="chk"></div>
                         </button>
+
+                        {(() => {
+                          const isPublished = (selectedItem.status || '').toUpperCase() === 'PUBLISHED';
+                          if (!isPublished || !active) return null;
+                          const entry = getPostEntry(platformKey, selectedItem.platform_post_ids);
+                          const url = buildPostUrl(platformKey, entry);
+                          if (!url && !entry) return null;
+                          return url ? (
+                            <a href={url} target="_blank" rel="noopener noreferrer"
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                marginTop: 4, marginLeft: 6, marginBottom: 2,
+                                fontSize: 10, fontWeight: 700, textDecoration: 'none',
+                                color: '#4ade80', padding: '2px 8px',
+                                background: 'rgba(74,222,128,0.08)',
+                                border: '1px solid rgba(74,222,128,0.25)',
+                                borderRadius: 20
+                              }}>
+                              View Post ↗
+                            </a>
+                          ) : (
+                            <span style={{ display: 'inline-block', marginTop: 4, marginLeft: 6, fontSize: 10, color: '#4ade80', fontWeight: 700 }}>
+                              ✓ Published
+                            </span>
+                          );
+                        })()}
 
                         {active && brandAccounts.length > 0 && (
                           <div className="acct" style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 28 }}>

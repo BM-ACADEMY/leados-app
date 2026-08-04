@@ -1,9 +1,24 @@
-import { useState, Fragment } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { C } from '../constants/theme.js';
 
 export const ClientsTable = ({ clients, onDashboard, onManage }) => {
   const [expandedId, setExpandedId] = useState(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 5;
+  const totalRecords = clients.length;
+  const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
+  const pageStart = (page - 1) * pageSize;
+  const pageClients = clients.slice(pageStart, pageStart + pageSize);
+
+  useEffect(() => {
+    setPage(current => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  const changePage = nextPage => {
+    setPage(Math.min(Math.max(nextPage, 1), totalPages));
+    setExpandedId(null);
+  };
   const cell = { padding: 13, borderBottom: `1px solid ${C.border}`, fontSize: 10 };
   const details = client => [
     ['WhatsApp Number', client.whatsapp_number],
@@ -22,7 +37,7 @@ export const ClientsTable = ({ clients, onDashboard, onManage }) => {
       <thead><tr>{['', 'Brand', 'Leads', 'Converted', 'Conversion', 'WhatsApp', 'Status', 'Action'].map(label =>
         <th key={label} style={{ ...cell, color: C.muted, fontSize: 8, textAlign: ['Leads','Converted','Conversion'].includes(label) ? 'right' : 'left', textTransform: 'uppercase', letterSpacing: .6 }}>{label}</th>
       )}</tr></thead>
-      <tbody>{clients.map(client => {
+      <tbody>{pageClients.map(client => {
         const leads = Number(client.lead_count ?? client.leads ?? 0);
         const converted = Number(client.converted_count ?? client.conv ?? 0);
         const expanded = expandedId === client.id;
@@ -45,5 +60,15 @@ export const ClientsTable = ({ clients, onDashboard, onManage }) => {
         </Fragment>;
       })}</tbody>
     </table></div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '15px 16px', borderTop: `1px solid ${C.border}`, background: C.surface, flexWrap: 'wrap' }}>
+      <span style={{ color: C.muted, fontSize: 9 }}>
+        {totalRecords === 0 ? 'Showing 0 entries' : `Showing ${pageStart + 1} to ${Math.min(pageStart + pageSize, totalRecords)} of ${totalRecords} entries`}
+      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1} aria-label="Previous page" style={{ height: 34, padding: '0 13px', borderRadius: 7, border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: page === 1 ? 'not-allowed' : 'pointer', opacity: page === 1 ? .4 : 1, fontSize: 10, fontWeight: 600 }}>Previous</button>
+        <strong style={{ color: C.text, fontSize: 10, whiteSpace: 'nowrap' }}>Page {page} of {totalPages}</strong>
+        <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages} aria-label="Next page" style={{ height: 34, padding: '0 13px', borderRadius: 7, border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: page === totalPages ? 'not-allowed' : 'pointer', opacity: page === totalPages ? .4 : 1, fontSize: 10, fontWeight: 600 }}>Next</button>
+      </div>
+    </div>
   </div>;
 };

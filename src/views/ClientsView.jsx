@@ -7,6 +7,12 @@ import { ClientDashboardModal } from '../components/ClientDashboardModal.jsx';
 import { ClientsTable } from '../components/ClientsTable.jsx';
 import toast from 'react-hot-toast';
 
+const getDisplayNameStatus = phone => {
+  const nextStatus = String(phone?.raw_data?.new_name_status || '').toUpperCase();
+  if (nextStatus && nextStatus !== 'NONE') return nextStatus;
+  return String(phone?.raw_data?.name_status || 'UNKNOWN').toUpperCase();
+};
+
 export const ClientsView = () => {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -163,6 +169,23 @@ export const ClientsView = () => {
     }
   };
 
+  const openMetaDisplayNameEditor = phone => {
+    const waba = metaInventory.wabas.find(item => item.waba_id === phone.waba_id);
+    if (!waba?.business_id) return toast.error('Run a full Meta sync before editing the display name');
+    const url = new URL('https://business.facebook.com/wa/manage/phone-numbers/');
+    url.searchParams.set('business_id', waba.business_id);
+    url.searchParams.set('waba_id', phone.waba_id);
+    url.searchParams.set('phone_number_id', phone.phone_number_id);
+    const width = 900;
+    const height = 780;
+    const left = Math.max(0, window.screenX + (window.outerWidth - width) / 2);
+    const top = Math.max(0, window.screenY + (window.outerHeight - height) / 2);
+    const popup = window.open(url.toString(), 'leados-meta-display-name', `popup=yes,width=${width},height=${height},left=${Math.round(left)},top=${Math.round(top)},resizable=yes,scrollbars=yes`);
+    if (!popup) return toast.error('Allow popups for LeadOS, then try again');
+    popup.focus();
+    toast('Select the phone in Meta, click its rejected display name, submit the corrected name, then close the popup and sync.');
+  };
+
   const mapPhone = async (phoneId) => {
     const clientId = mapping[phoneId];
     if (!clientId) return toast.error('Select a brand first');
@@ -227,8 +250,13 @@ export const ClientsView = () => {
         {unassignedMetaNumbers.length === 0 ? <p style={{ color: C.muted, fontSize: 11 }}>No unassigned Meta phone numbers.</p> : <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{unassignedMetaNumbers.map(phone => (
           <div key={phone.phone_number_id} style={{ display: 'grid', gridTemplateColumns: 'minmax(180px,1fr) minmax(180px,1fr) auto auto auto', gap: 8, alignItems: 'center', background: C.surface, borderRadius: 9, padding: 10 }} className="grid-responsive">
             <div style={{ display: 'flex', gap: 9, alignItems: 'center' }}>{phone.profile_picture_url ? <img src={phone.profile_picture_url} alt="WhatsApp profile" style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', border: '1px solid ' + C.border }} /> : <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.card, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.accent, fontSize: 11, fontWeight: 800 }}>{phone.verified_name?.[0] || '?'}</div>}<div><div style={{ color: C.text, fontSize: 12, fontWeight: 700 }}>{phone.display_phone_number || 'Unknown number'}</div><div style={{ color: C.muted, fontSize: 9 }}>{phone.verified_name || 'No display name'} · {phone.waba_name}</div><div style={{ color: C.muted, fontSize: 8, marginTop: 3 }}>Phone ID: {phone.phone_number_id}</div></div></div>
-            <div style={{ color: C.muted, fontSize: 10 }}>{phone.connection_status || phone.verification_status || 'Unknown'} · Quality: {phone.quality_rating || 'Unknown'}<small style={{ display: 'block', marginTop: 3 }}>Platform: {phone.platform_type || 'Unknown'} · Verified: {phone.verification_status || 'Unknown'}</small></div>
-            <button type="button" onClick={() => { setRegistrationPhone(phone); setRegistrationPin(''); }} title="Register this number with WhatsApp Cloud API" style={{ background: C.green + '18', color: C.green, border: '1px solid ' + C.green, borderRadius: 7, padding: '7px 10px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>Register API</button>
+            <div style={{ color: C.muted, fontSize: 10 }}>{phone.connection_status || phone.verification_status || 'Unknown'} · Quality: {phone.quality_rating || 'Unknown'}<small style={{ display: 'block', marginTop: 3 }}>Platform: {phone.platform_type || 'Unknown'} · Verified: {phone.verification_status || 'Unknown'}</small><small style={{ display: 'block', marginTop: 3, color: ['DECLINED','REJECTED'].includes(getDisplayNameStatus(phone)) ? C.red : C.muted }}>Display name: {getDisplayNameStatus(phone)}</small></div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {String(phone.connection_status || '').toUpperCase() !== 'CONNECTED'
+                ? <button type="button" onClick={() => { setRegistrationPhone(phone); setRegistrationPin(''); }} title="Register this number with WhatsApp Cloud API" style={{ background: C.green + '18', color: C.green, border: '1px solid ' + C.green, borderRadius: 7, padding: '7px 10px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>Register API</button>
+                : <span style={{ color: C.green, fontSize: 9, fontWeight: 700, whiteSpace: 'nowrap' }}>API registered</span>}
+              {['DECLINED','REJECTED'].includes(getDisplayNameStatus(phone)) && <button type="button" onClick={() => openMetaDisplayNameEditor(phone)} style={{ background: C.red + '16', color: C.red, border: '1px solid ' + C.red, borderRadius: 7, padding: '6px 9px', fontSize: 9, fontWeight: 700, whiteSpace: 'nowrap' }}>Edit display name</button>}
+            </div>
             <select value={mapping[phone.phone_number_id] || ''} onChange={e => setMapping({...mapping, [phone.phone_number_id]: e.target.value})} style={{ background: C.bg, border: '1px solid ' + C.border, color: C.text, borderRadius: 7, padding: '6px 8px', fontSize: 11, lineHeight: 1.3, minHeight: 32 }}><option value="" style={{ fontSize: 11 }}>Map to brand...</option>{clients.map(client => <option key={client.id} value={client.id} style={{ fontSize: 11 }}>{client.name}</option>)}</select>
             <button onClick={() => mapPhone(phone.phone_number_id)} title="Map selected brand" style={{ background: C.accent + '20', color: C.accent, border: '1px solid ' + C.accentDim, borderRadius: 7, padding: 7 }}><Link2 size={13} /></button>
           </div>
@@ -279,7 +307,7 @@ export const ClientsView = () => {
       {registrationPhone && <div style={{ position: 'fixed', inset: 0, zIndex: 10050, background: 'rgba(0,0,0,.78)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
         <div style={{ width: '100%', maxWidth: 440, background: C.card, border: '1px solid ' + C.border, borderRadius: 14, padding: 24, boxShadow: '0 24px 70px rgba(0,0,0,.55)' }}>
           <h3 style={{ color: C.text, fontSize: 17, marginBottom: 6 }}>Register phone with Cloud API</h3>
-          <p style={{ color: C.muted, fontSize: 11, lineHeight: 1.6, marginBottom: 18 }}>Meta verified <strong style={{ color: C.text }}>{registrationPhone.display_phone_number || registrationPhone.phone_number_id}</strong>. Choose a new 6-digit two-step verification PIN. LeadOS sends it directly to Meta and never stores it.</p>
+          <p style={{ color: C.muted, fontSize: 11, lineHeight: 1.6, marginBottom: 18 }}>Meta verified <strong style={{ color: C.text }}>{registrationPhone.display_phone_number || registrationPhone.phone_number_id}</strong>. For a first registration, choose a new 6-digit PIN. If Meta already configured two-step verification for this number, enter its existing PIN. LeadOS sends it directly to Meta and never stores it.</p>
           <label style={{ display: 'block', color: C.muted, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', marginBottom: 6 }}>6-digit PIN</label>
           <input type="password" inputMode="numeric" autoComplete="new-password" maxLength={6} value={registrationPin} onChange={event => setRegistrationPin(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="••••••" style={{ width: '100%', boxSizing: 'border-box', background: C.bg, border: '1px solid ' + C.border, borderRadius: 8, padding: '11px 13px', color: C.text, fontSize: 18, letterSpacing: 8, textAlign: 'center', outline: 'none' }} />
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>

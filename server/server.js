@@ -162,7 +162,7 @@ async function assertPhoneBelongsToWaba(client) {
   }
   const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
   const phones = await graphPageData(`${base}/${config.wabaId}/phone_numbers`, config.token, {
-    fields: 'id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status'
+    fields: 'id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status,name_status,new_name_status'
   });
   const phone = phones.find(item => String(item.id) === String(config.phoneId));
   if (!phone) {
@@ -269,7 +269,7 @@ async function syncMetaWhatsAppInventory() {
         waba.message_template_namespace, waba.ownership_type, JSON.stringify(waba)]);
       const [phones, templates] = await Promise.all([
         graphPageData(`${base}/${waba.id}/phone_numbers`, token,
-          { fields: 'id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status' })
+          { fields: 'id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status,name_status,new_name_status' })
           .catch(() => graphPageData(`${base}/${waba.id}/phone_numbers`, token)),
         graphPageData(`${base}/${waba.id}/message_templates`, token),
       ]);

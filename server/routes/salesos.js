@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/connection');
 const axios = require('axios');
+const { findBmAcademySyllabus } = require('../services/bmAcademySyllabus');
 
 // ==========================================
 // WF00 - Lead Integrator Endpoints
@@ -882,6 +883,33 @@ router.post('/ai/response', async (req, res) => {
     let resolvedHistory = normalizeChatHistory(chat_history);
     if (resolvedHistory.length === 0 && lead_id) {
       resolvedHistory = await getRecentChatHistory(lead_id);
+    }
+
+    // Syllabus links are business data, not generated prose. Resolve the
+    // selected course from this turn or the latest course in chat history and
+    // return only the approved catalog URL. This prevents invented Drive IDs.
+    const isBmAcademy = String(persistedBrand || '').trim().toLowerCase() === 'bm academy';
+    if (isBmAcademy) {
+      const syllabusMatch = findBmAcademySyllabus(message, resolvedHistory);
+      if (syllabusMatch.requested && syllabusMatch.course) {
+        const { name: courseName, url } = syllabusMatch.course;
+        return res.json({
+          ...req.body,
+          brand: persistedBrand,
+          name: leadName,
+          ai_reply: `Here is the ${courseName} syllabus: ${url}`,
+          syllabus_course: courseName,
+          syllabus_url: url,
+        });
+      }
+      if (syllabusMatch.requested) {
+        return res.json({
+          ...req.body,
+          brand: persistedBrand,
+          name: leadName,
+          ai_reply: 'Which BM Academy course syllabus would you like?',
+        });
+      }
     }
     let historyText = "";
     if (resolvedHistory.length > 0) {

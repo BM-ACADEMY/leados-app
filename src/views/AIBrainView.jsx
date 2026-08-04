@@ -49,6 +49,35 @@ FALLBACKS
 - Unclear message: ask one short clarifying question.
 - Send exactly one reply for each inbound WhatsApp message.`;
 
+const BM_ACADEMY_SYLLABUS_CATALOG = `BM ACADEMY - APPROVED SYLLABUS LINKS
+These URLs are authoritative. Copy them exactly; never create or alter a Google Drive URL.
+
+Social Media Creator Bootcamp: https://drive.google.com/file/d/1xSclKumtK7un2YqEGtGFtfRjJvFUIC6q/view?usp=sharing
+Digital Marketing Starter Program: https://drive.google.com/file/d/1uV0Wa5Gk5_N2ppXxiUlfGS66YhoDDG73/view?usp=sharing
+AI-Powered Digital Marketing Professional: https://drive.google.com/file/d/16kR4qgzvhQCcvjGVGZRBCdR-d9bPzc_o/view?usp=sharing
+Performance Marketing Accelerator: https://drive.google.com/file/d/1090r8JUeOlQ02GQ2e4NHk0f3KI_V_Qxh/view?usp=sharing
+Digital Content Creator Program: https://drive.google.com/file/d/1d28V5I5z8XlYabt36q0NNVmSszTibma1/view?usp=drivesdk
+Full Stack Digital Marketing Bundle: https://drive.google.com/file/d/10EELdu9IatnDUdfr6ku4JTYoJ5qpTFLv/view?usp=sharing
+Video Editing Bootcamp: https://drive.google.com/file/d/1TK8c7Fzc6bC7-HTmxuwh1a4PRAMETDy-/view?usp=sharing
+Video Editing Professional: https://drive.google.com/file/d/1gDcTZdUq2L9DDhg-nNKF81tLUGkYWpxu/view?usp=sharing
+Design Basics Bootcamp: https://drive.google.com/file/d/1nkt-42FwF5guyaOQsmA3SI67rDMMFwXO/view?usp=sharing
+Graphic Design Professional: https://drive.google.com/file/d/1IGJb2YSwsOt_xUlhjXTtRr5CxCAnY6Iy/view?usp=sharing
+Web Design Basic Program / Web Dev Basic Bootcamp: https://drive.google.com/file/d/1P758ymghSLLJHvmgQKot7ox7hFBTJ-4h/view?usp=sharing
+WordPress Web Design Program: https://drive.google.com/file/d/1Dv8xPEDn0FItCQk0S42Synh5eO4Biqw0/view?usp=sharing
+AI Starter Bootcamp: https://drive.google.com/file/d/1sjGQ_TYHP2omAgcTBDLhKdCIFEsSIchF/view?usp=sharing
+AI Tools Mastery Program: https://drive.google.com/file/d/11-aloNBPtY2NGh0K_yuXgnTEdqXd-a0X/view?usp=sharing
+Full Stack Developer Tier 1: https://drive.google.com/file/d/189jAkS2YBhp9XILlepsDyy8gy_Vo5b-Z/view?usp=sharing
+Full Stack Developer Tier 2: https://drive.google.com/file/d/1IxoK1896Zptl1Sjplkk4Hz2znmGNy5Z9/view?usp=sharing
+Data Analytics Bootcamp: https://drive.google.com/file/d/1Vh0qCEqQVRLdHsyrwiHH78WKfKiGrfLk/view?usp=sharing
+Data Analytics Tier 1: https://drive.google.com/file/d/1hLTKlWAo8AfjoKbzxAuvuEmgfAMOBPI1/view?usp=sharing
+Data Analytics Tier 2: https://drive.google.com/file/d/1K_bKym9aLwGudUTlvbSpedKQ_yuXWFzC/view?usp=sharing
+Data Analytics Professional: https://drive.google.com/file/d/1pGUSto3KKAOu4osG2dN-BNQvxCNrCo-4/view?usp=sharing
+AI Fun Lab: https://drive.google.com/file/d/15lQVN-T7zGfH-uCJi1XH0H6VE7FLQhf5/view?usp=sharing
+AI Skills for Teens: https://drive.google.com/file/d/1T3ffKgvASOJ2iKQYPk0hO0r_ImR5pqYY/view?usp=sharing
+Pre-College AI + Digital: https://drive.google.com/file/d/1v3NRUhsU5W5grz55eDHIBd1wf-i08IRf/view?usp=sharing
+Career Roadmap: https://drive.google.com/drive/folders/1sQyWtWveqmMegFE7b_-TznoBXqzwYS5-
+Build Your Own AI Marketing Agency in 90 Days: https://drive.google.com/file/d/1GYwTKfOBez6jQ9J3yITglxh248INrqii/view?usp=sharing`;
+
 export const AIBrainView = () => {
   const [clients, setClients] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState(null);
@@ -97,14 +126,7 @@ export const AIBrainView = () => {
         ]);
         
         const docMap = {};
-        // Brand specific docs (welcome template)
-        brandDocsRes.docs?.forEach(d => {
-          if (d.doc_type === 'welcome_template') {
-            docMap[d.doc_type] = d.content;
-          }
-        });
-        
-        // Global ABM docs (prompt, training)
+        // Global behaviour and master knowledge are shared by all brands.
         abmDocsRes.docs?.forEach(d => {
           if (d.doc_type === 'prompt') {
             docMap[d.doc_type] = d.content;
@@ -116,6 +138,13 @@ export const AIBrainView = () => {
             docMap[d.doc_type] = d.content;
           }
           if (d.doc_type === 'pricing') {
+            docMap[d.doc_type] = d.content;
+          }
+        });
+        // Product, pricing and welcome content belong to the selected brand.
+        // A brand-specific document overrides the global fallback.
+        brandDocsRes.docs?.forEach(d => {
+          if (['welcome_template', 'product', 'pricing'].includes(d.doc_type)) {
             docMap[d.doc_type] = d.content;
           }
         });
@@ -1082,7 +1111,7 @@ tags: internal, todo
     const promptVal = savedProgramCount >= 23 ? docs.prompt : defaultTemplate;
     const behaviorVal = docs.training || DEFAULT_BOT_BEHAVIOR;
     const welcomeTemplateVal = docs.welcome_template || '';
-    const productVal = docs.product || '';
+    const productVal = docs.product || (selectedBrandName === 'BM Academy' ? BM_ACADEMY_SYLLABUS_CATALOG : '');
     const pricingVal = docs.pricing || '';
 
     setPromptText(promptVal);
@@ -1099,8 +1128,8 @@ tags: internal, todo
       await Promise.all([
         api.saveBrainDoc(abmGroupId, 'prompt', promptText),
         api.saveBrainDoc(abmGroupId, 'training', behaviorText),
-        api.saveBrainDoc(abmGroupId, 'product', productText),
-        api.saveBrainDoc(abmGroupId, 'pricing', pricingText),
+        api.saveBrainDoc(selectedClientId, 'product', productText),
+        api.saveBrainDoc(selectedClientId, 'pricing', pricingText),
         api.saveBrainDoc(selectedClientId, 'welcome_template', welcomeTemplate),
       ]);
       alert('AI Brain saved! All brain docs (prompt, training, product, pricing) are active for ' + selectedBrandName);

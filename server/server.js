@@ -313,6 +313,27 @@ async function syncMetaWhatsAppInventory() {
       phoneCount += phones.length;
       templateCount += templates.length;
     }
+    if (businessId) {
+      // Portfolio discovery is authoritative. Remove cached WABAs that Meta no
+      // longer returns (for example, an account removed from the portfolio).
+      // Do not do this in single-WABA fallback mode because that response says
+      // nothing about the portfolio's other valid WABAs.
+      const activeWabaIds = [...wabaMap.keys()];
+      await pool.query(`
+        DELETE FROM meta_whatsapp_templates
+        WHERE waba_id IN (
+          SELECT waba_id
+          FROM meta_whatsapp_accounts
+          WHERE business_id = $1
+            AND NOT (waba_id = ANY($2::text[]))
+        )
+      `, [businessId, activeWabaIds]);
+      await pool.query(`
+        DELETE FROM meta_whatsapp_accounts
+        WHERE business_id = $1
+          AND NOT (waba_id = ANY($2::text[]))
+      `, [businessId, activeWabaIds]);
+    }
     await pool.query(`UPDATE clients client SET
       wa_business_id=phone.waba_id, phone_number_id=phone.phone_number_id,
       whatsapp_number=phone.display_phone_number,
@@ -3520,6 +3541,45 @@ app.get('/api/meta/whatsapp/inventory', auth, async (req, res) => {
 app.post('/api/meta/whatsapp/sync', auth, async (req, res) => {
   try { res.json({ success: true, ...(await syncMetaWhatsAppInventory()) }); }
   catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.delete('/api/meta/whatsapp/cache/wabas/:wabaId', auth, async (req, res) => {
+  const db = await pool.connect();
+  try {
+    await metaInventoryReady;
+    await db.query('BEGIN');
+    const account = await db.query(
+      'SELECT waba_id,name FROM meta_whatsapp_accounts WHERE waba_id=$1 FOR UPDATE',
+      [req.params.wabaId]
+    );
+    if (!account.rows.length) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Cached WABA not found' });
+    }
+    const mapped = await db.query(
+      `SELECT phone.phone_number_id,client.name AS client_name
+       FROM meta_whatsapp_phone_numbers phone
+       JOIN clients client ON client.id=phone.client_id
+       WHERE phone.waba_id=$1
+       LIMIT 1`,
+      [req.params.wabaId]
+    );
+    if (mapped.rows.length) {
+      await db.query('ROLLBACK');
+      return res.status(409).json({
+        error: `Cannot clear this cache because a phone number is mapped to ${mapped.rows[0].client_name}`
+      });
+    }
+    await db.query('DELETE FROM meta_whatsapp_templates WHERE waba_id=$1', [req.params.wabaId]);
+    await db.query('DELETE FROM meta_whatsapp_accounts WHERE waba_id=$1', [req.params.wabaId]);
+    await db.query('COMMIT');
+    res.json({ success: true, waba_id: account.rows[0].waba_id, name: account.rows[0].name });
+  } catch (err) {
+    await db.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    db.release();
+  }
 });
 
 app.patch('/api/meta/whatsapp/phone-numbers/:phoneId/map', auth, async (req, res) => {

@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Smartphone, Link2 } from 'lucide-react';
+import { Plus, RefreshCw, Smartphone, Link2, Trash2 } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
 import { ClientModal } from '../components/ClientModal.jsx';
 import { ClientDashboardModal } from '../components/ClientDashboardModal.jsx';
 import { ClientsTable } from '../components/ClientsTable.jsx';
 import toast from 'react-hot-toast';
+import { launchMetaEmbeddedSignup } from '../utils/metaEmbeddedSignup.js';
 
 export const ClientsView = () => {
   const [clients, setClients] = useState([]);
@@ -17,6 +18,7 @@ export const ClientsView = () => {
   const [dashboardClient, setDashboardClient] = useState(null);
   const [metaInventory, setMetaInventory] = useState({ wabas: [], phone_numbers: [], templates: [], template_summary: [], last_sync: null });
   const [metaSyncing, setMetaSyncing] = useState(false);
+  const [metaCacheDeleting, setMetaCacheDeleting] = useState(false);
   const [mapping, setMapping] = useState({});
   const [selectedWabaId, setSelectedWabaId] = useState('');
   const [metaResourceTab, setMetaResourceTab] = useState('phones');
@@ -60,6 +62,47 @@ export const ClientsView = () => {
     finally { setMetaSyncing(false); }
   };
 
+  const deleteSelectedMetaCache = async () => {
+    if (!selectedWaba) return;
+    const confirmed = window.confirm(
+      `Delete only the cached LeadOS inventory for ${selectedWaba.name} (${selectedWaba.waba_id})?\n\nThis does not delete anything from Meta. If the WABA still exists in Meta, it will return on the next sync.`
+    );
+    if (!confirmed) return;
+    setMetaCacheDeleting(true);
+    try {
+      await api.deleteMetaWhatsAppCache(selectedWaba.waba_id);
+      toast.success(`Deleted cached inventory for ${selectedWaba.name}`);
+      await fetchClients();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setMetaCacheDeleting(false);
+    }
+  };
+
+  const addPhoneToSelectedWaba = async () => {
+    if (!selectedWaba) return toast.error('Select a WABA first');
+    if (metaSyncing) return;
+    setMetaSyncing(true);
+    const toastId = toast.loading(`Opening Meta for WABA ${selectedWaba.waba_id}...`);
+    try {
+      const config = await api.getMetaEmbeddedSignupConfig();
+      if (!config.enabled) throw new Error('Meta Embedded Signup is not configured');
+      const result = await launchMetaEmbeddedSignup(config);
+      if (String(result.waba_id || '') !== String(selectedWaba.waba_id)) {
+        throw new Error(`Wrong WABA selected in Meta. Choose ${selectedWaba.name} (${selectedWaba.waba_id}); Meta returned ${result.waba_id || 'no WABA ID'}.`);
+      }
+      if (!result.phone_number_id) throw new Error('Meta did not return the new Phone Number ID');
+      const synced = await api.syncMetaWhatsApp();
+      toast.success(`Phone verified under ${selectedWaba.name}. Synced ${synced.phone_numbers} numbers.`, { id: toastId });
+      await fetchClients();
+    } catch (error) {
+      toast.error(error.message || 'Meta phone onboarding failed', { id: toastId });
+    } finally {
+      setMetaSyncing(false);
+    }
+  };
+
   const mapPhone = async (phoneId) => {
     const clientId = mapping[phoneId];
     if (!clientId) return toast.error('Select a brand first');
@@ -100,7 +143,11 @@ export const ClientsView = () => {
             <h2 style={{ color: C.text, fontSize: 15, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}><Smartphone size={16} color={C.green} />Meta WhatsApp Inventory</h2>
             <p style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>{metaInventory.wabas.length} WABAs · {metaInventory.phone_numbers.length} phone numbers · automatic sync every 15 minutes</p>
           </div>
-          <button onClick={syncMeta} disabled={metaSyncing} style={{ background: C.surface, border: '1px solid ' + C.border, color: C.text, borderRadius: 7, padding: '7px 11px', display: 'flex', gap: 6, alignItems: 'center', cursor: metaSyncing ? 'wait' : 'pointer', fontSize: 11, lineHeight: 1.2, fontWeight: 600 }}><RefreshCw size={12} className={metaSyncing ? 'spin' : ''} />{metaSyncing ? 'Syncing...' : 'Sync Meta Now'}</button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {selectedWaba && <button onClick={addPhoneToSelectedWaba} disabled={metaCacheDeleting || metaSyncing} title={`Add a phone number under WABA ${selectedWaba.waba_id}`} style={{ background: C.green + '16', border: '1px solid ' + C.green, color: C.green, borderRadius: 7, padding: '7px 11px', display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 11, lineHeight: 1.2, fontWeight: 600 }}><Plus size={12} />Add phone to selected WABA</button>}
+            {selectedWaba && <button onClick={deleteSelectedMetaCache} disabled={metaCacheDeleting || metaSyncing} title="Delete only this WABA's cached LeadOS inventory" style={{ background: C.red + '16', border: '1px solid ' + C.red, color: C.red, borderRadius: 7, padding: '7px 11px', display: 'flex', gap: 6, alignItems: 'center', cursor: metaCacheDeleting ? 'wait' : 'pointer', fontSize: 11, lineHeight: 1.2, fontWeight: 600 }}><Trash2 size={12} />{metaCacheDeleting ? 'Deleting cache...' : 'Delete selected cache'}</button>}
+            <button onClick={syncMeta} disabled={metaSyncing || metaCacheDeleting} style={{ background: C.surface, border: '1px solid ' + C.border, color: C.text, borderRadius: 7, padding: '7px 11px', display: 'flex', gap: 6, alignItems: 'center', cursor: metaSyncing ? 'wait' : 'pointer', fontSize: 11, lineHeight: 1.2, fontWeight: 600 }}><RefreshCw size={12} className={metaSyncing ? 'spin' : ''} />{metaSyncing ? 'Syncing...' : 'Sync Meta Now'}</button>
+          </div>
         </div>
         {metaInventory.wabas.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>{metaInventory.wabas.map(waba => {
           const templates = metaInventory.template_summary.find(item => item.waba_id === waba.waba_id);

@@ -477,6 +477,12 @@ class LeadOSAPI {
     return this.request('/api/meta/whatsapp/sync', { method: 'POST' });
   }
 
+  async deleteMetaWhatsAppCache(wabaId) {
+    return this.request(`/api/meta/whatsapp/cache/wabas/${encodeURIComponent(wabaId)}`, {
+      method: 'DELETE'
+    });
+  }
+
   async mapMetaPhoneNumber(phoneId, clientId) {
     return this.request(`/api/meta/whatsapp/phone-numbers/${phoneId}/map`, {
       method: 'PATCH', body: JSON.stringify({ client_id: clientId })

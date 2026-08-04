@@ -5,6 +5,7 @@ import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
 import toast from 'react-hot-toast';
 import { getCountries, getCountryCallingCode, parsePhoneNumberFromString } from 'libphonenumber-js';
+import { launchMetaEmbeddedSignup } from '../utils/metaEmbeddedSignup.js';
 
 const countryNames = new Intl.DisplayNames(['en'], { type: 'region' });
 const phoneCountries = getCountries().map(code => ({
@@ -24,70 +25,6 @@ const validateWhatsAppNumber = value => {
     return { normalized: '', error: 'Enter a valid country code followed by the phone number.' };
   }
   return { normalized: parsed.number.slice(1), error: '' };
-};
-
-const loadFacebookSdk = appId => new Promise((resolve, reject) => {
-  if (window.FB) return resolve(window.FB);
-  window.fbAsyncInit = () => {
-    window.FB.init({ appId, autoLogAppEvents: true, xfbml: false, version: 'v21.0' });
-    resolve(window.FB);
-  };
-  const existing = document.getElementById('facebook-jssdk');
-  if (existing) return undefined;
-  const script = document.createElement('script');
-  script.id = 'facebook-jssdk';
-  script.src = 'https://connect.facebook.net/en_US/sdk.js';
-  script.async = true;
-  script.defer = true;
-  script.onerror = () => reject(new Error('Unable to load Meta Embedded Signup'));
-  document.body.appendChild(script);
-  return undefined;
-});
-
-const launchMetaEmbeddedSignup = async config => {
-  const FB = await loadFacebookSdk(config.app_id);
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timeout = window.setTimeout(() => finish(new Error('Meta finished without returning the WhatsApp account details. Please retry the verification.')), 3 * 60 * 1000);
-    const onMessage = event => {
-      // Embedded Signup can post its completion event from facebook.com,
-      // web.facebook.com, or business.facebook.com depending on the Meta UI.
-      // Restrict this to HTTPS Facebook-owned hosts while accepting all three.
-      let eventHost = '';
-      try {
-        const eventUrl = new URL(event.origin);
-        if (eventUrl.protocol !== 'https:') return;
-        eventHost = eventUrl.hostname.toLowerCase();
-      } catch { return; }
-      if (eventHost !== 'facebook.com' && !eventHost.endsWith('.facebook.com')) return;
-      let data = event.data;
-      try { if (typeof data === 'string') data = JSON.parse(data); } catch { return; }
-      if (data?.type !== 'WA_EMBEDDED_SIGNUP') return;
-      if (data.event === 'FINISH' || data.event === 'FINISH_ONLY_WABA') {
-        finish(null, data.data || {});
-      } else if (data.event === 'CANCEL') {
-        finish(new Error('Meta Embedded Signup was cancelled'));
-      } else if (data.event === 'ERROR') {
-        finish(new Error(data.data?.error_message || 'Meta could not complete WhatsApp verification'));
-      }
-    };
-    const finish = (error, data) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeout);
-      window.removeEventListener('message', onMessage);
-      if (error) reject(error); else resolve(data);
-    };
-    window.addEventListener('message', onMessage);
-    FB.login(response => {
-      if (!response.authResponse) finish(new Error('Meta login or authorization was not completed'));
-    }, {
-      config_id: config.config_id,
-      response_type: 'code',
-      override_default_response_type: true,
-      extras: { setup: {}, featureType: '', sessionInfoVersion: '3' }
-    });
-  });
 };
 
 export const ClientModal = ({ client, onClose, onUpdate }) => {
@@ -309,14 +246,8 @@ export const ClientModal = ({ client, onClose, onUpdate }) => {
                     </p>
                   </div>
                 </div>
-                <button type="button" onClick={() => {
-                  const existingPhone = formData.whatsapp_number ? parsePhoneNumberFromString(`+${String(formData.whatsapp_number).replace(/\D/g, '')}`) : null;
-                  setOnboardingCountry(existingPhone?.country || 'IN');
-                  setOnboardingNationalNumber(existingPhone?.nationalNumber || '');
-                  setOnboardingPhoneError('');
-                  setMetaOnboardingStep(1);
-                }} style={{ marginTop: 12, background: `${C.blue}18`, border: `1px solid ${C.blue}55`, color: C.blue, padding: '9px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer', width: '100%' }}>
-                  Add New Phone Number with Meta
+                <button type="button" onClick={() => { onClose(); toast('Select the target WABA, then click Add phone to selected WABA.'); }} style={{ marginTop: 12, background: `${C.blue}18`, border: `1px solid ${C.blue}55`, color: C.blue, padding: '9px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer', width: '100%' }}>
+                  Add Phone via Selected WABA
                 </button>
               </div>
 

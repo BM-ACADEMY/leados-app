@@ -3582,6 +3582,39 @@ app.delete('/api/meta/whatsapp/cache/wabas/:wabaId', auth, async (req, res) => {
   }
 });
 
+app.post('/api/meta/whatsapp/phone-numbers/:phoneId/register', auth, async (req, res) => {
+  try {
+    await metaInventoryReady;
+    const pin = String(req.body?.pin || '').trim();
+    if (!/^\d{6}$/.test(pin)) return res.status(400).json({ error: 'Enter a valid 6-digit two-step verification PIN' });
+    const phoneResult = await pool.query(
+      `SELECT phone.phone_number_id,phone.waba_id FROM meta_whatsapp_phone_numbers phone
+       WHERE phone.phone_number_id=$1`, [req.params.phoneId]
+    );
+    if (!phoneResult.rows.length) return res.status(404).json({ error: 'Meta phone number not found in inventory' });
+    const phone = phoneResult.rows[0];
+    const token = process.env.META_SYSTEM_USER_ACCESS_TOKEN || process.env.META_PAGE_ACCESS_TOKEN;
+    if (!token) return res.status(503).json({ error: 'Meta system-user access token is not configured' });
+    const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+    const currentPhones = await graphPageData(`${base}/${phone.waba_id}/phone_numbers`, token, { fields: 'id' });
+    if (!currentPhones.some(item => String(item.id) === String(phone.phone_number_id))) {
+      return res.status(409).json({ error: `Phone Number ID does not belong to WABA ${phone.waba_id}` });
+    }
+    await axios.post(`${base}/${phone.phone_number_id}/register`, {
+      messaging_product: 'whatsapp', pin,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    await axios.post(`${base}/${phone.waba_id}/subscribed_apps`, null, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const syncResult = await syncMetaWhatsAppInventory();
+    res.json({ success: true, phone_number_id: phone.phone_number_id, waba_id: phone.waba_id, ...syncResult });
+  } catch (error) {
+    const message = error.response?.data?.error?.message || error.message || 'Meta phone registration failed';
+    console.error('[Meta Phone Registration]', message);
+    res.status(400).json({ error: message });
+  }
+});
+
 app.patch('/api/meta/whatsapp/phone-numbers/:phoneId/map', auth, async (req, res) => {
   const db = await pool.connect();
   try {

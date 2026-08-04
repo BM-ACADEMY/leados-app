@@ -483,6 +483,12 @@ class LeadOSAPI {
     });
   }
 
+  async registerMetaWhatsAppPhone(phoneId, pin) {
+    return this.request(`/api/meta/whatsapp/phone-numbers/${encodeURIComponent(phoneId)}/register`, {
+      method: 'POST', body: JSON.stringify({ pin })
+    });
+  }
+
   async mapMetaPhoneNumber(phoneId, clientId) {
     return this.request(`/api/meta/whatsapp/phone-numbers/${phoneId}/map`, {
       method: 'PATCH', body: JSON.stringify({ client_id: clientId })

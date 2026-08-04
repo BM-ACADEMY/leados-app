@@ -47,9 +47,19 @@ const loadFacebookSdk = appId => new Promise((resolve, reject) => {
 const launchMetaEmbeddedSignup = async config => {
   const FB = await loadFacebookSdk(config.app_id);
   return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => finish(new Error('Meta Embedded Signup timed out')), 10 * 60 * 1000);
+    let settled = false;
+    const timeout = window.setTimeout(() => finish(new Error('Meta finished without returning the WhatsApp account details. Please retry the verification.')), 3 * 60 * 1000);
     const onMessage = event => {
-      if (!['https://www.facebook.com', 'https://web.facebook.com'].includes(event.origin)) return;
+      // Embedded Signup can post its completion event from facebook.com,
+      // web.facebook.com, or business.facebook.com depending on the Meta UI.
+      // Restrict this to HTTPS Facebook-owned hosts while accepting all three.
+      let eventHost = '';
+      try {
+        const eventUrl = new URL(event.origin);
+        if (eventUrl.protocol !== 'https:') return;
+        eventHost = eventUrl.hostname.toLowerCase();
+      } catch { return; }
+      if (eventHost !== 'facebook.com' && !eventHost.endsWith('.facebook.com')) return;
       let data = event.data;
       try { if (typeof data === 'string') data = JSON.parse(data); } catch { return; }
       if (data?.type !== 'WA_EMBEDDED_SIGNUP') return;
@@ -57,9 +67,13 @@ const launchMetaEmbeddedSignup = async config => {
         finish(null, data.data || {});
       } else if (data.event === 'CANCEL') {
         finish(new Error('Meta Embedded Signup was cancelled'));
+      } else if (data.event === 'ERROR') {
+        finish(new Error(data.data?.error_message || 'Meta could not complete WhatsApp verification'));
       }
     };
     const finish = (error, data) => {
+      if (settled) return;
+      settled = true;
       window.clearTimeout(timeout);
       window.removeEventListener('message', onMessage);
       if (error) reject(error); else resolve(data);
@@ -184,6 +198,7 @@ export const ClientModal = ({ client, onClose, onUpdate }) => {
       setMetaOnboardingStep(0);
       await onUpdate();
       toast.success('Meta phone added and mapped to this brand', { id: toastId });
+      onClose();
     } catch (error) {
       toast.error(error.message || 'Meta phone onboarding failed', { id: toastId });
     } finally {

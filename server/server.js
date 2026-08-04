@@ -226,16 +226,33 @@ async function cacheMetaBusinessProfile(phoneId, token) {
 async function syncMetaWhatsAppInventory() {
   await Promise.all([clientsWhatsAppStatusReady, metaInventoryReady]);
   const businessId = process.env.META_BUSINESS_ID || process.env.WA_META_BUSINESS_ID;
+  const configuredWabaId = process.env.WA_BUSINESS_ACCOUNT_ID;
   const token = process.env.META_SYSTEM_USER_ACCESS_TOKEN || process.env.META_PAGE_ACCESS_TOKEN;
-  if (!businessId) throw new Error('META_BUSINESS_ID is required (Meta Business Portfolio ID, not WABA ID)');
+  if (!businessId && !configuredWabaId) {
+    throw new Error('Configure META_BUSINESS_ID for all WABAs, or WA_BUSINESS_ACCOUNT_ID for single-WABA sync');
+  }
   if (!token) throw new Error('META_SYSTEM_USER_ACCESS_TOKEN or META_PAGE_ACCESS_TOKEN is required');
   const run = await pool.query(`INSERT INTO meta_whatsapp_sync_runs (status) VALUES ('running') RETURNING id`);
   try {
     const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
-    const [owned, client] = await Promise.all([
-      graphPageData(`${base}/${businessId}/owned_whatsapp_business_accounts`, token),
-      graphPageData(`${base}/${businessId}/client_whatsapp_business_accounts`, token).catch(() => []),
-    ]);
+    let owned;
+    let client;
+    if (businessId) {
+      [owned, client] = await Promise.all([
+        graphPageData(`${base}/${businessId}/owned_whatsapp_business_accounts`, token),
+        graphPageData(`${base}/${businessId}/client_whatsapp_business_accounts`, token).catch(() => []),
+      ]);
+    } else {
+      // A WABA ID cannot be sent to the Business Portfolio discovery edges.
+      // When only WA_BUSINESS_ACCOUNT_ID is configured, fetch that WABA
+      // directly so phone/template sync remains usable in single-WABA mode.
+      const wabaResponse = await axios.get(`${base}/${configuredWabaId}`, {
+        params: { fields: 'id,name,currency,timezone_id,message_template_namespace' },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      owned = [wabaResponse.data];
+      client = [];
+    }
     const wabaMap = new Map();
     owned.forEach(item => wabaMap.set(String(item.id), { ...item, ownership_type: 'owned' }));
     client.forEach(item => wabaMap.set(String(item.id), { ...item, ownership_type: 'client' }));
@@ -248,7 +265,7 @@ async function syncMetaWhatsAppInventory() {
         business_id=EXCLUDED.business_id,name=EXCLUDED.name,currency=EXCLUDED.currency,
         timezone_id=EXCLUDED.timezone_id,template_namespace=EXCLUDED.template_namespace,
         ownership_type=EXCLUDED.ownership_type,raw_data=EXCLUDED.raw_data,last_synced_at=NOW()`,
-      [String(waba.id), businessId, waba.name, waba.currency, waba.timezone_id,
+      [String(waba.id), businessId || null, waba.name, waba.currency, waba.timezone_id,
         waba.message_template_namespace, waba.ownership_type, JSON.stringify(waba)]);
       const [phones, templates] = await Promise.all([
         graphPageData(`${base}/${waba.id}/phone_numbers`, token,

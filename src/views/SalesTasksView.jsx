@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
-import { RefreshCw, User, Trash2, X, AlertTriangle, ChevronDown, ChevronUp, MessageSquare, Search } from 'lucide-react';
+import { RefreshCw, User, Trash2, X, AlertTriangle, ChevronDown, ChevronUp, MessageSquare, Search, CalendarDays } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { io as socketIO } from 'socket.io-client';
@@ -18,14 +18,13 @@ export const SalesTasksView = () => {
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [search, setSearch] = useState('');
+  const [calendarStatus, setCalendarStatus] = useState(null);
   const tasksPerPage = 10;
 
-  useEffect(() => {
-    fetchTasks();
-    const socket = socketIO(api.baseUrl, { transports: ['websocket', 'polling'] });
-    socket.on('sales_task_update', fetchTasks);
-    return () => socket.disconnect();
-  }, []);
+  const fetchCalendarStatus = async () => {
+    try { setCalendarStatus(await api.get('/calendar/status')); }
+    catch { setCalendarStatus({ connected: false }); }
+  };
 
   const openLead = async (leadId) => {
     try { await api.put(`/sales-tasks/lead/${leadId}/read`, {}); } catch { /* navigation should still work */ }
@@ -47,6 +46,19 @@ export const SalesTasksView = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const initialLoad = window.setTimeout(() => {
+      fetchTasks();
+      fetchCalendarStatus();
+    }, 0);
+    const socket = socketIO(api.baseUrl, { transports: ['websocket', 'polling'] });
+    socket.on('sales_task_update', fetchTasks);
+    return () => {
+      window.clearTimeout(initialLoad);
+      socket.disconnect();
+    };
+  }, []);
 
   const updateStatus = async (id, status) => {
     try {
@@ -138,8 +150,6 @@ export const SalesTasksView = () => {
     return nameMatches || Boolean(searchDigits && phoneDigits.includes(searchDigits));
   });
 
-  useEffect(() => { setCurrentPage(1); }, [search]);
-
   return (
     <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%', background: C.bg, position: 'relative' }}>
       
@@ -172,7 +182,7 @@ export const SalesTasksView = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         <div style={{ height: 38, minWidth: 240, display: 'flex', alignItems: 'center', gap: 7, padding: '0 11px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 9 }}>
           <Search size={13} color={C.muted} />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or phone..." style={{ width: '100%', background: 'transparent', border: 0, outline: 'none', color: C.text, fontSize: 11 }} />
+          <input value={search} onChange={e => { setSearch(e.target.value); setCurrentPage(1); }} placeholder="Search name or phone..." style={{ width: '100%', background: 'transparent', border: 0, outline: 'none', color: C.text, fontSize: 11 }} />
           {search && <button onClick={() => setSearch('')} title="Clear search" style={{ background: 'transparent', border: 0, padding: 2, cursor: 'pointer', display: 'flex' }}><X size={12} color={C.muted} /></button>}
         </div>
         <button
@@ -196,6 +206,14 @@ export const SalesTasksView = () => {
         >
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
           Refresh Tasks
+        </button>
+        <button
+          onClick={() => calendarStatus?.connected ? fetchCalendarStatus() : window.open(`${api.baseUrl}/api/auth/google`, '_blank', 'noopener,noreferrer')}
+          title={calendarStatus?.connected ? 'Google Calendar is connected' : 'Connect the organizer Google Calendar'}
+          style={{ background: calendarStatus?.connected ? 'rgba(16,185,129,.12)' : C.surface, border: `1px solid ${calendarStatus?.connected ? C.green : C.border}`, color: calendarStatus?.connected ? C.green : C.text, padding: '9px 13px', borderRadius: 9, cursor: 'pointer', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <CalendarDays size={13} />
+          {calendarStatus?.connected ? 'Calendar Connected' : 'Connect Calendar'}
         </button>
         </div>
       </div>
@@ -364,6 +382,7 @@ export const SalesTasksView = () => {
                             ['Lead Score', task.score ?? 0],
                             ['Assigned To', task.assigned_name || 'Unassigned'],
                             [task.task_type === 'call' ? 'Demo Call' : 'Next Follow-up', formatDateTime(task.task_type === 'call' ? task.call_booked_at : task.next_followup_due)],
+                            ['Calendar Status', task.booking_status || (task.task_type === 'call' ? 'Pending' : '—')],
                             ['Lead Created', formatDateTime(task.lead_created_at)],
                             ['Last Contact', formatDateTime(task.last_contact)],
                             ['Latest Sales Note', task.latest_sales_note || '—'],
@@ -374,6 +393,8 @@ export const SalesTasksView = () => {
                               <p style={{ margin: '4px 0 0', fontSize: 11, color: C.text, fontWeight: 600 }}>{value}</p>
                             </div>
                           ))}
+                          {task.calendar_event_url && <a href={task.calendar_event_url} target="_blank" rel="noreferrer" style={{ alignSelf: 'center', justifySelf: 'start', color: C.blue, fontSize: 10, fontWeight: 700 }}>Open Google Calendar</a>}
+                          {task.google_meet_link && <a href={task.google_meet_link} target="_blank" rel="noreferrer" style={{ alignSelf: 'center', justifySelf: 'start', color: C.green, fontSize: 10, fontWeight: 700 }}>Join Google Meet</a>}
                           {task.unread && <button onClick={() => openLead(task.lead_id)} style={{ alignSelf: 'center', justifySelf: 'start', background: `${C.accent}18`, color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: 7, padding: '7px 10px', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>Mark as Read & Open Chat</button>}
                         </div>
                       </td>

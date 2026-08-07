@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db/connection');
 const axios = require('axios');
 const { findBmAcademySyllabus, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
+const googleCalendar = require('../services/googleCalendar');
 
 // ==========================================
 // WF00 - Lead Integrator Endpoints
@@ -30,6 +31,10 @@ const salesTrackingReady = pool.query(`
   ALTER TABLE leads ADD COLUMN IF NOT EXISTS sales_status VARCHAR(30) DEFAULT 'new';
   ALTER TABLE leads ADD COLUMN IF NOT EXISTS sales_followup_stopped BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE leads ADD COLUMN IF NOT EXISTS sales_followup_at TIMESTAMP;
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS calendar_event_id TEXT;
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS calendar_event_url TEXT;
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS google_meet_link TEXT;
+  ALTER TABLE leads ADD COLUMN IF NOT EXISTS booking_status VARCHAR(30);
   CREATE TABLE IF NOT EXISTS sales_lead_notes (
     id BIGSERIAL PRIMARY KEY,
     lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
@@ -217,6 +222,15 @@ const BRAND_KEYWORDS = [
   { name: 'EduConsultants', pattern: /\b(study abroad|education abroad|overseas admission|educonsultants?)\b/i },
   { name: 'BM Foundation', pattern: /\b(donation|ngo|charity|volunteer|foundation)\b/i },
 ];
+
+const BRAND_WEBSITES = {
+  'ABM Groups': 'https://abmgroups.in',
+  'BM Academy': 'https://thebmacademy.com',
+  'BM TechX': 'https://bmtechx.in',
+  'Namma Pondy Properties': 'https://nammapondyproperties.com',
+  CoreTalents: 'https://coretalents.in',
+};
+const SHARED_GOOGLE_MAPS_URL = 'https://maps.app.goo.gl/Vc4GAwMjkawSgAyk8';
 
 const detectExplicitBrand = (message = '') =>
   BRAND_KEYWORDS.find(({ pattern }) => pattern.test(message))?.name || null;
@@ -817,11 +831,14 @@ router.post('/ai/response', async (req, res) => {
   const { brand, intent, message, kb_snippets, system_instructions, lead_id, chat_history, name } = req.body;
   try {
     let leadName = name || '';
+    let leadEmail = '';
+    let leadPhone = '';
+    let brandAddress = '';
     let persistedBrand = brand || 'ABM Groups';
     let effectiveMessage = String(message || '').trim();
     if (lead_id) {
       const leadContext = await pool.query(
-        `SELECT l.name, c.name AS brand_name
+        `SELECT l.name, l.email, l.phone, c.name AS brand_name, c.wa_address AS brand_address
          FROM leads l
          LEFT JOIN clients c ON c.id = l.client_id
          WHERE l.id = $1
@@ -829,6 +846,9 @@ router.post('/ai/response', async (req, res) => {
         [lead_id]
       );
       leadName = leadContext.rows[0]?.name || leadName;
+      leadEmail = leadContext.rows[0]?.email || '';
+      leadPhone = leadContext.rows[0]?.phone || '';
+      brandAddress = leadContext.rows[0]?.brand_address || '';
       persistedBrand = leadContext.rows[0]?.brand_name || persistedBrand;
 
       // A stale/pinned n8n execution can carry the previous turn (commonly
@@ -894,6 +914,27 @@ router.post('/ai/response', async (req, res) => {
 
     const firstName = getLeadFirstName(leadName);
     const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(effectiveMessage);
+    const wantsLocation = /\b(location|address|office address|google maps?|map link)\b/i.test(effectiveMessage);
+    const wantsWebsite = /\b(website|official site|official website)\b/i.test(effectiveMessage);
+
+    if (wantsLocation) {
+      const address = brandAddress || '252, 2nd Floor, MG Road, Kottakuppam, Vanur, Puducherry 605104';
+      return res.json({
+        ...req.body,
+        brand: persistedBrand,
+        ai_reply: `${persistedBrand}\nOffice Address: ${address}\nGoogle Maps: ${SHARED_GOOGLE_MAPS_URL}\n\nWould you like to visit our office or schedule an online meeting?`,
+        crm_tag: `LOCATION_SHARED | ${persistedBrand}`,
+      });
+    }
+
+    if (wantsWebsite) {
+      const website = BRAND_WEBSITES[persistedBrand];
+      return res.json({
+        ...req.body,
+        brand: persistedBrand,
+        ai_reply: website ? `${persistedBrand} official website: ${website}` : `Please tell me which ABM Groups brand website you need.`,
+      });
+    }
 
     // Detect voice/audio messages - respond immediately without AI
     const msgContent = effectiveMessage.toLowerCase();
@@ -964,6 +1005,7 @@ router.post('/ai/response', async (req, res) => {
 
     const prompt = `AI BRAIN SYSTEM INSTRUCTIONS (editable in LeadOS):\n${system_instructions || DEFAULT_BOT_BEHAVIOR}\n\n
       NON-NEGOTIABLE ORCHESTRATION RULES:
+      - Current date/time: ${new Date().toISOString()}. Scheduling timezone: ${googleCalendar.TIME_ZONE}.
       - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${persistedBrand}".
       - Address the contact naturally by first name ("${firstName || 'there'}") when useful, but do not repeat their name in every sentence.
       - The brand is sticky. Stay with "${persistedBrand}" unless the current message explicitly names or clearly keywords another ABM brand.
@@ -976,6 +1018,7 @@ router.post('/ai/response', async (req, res) => {
       - Resolve follow-up phrases such as "this course", "that course", "it", "details", "fees", "duration", and "the syllabus" to the most recently selected course/topic in chat history.
       - If a course was identified earlier, keep it as the active course until the user explicitly selects a different course. Do not ask "which course?" again for a follow-up about that active course.
       - If the user asks a FAQ (like contact number, timings, or fees) mid-booking, provide the answer inline and immediately resume the booking flow. Do not reset the conversation or ask for information again.
+      - For meeting requests collect name, mobile number, email, preferred date, and preferred time one missing field at a time. Do not say the meeting is confirmed; Calendar automation decides that after this response.
       - Send exactly one concise WhatsApp reply for this user message.
       - Never claim a booking, calendar entry, reminder, or handoff succeeded unless the corresponding workflow result confirms it.
 
@@ -998,6 +1041,7 @@ router.post('/ai/response', async (req, res) => {
       {
         "reply": "your generated reply message following the behavior specs",
         "extracted_name": "John Doe", (or null if the user has not provided their name)
+        "extracted_email": "john@example.com", (or null if unavailable)
         "extracted_booking_time": "2026-07-25T16:00:00Z" (or null if the user has not provided a preferred date/time for a call)
       }
       Respond ONLY with the JSON object, no markdown formatting, no backticks.`;
@@ -1016,18 +1060,45 @@ router.post('/ai/response', async (req, res) => {
          if (extractedData.extracted_name) {
            await pool.query(`UPDATE leads SET name = $1 WHERE id = $2`, [extractedData.extracted_name, lead_id]);
          }
+         if (extractedData.extracted_email) {
+           leadEmail = String(extractedData.extracted_email).trim();
+           await pool.query(`UPDATE leads SET email = $1, updated_at = NOW() WHERE id = $2`, [leadEmail, lead_id]);
+         }
          if (extractedData.extracted_booking_time) {
-           // When a booking time is extracted, set status to 'booked' to STOP follow-ups
-           await pool.query(`UPDATE leads SET call_booked_at = $1, status = 'booked', updated_at = NOW() WHERE id = $2`, [extractedData.extracted_booking_time, lead_id]);
-           await salesTasksReady;
-           const taskResult = await pool.query(`
-             INSERT INTO sales_tasks (lead_id, task_type, unread)
-             SELECT $1, 'call', TRUE
-             WHERE NOT EXISTS (SELECT 1 FROM sales_tasks WHERE lead_id = $1 AND task_type = 'call')
-             RETURNING id, lead_id, task_type, status, unread, created_at
-           `, [lead_id]);
-           if (taskResult.rows[0]) await emitSalesTaskUpdate(req, 'created', taskResult.rows[0]);
-           console.log(`[AI Booking] Lead ${lead_id} booked for ${extractedData.extracted_booking_time} - follow-ups STOPPED`);
+           if (!leadEmail) {
+             ai_reply = 'Please share your email address so I can check the slot and send the Calendar and Google Meet invitation.';
+             await pool.query(`UPDATE leads SET booking_status = 'awaiting_email', updated_at = NOW() WHERE id = $1`, [lead_id]);
+             return res.json({ ...req.body, ai_reply, booking_status: 'awaiting_email' });
+           }
+           try {
+             const calendarBooking = await googleCalendar.bookMeeting({
+               leadId: lead_id,
+               brand: persistedBrand,
+               name: extractedData.extracted_name || leadName,
+               email: leadEmail,
+               phone: leadPhone,
+               start: extractedData.extracted_booking_time,
+               notes: `Booked from the LeadOS WhatsApp AI conversation.`,
+             });
+             if (calendarBooking.booked) {
+               await pool.query(`
+                 UPDATE leads SET call_booked_at = $1, status = 'booked', booking_status = 'confirmed',
+                   calendar_event_id = $2, calendar_event_url = $3, google_meet_link = $4, updated_at = NOW()
+                 WHERE id = $5
+               `, [calendarBooking.start, calendarBooking.event_id, calendarBooking.event_url, calendarBooking.meet_link, lead_id]);
+               await ensureSalesTask(req, lead_id, 'call');
+               ai_reply = `Your meeting is confirmed for ${new Date(calendarBooking.start).toLocaleString('en-IN', { timeZone: googleCalendar.TIME_ZONE, dateStyle: 'medium', timeStyle: 'short' })}.${calendarBooking.meet_link ? ` Google Meet: ${calendarBooking.meet_link}` : ''}`;
+               console.log(`[AI Booking] Lead ${lead_id} booked in Google Calendar for ${calendarBooking.start}`);
+             } else {
+               await pool.query(`UPDATE leads SET booking_status = 'slot_unavailable', updated_at = NOW() WHERE id = $1`, [lead_id]);
+               ai_reply = 'That time is already occupied. Please share another preferred date and time, and I’ll check availability.';
+             }
+           } catch (calendarError) {
+             await pool.query(`UPDATE leads SET booking_status = 'pending_automation', updated_at = NOW() WHERE id = $1`, [lead_id]);
+             await ensureSalesTask(req, lead_id, 'hot_lead');
+             ai_reply = 'I’ve collected your preferred meeting time and forwarded it for availability checking. We’ll confirm the available slot shortly.';
+             console.error('[AI Booking] Calendar automation failed:', calendarError.message);
+           }
          }
       }
     } catch (parseErr) {
@@ -2393,7 +2464,8 @@ router.get('/sales-tasks', async (req, res) => {
              l.sales_followup_stopped, l.sales_followup_at,
              (SELECT note FROM sales_lead_notes WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) AS latest_sales_note,
              (SELECT created_at FROM sales_lead_notes WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) AS latest_sales_note_at,
-             l.call_booked_at, l.next_followup_due,
+             l.call_booked_at, l.next_followup_due, l.booking_status,
+             l.calendar_event_url, l.google_meet_link,
              (SELECT MAX(conversation.last_message_at) FROM conversations conversation WHERE conversation.lead_id = l.id) AS last_contact,
              l.created_at AS lead_created_at,
              c.name AS brand_name, u.name AS assigned_name
@@ -2527,18 +2599,78 @@ router.delete('/sales-tasks/:id', async (req, res) => {
 // ==========================================
 // Bot Integration: Book a Call - STOPS FOLLOW-UPS
 // ==========================================
+router.get('/auth/google', (req, res) => {
+  try {
+    res.redirect(googleCalendar.getAuthorizationUrl());
+  } catch (error) {
+    res.status(503).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/auth/google/callback', async (req, res) => {
+  try {
+    if (!req.query.code) return res.status(400).send('Google authorization code is missing.');
+    const email = await googleCalendar.exchangeAndStoreCode(String(req.query.code));
+    res.send(`Google Calendar connected successfully for ${email}. You may close this window.`);
+  } catch (error) {
+    res.status(500).send(`Google Calendar connection failed: ${error.message}`);
+  }
+});
+
+router.get('/calendar/status', async (req, res) => {
+  res.json(await googleCalendar.getConnectionStatus());
+});
+
+router.post('/calendar/availability', async (req, res) => {
+  try {
+    const start = new Date(req.body.start);
+    const durationMinutes = Math.min(Math.max(Number(req.body.duration_minutes) || 30, 15), 180);
+    if (Number.isNaN(start.getTime())) return res.status(400).json({ success: false, error: 'A valid start time is required' });
+    const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+    const available = await googleCalendar.isSlotAvailable(start, end);
+    res.json({ success: true, available, start: start.toISOString(), end: end.toISOString(), time_zone: googleCalendar.TIME_ZONE });
+  } catch (error) {
+    res.status(503).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/leads/book-call', async (req, res) => {
   try {
-    const { lead_id, booking_time } = req.body;
+    const { lead_id, booking_time, duration_minutes, notes } = req.body;
 
     if (!lead_id || !booking_time) {
       return res.status(400).json({ success: false, error: "Missing lead_id or booking_time" });
     }
 
-    // Update call_booked_at AND status to indicate booked - this stops follow-ups
+    const leadDetails = await pool.query(`
+      SELECT l.id, l.name, l.phone, l.email, c.name AS brand_name
+      FROM leads l LEFT JOIN clients c ON c.id = l.client_id
+      WHERE l.id = $1 LIMIT 1
+    `, [lead_id]);
+    if (!leadDetails.rows[0]) return res.status(404).json({ success: false, error: 'Lead not found' });
+
+    const lead = leadDetails.rows[0];
+    const calendarBooking = await googleCalendar.bookMeeting({
+      leadId: lead_id,
+      brand: lead.brand_name,
+      name: lead.name,
+      email: lead.email,
+      phone: lead.phone,
+      start: booking_time,
+      durationMinutes: duration_minutes,
+      notes,
+    });
+    if (!calendarBooking.booked) {
+      return res.status(409).json({ success: false, reason: calendarBooking.reason, error: 'The selected Google Calendar slot is unavailable' });
+    }
+
+    // Mark booked only after Google confirms the event, preventing false CRM bookings.
     const result = await pool.query(
-      `UPDATE leads SET call_booked_at = $1, status = 'booked', updated_at = NOW() WHERE id = $2 RETURNING id, call_booked_at, status`,
-      [booking_time, lead_id]
+      `UPDATE leads SET call_booked_at = $1, status = 'booked', booking_status = 'confirmed',
+         calendar_event_id = $2, calendar_event_url = $3, google_meet_link = $4, updated_at = NOW()
+       WHERE id = $5
+       RETURNING id, call_booked_at, status, booking_status, calendar_event_url, google_meet_link`,
+      [calendarBooking.start, calendarBooking.event_id, calendarBooking.event_url, calendarBooking.meet_link, lead_id]
     );
 
     if (result.rows.length === 0) {
@@ -2555,7 +2687,7 @@ router.post('/leads/book-call', async (req, res) => {
     if (taskResult.rows[0]) await emitSalesTaskUpdate(req, 'created', taskResult.rows[0]);
 
     console.log(`[Book Call] Lead ${lead_id} booked for ${booking_time} - follow-ups will STOP`);
-    res.json({ success: true, lead: result.rows[0], message: "Call booked! Follow-ups have been stopped for this lead." });
+    res.json({ success: true, lead: result.rows[0], calendar: calendarBooking, message: "Meeting booked in Google Calendar and follow-ups stopped." });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

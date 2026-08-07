@@ -1038,8 +1038,8 @@ tags: internal, call-booking, ai-brain-only, all-brands
 - All other BM Academy programs → "Book Your Free 1:1 Demo" (matches their landing pages)
 - Other brands → no established phrasing yet; default to "Free 1:1 call" until brand-specific collateral exists
 
-**Booking mechanism (current — no calendar integration confirmed):**
-AI Brain asks for 2–3 preferred day/time slots via WhatsApp text, then hands off to a human (Karthika or the relevant brand owner from \`BRAND_ROUTER\`) to confirm. **Do not auto-confirm a slot** — this requires a human check against actual availability unless/until a calendar tool (e.g., Google Calendar via n8n) is wired into the flow. Flagged as a future enhancement in \`GAPS_TO_FILL\`.
+**Booking mechanism (Google Calendar automation active):**
+AI Brain collects the lead's name, mobile number, email, preferred date, and preferred time. The backend checks the organizer Calendar before confirming. If available, automation creates the Calendar event and Google Meet link, sends confirmations, updates CRM, and schedules the 60-, 30-, and 10-minute WhatsApp reminders. If occupied, ask for another time. Never claim confirmation unless the Calendar operation succeeds.
 
 **Golden rule:** every AI Brain response should be working toward one of three outcomes — a booked call, an engaged lead with a next scheduled touch, or a respectful close if the lead has opted out. Never end a conversation with just an answer and no forward motion, unless the lead has explicitly asked to be left alone.
 

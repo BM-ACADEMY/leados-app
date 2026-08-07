@@ -4938,6 +4938,35 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
+// Safety net for demo-call reminders. WF02 normally invokes these endpoints,
+// but this local runner guarantees the 60/30/10-minute checks still happen if
+// n8n is paused or temporarily unavailable. The reminder table's unique claim
+// prevents duplicate sends when both runners execute at the same minute.
+let demoReminderFallbackRunning = false;
+cron.schedule('* * * * *', async () => {
+  if (process.env.DEMO_REMINDER_FALLBACK_ENABLED === 'false' || demoReminderFallbackRunning) return;
+  demoReminderFallbackRunning = true;
+  try {
+    const localApi = `http://127.0.0.1:${PORT}/api`;
+    const dueResponse = await axios.get(`${localApi}/demo-reminders/due`, { timeout: 15000 });
+    for (const reminder of dueResponse.data?.reminders || []) {
+      try {
+        await axios.post(`${localApi}/demo-reminders/send`, {
+          lead_id: reminder.lead_id,
+          booking_time: reminder.booking_time,
+          reminder_minutes: Number(reminder.reminder_minutes),
+        }, { timeout: 30000 });
+      } catch (sendError) {
+        console.error('[Demo Reminder Fallback] Send failed:', sendError.response?.data || sendError.message);
+      }
+    }
+  } catch (error) {
+    console.error('[Demo Reminder Fallback] Due check failed:', error.response?.data || error.message);
+  } finally {
+    demoReminderFallbackRunning = false;
+  }
+});
+
 // Run every 1 minute to poll Google Drive folders for new videos
 let drivePollerRunning = false;
 if (process.env.DISABLE_DRIVE_POLLER !== 'true') {

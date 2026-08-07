@@ -119,6 +119,29 @@ const bookMeeting = async ({ leadId, brand, name, email, phone, start, durationM
   });
   const existingEvent = existing.data.items?.[0];
   if (existingEvent) {
+    const existingStart = new Date(existingEvent.start?.dateTime || existingEvent.start?.date);
+    const sameSlot = !Number.isNaN(existingStart.getTime()) && Math.abs(existingStart.getTime() - startDate.getTime()) < 60000;
+    if (!sameSlot) {
+      if (!(await isSlotAvailable(startDate, endDate))) return { booked: false, reason: 'slot_unavailable' };
+      const updated = await calendar.events.patch({
+        calendarId: ORGANIZER_EMAIL,
+        eventId: existingEvent.id,
+        sendUpdates: email ? 'all' : 'none',
+        requestBody: {
+          start: { dateTime: startDate.toISOString(), timeZone: TIME_ZONE },
+          end: { dateTime: endDate.toISOString(), timeZone: TIME_ZONE },
+        },
+      });
+      return {
+        booked: true,
+        rescheduled: true,
+        event_id: updated.data.id,
+        event_url: updated.data.htmlLink,
+        meet_link: updated.data.hangoutLink || updated.data.conferenceData?.entryPoints?.find(item => item.entryPointType === 'video')?.uri || null,
+        start: updated.data.start?.dateTime,
+        end: updated.data.end?.dateTime,
+      };
+    }
     return {
       booked: true,
       reused: true,

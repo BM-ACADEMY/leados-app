@@ -4,6 +4,7 @@ const pool = require('../db/connection');
 const axios = require('axios');
 const { findBmAcademySyllabus, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
 const googleCalendar = require('../services/googleCalendar');
+const { sendBookingNotification } = require('../services/bookingNotifications');
 
 // ==========================================
 // WF00 - Lead Integrator Endpoints
@@ -715,6 +716,50 @@ const normalizeChatHistory = (history) => (
     : []
 );
 
+const MONTH_INDEX = {
+  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2,
+  apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6,
+  aug: 7, august: 7, augest: 7, sep: 8, sept: 8, september: 8,
+  oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+};
+
+// Preserve a date supplied in an earlier WhatsApp turn and combine it with a
+// later time-only reply (for example: "08 August" followed by "2 PM"). The
+// LLM may otherwise treat the second message as incomplete and ask again.
+const resolveBookingTimeFromConversation = (history, currentMessage) => {
+  const userText = [
+    ...normalizeChatHistory(history).filter(item => item.role === 'user').map(item => item.text),
+    String(currentMessage || ''),
+  ].join('\n');
+
+  const dateMatches = [...userText.matchAll(/\b(0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?[\s./-]+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|augest|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[\s,./-]+(20\d{2}))?\b/gi)];
+  const numericDateMatches = [...userText.matchAll(/\b(0?[1-9]|[12]\d|3[01])[\/.\-](0?[1-9]|1[0-2])(?:[\/.\-](20\d{2}))?\b/g)];
+  const timeMatches = [...userText.matchAll(/\b(0?[1-9]|1[0-2])(?:[:.]([0-5]\d))?\s*(am|pm)\b/gi)];
+  if ((!dateMatches.length && !numericDateMatches.length) || !timeMatches.length) return null;
+
+  const namedDate = dateMatches.at(-1);
+  const numericDate = numericDateMatches.at(-1);
+  const useNamedDate = namedDate && (!numericDate || namedDate.index > numericDate.index);
+  const day = Number((useNamedDate ? namedDate : numericDate)[1]);
+  const month = useNamedDate
+    ? MONTH_INDEX[String(namedDate[2]).toLowerCase()]
+    : Number(numericDate[2]) - 1;
+  let year = Number((useNamedDate ? namedDate : numericDate)[3]) || new Date().getFullYear();
+  const time = timeMatches.at(-1);
+  let hour = Number(time[1]) % 12;
+  if (String(time[3]).toLowerCase() === 'pm') hour += 12;
+  const minute = Number(time[2] || 0);
+
+  // Convert an Asia/Kolkata wall-clock value to UTC without depending on the
+  // API server's host timezone.
+  let value = new Date(Date.UTC(year, month, day, hour - 5, minute - 30));
+  if (value <= new Date() && !(useNamedDate ? namedDate[3] : numericDate[3])) {
+    year += 1;
+    value = new Date(Date.UTC(year, month, day, hour - 5, minute - 30));
+  }
+  return Number.isNaN(value.getTime()) ? null : value.toISOString();
+};
+
 const getRelevantKnowledge = (documents, query = '') => {
   const normalizedQuery = String(query).toLowerCase();
   const wantsCourseList = /\b(all|available|offer|show|what|which)\b.*\b(course|courses|program|programs)\b|\bcourse list\b/i.test(normalizedQuery);
@@ -1055,6 +1100,9 @@ router.post('/ai/response', async (req, res) => {
       const cleanJsonStr = rawAiResponse.replace(/\s*```json\s*/gi, '').replace(/\s*```\s*/g, '').trim();
       extractedData = JSON.parse(cleanJsonStr);
       ai_reply = extractedData.reply || rawAiResponse;
+      extractedData.extracted_booking_time =
+        resolveBookingTimeFromConversation(resolvedHistory, effectiveMessage) ||
+        extractedData.extracted_booking_time;
 
       if (lead_id) {
          if (extractedData.extracted_name) {
@@ -1087,6 +1135,21 @@ router.post('/ai/response', async (req, res) => {
                  WHERE id = $5
                `, [calendarBooking.start, calendarBooking.event_id, calendarBooking.event_url, calendarBooking.meet_link, lead_id]);
                await ensureSalesTask(req, lead_id, 'call');
+               try {
+                 await sendBookingNotification({
+                   eventId: calendarBooking.event_id,
+                   brand: persistedBrand,
+                   name: extractedData.extracted_name || leadName,
+                   email: leadEmail,
+                   phone: leadPhone,
+                   start: calendarBooking.start,
+                   eventUrl: calendarBooking.event_url,
+                   meetLink: calendarBooking.meet_link,
+                   rescheduled: calendarBooking.rescheduled,
+                 });
+               } catch (notificationError) {
+                 console.error('[AI Booking] Support email notification failed:', notificationError.message);
+               }
                ai_reply = `Your meeting is confirmed for ${new Date(calendarBooking.start).toLocaleString('en-IN', { timeZone: googleCalendar.TIME_ZONE, dateStyle: 'medium', timeStyle: 'short' })}.${calendarBooking.meet_link ? ` Google Meet: ${calendarBooking.meet_link}` : ''}`;
                console.log(`[AI Booking] Lead ${lead_id} booked in Google Calendar for ${calendarBooking.start}`);
              } else {
@@ -1094,9 +1157,11 @@ router.post('/ai/response', async (req, res) => {
                ai_reply = 'That time is already occupied. Please share another preferred date and time, and I’ll check availability.';
              }
            } catch (calendarError) {
-             await pool.query(`UPDATE leads SET booking_status = 'pending_automation', updated_at = NOW() WHERE id = $1`, [lead_id]);
+             const calendarDisconnected = /not connected|oauth is not configured|refresh token/i.test(calendarError.message);
+             const failedStatus = calendarDisconnected ? 'calendar_not_connected' : 'calendar_error';
+             await pool.query(`UPDATE leads SET booking_status = $1, updated_at = NOW() WHERE id = $2`, [failedStatus, lead_id]);
              await ensureSalesTask(req, lead_id, 'hot_lead');
-             ai_reply = 'I’ve collected your preferred meeting time and forwarded it for availability checking. We’ll confirm the available slot shortly.';
+             ai_reply = 'I’m unable to verify Calendar availability right now, so your meeting is not booked yet. Please try again shortly.';
              console.error('[AI Booking] Calendar automation failed:', calendarError.message);
            }
          }
@@ -1760,6 +1825,7 @@ Write one natural follow-up that continues the unfinished topic. Reference the s
 
     let delivered = false;
     let waMessageId = null;
+    let outboundMessageType = 'text';
     const phoneNumberId = lead?.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
     const waAccessToken = lead?.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN;
     if (lead && lead.phone && phoneNumberId && waAccessToken) {
@@ -1908,6 +1974,7 @@ Naturally reference relevant details already discussed when useful. Do not inven
         if (within24Hours) {
           messagePayload = { messaging_product: 'whatsapp', to: lead.phone.replace(/\D/g, ''), type: 'text', text: { body: message } };
         } else {
+          outboundMessageType = 'template';
           const templateResult = await pool.query(`
             SELECT name, language, body
             FROM templates
@@ -1952,8 +2019,16 @@ Naturally reference relevant details already discussed when useful. Do not inven
 
     const conversationId = await getOrUpsertConversation(lead_id);
     await pool.query(`UPDATE conversations SET last_message = $1, last_message_at = NOW() WHERE id = $2`, [message, conversationId]);
-    await pool.query(`INSERT INTO messages (conversation_id, direction, msg_type, content, wa_msg_id, status, is_ai, sent_at) VALUES ($1, 'outbound', 'text', $2, $3, $4, $5, NOW())`, [conversationId, message, waMessageId, delivered ? 'sent' : 'failed', within24Hours]);
+    const savedReminder = await pool.query(`
+      INSERT INTO messages (conversation_id, direction, msg_type, content, wa_msg_id, status, is_ai, sent_at)
+      VALUES ($1, 'outbound', $2, $3, $4, $5, $6, NOW())
+      RETURNING id, direction, msg_type AS type, content, wa_msg_id, status, is_ai, sent_at AS timestamp
+    `, [conversationId, outboundMessageType, message, waMessageId, delivered ? 'sent' : 'failed', within24Hours]);
     await pool.query(`UPDATE demo_call_reminders SET status = $1, message = $2, wa_message_id = $3, sent_at = CASE WHEN $1 = 'sent' THEN NOW() END WHERE id = $4`, [delivered ? 'sent' : 'failed', message, waMessageId, claim.rows[0].id]);
+
+    if (savedReminder.rows[0]) {
+      req.app.get('io')?.emit('outgoing_message', { lead_id: Number(lead_id), message: savedReminder.rows[0] });
+    }
 
     if (!delivered) return res.status(502).json({ success: false, error: 'WhatsApp reminder could not be delivered' });
     res.json({ success: true, delivered: true, reminder_minutes, message });
@@ -2686,8 +2761,26 @@ router.post('/leads/book-call', async (req, res) => {
     `, [lead_id]);
     if (taskResult.rows[0]) await emitSalesTaskUpdate(req, 'created', taskResult.rows[0]);
 
+    let support_notification = { sent: false };
+    try {
+      support_notification = await sendBookingNotification({
+        eventId: calendarBooking.event_id,
+        brand: lead.brand_name,
+        name: lead.name,
+        email: lead.email,
+        phone: lead.phone,
+        start: calendarBooking.start,
+        eventUrl: calendarBooking.event_url,
+        meetLink: calendarBooking.meet_link,
+        rescheduled: calendarBooking.rescheduled,
+      });
+    } catch (notificationError) {
+      console.error('[Book Call] Support email notification failed:', notificationError.message);
+      support_notification = { sent: false, error: notificationError.message };
+    }
+
     console.log(`[Book Call] Lead ${lead_id} booked for ${booking_time} - follow-ups will STOP`);
-    res.json({ success: true, lead: result.rows[0], calendar: calendarBooking, message: "Meeting booked in Google Calendar and follow-ups stopped." });
+    res.json({ success: true, lead: result.rows[0], calendar: calendarBooking, support_notification, message: "Meeting booked in Google Calendar and follow-ups stopped." });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

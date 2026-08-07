@@ -818,6 +818,7 @@ router.post('/ai/response', async (req, res) => {
   try {
     let leadName = name || '';
     let persistedBrand = brand || 'ABM Groups';
+    let effectiveMessage = String(message || '').trim();
     if (lead_id) {
       const leadContext = await pool.query(
         `SELECT l.name, c.name AS brand_name
@@ -829,6 +830,33 @@ router.post('/ai/response', async (req, res) => {
       );
       leadName = leadContext.rows[0]?.name || leadName;
       persistedBrand = leadContext.rows[0]?.brand_name || persistedBrand;
+
+      // A stale/pinned n8n execution can carry the previous turn (commonly
+      // "hi") even after the customer's newer question has been persisted.
+      // Prefer that newer inbound text before applying the greeting shortcut.
+      const latestInboundRes = await pool.query(
+        `SELECT m.content
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.lead_id = $1
+           AND m.direction = 'inbound'
+           AND m.content IS NOT NULL
+           AND BTRIM(m.content) <> ''
+         ORDER BY m.sent_at DESC, m.id DESC
+         LIMIT 1`,
+        [lead_id]
+      );
+      const latestInbound = String(latestInboundRes.rows[0]?.content || '').trim();
+      const requestIsGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(effectiveMessage);
+      const latestIsGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(latestInbound);
+      if (requestIsGreeting && latestInbound && !latestIsGreeting) {
+        console.warn('[AI] Replaced stale greeting payload with latest inbound message', {
+          lead_id: Number(lead_id),
+          stale_message: effectiveMessage,
+          latest_message: latestInbound,
+        });
+        effectiveMessage = latestInbound;
+      }
     }
 
     // Deterministic: the very first reply after the Core Talents bulk hiring
@@ -865,10 +893,10 @@ router.post('/ai/response', async (req, res) => {
     }
 
     const firstName = getLeadFirstName(leadName);
-    const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(String(message || '').trim());
+    const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(effectiveMessage);
 
     // Detect voice/audio messages - respond immediately without AI
-    const msgContent = String(message || '').toLowerCase();
+    const msgContent = effectiveMessage.toLowerCase();
     const isVoiceMessage = msgContent.includes('[voice_message]') ||
                          msgContent.includes('[audio]') ||
                          msgContent.includes('voice note') ||
@@ -898,7 +926,7 @@ router.post('/ai/response', async (req, res) => {
     // return only the approved catalog URL. This prevents invented Drive IDs.
     const isBmAcademy = String(persistedBrand || '').trim().toLowerCase() === 'bm academy';
     if (isBmAcademy) {
-      const syllabusMatch = findBmAcademySyllabus(message, resolvedHistory);
+      const syllabusMatch = findBmAcademySyllabus(effectiveMessage, resolvedHistory);
       if (syllabusMatch.requested && syllabusMatch.course) {
         const { name: courseName, url } = syllabusMatch.course;
         return res.json({
@@ -955,7 +983,7 @@ router.post('/ai/response', async (req, res) => {
       ${kb_snippets}
 
       ${historyText}User Intent detected: ${intent}
-      User Message: "${message}"
+      User Message: "${effectiveMessage}"
 
       CRITICAL BEHAVIOR SPECIFICATIONS:
       1. Greeting: Mirror the user's opener (e.g. "hi" -> "Hi!", "hello" -> "Hello!"). Keep it to one short line. Do NOT open with "Vanakkam, this is ABM Groups" or list all brands on every message. Only fall back to full brand list if intent is genuinely unclear.

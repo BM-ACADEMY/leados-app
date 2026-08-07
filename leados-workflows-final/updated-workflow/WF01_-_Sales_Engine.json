@@ -43,7 +43,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: String($json.message || ''), brand: String($json.brand || 'ABM Groups'), lead_id: Number($json.lead_id), intent: $json.intent, confidence: Number($json.confidence || 0), chat_history: $json.chat_history || [] }) }}"
+        "jsonBody": "={{ JSON.stringify({ message: String($('Intent Detection').first().json.message || ''), brand: String($json.brand || 'ABM Groups'), lead_id: Number($json.lead_id), intent: $json.intent, confidence: Number($json.confidence || 0), chat_history: $json.chat_history || [] }) }}"
       },
       "id": "894e8b99-a212-4523-82de-f1bbefbf022e",
       "name": "Objection Detection",
@@ -61,7 +61,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brand: String($json.brand || 'ABM Groups').trim(), query: String($json.message || ''), message: String($json.message || ''), lead_id: Number($json.lead_id), intent: $json.intent, objections: $json.objections, program: $json.program || null, chat_history: $json.chat_history || [] }) }}"
+        "jsonBody": "={{ JSON.stringify({ brand: String($json.brand || 'ABM Groups').trim(), query: String($('Intent Detection').first().json.message || ''), message: String($('Intent Detection').first().json.message || ''), lead_id: Number($json.lead_id), intent: $json.intent, objections: $json.objections, program: $json.program || null, chat_history: $json.chat_history || [] }) }}"
       },
       "id": "ed856d41-1144-4d5e-a252-5eaed34906f2",
       "name": "Knowledge Retrieval",
@@ -79,7 +79,7 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ brand: String($json.brand || 'ABM Groups').trim(), name: $json.name, phone: $json.phone, intent: $json.intent, message: String($json.message || ''), kb_snippets: $json.kb_snippets, system_instructions: $json.system_instructions, chat_history: $json.chat_history || [], lead_id: Number($json.lead_id), objections: $json.objections, program: $json.program || null }) }}"
+        "jsonBody": "={{ JSON.stringify({ brand: String($json.brand || 'ABM Groups').trim(), name: $json.name, phone: $json.phone, intent: $json.intent, message: String($('Intent Detection').first().json.message || ''), kb_snippets: $json.kb_snippets, system_instructions: $json.system_instructions, chat_history: $json.chat_history || [], lead_id: Number($json.lead_id), objections: $json.objections, program: $json.program || null }) }}"
       },
       "id": "55923ed8-d688-4403-a5ca-d99434383d4a",
       "name": "Generate AI Response",

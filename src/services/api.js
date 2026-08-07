@@ -572,16 +572,150 @@ class LeadOSAPI {
   async uploadAllianceCSV(formData) {
     const token = localStorage.getItem('leados_token');
     if (!token) throw new Error('No authentication token found');
-    const response = await fetch(`${API_URL}/api/upload/csv`, {
+    const response = await fetch(`${API_URL}/api/alliance/prospects/import`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` },
       body: formData
     });
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      throw new Error(errorData.error || errorData.message || `HTTP error! status: ${response.status}`);
     }
     return response.json();
+  }
+
+  async getAllianceProspects(params = {}) {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '')
+    ).toString();
+    return this.request(`/api/alliance/prospects${query ? `?${query}` : ''}`);
+  }
+
+  async updateAllianceProspect(id, updates) {
+    return this.request(`/api/alliance/prospects/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  async deleteAllianceProspect(id) {
+    return this.request(`/api/alliance/prospects/${id}`, { method: 'DELETE' });
+  }
+
+  async getAllianceAudiences() {
+    return this.request('/api/alliance/audiences');
+  }
+
+  async downloadAllianceAudienceTemplate(code) {
+    const token = localStorage.getItem('leados_token');
+    const response = await fetch(`${API_URL}/api/alliance/audiences/${encodeURIComponent(code)}/template`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Failed to download Excel template');
+    }
+    return response.blob();
+  }
+
+  async getAllianceAudienceTemplatePreview(code) {
+    return this.request(`/api/alliance/audiences/${encodeURIComponent(code)}/template-preview`);
+  }
+
+  async createAllianceAudience(payload) {
+    return this.request('/api/alliance/audiences', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getAllianceCampaigns() {
+    return this.request('/api/alliance/campaigns');
+  }
+
+  async getAllianceCampaign(id) {
+    return this.request(`/api/alliance/campaigns/${id}`);
+  }
+
+  async startAllianceCampaign(id) {
+    return this.request(`/api/alliance/campaigns/${id}/start`, { method: 'POST' });
+  }
+
+  async pauseAllianceCampaign(id) {
+    return this.request(`/api/alliance/campaigns/${id}/pause`, { method: 'POST' });
+  }
+
+  async stopAllianceCampaign(id) {
+    return this.request(`/api/alliance/campaigns/${id}/stop`, { method: 'POST' });
+  }
+
+  async sendAllianceCampaignTest(id, payload) {
+    return this.request(`/api/alliance/campaigns/${id}/test-email`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getAllianceEmailReplies(params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null));
+    return this.request(`/api/alliance/replies${query.toString() ? `?${query}` : ''}`);
+  }
+
+  async getAllianceEmailConversation(prospectId) {
+    return this.request(`/api/alliance/reply-conversations/${prospectId}`);
+  }
+
+  async sendAllianceEmailReply(id, body) {
+    return this.request(`/api/alliance/replies/${id}/send`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    });
+  }
+
+  async suggestAllianceEmailReply(id) {
+    return this.request(`/api/alliance/replies/${id}/suggest`, { method: 'POST' });
+  }
+
+  async getAllianceEmailSettings() {
+    return this.request('/api/alliance/email-settings');
+  }
+
+  async saveAllianceEmailSettings(settings) {
+    return this.request('/api/alliance/email-settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
+  }
+
+  async verifyAllianceEmailSettings() {
+    return this.request('/api/alliance/email-settings/verify', { method: 'POST' });
+  }
+
+  async getAllianceCampaignBuilderOptions() {
+    return this.request('/api/alliance/campaign-builder/options');
+  }
+
+  async getAllianceCampaignProspects(params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value !== undefined && value !== null)).toString();
+    return this.request(`/api/alliance/campaign-builder/prospects${query ? `?${query}` : ''}`);
+  }
+
+  async getAllianceCampaignTemplates(audience) {
+    return this.request(`/api/alliance/campaign-builder/templates?audience=${encodeURIComponent(audience)}`);
+  }
+
+  async suggestAllianceCampaignTemplates(payload) {
+    return this.request('/api/alliance/campaign-builder/ai-suggestion', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async createAllianceEmailCampaign(payload) {
+    return this.request('/api/alliance/campaigns', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   }
 
   async getPipeline(type = 'college') {
@@ -803,3 +937,47 @@ class LeadOSAPI {
 }
 
 export const api = new LeadOSAPI();
+
+export const allianceInboxApi = {
+  getLeads(filters = {}) {
+    const params = new URLSearchParams({
+      limit: filters.limit || 20,
+      offset: filters.offset || 0,
+      ...(filters.search && { search: filters.search }),
+    });
+    return api.request(`/api/alliance-inbox/contacts?${params}`);
+  },
+  getLead(id) { return api.request(`/api/alliance-inbox/contacts/${id}`); },
+  getMessages(id, limit = 100, offset = 0) { return api.request(`/api/alliance-inbox/contacts/${id}/messages?limit=${limit}&offset=${offset}`); },
+  readConversation(id) { return api.request(`/api/alliance-inbox/conversations/${id}/read`, { method: 'PUT' }); },
+  updateLead(id, updates) { return api.request(`/api/alliance-inbox/contacts/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }); },
+  sendWhatsAppMessage(id, message, mediaUrl = null, msgType = 'text', replyToWaId = null, isForwarded = false) {
+    return api.request(`/api/alliance-inbox/contacts/${id}/messages`, {
+      method: 'POST', body: JSON.stringify({ message, mediaUrl, msgType, replyToMessageId: replyToWaId, isForwarded }),
+    });
+  },
+  editMessage(id, content) { return api.request(`/api/alliance-inbox/messages/${id}/edit`, { method: 'PUT', body: JSON.stringify({ content }) }); },
+  deleteMessage(id) { return api.request(`/api/alliance-inbox/messages/${id}/delete`, { method: 'PUT' }); },
+  pinMessage(id, duration) { return api.request(`/api/alliance-inbox/messages/${id}/pin`, { method: 'PUT', body: JSON.stringify({ duration }) }); },
+  unpinMessage(id) { return api.request(`/api/alliance-inbox/messages/${id}/pin`, { method: 'PUT', body: JSON.stringify({ unpin: true }) }); },
+  toggleStarMessage(id, is_starred) { return api.request(`/api/alliance-inbox/messages/${id}/star`, { method: 'PUT', body: JSON.stringify({ is_starred }) }); },
+  reactToMessage(id, emoji, action = 'add') { return api.request(`/api/alliance-inbox/messages/${id}/react`, { method: 'PUT', body: JSON.stringify({ emoji, action }) }); },
+  put() { return Promise.resolve({ success: true }); },
+  uploadMedia(formData, onProgress) {
+    const token = localStorage.getItem('leados_token');
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_URL}/api/alliance-inbox/media/upload`);
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      if (onProgress) xhr.upload.onprogress = (event) => event.lengthComputable && onProgress(Math.round((event.loaded / event.total) * 100));
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText || '{}'); } catch { /* handled below */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(Object.assign(new Error(data.error || 'Alliance media upload failed'), { response: { data } }));
+      };
+      xhr.onerror = () => reject(new Error('Alliance media upload failed'));
+      xhr.send(formData);
+    });
+  },
+};

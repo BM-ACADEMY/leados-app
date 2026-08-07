@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Brain } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
+import updatedBrainData from '../../documentation/updated-brain-data.md?raw';
 
 const DEFAULT_BOT_BEHAVIOR = `ABM Groups — Master Bot Behaviour Spec
 
@@ -161,7 +162,7 @@ export const AIBrainView = () => {
   useEffect(() => {
     if (!selectedClientId || !abmGroupId) return;
 
-    const defaultTemplate = `
+    const legacyDefaultTemplate = `
 # ABM Groups — Master Knowledge Base
 **For: KAI (LeadOS internal) · WhatsApp Auto-Responder (shared number, all brands) · AllianceOS AI Brain**
 **Supersedes:** \`BM_Academy_Master_Knowledge_Base.md\` (BM Academy content is now Module 2 below, unchanged, re-tagged)
@@ -1104,6 +1105,29 @@ tags: internal, todo
 - [ ] Confirm refund/EMI terms for the several "not specified" bootcamp entries above (Video Editing Bootcamp, Design Basics Bootcamp, Web Design Basics, AI Fun Lab for Kids) — currently instructed to escalate to human, but a documented policy would let the AI Brain answer directly.
 
 `;
+
+    const bmTechxSourceHeading = '2. BM TechX Data Collection Form';
+    const bmTechxSourceIndex = updatedBrainData.indexOf(bmTechxSourceHeading);
+    const bmAcademyContent = updatedBrainData.slice(0, bmTechxSourceIndex).trim();
+    const bmTechxContent = updatedBrainData.slice(bmTechxSourceIndex).trim();
+    const defaultTemplate = legacyDefaultTemplate.replace(
+      /## MODULE 2 — BM ACADEMY[\s\S]*?(?=## MODULE 4 — CORETALENTS)/,
+      `## MODULE 2 — BM ACADEMY
+tags: brand:bm-academy, module-header
+
+${bmAcademyContent}
+
+---
+
+## MODULE 3 — BM TECHX
+tags: brand:bm-techx, module-header
+
+${bmTechxContent}
+
+---
+
+`
+    );
 
     // Upgrade an older saved BM Academy brain that only contained the original
     // four flagship courses. The updated master contains all 23 PROGRAM entries.

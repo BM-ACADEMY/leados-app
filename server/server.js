@@ -908,6 +908,10 @@ app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 // ── ALLIANCE OS ROUTES ────────────────────────────────────
 const knowledgeRoutes = require('./routes/knowledge');
 const uploadRoutes = require('./routes/upload');
+const allianceRoutes = require('./routes/alliance');
+const createAllianceInboxRouter = require('./routes/alliance-inbox-v2');
+const { startAllianceEmailWorker } = require('./services/alliance-email-worker');
+const { startAllianceEmailReplyPoller } = require('./services/alliance-email-replies');
 const pipelineRoutes = require('./routes/pipeline');
 const analyzeRoutes = require('./routes/analyze');
 const contentOsRoutes = require('./routes/contentos');
@@ -967,6 +971,9 @@ const internalAuth = (req, res, next) => {
   if (req.headers['x-internal-key'] === process.env.INTERNAL_API_KEY) return next();
   return auth(req, res, next);
 };
+
+app.use('/api/alliance', auth, allianceRoutes);
+app.use('/api/alliance-inbox', createAllianceInboxRouter({ auth, io }));
 
 // conversations.tenant_id is a foreign key into a legacy `tenants` table from
 // an earlier multi-tenant schema that was never actually populated per brand —
@@ -4904,7 +4911,10 @@ app.post('/api/internal/update-lead', internalAuth, async (req, res) => {
 
 // ── CRON JOBS ─────────────────────────────────────────────
 // Re-enabled internal campaign execution cron and added logging for WF05 Dashboard
+let scheduledCampaignCronRunning = false;
 cron.schedule('* * * * *', async () => {
+  if (scheduledCampaignCronRunning) return;
+  scheduledCampaignCronRunning = true;
   try {
     const { rows } = await pool.query(`
       SELECT id FROM campaigns 
@@ -4913,7 +4923,7 @@ cron.schedule('* * * * *', async () => {
 
     for (const row of rows) {
       console.log(`Cron: Starting scheduled campaign ${row.id}`);
-      executeCampaign(row.id);
+      await executeCampaign(row.id);
       
       // Log the execution to workflow_logs so it appears in the Admin Dashboard
       await pool.query(`
@@ -4923,16 +4933,23 @@ cron.schedule('* * * * *', async () => {
     }
   } catch (err) {
     console.error('Cron check error:', err);
+  } finally {
+    scheduledCampaignCronRunning = false;
   }
 });
 
 // Run every 1 minute to poll Google Drive folders for new videos
+let drivePollerRunning = false;
 if (process.env.DISABLE_DRIVE_POLLER !== 'true') {
   cron.schedule('* * * * *', async () => {
+    if (drivePollerRunning) return;
+    drivePollerRunning = true;
     try {
       await checkNewDriveVideos();
     } catch (err) {
       console.error('Cron checkNewDriveVideos error:', err);
+    } finally {
+      drivePollerRunning = false;
     }
   });
 } else {
@@ -4998,6 +5015,13 @@ cron.schedule('0 2 * * 0', async () => {
 // ── START ─────────────────────────────────────────────────
 httpServer.listen(PORT, () => {
   console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);
+
+  startAllianceEmailWorker(io).catch((error) => {
+    console.error('[Startup] Alliance email worker failed:', error.message);
+  });
+  startAllianceEmailReplyPoller(io).catch((error) => {
+    console.error('[Startup] Alliance email reply poller failed:', error.message);
+  });
 
   // Start campaign message queue processor
   startCampaignQueueProcessor();

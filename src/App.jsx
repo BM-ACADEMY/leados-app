@@ -34,6 +34,8 @@ import { KnowledgeBase } from './views/alliance/KnowledgeBase.jsx';
 import { PromptManager } from './views/alliance/PromptManager.jsx';
 import { AllianceInboxView } from './views/alliance/AllianceInboxView.jsx';
 import { CampaignPlanner } from './views/alliance/CampaignPlanner.jsx';
+import { EmailSetup } from './views/alliance/EmailSetup.jsx';
+import { EmailCampaignBuilder } from './views/alliance/EmailCampaignBuilder.jsx';
 import ContentOSDashboard from '../contentos/ContentOSDashboard.jsx';
 
 import KeywordTracking from './views/thedal/KeywordTracking.jsx';
@@ -415,9 +417,12 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/prompt-manager" element={<PromptManager />} />
               <Route path="/alliance-inbox" element={<AllianceInboxView />} />
               <Route path="/alliance/planner" element={<CampaignPlanner />} />
+              <Route path="/alliance/email-setup" element={<EmailSetup />} />
+              <Route path="/alliance/email-campaigns/new" element={<EmailCampaignBuilder />} />
               <Route path="/alliance/prospects" element={<LeadList />} />
               <Route path="/alliance/number-health" element={<Pipeline />} />
               <Route path="/alliance/replies" element={<LeadProfile />} />
+              <Route path="/alliance/replies/:prospectId" element={<LeadProfile />} />
               <Route path="/alliance/ai-brain" element={<KnowledgeBase />} />
               <Route path="/alliance/prompts" element={<PromptManager />} />
               <Route path="/alliance/analytics" element={<AllianceDashboard />} />

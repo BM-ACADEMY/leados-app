@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/connection');
 const axios = require('axios');
-const { findBmAcademySyllabus } = require('../services/bmAcademySyllabus');
+const { findBmAcademySyllabus, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
 
 // ==========================================
 // WF00 - Lead Integrator Endpoints
@@ -748,14 +748,21 @@ router.post('/kb/search', async (req, res) => {
     if (resolvedHistory.length === 0 && lead_id) {
       resolvedHistory = await getRecentChatHistory(lead_id);
     }
-    const contextualQuery = [
-      ...resolvedHistory.slice(-10).map((item) => item.text),
-      query,
-    ].filter(Boolean).join(' ');
+    const targetBrand = brand || 'ABM Groups';
+    const isBmAcademy = ['bm academy', 'bm-academy', 'bmacademy'].includes(
+      String(targetBrand).trim().toLowerCase()
+    );
+    const activeCourse = isBmAcademy
+      ? resolveBmAcademyCourseContext(query, resolvedHistory)
+      : null;
+    // For vague follow-ups ("details", "fees", "duration"), weight the most
+    // recently selected course instead of mixing every old course into retrieval.
+    const contextualQuery = activeCourse
+      ? `${activeCourse.name} ${activeCourse.name} ${query || ''}`
+      : [...resolvedHistory.slice(-10).map((item) => item.text), query].filter(Boolean).join(' ');
 
     // AIBrainView stores the master multi-brand knowledge under ABM Groups.
     // Load it as a fallback and combine it with any brand-specific documents.
-    const targetBrand = brand || 'ABM Groups';
     const docsRes = await pool.query(
       `SELECT c.name AS client_name, bd.doc_type, bd.content
        FROM brain_docs bd
@@ -783,9 +790,6 @@ router.post('/kb/search', async (req, res) => {
     // Follow-up questions such as "what is the syllabus?" need the previously
     // selected program in the retrieval query, not only the latest vague turn.
     const kb_snippets = getRelevantKnowledge(knowledgeDocs, contextualQuery) || 'No relevant knowledge found.';
-    const isBmAcademy = ['bm academy', 'bm-academy', 'bmacademy'].includes(
-      String(targetBrand).trim().toLowerCase()
-    );
     const bmAcademyCourseRule = isBmAcademy
       ? `BM ACADEMY COURSE LIST RULE:
 When asked for available courses or the full course list, include every PROGRAM entry in the knowledge base, not only the first four. The catalogue has 23 courses. Group the names under Flagship & Placement, Digital Marketing, Creator & Video, Design & Web, AI Tools, and Kids & Teens. Show names first, then ask which course needs details.`
@@ -794,11 +798,15 @@ When asked for available courses or the full course list, include every PROGRAM 
       ? `BM ACADEMY SYLLABUS RULE:
 When the user asks for a syllabus, resolve the active BM Academy course from the current message and chat history. Return the syllabus URL exactly as stored in the KNOWLEDGE BASE REFERENCE for that course. Never substitute a link from another brand or course, alter the URL, or invent a URL. If no syllabus URL for the active course is present in the retrieved knowledge, ask one short course clarification question instead.`
       : '';
-    const system_instructions = [...trainingDocs, bmAcademyCourseRule, bmAcademySyllabusRule]
+    const bmAcademyActiveCourseRule = activeCourse
+      ? `ACTIVE BM ACADEMY COURSE: ${activeCourse.name}\nAnswer course-detail follow-ups only about this active course. Do not use details, fees, duration, curriculum, placement claims, or links from any other course. If a requested fact is absent from the knowledge base, say it needs confirmation instead of guessing.`
+      : '';
+    // Put runtime course state first so the 8k prompt cap can never truncate it.
+    const system_instructions = [bmAcademyActiveCourseRule, bmAcademySyllabusRule, bmAcademyCourseRule, ...trainingDocs]
       .filter(Boolean)
       .join('\n\n')
       .slice(0, 8000);
-    res.json({ ...req.body, chat_history: resolvedHistory, kb_snippets, system_instructions });
+    res.json({ ...req.body, chat_history: resolvedHistory, kb_snippets, system_instructions, active_course: activeCourse?.name || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -900,6 +908,16 @@ router.post('/ai/response', async (req, res) => {
           ai_reply: `Here is the ${courseName} syllabus: ${url}`,
           syllabus_course: courseName,
           syllabus_url: url,
+        });
+      }
+      if (syllabusMatch.requested && syllabusMatch.options?.length) {
+        const optionNames = syllabusMatch.options.map((course) => course.name);
+        return res.json({
+          ...req.body,
+          brand: persistedBrand,
+          name: leadName,
+          ai_reply: `We have two Full Stack Developer syllabi:\n\n1. ${optionNames[0]}\n2. ${optionNames[1]}\n\nWhich one would you like?`,
+          syllabus_options: optionNames,
         });
       }
       if (syllabusMatch.requested) {

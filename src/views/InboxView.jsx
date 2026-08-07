@@ -5,8 +5,8 @@ import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Ch
 import EmojiPicker from 'emoji-picker-react';
 import { io as socketIO } from 'socket.io-client';
 import { C } from '../constants/theme.js';
-import { useLeads, useLead } from '../hooks/useLeads.js';
-import { api } from '../services/api.js';
+import { useLeads, useLead, useAllianceInbox, useAllianceLead } from '../hooks/useLeads.js';
+import { api, allianceInboxApi } from '../services/api.js';
 import { toast } from 'react-hot-toast';
 
 // In local dev (localhost), connect via same origin so Vite's WebSocket proxy works.
@@ -119,12 +119,26 @@ const mergeMessages = (current, incoming) => {
   return merged;
 };
 
-export const InboxView = () => {
+export const InboxView = ({ alliance = false }) => {
   const location = useLocation();
   const [search, setSearch] = useState('');
-  const { leads, loading: loadingLeads, hasMore: hasMoreLeads, loadingMore: loadingMoreLeads, loadMoreLeads, refetch: refetchLeadsList } = useLeads({ search });
+  const useInboxList = alliance ? useAllianceInbox : useLeads;
+  const useInboxLead = alliance ? useAllianceLead : useLead;
+  const inboxApi = alliance ? allianceInboxApi : api;
+  const storageKeys = alliance ? {
+    reactions: 'alliance_user_reactions', deleted: 'alliance_deleted_for_me',
+  } : { reactions: 'leados_user_reactions', deleted: 'leados_deleted_for_me' };
+  const socketEvents = alliance ? {
+    incoming: 'alliance_incoming_message', outgoing: 'alliance_outgoing_message',
+    typing: 'alliance_ai_typing', status: 'alliance_message_status',
+    edited: 'alliance_message_edited', deleted: 'alliance_message_deleted',
+  } : {
+    incoming: 'incoming_message', outgoing: 'outgoing_message', typing: 'ai_typing',
+    status: 'message_status', edited: 'message_edited', deleted: 'message_deleted',
+  };
+  const { leads, loading: loadingLeads, hasMore: hasMoreLeads, loadingMore: loadingMoreLeads, loadMoreLeads, refetch: refetchLeadsList } = useInboxList({ search });
   const [activeLeadId, setActiveLeadId] = useState(location.state?.leadId || null);
-  const { lead: activeLead, conversations, loadingMore, hasMore, loadMoreMessages, refetch: refetchLead, loading: loadingLead } = useLead(activeLeadId);
+  const { lead: activeLead, conversations, loadingMore, hasMore, loadMoreMessages, refetch: refetchLead, loading: loadingLead } = useInboxLead(activeLeadId);
   const [msg, setMsg] = useState('');
   const [sending, setSending] = useState(false);
   const [showChatOnMobile, setShowChatOnMobile] = useState(!!location.state?.leadId);
@@ -197,17 +211,17 @@ export const InboxView = () => {
   const [showFullReactionPicker, setShowFullReactionPicker] = useState(null);
   // userReactions: { [msgId]: emoji } — tracks the current user's own reaction per message
   const [userReactions, setUserReactions] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('leados_user_reactions') || '{}'); } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(storageKeys.reactions) || '{}'); } catch { return {}; }
   });
   const saveUserReactions = (updated) => {
     setUserReactions(updated);
-    localStorage.setItem('leados_user_reactions', JSON.stringify(updated));
+    localStorage.setItem(storageKeys.reactions, JSON.stringify(updated));
   };
 
   // Deleted for me state
   const [deletedForMeIds, setDeletedForMeIds] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem('leados_deleted_for_me') || '[]');
+      return JSON.parse(localStorage.getItem(storageKeys.deleted) || '[]');
     } catch {
       return [];
     }
@@ -215,7 +229,7 @@ export const InboxView = () => {
   const hideMessageForMe = (msgId) => {
     const updated = [...deletedForMeIds, msgId];
     setDeletedForMeIds(updated);
-    localStorage.setItem('leados_deleted_for_me', JSON.stringify(updated));
+    localStorage.setItem(storageKeys.deleted, JSON.stringify(updated));
   };
 
   // cleanup recording on unmount
@@ -303,7 +317,7 @@ export const InboxView = () => {
   // Opening a lead conversation also clears its Sales Task unread state for
   // every connected user through the server's Socket.IO update.
   useEffect(() => {
-    if (activeLeadId) api.put(`/sales-tasks/lead/${activeLeadId}/read`, {}).catch(() => {});
+    if (activeLeadId) inboxApi.put(`/sales-tasks/lead/${activeLeadId}/read`, {}).catch(() => {});
   }, [activeLeadId]);
 
   // Removed old auto-scroll as Virtuoso handles it natively
@@ -320,7 +334,7 @@ export const InboxView = () => {
   // Separate effect for reading the conversation to prevent infinite loop
   useEffect(() => {
     if (activeLeadId) {
-      api.readConversation(activeLeadId).then(() => {
+      inboxApi.readConversation(activeLeadId).then(() => {
         // Refetch leads without adding the function to the dependency array
         refetchLeadsListRef.current();
       }).catch(e => console.error(e));
@@ -362,7 +376,7 @@ export const InboxView = () => {
     });
 
     // New inbound message received from a customer
-    socket.on('incoming_message', ({ lead_id, message }) => {
+    socket.on(socketEvents.incoming, ({ lead_id, message }) => {
       // Refresh sidebar lead list to show new last_contact time
       refetchLeadsListRef.current();
       // If the active conversation is for this lead, append the message
@@ -374,7 +388,7 @@ export const InboxView = () => {
     });
 
     // Our own outbound message confirmed by server
-    socket.on('outgoing_message', ({ lead_id, message }) => {
+    socket.on(socketEvents.outgoing, ({ lead_id, message }) => {
       refetchLeadsListRef.current();
       clearTypingIndicator(lead_id);
       if (activeLeadIdRef.current !== null && activeLeadIdRef.current !== undefined && String(lead_id) === String(activeLeadIdRef.current)) {
@@ -384,8 +398,12 @@ export const InboxView = () => {
       }
     });
 
+    if (alliance) {
+      socket.on('alliance_contacts_changed', () => refetchLeadsListRef.current());
+    }
+
     // AI is waiting in queue / composing a reply to the customer's last message
-    socket.on('ai_typing', ({ lead_id, typing, status }) => {
+    socket.on(socketEvents.typing, ({ lead_id, typing, status }) => {
       if (typing) {
         const key = String(lead_id);
         const aiStatus = status || 'composing';
@@ -399,17 +417,17 @@ export const InboxView = () => {
     });
 
     // Status update (sent → delivered → read)
-    socket.on('message_status', ({ wa_message_id, status }) => {
+    socket.on(socketEvents.status, ({ wa_message_id, status }) => {
       setLocalMessages((prev) =>
-        prev.map((m) => (m.wa_message_id === wa_message_id ? { ...m, status } : m))
+        prev.map((m) => ((m.wa_message_id || m.wa_msg_id) === wa_message_id ? { ...m, status } : m))
       );
     });
 
-    socket.on('message_edited', (message) => {
+    socket.on(socketEvents.edited, (message) => {
       setLocalMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, ...message } : m)));
     });
 
-    socket.on('message_deleted', (message) => {
+    socket.on(socketEvents.deleted, (message) => {
       setLocalMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, is_deleted: true } : m)));
     });
 
@@ -425,7 +443,7 @@ export const InboxView = () => {
     if (!editContactData?.id) return;
     setSavingContact(true);
     try {
-      await api.updateLead(editContactData.id, editContactData);
+      await inboxApi.updateLead(editContactData.id, editContactData);
       refetchLeadsList(); // Use direct hook reference
       refetchLead(); // Update active lead data as well
       setShowEditContactModal(false);
@@ -465,7 +483,7 @@ export const InboxView = () => {
         setUploadProgress(0);
         const formData = new FormData();
         formData.append('file', attachedFile);
-        const uploadRes = await api.uploadMedia(formData, (progress) => {
+        const uploadRes = await inboxApi.uploadMedia(formData, (progress) => {
           setUploadProgress(progress);
         });
         mediaUrl = uploadRes.fileUrl;
@@ -493,7 +511,7 @@ export const InboxView = () => {
       setMsg('');
       setAttachedFile(null);
 
-      const sentMsg = await api.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
+      const sentMsg = await inboxApi.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
 
       // If window was closed, backend sent a template to reopen it silently.
       // We must remove the optimistic message because WhatsApp API STRICTLY blocks 
@@ -544,7 +562,7 @@ export const InboxView = () => {
   const saveEdit = async () => {
     setEditSaving(true);
     try {
-      await api.editMessage(editingMessageId, editContent);
+      await inboxApi.editMessage(editingMessageId, editContent);
       setEditingMessageId(null);
       setEditContent('');
     } catch (e) {
@@ -564,7 +582,7 @@ export const InboxView = () => {
           for (const msgId of forwardMessage.messages) {
             const m = localMessages.find(x => x.id === msgId);
             if (m) {
-              await api.sendWhatsAppMessage(leadId, m.content, m.media_url, m.msg_type || m.type || 'text', null, true);
+              await inboxApi.sendWhatsAppMessage(leadId, m.content, m.media_url, m.msg_type || m.type || 'text', null, true);
             }
           }
         }
@@ -573,7 +591,7 @@ export const InboxView = () => {
       } else {
         // Single forward
         await Promise.all(selectedForwardLeads.map(leadId =>
-          api.sendWhatsAppMessage(leadId, forwardMessage.content, forwardMessage.media_url, forwardMessage.type || 'text', null, true)
+          inboxApi.sendWhatsAppMessage(leadId, forwardMessage.content, forwardMessage.media_url, forwardMessage.type || 'text', null, true)
         ));
       }
 
@@ -596,10 +614,10 @@ export const InboxView = () => {
     try {
       let updatedMessage;
       if (pinMessageModal.pinned_until && new Date(pinMessageModal.pinned_until) > new Date()) {
-        const res = await api.unpinMessage(pinMessageModal.id);
+        const res = await inboxApi.unpinMessage(pinMessageModal.id);
         updatedMessage = res.message;
       } else {
-        const res = await api.pinMessage(pinMessageModal.id, pinDuration);
+        const res = await inboxApi.pinMessage(pinMessageModal.id, pinDuration);
         updatedMessage = res.message;
       }
 
@@ -620,7 +638,7 @@ export const InboxView = () => {
       // Optimistically update the UI instantly
       setLocalMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, is_starred: isStarred } : m)));
 
-      const res = await api.toggleStarMessage(msgId, isStarred);
+      const res = await inboxApi.toggleStarMessage(msgId, isStarred);
       // Backend confirmation
       setLocalMessages((prev) => prev.map((m) => (m.id === res.message.id ? { ...m, ...res.message } : m)));
     } catch (err) {
@@ -669,11 +687,11 @@ export const InboxView = () => {
     try {
       // Remove old reaction first if switching emoji
       if (prevEmoji && !isSameEmoji) {
-        await api.reactToMessage(msgId, prevEmoji, 'remove');
+        await inboxApi.reactToMessage(msgId, prevEmoji, 'remove');
       }
       // Add new or remove toggled
       const action = isSameEmoji ? 'remove' : 'add';
-      const res = await api.reactToMessage(msgId, emoji, action);
+      const res = await inboxApi.reactToMessage(msgId, emoji, action);
       setLocalMessages((prev) => prev.map((m) => m.id === res.message.id ? { ...m, reactions: res.message.reactions } : m));
     } catch (err) {
       console.error('React failed:', err);
@@ -995,7 +1013,7 @@ export const InboxView = () => {
                 onClick={async (e) => {
                   e.stopPropagation();
                   try {
-                    await api.unpinMessage(currentPin.id);
+                    await inboxApi.unpinMessage(currentPin.id);
                     // Instantly update the local state so the top bar updates immediately
                     setLocalMessages((prev) => prev.map((m) => (m.id === currentPin.id ? { ...m, pinned_until: null } : m)));
                   } catch (err) {
@@ -1893,7 +1911,7 @@ export const InboxView = () => {
                   <button 
                     onClick={async () => {
                       try {
-                        await api.deleteMessage(deleteModalMsg.id);
+                        await inboxApi.deleteMessage(deleteModalMsg.id);
                         setDeleteModalMsg(null);
                       } catch (e) {
                         alert("Failed to delete for everyone");

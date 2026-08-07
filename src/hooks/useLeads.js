@@ -118,16 +118,20 @@ export const useLead = (id) => {
   return { lead, conversations, loading, loadingMore, hasMore, error, refetch: fetchLead, loadMoreMessages };
 };
 
-export const useAllianceInbox = () => {
-  const [inbox, setInbox] = useState([]);
+export const useAllianceInbox = (filters = {}) => {
+  const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState(null);
+  const limit = filters.limit || 20;
 
   const fetchInbox = async () => {
     setLoading(true);
     try {
-      const data = await api.getAllianceInbox();
-      setInbox(data || []);
+      const data = await api.request(`/api/alliance-inbox/contacts?${new URLSearchParams({ limit, offset: 0, ...(filters.search && { search: filters.search }) })}`);
+      setLeads(data.leads || []);
+      setHasMore((data.leads || []).length === limit);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -137,15 +141,28 @@ export const useAllianceInbox = () => {
 
   useEffect(() => {
     fetchInbox();
-  }, []);
+  }, [filters.search, limit]);
 
-  return { inbox, loading, error, refetch: fetchInbox };
+  const loadMoreLeads = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await api.request(`/api/alliance-inbox/contacts?${new URLSearchParams({ limit, offset: leads.length, ...(filters.search && { search: filters.search }) })}`);
+      const incoming = data.leads || [];
+      setLeads((current) => [...current, ...incoming.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setHasMore(incoming.length === limit);
+    } finally { setLoadingMore(false); }
+  };
+
+  return { leads, loading, loadingMore, hasMore, error, refetch: fetchInbox, loadMoreLeads };
 };
 
 export const useAllianceLead = (id) => {
   const [lead, setLead] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState(null);
 
   const fetchLead = async () => {
@@ -153,9 +170,11 @@ export const useAllianceLead = (id) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.getAllianceLead(id);
+      const data = await api.request(`/api/alliance-inbox/contacts/${id}`);
       setLead(data.lead);
-      setConversations(data.conversations || []);
+      const messages = await api.request(`/api/alliance-inbox/contacts/${id}/messages?limit=100&offset=0`);
+      setConversations(messages.messages || []);
+      setHasMore((messages.messages || []).length === 100);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -167,5 +186,15 @@ export const useAllianceLead = (id) => {
     fetchLead();
   }, [id]);
 
-  return { lead, conversations, loading, error, refetch: fetchLead };
+  const loadMoreMessages = async () => {
+    if (!id || loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await api.request(`/api/alliance-inbox/contacts/${id}/messages?limit=100&offset=${conversations.length}`);
+      setConversations((current) => [...(data.messages || []), ...current]);
+      setHasMore((data.messages || []).length === 100);
+    } finally { setLoadingMore(false); }
+  };
+
+  return { lead, conversations, loading, loadingMore, hasMore, error, refetch: fetchLead, loadMoreMessages };
 };

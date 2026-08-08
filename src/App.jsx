@@ -36,6 +36,7 @@ import { AllianceInboxView } from './views/alliance/AllianceInboxView.jsx';
 import { CampaignPlanner } from './views/alliance/CampaignPlanner.jsx';
 import { EmailSetup } from './views/alliance/EmailSetup.jsx';
 import { EmailCampaignBuilder } from './views/alliance/EmailCampaignBuilder.jsx';
+import { WhatsAppCampaignBuilder } from './views/alliance/WhatsAppCampaignBuilder.jsx';
 import ContentOSDashboard from '../contentos/ContentOSDashboard.jsx';
 
 import KeywordTracking from './views/thedal/KeywordTracking.jsx';
@@ -419,6 +420,7 @@ function AppLayout({ user, logout, leadRefresh, setLeadRefresh }) {
               <Route path="/alliance/planner" element={<CampaignPlanner />} />
               <Route path="/alliance/email-setup" element={<EmailSetup />} />
               <Route path="/alliance/email-campaigns/new" element={<EmailCampaignBuilder />} />
+              <Route path="/alliance/whatsapp-campaigns/new" element={<WhatsAppCampaignBuilder />} />
               <Route path="/alliance/prospects" element={<LeadList />} />
               <Route path="/alliance/number-health" element={<Pipeline />} />
               <Route path="/alliance/replies" element={<LeadProfile />} />

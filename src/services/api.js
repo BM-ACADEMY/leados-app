@@ -672,6 +672,27 @@ class LeadOSAPI {
     return this.request(`/api/alliance/reply-conversations/${prospectId}`);
   }
 
+  async getAllianceWhatsAppProspects(params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null));
+    return this.request(`/api/alliance/whatsapp-campaigns/prospects?${query}`);
+  }
+
+  async getAllianceWhatsAppCampaigns() {
+    return this.request('/api/alliance/whatsapp-campaigns');
+  }
+
+  async createAllianceWhatsAppCampaign(payload) {
+    return this.request('/api/alliance/whatsapp-campaigns', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async testAllianceWhatsAppCampaign(payload) {
+    return this.request('/api/alliance/whatsapp-campaigns/test', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async stopAllianceWhatsAppCampaign(id) {
+    return this.request(`/api/alliance/whatsapp-campaigns/${id}/stop`, { method: 'POST' });
+  }
+
   async sendAllianceEmailReply(id, body) {
     return this.request(`/api/alliance/replies/${id}/send`, {
       method: 'POST',

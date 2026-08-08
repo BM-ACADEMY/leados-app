@@ -910,8 +910,10 @@ const knowledgeRoutes = require('./routes/knowledge');
 const uploadRoutes = require('./routes/upload');
 const allianceRoutes = require('./routes/alliance');
 const createAllianceInboxRouter = require('./routes/alliance-inbox-v2');
+const createAllianceAutomationRouter = require('./routes/alliance-automation');
 const { startAllianceEmailWorker } = require('./services/alliance-email-worker');
 const { startAllianceEmailReplyPoller } = require('./services/alliance-email-replies');
+const { startAllianceWhatsAppCampaignWorker } = require('./services/alliance-whatsapp-campaign-worker');
 const pipelineRoutes = require('./routes/pipeline');
 const analyzeRoutes = require('./routes/analyze');
 const contentOsRoutes = require('./routes/contentos');
@@ -974,6 +976,7 @@ const internalAuth = (req, res, next) => {
 
 app.use('/api/alliance', auth, allianceRoutes);
 app.use('/api/alliance-inbox', createAllianceInboxRouter({ auth, io }));
+app.use('/api/internal/alliance', internalAuth, createAllianceAutomationRouter({ io }));
 
 // conversations.tenant_id is a foreign key into a legacy `tenants` table from
 // an earlier multi-tenant schema that was never actually populated per brand —
@@ -5050,6 +5053,9 @@ httpServer.listen(PORT, () => {
   });
   startAllianceEmailReplyPoller(io).catch((error) => {
     console.error('[Startup] Alliance email reply poller failed:', error.message);
+  });
+  startAllianceWhatsAppCampaignWorker(io).catch((error) => {
+    console.error('[Startup] Alliance WhatsApp campaign worker failed:', error.message);
   });
 
   // Start campaign message queue processor

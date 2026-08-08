@@ -5,6 +5,10 @@ const { createAllianceEmailTransport, getAllianceEmailConfig } = require('./alli
 let interval;
 let processing = false;
 
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 function renderTemplate(value, prospect) {
   return String(value || '')
     .replace(/\\r\\n|\\n|\\r/g, '\n')
@@ -150,7 +154,7 @@ async function deliverTouch(touch, io) {
       );
       return;
     }
-    if (String(config.from).toLowerCase() !== String(touch.inbox_email).toLowerCase()) {
+    if (normalizeEmail(config.from) !== normalizeEmail(touch.inbox_email)) {
       throw new Error(`Selected sender ${touch.inbox_email} does not match ALLIANCE_EMAIL_FROM.`);
     }
     const subject = renderTemplate(touch.subject, touch);

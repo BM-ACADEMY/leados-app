@@ -30,6 +30,10 @@ function createAllianceInboxRouter({ auth, io }) {
   };
   const accessToken = (settings) => process.env[settings?.access_token_env || 'ALLIANCE_WA_ACCESS_TOKEN'];
   const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+  const relayAuthorized = (req) => {
+    const expected = String(process.env.INTERNAL_API_KEY || '');
+    return !expected || String(req.get('x-internal-key') || '') === expected;
+  };
   const syncImportedProspects = async () => {
     const settings = await configuredPhoneId();
     const phoneNumberId = settings?.phone_number_id || process.env.ALLIANCE_WA_PHONE_NUMBER_ID || 'unconfigured';
@@ -38,7 +42,28 @@ function createAllianceInboxRouter({ auth, io }) {
       await client.query('BEGIN');
       await client.query(
         `UPDATE alliance_inbox_contacts c
-         SET prospect_id = p.id, name = COALESCE(c.name, p.name, p.business_name),
+         SET name = COALESCE(p.name, p.business_name, c.name),
+             profile_name = COALESCE(p.name, p.business_name, c.profile_name),
+             phone = CASE WHEN NOT EXISTS (
+               SELECT 1 FROM alliance_inbox_contacts other
+               WHERE other.id <> c.id AND other.phone = p.phone
+             ) THEN p.phone ELSE c.phone END,
+             wa_id = CASE WHEN NOT EXISTS (
+               SELECT 1 FROM alliance_inbox_contacts other
+               WHERE other.id <> c.id AND other.wa_id = p.phone
+             ) THEN p.phone ELSE c.wa_id END,
+             source = COALESCE(p.source, c.source, 'file_upload'),
+             custom_fields = c.custom_fields || jsonb_build_object(
+               'business_name', p.business_name, 'audience', p.audience,
+               'email', p.email, 'industry', p.industry, 'location', p.location
+             ),
+             updated_at = NOW()
+         FROM alliance_prospects p
+         WHERE c.prospect_id = p.id`
+      );
+      await client.query(
+        `UPDATE alliance_inbox_contacts c
+         SET prospect_id = p.id, name = COALESCE(p.name, p.business_name, c.name),
              source = COALESCE(c.source, p.source, 'file_upload'),
              custom_fields = c.custom_fields || jsonb_build_object(
                'business_name', p.business_name, 'audience', p.audience, 'email', p.email
@@ -143,12 +168,14 @@ function createAllianceInboxRouter({ auth, io }) {
   // Public Meta verification and event endpoints. Only events for the configured
   // Alliance phone_number_id are accepted; LeadOS webhook data never enters here.
   router.get('/webhook', (req, res) => {
+    if (!relayAuthorized(req)) return res.sendStatus(401);
     const expected = process.env.ALLIANCE_WA_VERIFY_TOKEN;
     if (req.query['hub.mode'] === 'subscribe' && expected && req.query['hub.verify_token'] === expected) return res.status(200).send(req.query['hub.challenge']);
     return res.sendStatus(403);
   });
 
   router.post('/webhook', async (req, res) => {
+    if (!relayAuthorized(req)) return res.sendStatus(401);
     res.sendStatus(200);
     try {
       const settings = await configuredPhoneId();
@@ -164,6 +191,11 @@ function createAllianceInboxRouter({ auth, io }) {
               [statusEvent.status, JSON.stringify({ status_event: statusEvent }), statusEvent.id]
             );
             if (updated.rowCount) io.emit('alliance_message_status', { wa_message_id: statusEvent.id, status: statusEvent.status });
+            await db.query(
+              `UPDATE alliance_whatsapp_campaign_recipients SET status=$1
+               WHERE wa_msg_id=$2 AND status IN ('sent','delivered','read')`,
+              [statusEvent.status, statusEvent.id]
+            ).catch(() => {});
           }
 
           for (const incoming of value.messages || []) {
@@ -205,6 +237,19 @@ function createAllianceInboxRouter({ auth, io }) {
                    last_message_at = $2, last_inbound_at = $2, updated_at = NOW() WHERE id = $3`,
                   [content, saved.rows[0].sent_at, conversation.id]
                 );
+                if (contact.prospect_id) {
+                  await client.query(`UPDATE alliance_prospects SET status='replied',updated_at=NOW() WHERE id=$1 AND status NOT IN ('converted','closed','not_interested','unsubscribed')`,[contact.prospect_id]);
+                  await client.query(
+                    `UPDATE alliance_whatsapp_campaign_recipients SET status='cancelled',error_message='Recipient replied.'
+                     WHERE prospect_id=$1 AND status='queued'`,
+                    [contact.prospect_id]
+                  );
+                  await client.query(
+                    `UPDATE alliance_whatsapp_followup_jobs SET status='cancelled',error_message='Recipient replied.'
+                     WHERE prospect_id=$1 AND status IN ('pending','claimed')`,
+                    [contact.prospect_id]
+                  );
+                }
               }
               await client.query('COMMIT');
               if (saved.rowCount) io.emit('alliance_incoming_message', { lead_id: String(contact.id), message: { ...saved.rows[0], type, timestamp: saved.rows[0].sent_at } });

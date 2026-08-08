@@ -1,12 +1,14 @@
 const express = require('express');
 const multer = require('multer');
 const xlsx = require('xlsx');
+const axios = require('axios');
 const db = require('../db/connection');
 const ensureAllianceSchema = require('../db/alliance-schema');
 const { processQueuedAllianceWelcomes } = require('../services/alliance-welcome');
 const { publicAllianceEmailConfig, verifyAllianceEmailTransport, createAllianceEmailTransport, getAllianceEmailConfig } = require('../services/alliance-email');
 const openRouter = require('../services/openrouter');
 const { regenerateReplySuggestion } = require('../services/alliance-email-replies');
+const { processAllianceWhatsAppCampaigns } = require('../services/alliance-whatsapp-campaign-worker');
 
 const router = express.Router();
 const upload = multer({
@@ -1073,9 +1075,17 @@ async function getCampaignReadiness(queryable, campaignId) {
     if (templateResult.rows[0].available < sequenceResult.rows[0].expected) missingTemplates.push(channel);
 
     const senderResult = channel === 'email'
-      ? await queryable.query(`SELECT 1 FROM alliance_domains WHERE status = 'active' AND sent_today < daily_cap LIMIT 1`)
+      ? await queryable.query(
+        `SELECT inbox_email FROM alliance_domains
+         WHERE id = $1 AND status = 'active' AND sent_today < daily_cap`,
+        [campaign.sender_domain_id]
+      )
       : await queryable.query(`SELECT 1 FROM alliance_numbers WHERE status = 'active' AND quality_rating = 'green' AND sent_today < daily_cap LIMIT 1`);
     if (!senderResult.rowCount) missingSenders.push(channel);
+    if (channel === 'email' && senderResult.rowCount
+      && normalizeEmail(senderResult.rows[0].inbox_email) !== normalizeEmail(getAllianceEmailConfig().from)) {
+      missingSenders.push('email configuration');
+    }
   }
   const stats = statsResult.rows[0];
   const blockers = [];
@@ -1170,7 +1180,7 @@ router.post('/campaigns/:id/start', async (req, res) => {
     if (resuming) {
       await client.query(
         `UPDATE alliance_touches SET status = 'scheduled', error_message = NULL
-         WHERE campaign_id = $1 AND status = 'paused' AND sent_at IS NULL`,
+         WHERE campaign_id = $1 AND status IN ('paused', 'failed') AND sent_at IS NULL`,
         [req.params.id]
       );
     } else {
@@ -1198,7 +1208,7 @@ router.post('/campaigns/:id/start', async (req, res) => {
     await client.query(`UPDATE alliance_campaign_prospects SET enrollment_status = 'in_sequence' WHERE campaign_id = $1 AND enrollment_status <> 'stopped'`, [req.params.id]);
     await client.query(`UPDATE alliance_campaigns SET status = 'running', started_at = COALESCE(started_at, NOW()) WHERE id = $1`, [req.params.id]);
     await client.query('COMMIT');
-    res.json({ success: true, resumed: resuming, message: resuming ? 'Campaign resumed. Only unsent paused touches were restored.' : 'Campaign started and first touches scheduled.' });
+    res.json({ success: true, resumed: resuming, message: resuming ? 'Campaign resumed. Unsent paused or failed touches were restored.' : 'Campaign started and first touches scheduled.' });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Alliance campaign start failed:', error);
@@ -1322,5 +1332,77 @@ router.post('/campaigns/:id/test-email', async (req, res) => {
     res.status(502).json({ error: error.response || error.message || 'Failed to send test email.' });
   }
 });
+
+router.get('/whatsapp-campaigns/prospects', async (req, res) => {
+  try {
+    const values=[]; const where=[`p.phone IS NOT NULL`,`p.consent=TRUE`,`p.consent_source IS NOT NULL`,`p.suppressed=FALSE`,`p.status NOT IN ('converted','closed','not_interested','unsubscribed')`];
+    if(text(req.query.audience)){values.push(text(req.query.audience));where.push(`p.audience=$${values.length}`);}
+    if(text(req.query.search)){values.push(`%${text(req.query.search).toLowerCase()}%`);where.push(`(LOWER(COALESCE(p.name,'')) LIKE $${values.length} OR LOWER(p.business_name) LIKE $${values.length} OR p.phone LIKE $${values.length})`);}
+    const limit=Math.min(Math.max(Number(req.query.limit)||20,1),5000);const offset=Math.max(Number(req.query.offset)||0,0);
+    const count=await db.query(`SELECT COUNT(*)::int AS total FROM alliance_prospects p WHERE ${where.join(' AND ')}`,values);
+    const rows=await db.query(`SELECT p.id,p.name,p.business_name,p.phone,p.audience,p.industry,p.location,p.status,p.consent_source FROM alliance_prospects p WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT $${values.length+1} OFFSET $${values.length+2}`,[...values,limit,offset]);
+    res.json({prospects:rows.rows,total:count.rows[0]?.total||0});
+  }catch(error){console.error('Alliance WhatsApp prospects failed:',error);res.status(500).json({error:'Failed to load WhatsApp-eligible prospects.'});}
+});
+
+router.get('/whatsapp-campaigns', async (_req,res)=>{
+  try{const result=await db.query(`SELECT c.*,COUNT(r.id)::int AS recipients,
+    COUNT(r.id) FILTER(WHERE r.status IN ('sent','delivered','read'))::int AS sent,
+    COUNT(r.id) FILTER(WHERE r.status='delivered')::int AS delivered,
+    COUNT(r.id) FILTER(WHERE r.status='read')::int AS read,
+    COUNT(r.id) FILTER(WHERE r.status='failed')::int AS failed,
+    COUNT(r.id) FILTER(WHERE r.status='skipped')::int AS skipped,
+    (ARRAY_AGG(r.error_message ORDER BY r.id DESC) FILTER(WHERE r.error_message IS NOT NULL))[1] AS latest_error
+    FROM alliance_whatsapp_campaigns c LEFT JOIN alliance_whatsapp_campaign_recipients r ON r.campaign_id=c.id GROUP BY c.id ORDER BY c.created_at DESC`);res.json({campaigns:result.rows});}
+  catch(error){res.status(500).json({error:'Failed to load WhatsApp campaigns.'});}
+});
+
+const getAllianceWhatsAppSettings = async (queryable = db) => {
+  const result = await queryable.query(`SELECT * FROM alliance_inbox_settings WHERE active=TRUE ORDER BY id LIMIT 1`);
+  if (result.rowCount) return result.rows[0];
+  if (process.env.ALLIANCE_WA_PHONE_NUMBER_ID) {
+    return {
+      phone_number_id: process.env.ALLIANCE_WA_PHONE_NUMBER_ID,
+      access_token_env: 'ALLIANCE_WA_ACCESS_TOKEN',
+      active: true,
+      source: 'environment',
+    };
+  }
+  return null;
+};
+
+router.post('/whatsapp-campaigns', async (req,res)=>{
+  const name=text(req.body.name);const templateId=Number(req.body.template_id);const prospectIds=[...new Set((req.body.prospect_ids||[]).map(Number).filter(Number.isInteger))];const mapping=Array.isArray(req.body.parameter_mapping)?req.body.parameter_mapping.map(text):[];
+  const followupTemplateId=Number(req.body.followup_template_id)||null;const followupMapping=Array.isArray(req.body.followup_parameter_mapping)?req.body.followup_parameter_mapping.map(text):[];const followupDelay=Math.min(Math.max(Number(req.body.followup_delay_days)||4,1),30);const followupRepeat=Math.min(Math.max(Number(req.body.followup_repeat_days)||4,1),30);const maxFollowups=Math.min(Math.max(Number(req.body.max_followups)||1,1),5);
+  if(!name||!templateId||!prospectIds.length)return res.status(400).json({error:'Campaign name, approved template, and at least one lead are required.'});
+  const client=await db.connect();
+  try{await client.query('BEGIN');
+    const template=await client.query(`SELECT id,name,language,body,status,category,header_format FROM templates WHERE id=$1`,[templateId]);
+    if(!template.rowCount||String(template.rows[0].status).toLowerCase()!=='approved')throw Object.assign(new Error('Select a Meta-approved registered template.'),{status:409});
+    const variableCount=Math.max(0,...[...String(template.rows[0].body).matchAll(/\{\{(\d+)\}\}/g)].map(match=>Number(match[1])));
+    if(mapping.length!==variableCount||mapping.some(field=>!['name','business_name','location'].includes(field)))throw Object.assign(new Error(`Map all ${variableCount} template variables before scheduling.`),{status:400});
+    let followup=null;if(followupTemplateId){const followupResult=await client.query(`SELECT id,name,language,body,status FROM templates WHERE id=$1`,[followupTemplateId]);followup=followupResult.rows[0];if(!followup||String(followup.status).toLowerCase()!=='approved')throw Object.assign(new Error('Select a Meta-approved follow-up template.'),{status:409});const count=Math.max(0,...[...String(followup.body).matchAll(/\{\{(\d+)\}\}/g)].map(match=>Number(match[1])));if(followupMapping.length!==count||followupMapping.some(field=>!['name','business_name','location'].includes(field)))throw Object.assign(new Error(`Map all ${count} follow-up variables.`),{status:400});}
+    const settings=await getAllianceWhatsAppSettings(client);
+    if(!settings)throw Object.assign(new Error('Configure ALLIANCE_WA_PHONE_NUMBER_ID or an active Alliance WhatsApp number.'),{status:409});
+    if(!process.env[settings.access_token_env||'ALLIANCE_WA_ACCESS_TOKEN'])throw Object.assign(new Error('Alliance WhatsApp access token is missing.'),{status:409});
+    const eligible=await client.query(`SELECT id FROM alliance_prospects WHERE id=ANY($1::bigint[]) AND phone IS NOT NULL AND consent=TRUE AND consent_source IS NOT NULL AND suppressed=FALSE AND status NOT IN ('converted','closed','not_interested','unsubscribed')`,[prospectIds]);
+    if(!eligible.rowCount)throw Object.assign(new Error('No selected leads have valid WhatsApp consent.'),{status:409});
+    const scheduledAt=req.body.scheduled_at?new Date(req.body.scheduled_at):new Date();if(Number.isNaN(scheduledAt.getTime()))throw Object.assign(new Error('Enter a valid schedule date and time.'),{status:400});
+    const campaign=await client.query(`INSERT INTO alliance_whatsapp_campaigns(name,audience,template_id,template_name,template_language,template_body,parameter_mapping,phone_number_id,status,scheduled_at,created_by,followup_template_id,followup_template_name,followup_template_language,followup_template_body,followup_parameter_mapping,followup_delay_days,followup_repeat_days,max_followups) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,'scheduled',$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18) RETURNING *`,[name,text(req.body.audience)||null,templateId,template.rows[0].name,template.rows[0].language||'en',template.rows[0].body,JSON.stringify(mapping),settings.phone_number_id,scheduledAt,req.user?.id||null,followup?.id||null,followup?.name||null,followup?.language||null,followup?.body||null,JSON.stringify(followupMapping),followupDelay,followupRepeat,maxFollowups]);
+    await client.query(`INSERT INTO alliance_whatsapp_campaign_recipients(campaign_id,prospect_id,scheduled_at) SELECT $1,id,$2 FROM alliance_prospects WHERE id=ANY($3::bigint[])`,[campaign.rows[0].id,scheduledAt,eligible.rows.map(row=>row.id)]);
+    await client.query('COMMIT');setImmediate(()=>processAllianceWhatsAppCampaigns(req.app.get('io')).catch(error=>console.error('[Alliance WhatsApp bulk]',error)));
+    res.status(201).json({success:true,campaign:campaign.rows[0],recipients:eligible.rowCount,message:`WhatsApp campaign scheduled for ${eligible.rowCount} opted-in leads.`});
+  }catch(error){await client.query('ROLLBACK');console.error('Alliance WhatsApp campaign create failed:',error.message);res.status(error.status||500).json({error:error.message||'Failed to create WhatsApp campaign.'});}
+  finally{client.release();}
+});
+
+router.post('/whatsapp-campaigns/test',async(req,res)=>{
+  try{const templateId=Number(req.body.template_id);const phone=normalizePhone(req.body.phone);const mapping=Array.isArray(req.body.sample_values)?req.body.sample_values.map(text):[];if(!templateId||!phone)return res.status(400).json({error:'Template and test phone number are required.'});
+    const [templateResult,settings]=await Promise.all([db.query(`SELECT name,language,body,status FROM templates WHERE id=$1`,[templateId]),getAllianceWhatsAppSettings()]);const template=templateResult.rows[0];if(!template||String(template.status).toLowerCase()!=='approved')return res.status(409).json({error:'Select an approved template.'});if(!settings)return res.status(409).json({error:'Alliance WhatsApp number is not configured.'});const token=process.env[settings.access_token_env||'ALLIANCE_WA_ACCESS_TOKEN'];if(!token)return res.status(409).json({error:'Alliance WhatsApp access token is missing.'});
+    const payload={messaging_product:'whatsapp',to:phone,type:'template',template:{name:template.name,language:{code:template.language||'en'},...(mapping.length?{components:[{type:'body',parameters:mapping.map(value=>({type:'text',text:value||'Test'}))}]}:{})}};const response=await axios.post(`https://graph.facebook.com/v19.0/${settings.phone_number_id}/messages`,payload,{headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},timeout:20000});res.json({success:true,message:'Test template submitted to Meta.',wa_msg_id:response.data?.messages?.[0]?.id||null});
+  }catch(error){res.status(502).json({error:error.response?.data?.error?.message||error.message||'Test send failed.'});}
+});
+
+router.post('/whatsapp-campaigns/:id/stop',async(req,res)=>{try{await db.query(`UPDATE alliance_whatsapp_campaigns SET status='stopped',completed_at=NOW(),updated_at=NOW() WHERE id=$1 AND status IN ('scheduled','running','paused','completed')`,[req.params.id]);await db.query(`UPDATE alliance_whatsapp_campaign_recipients SET status='cancelled',error_message='Campaign stopped by user.' WHERE campaign_id=$1 AND status='queued'`,[req.params.id]);await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='cancelled',error_message='Campaign stopped by user.' WHERE campaign_id=$1 AND status IN ('pending','claimed')`,[req.params.id]);res.json({success:true,message:'WhatsApp campaign and reminders stopped.'});}catch(error){res.status(500).json({error:'Failed to stop campaign.'});}});
 
 module.exports = router;

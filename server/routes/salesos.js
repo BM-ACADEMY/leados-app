@@ -1,10 +1,37 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const router = express.Router();
 const pool = require('../db/connection');
 const axios = require('axios');
 const { buildBmAcademyCatalog, findBmAcademyCourseFamily, findBmAcademySyllabus, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
 const googleCalendar = require('../services/googleCalendar');
 const { sendBookingNotification } = require('../services/bookingNotifications');
+
+const APPROVED_BRAIN_DATA_PATH = path.join(__dirname, '..', '..', 'documentation', 'updated-brain-data.md');
+let approvedBrainDataCache = { mtimeMs: -1, content: '' };
+
+const getApprovedBrainData = () => {
+  const { mtimeMs } = fs.statSync(APPROVED_BRAIN_DATA_PATH);
+  if (approvedBrainDataCache.mtimeMs !== mtimeMs) {
+    approvedBrainDataCache = {
+      mtimeMs,
+      content: fs.readFileSync(APPROVED_BRAIN_DATA_PATH, 'utf8'),
+    };
+  }
+  return approvedBrainDataCache.content;
+};
+
+const getApprovedBrandData = (brand) => {
+  const content = getApprovedBrainData();
+  const bmTechxHeading = '2. BM TechX Data Collection Form';
+  const splitAt = content.indexOf(bmTechxHeading);
+  if (splitAt < 0) throw new Error(`Missing "${bmTechxHeading}" in approved AI Brain data`);
+  const normalized = String(brand || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  return ['bmtechx', 'growwithkamar'].includes(normalized)
+    ? content.slice(splitAt).trim()
+    : content.slice(0, splitAt).trim();
+};
 
 // ==========================================
 // WF00 - Lead Integrator Endpoints
@@ -711,14 +738,7 @@ const getRecentChatHistory = async (leadId, limit = 12) => {
 };
 
 const loadBmAcademyCatalog = async () => {
-  const result = await pool.query(
-    `SELECT bd.content FROM brain_docs bd
-      JOIN clients c ON c.id=bd.client_id
-     WHERE LOWER(c.name) IN ('bm academy','abm groups')
-       AND bd.doc_type IN ('prompt','product') AND COALESCE(BTRIM(bd.content),'') <> ''
-     ORDER BY bd.updated_at ASC, CASE WHEN LOWER(c.name)='bm academy' THEN 1 ELSE 0 END`
-  );
-  return buildBmAcademyCatalog(result.rows.map((row) => row.content));
+  return buildBmAcademyCatalog([getApprovedBrandData('BM Academy')]);
 };
 
 const normalizeChatHistory = (history) => (
@@ -830,9 +850,9 @@ router.post('/kb/search', async (req, res) => {
       ? await getRecentChatHistory(lead_id)
       : normalizeChatHistory(chat_history);
     const targetBrand = brand || 'ABM Groups';
-    const isBmAcademy = ['bm academy', 'bm-academy', 'bmacademy'].includes(
-      String(targetBrand).trim().toLowerCase()
-    );
+    const normalizedTargetBrand = String(targetBrand).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const isBmAcademy = normalizedTargetBrand === 'bmacademy';
+    const isBmTechx = ['bmtechx', 'growwithkamar'].includes(normalizedTargetBrand);
     // AIBrainView stores the master multi-brand knowledge under ABM Groups.
     // Load it as a fallback and combine it with any brand-specific documents.
     const docsRes = await pool.query(
@@ -853,8 +873,11 @@ router.post('/kb/search', async (req, res) => {
     );
 
     const knowledgeDocs = docsRes.rows
-      .filter((doc) => ['prompt', 'product', 'pricing'].includes(doc.doc_type) && doc.content)
+      .filter((doc) => ['prompt', 'product', 'pricing'].includes(doc.doc_type)
+        && doc.content
+        && (!(isBmAcademy || isBmTechx) || doc.doc_type === 'prompt'))
       .map((doc) => doc.content);
+    if (isBmAcademy || isBmTechx) knowledgeDocs.push(getApprovedBrandData(targetBrand));
     const trainingDocs = docsRes.rows
       .filter((doc) => doc.doc_type === 'training' && doc.content)
       .map((doc) => doc.content);

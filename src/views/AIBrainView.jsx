@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Brain } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
-import updatedBrainData from '../../documentation/updated-brain-data.md?raw';
 
 const DEFAULT_BOT_BEHAVIOR = `ABM Groups — Master Bot Behaviour Spec
 
@@ -74,8 +73,6 @@ export const AIBrainView = () => {
   const [promptText, setPromptText] = useState('');
   const [behaviorText, setBehaviorText] = useState(DEFAULT_BOT_BEHAVIOR);
   const [welcomeTemplate, setWelcomeTemplate] = useState('');
-  const [productText, setProductText] = useState('');
-  const [pricingText, setPricingText] = useState('');
   const [migrating, setMigrating] = useState(false);
   const [dupCheckResult, setDupCheckResult] = useState(null);
   const [dupChecking, setDupChecking] = useState(false);
@@ -119,17 +116,11 @@ export const AIBrainView = () => {
           if (d.doc_type === 'training') {
             docMap[d.doc_type] = d.content;
           }
-          if (d.doc_type === 'product') {
-            docMap[d.doc_type] = d.content;
-          }
-          if (d.doc_type === 'pricing') {
-            docMap[d.doc_type] = d.content;
-          }
         });
         // Product, pricing and welcome content belong to the selected brand.
         // A brand-specific document overrides the global fallback.
         brandDocsRes.docs?.forEach(d => {
-          if (['welcome_template', 'product', 'pricing'].includes(d.doc_type)) {
+          if (d.doc_type === 'welcome_template') {
             docMap[d.doc_type] = d.content;
           }
         });
@@ -441,10 +432,6 @@ tags: internal, todo
 
 `;
 
-    const bmTechxSourceHeading = '2. BM TechX Data Collection Form';
-    const bmTechxSourceIndex = updatedBrainData.indexOf(bmTechxSourceHeading);
-    const bmAcademyContent = updatedBrainData.slice(0, bmTechxSourceIndex).trim();
-    const bmTechxContent = updatedBrainData.slice(bmTechxSourceIndex).trim();
     const approvedBrandModules = `## MODULE 2 — BM ACADEMY
 tags: brand:bm-academy, memory-managed
 
@@ -477,19 +464,10 @@ Use only the current BM TechX product/pricing memory. No service facts are store
     // from restoring legacy BM brand rules or contact details.
     const behaviorVal = DEFAULT_BOT_BEHAVIOR;
     const welcomeTemplateVal = docs.welcome_template || '';
-    const normalizedBrand = selectedBrandName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const isBmAcademy = normalizedBrand === 'bmacademy';
-    const isBmTechx = ['bmtechx', 'growwithkamar'].includes(normalizedBrand);
-    const hasProductMemory = Object.prototype.hasOwnProperty.call(docs, 'product');
-    const hasPricingMemory = Object.prototype.hasOwnProperty.call(docs, 'pricing');
-    const productVal = hasProductMemory ? docs.product : (isBmAcademy ? bmAcademyContent : isBmTechx ? bmTechxContent : '');
-    const pricingVal = hasPricingMemory ? docs.pricing : '';
 
     setPromptText(promptVal);
     setBehaviorText(behaviorVal);
     setWelcomeTemplate(welcomeTemplateVal);
-    setProductText(productVal);
-    setPricingText(pricingVal);
   }, [docs, selectedClientId, selectedBrandName]);
 
   const handleSave = async () => {
@@ -499,11 +477,9 @@ Use only the current BM TechX product/pricing memory. No service facts are store
       await Promise.all([
         api.saveBrainDoc(abmGroupId, 'prompt', promptText),
         api.saveBrainDoc(abmGroupId, 'training', behaviorText),
-        api.saveBrainDoc(selectedClientId, 'product', productText),
-        api.saveBrainDoc(selectedClientId, 'pricing', pricingText),
         api.saveBrainDoc(selectedClientId, 'welcome_template', welcomeTemplate),
       ]);
-      alert('AI Brain saved! All brain docs (prompt, training, product, pricing) are active for ' + selectedBrandName);
+      alert('AI Brain settings saved for ' + selectedBrandName + '. Brand facts come from documentation/updated-brain-data.md.');
     } catch (err) {
       alert('Failed to save AI Brain config: ' + err.message);
     } finally {
@@ -641,31 +617,14 @@ Use only the current BM TechX product/pricing memory. No service facts are store
                   style={{ width: '100%', height: 320, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#60a5fa', padding: 16, fontSize: 13, outline: 'none', fontFamily: 'monospace', lineHeight: 1.7, resize: 'vertical', marginBottom: 22 }}
                 />
 
-                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Knowledge Base — <span style={{ color: C.accent }}>Products, Prices and Content</span></h3>
-                <p style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>Course modules, pricing, property details and brand knowledge remain separate and are supplied as reference content.</p>
+                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Shared AI Routing Rules</h3>
+                <p style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>BM Academy and BM TechX facts are read only from documentation/updated-brain-data.md. This editor contains shared routing rules, not duplicated product or pricing details.</p>
                 <textarea
                   value={promptText}
                   onChange={(e) => setPromptText(e.target.value)}
                   style={{ width: '100%', height: 280, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#10b981', padding: 16, fontSize: 13, outline: 'none', fontFamily: 'monospace', lineHeight: 1.8, resize: 'vertical', marginBottom: 18 }}
                 />
 
-                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Product Knowledge — <span style={{ color: C.accent }}>Detailed Program/Service Info</span></h3>
-                <p style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>Detailed descriptions, syllabus, features, and benefits of each product or service offering.</p>
-                <textarea
-                  value={productText}
-                  onChange={(e) => setProductText(e.target.value)}
-                  placeholder="Enter detailed product information, course syllabus, service features..."
-                  style={{ width: '100%', height: 200, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#a855f7', padding: 16, fontSize: 13, outline: 'none', fontFamily: 'monospace', lineHeight: 1.8, resize: 'vertical', marginBottom: 18 }}
-                />
-
-                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Pricing Knowledge — <span style={{ color: C.accent }}>Fees, EMI, Discounts</span></h3>
-                <p style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>Exact pricing, EMI options, discount policies, and payment terms for each product/service.</p>
-                <textarea
-                  value={pricingText}
-                  onChange={(e) => setPricingText(e.target.value)}
-                  placeholder="Enter pricing details, fee structure, EMI options, discount policies..."
-                  style={{ width: '100%', height: 200, background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: '#f59e0b', padding: 16, fontSize: 13, outline: 'none', fontFamily: 'monospace', lineHeight: 1.8, resize: 'vertical' }}
-                />
               </div>
             )}
 

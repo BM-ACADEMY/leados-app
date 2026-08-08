@@ -572,6 +572,75 @@ router.get('/prospects', async (req, res) => {
   }
 });
 
+router.post('/prospects', async (req, res) => {
+  try {
+    const audience = text(req.body.audience).toLowerCase();
+    const audienceResult = await db.query(
+      `SELECT a.default_channel, COALESCE(json_agg(json_build_object(
+         'field_key', f.field_key, 'data_type', f.data_type, 'required', f.required
+       ) ORDER BY f.sort_order) FILTER (WHERE f.id IS NOT NULL), '[]'::json) AS fields
+       FROM alliance_audiences a
+       LEFT JOIN alliance_audience_fields f ON f.audience_id = a.id AND f.active = TRUE
+       WHERE a.code = $1 AND a.active = TRUE GROUP BY a.id`,
+      [audience]
+    );
+    if (!audienceResult.rowCount) return res.status(400).json({ error: 'Select a valid audience.' });
+
+    const config = audienceResult.rows[0];
+    const businessName = text(req.body.business_name);
+    const emailInput = text(req.body.email);
+    const phoneInput = text(req.body.phone);
+    const email = emailInput ? normalizeEmail(emailInput) : null;
+    const phone = phoneInput ? normalizePhone(phoneInput) : null;
+    const channel = text(req.body.channel || config.default_channel).toLowerCase();
+    const consent = Boolean(req.body.consent);
+    const consentSource = text(req.body.consent_source);
+    if (!businessName) return res.status(400).json({ error: 'Business name is required.' });
+    if (!['email', 'whatsapp'].includes(channel)) return res.status(400).json({ error: 'Channel must be email or whatsapp.' });
+    if (emailInput && !email) return res.status(400).json({ error: 'Enter a valid email address.' });
+    if (phoneInput && !phone) return res.status(400).json({ error: 'Enter a valid mobile number.' });
+    if (channel === 'email' && !email) return res.status(400).json({ error: 'Email is required for email outreach.' });
+    if (channel === 'whatsapp' && (!phone || !consent || !consentSource)) {
+      return res.status(400).json({ error: 'WhatsApp requires phone, consent, and consent source.' });
+    }
+
+    const inputCustomFields = req.body.custom_fields && typeof req.body.custom_fields === 'object' ? req.body.custom_fields : {};
+    const customFields = {};
+    for (const field of config.fields) {
+      const parsedValue = parseCustomValue(inputCustomFields[field.field_key], field.data_type);
+      if (field.required && (parsedValue === null || parsedValue === undefined)) {
+        return res.status(400).json({ error: `${field.field_key} is required.` });
+      }
+      if (parsedValue === undefined) return res.status(400).json({ error: `${field.field_key} must be ${field.data_type}.` });
+      if (parsedValue !== null) customFields[field.field_key] = parsedValue;
+    }
+
+    const suppression = await db.query(
+      `SELECT 1 FROM alliance_suppression
+       WHERE ($1::text IS NOT NULL AND LOWER(email) = LOWER($1))
+          OR ($2::text IS NOT NULL AND phone = $2) LIMIT 1`,
+      [email, phone]
+    );
+    if (suppression.rowCount) return res.status(409).json({ error: 'This contact is on the do-not-contact list.' });
+
+    const result = await db.query(
+      `INSERT INTO alliance_prospects
+        (audience, name, business_name, phone, email, industry, location, channel_pref,
+         channel, consent, consent_source, consent_at, source, custom_fields)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [audience, text(req.body.name) || null, businessName, phone, email,
+        text(req.body.industry) || null, text(req.body.location) || null, channel, consent,
+        consent ? consentSource : null, consent ? new Date() : null, text(req.body.source) || 'manual_entry', customFields]
+    );
+    req.app.get('io')?.emit('alliance_contacts_changed', { prospect_id: result.rows[0].id, created: 1 });
+    res.status(201).json({ success: true, prospect: result.rows[0] });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Another prospect already uses this email or phone.' });
+    console.error('Alliance prospect create failed:', error);
+    res.status(500).json({ error: 'Failed to create prospect.' });
+  }
+});
+
 router.patch('/prospects/:id', async (req, res) => {
   try {
     const existingResult = await db.query(`SELECT * FROM alliance_prospects WHERE id = $1`, [req.params.id]);
@@ -1121,7 +1190,7 @@ router.post('/campaigns/:id/start', async (req, res) => {
       );
     }
     await client.query(
-      `UPDATE alliance_prospects p SET status = 'in_sequence', updated_at = NOW()
+      `UPDATE alliance_prospects p SET status = 'pending', updated_at = NOW()
        FROM alliance_campaign_prospects cp
        WHERE cp.campaign_id = $1 AND cp.prospect_id = p.id AND p.suppressed = FALSE`,
       [req.params.id]

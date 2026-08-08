@@ -7,6 +7,7 @@ let processing = false;
 
 function renderTemplate(value, prospect) {
   return String(value || '')
+    .replace(/\\r\\n|\\n|\\r/g, '\n')
     .replace(/\{\{name\}\}/gi, prospect.name || 'there')
     .replace(/\{\{org\}\}/gi, prospect.business_name || 'your organisation')
     .replace(/\{\{location\}\}/gi, prospect.location || 'your area');
@@ -52,7 +53,7 @@ async function claimDueTouch() {
     const touch = result.rows[0];
     const stopReason = touch.campaign_status !== 'running' ? 'campaign_not_running'
       : touch.suppressed ? 'suppressed'
-        : ['converted', 'closed', 'not_interested', 'unsubscribed', 'replied'].includes(touch.prospect_status) ? `prospect_${touch.prospect_status}`
+        : ['converted', 'closed', 'not_interested', 'unsubscribed'].includes(touch.prospect_status) ? `prospect_${touch.prospect_status}`
           : ['stopped', 'completed'].includes(touch.enrollment_status) ? `enrollment_${touch.enrollment_status}`
             : touch.sender_status !== 'active' ? 'sender_not_active'
               : Number(touch.sent_today) >= Number(touch.daily_cap) ? 'sender_daily_cap_reached'
@@ -123,7 +124,7 @@ async function finalEligibilityCheck(touch) {
   const state = result.rows[0];
   if (state.campaign_status !== 'running') return 'campaign_not_running';
   if (state.suppressed) return 'suppressed';
-  if (['converted', 'closed', 'not_interested', 'unsubscribed', 'replied'].includes(state.prospect_status)) return `prospect_${state.prospect_status}`;
+  if (['converted', 'closed', 'not_interested', 'unsubscribed'].includes(state.prospect_status)) return `prospect_${state.prospect_status}`;
   if (['stopped', 'completed'].includes(state.enrollment_status)) return `enrollment_${state.enrollment_status}`;
   if (state.sender_status !== 'active') return 'sender_not_active';
   if (Number(state.sent_today) >= Number(state.daily_cap)) return 'sender_daily_cap_reached';

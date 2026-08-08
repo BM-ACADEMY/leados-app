@@ -59,7 +59,7 @@ async function correlateReply(parsed) {
   return fallback.rowCount ? { ...fallback.rows[0], references } : { references };
 }
 
-async function stopColdSequence(inboundId, correlation, parsed) {
+async function recordCampaignReply(inboundId, correlation, parsed) {
   if (!correlation.prospect_id || !correlation.campaign_id) return null;
   const client = await db.connect();
   try {
@@ -69,17 +69,7 @@ async function stopColdSequence(inboundId, correlation, parsed) {
        WHERE id=$4`,
       [correlation.prospect_id, correlation.campaign_id, correlation.touch_id || null, inboundId]
     );
-    await client.query(
-      `UPDATE alliance_touches SET status='cancelled', error_message='Recipient replied.'
-       WHERE campaign_id=$1 AND prospect_id=$2 AND status IN ('scheduled','paused') AND sent_at IS NULL`,
-      [correlation.campaign_id, correlation.prospect_id]
-    );
-    await client.query(
-      `UPDATE alliance_campaign_prospects SET enrollment_status='stopped', stopped_at=NOW(), stop_reason='recipient_replied'
-       WHERE campaign_id=$1 AND prospect_id=$2`,
-      [correlation.campaign_id, correlation.prospect_id]
-    );
-    await client.query(`UPDATE alliance_prospects SET status='replied', updated_at=NOW() WHERE id=$1`, [correlation.prospect_id]);
+    await client.query(`UPDATE alliance_prospects SET status='in_process', updated_at=NOW() WHERE id=$1`, [correlation.prospect_id]);
     const reply = await client.query(
       `INSERT INTO alliance_replies (prospect_id, channel, body, status, email_inbound_id)
        VALUES ($1,'email',$2,'new',$3)
@@ -134,11 +124,25 @@ Return JSON only: {"intent":"interested|question|objection|not_interested|ooo|ot
       `UPDATE alliance_replies SET ai_intent=$1, ai_draft=$2, status='drafted' WHERE id=$3`,
       [intent, draft || null, reply.id]
     );
+    const prospectStatus = intent === 'interested'
+      ? 'interested'
+      : intent === 'not_interested' ? 'not_interested' : 'in_process';
     await db.query(
       `UPDATE alliance_prospects SET status=$1, updated_at=NOW() WHERE id=$2`,
-      [intent === 'interested' ? 'interested' : intent === 'not_interested' ? 'not_interested' : 'replied', correlation.prospect_id]
+      [prospectStatus, correlation.prospect_id]
     );
     if (intent === 'not_interested') {
+      await db.query(
+        `UPDATE alliance_touches SET status='cancelled', error_message='Recipient is not interested.'
+         WHERE campaign_id=$1 AND prospect_id=$2 AND status IN ('scheduled','paused') AND sent_at IS NULL`,
+        [correlation.campaign_id, correlation.prospect_id]
+      );
+      await db.query(
+        `UPDATE alliance_campaign_prospects
+            SET enrollment_status='stopped', stopped_at=NOW(), stop_reason='not_interested', next_touch_at=NULL
+          WHERE campaign_id=$1 AND prospect_id=$2`,
+        [correlation.campaign_id, correlation.prospect_id]
+      );
       await db.query(
         `INSERT INTO alliance_suppression (email, phone, reason)
          SELECT email,phone,'not_interested' FROM alliance_prospects WHERE id=$1
@@ -214,7 +218,7 @@ async function processMessage(parsed, io) {
     }
   }
   try {
-    const reply = await stopColdSequence(inboundId, correlation, parsed);
+    const reply = await recordCampaignReply(inboundId, correlation, parsed);
     if (!reply) {
       await db.query(`UPDATE alliance_email_inbound SET processing_status='unmatched' WHERE id=$1`, [inboundId]);
       return;

@@ -6,6 +6,7 @@ import { api } from '../../services/api.js';
 import './alliance.css';
 
 const EMPTY_FILTERS = { search: '', audience: '', industry: '', status: '', source: '', location: '' };
+const normalizeLineBreaks = (value = '') => String(value).replace(/\\r\\n|\\n|\\r/g, '\n');
 const STEPS = [
   { id: 1, label: 'Campaign details', icon: FileText },
   { id: 2, label: 'Audience', icon: Users },
@@ -31,6 +32,7 @@ export const EmailCampaignBuilder = () => {
   const [form, setForm] = useState({ name: '', objective: '', sender_domain_id: '' });
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState('');
+  const [activeCampaigns, setActiveCampaigns] = useState([]);
   const limit = 10;
 
   useEffect(() => {
@@ -38,6 +40,21 @@ export const EmailCampaignBuilder = () => {
       setOptions(data);
       if (data.senders?.length === 1) setForm((current) => ({ ...current, sender_domain_id: String(data.senders[0].id) }));
     }).catch((error) => toast.error(error.message));
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadActiveCampaigns = async () => {
+      try {
+        const data = await api.getAllianceCampaigns();
+        if (mounted) setActiveCampaigns((data.campaigns || []).filter((campaign) => ['running', 'paused'].includes(campaign.status)));
+      } catch {
+        // Campaign creation remains available if the monitoring request fails.
+      }
+    };
+    loadActiveCampaigns();
+    const interval = window.setInterval(loadActiveCampaigns, 10000);
+    return () => { mounted = false; window.clearInterval(interval); };
   }, []);
 
   const loadProspects = useCallback(async () => {
@@ -55,19 +72,19 @@ export const EmailCampaignBuilder = () => {
   useEffect(() => {
     if (!filters.audience) { setTemplates([]); setBrand(''); return; }
     api.getAllianceCampaignTemplates(filters.audience).then((data) => {
-      setTemplates(data.templates || []);
+      setTemplates((data.templates || []).map((template) => ({ ...template, body: normalizeLineBreaks(template.body) })));
       setBrand(data.audience?.brand || '');
       setAiGenerated(false);
       setActiveTouch(0);
     }).catch((error) => toast.error(error.message));
   }, [filters.audience]);
 
-  const selected = useMemo(() => new Set(Object.keys(selectedLeads).map(Number)), [selectedLeads]);
+  const selected = useMemo(() => new Set(Object.keys(selectedLeads)), [selectedLeads]);
   const sender = options.senders?.find((item) => String(item.id) === String(form.sender_domain_id));
   const audience = options.audiences?.find((item) => item.code === filters.audience);
   const previewLead = Object.values(selectedLeads)[0] || prospects[0] || { name: 'Dr. Charles', business_name: 'Example Organisation', location: 'Pondicherry' };
   const pages = Math.max(1, Math.ceil(total / limit));
-  const allPageSelected = prospects.length > 0 && prospects.every((lead) => selected.has(lead.id));
+  const allPageSelected = prospects.length > 0 && prospects.every((lead) => selected.has(String(lead.id)));
   const dailyCapacity = Math.max(1, Number(sender?.daily_cap || 20) - Number(sender?.sent_today || 0));
   const deliveryDays = selected.size ? Math.ceil(selected.size / dailyCapacity) : 0;
   const lastTouchDay = templates.length ? Math.max(...templates.map((item) => Number(item.delay_days || 0))) : 0;
@@ -79,12 +96,16 @@ export const EmailCampaignBuilder = () => {
   };
   const toggleOne = (lead) => setSelectedLeads((current) => {
     const next = { ...current };
-    if (next[lead.id]) delete next[lead.id]; else next[lead.id] = lead;
+    const leadId = String(lead.id);
+    if (next[leadId]) delete next[leadId]; else next[leadId] = lead;
     return next;
   });
   const togglePage = () => setSelectedLeads((current) => {
     const next = { ...current };
-    prospects.forEach((lead) => { if (allPageSelected) delete next[lead.id]; else next[lead.id] = lead; });
+    prospects.forEach((lead) => {
+      const leadId = String(lead.id);
+      if (allPageSelected) delete next[leadId]; else next[leadId] = lead;
+    });
     return next;
   });
   const selectAllMatching = async () => {
@@ -97,12 +118,20 @@ export const EmailCampaignBuilder = () => {
     finally { setBusy(''); }
   };
   const suggestWithAI = async () => {
+    const requestedTouchIndex = activeTouch;
     setBusy('ai');
     try {
       const data = await api.suggestAllianceCampaignTemplates({ audience: filters.audience, objective: form.objective });
-      setTemplates(data.templates || []);
+      const generatedTemplates = data.templates || [];
+      const currentTouchNo = templates[requestedTouchIndex]?.touch_no;
+      const generatedTouch = generatedTemplates.find((template) => String(template.touch_no) === String(currentTouchNo))
+        || generatedTemplates[requestedTouchIndex];
+      if (!generatedTouch) throw new Error(`AI did not return content for Touch ${requestedTouchIndex + 1}.`);
+      setTemplates((current) => current.map((template, index) => index === requestedTouchIndex
+        ? { ...template, ...generatedTouch, body: normalizeLineBreaks(generatedTouch.body) }
+        : template));
       setAiGenerated(Boolean(data.ai_generated));
-      data.warning ? toast(data.warning) : toast.success('AI sequence generated for review');
+      data.warning ? toast(data.warning) : toast.success(`AI content applied to Touch ${requestedTouchIndex + 1}`);
     } catch (error) { toast.error(error.message || 'AI suggestion failed'); }
     finally { setBusy(''); }
   };
@@ -138,7 +167,7 @@ export const EmailCampaignBuilder = () => {
     const error = validateStep(5); if (error) return toast.error(error);
     setBusy('create');
     try {
-      const result = await api.createAllianceEmailCampaign({ ...form, audience: filters.audience, sender_domain_id: Number(form.sender_domain_id), prospect_ids: [...selected], templates, ai_generated: aiGenerated });
+      const result = await api.createAllianceEmailCampaign({ ...form, audience: filters.audience, sender_domain_id: Number(form.sender_domain_id), prospect_ids: Object.values(selectedLeads).map((lead) => lead.id), templates, ai_generated: aiGenerated });
       toast.success(result.message);
       navigate('/alliance/planner');
     } catch (requestError) { toast.error(requestError.message || 'Failed to create campaign'); }
@@ -150,8 +179,21 @@ export const EmailCampaignBuilder = () => {
     <div className="al-wrap al-campaign-builder">
       <div className="al-cb-header">
         <div><div className="al-eyebrow">AllianceOS · Campaign studio</div><div className="al-page-title">Create email campaign</div><p className="al-page-desc">Build a targeted, personalized sequence and review every detail before launch.</p></div>
-        <button className="al-btn ghost" onClick={() => navigate('/alliance/planner')}><ArrowLeft size={16} /> Exit builder</button>
+        <button className="al-btn ghost" onClick={() => navigate('/alliance/planner')}><ArrowLeft size={16} /> View Campaign Planner</button>
       </div>
+
+      <section className="al-cb-active-campaigns" aria-label="Active campaigns">
+        <div className="al-cb-active-head"><div><b>Active campaigns</b><span>Live campaign activity refreshes every 10 seconds.</span></div><button className="al-link" onClick={() => navigate('/alliance/planner')}>View full details</button></div>
+        {activeCampaigns.length ? <div className="al-cb-active-list">{activeCampaigns.map((campaign) => (
+          <button key={campaign.id} type="button" onClick={() => navigate('/alliance/planner')}>
+            <span><b>{campaign.name}</b><small>{campaign.audience} · {campaign.status}</small></span>
+            <span><small>Recipients</small><b>{campaign.prospects || 0}</b></span>
+            <span><small>Sent</small><b>{campaign.sent || 0}</b></span>
+            <span><small>Replies</small><b>{campaign.replied || 0}</b></span>
+            <ArrowRight size={16} />
+          </button>
+        ))}</div> : <div className="al-cb-active-empty">No running or paused campaigns.</div>}
+      </section>
 
       <nav className="al-cb-steps" aria-label="Campaign creation progress">
         {STEPS.map((item) => { const Icon = item.icon; const done = step > item.id; return <button key={item.id} className={`al-cb-step ${step === item.id ? 'active' : ''} ${done ? 'done' : ''}`} onClick={() => item.id <= step && goTo(item.id)}><span>{done ? <Check size={16} /> : <Icon size={16} />}</span><div><small>Step {item.id}</small><b>{item.label}</b></div></button>; })}
@@ -170,7 +212,7 @@ export const EmailCampaignBuilder = () => {
             <div className="al-cb-grid three"><div className="al-field"><label>Audience <b>*</b></label><select value={filters.audience} onChange={(e) => updateFilter('audience', e.target.value)}><option value="">Select audience</option>{options.audiences?.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select></div><div className="al-field"><label>Brand</label><input value={brand} readOnly placeholder="Assigned automatically" /></div><div className="al-field"><label>Search leads</label><div className="al-input-icon"><Search size={15} /><input value={filters.search} onChange={(e) => updateFilter('search', e.target.value)} placeholder="Name, company, or email" /></div></div></div>
             <div className="al-cb-filterbar"><Filter size={16} /><select value={filters.industry} onChange={(e) => updateFilter('industry', e.target.value)}><option value="">All industries</option>{options.industries?.map((v) => <option key={v}>{v}</option>)}</select><select value={filters.status} onChange={(e) => updateFilter('status', e.target.value)}><option value="">All statuses</option>{options.statuses?.map((v) => <option key={v}>{v}</option>)}</select><select value={filters.source} onChange={(e) => updateFilter('source', e.target.value)}><option value="">All sources</option>{options.sources?.map((v) => <option key={v}>{v}</option>)}</select><select value={filters.location} onChange={(e) => updateFilter('location', e.target.value)}><option value="">All locations</option>{options.locations?.map((v) => <option key={v}>{v}</option>)}</select></div>
             <div className="al-cb-selection"><b>{selected.size} selected</b><span>{total} matching eligible leads</span><button className="al-btn ghost sm" disabled={!filters.audience || busy === 'select'} onClick={selectAllMatching}>Select all matching</button><button className="al-link" disabled={!selected.size} onClick={() => setSelectedLeads({})}>Clear selection</button></div>
-            <div className="al-cb-table"><table className="al-table"><thead><tr><th><input type="checkbox" checked={allPageSelected} onChange={togglePage} /></th><th>Contact</th><th>Email</th><th>Industry / location</th><th>Status</th></tr></thead><tbody>{loading ? <tr><td colSpan="5" className="al-empty">Loading leads…</td></tr> : prospects.map((lead) => <tr key={lead.id} className={selected.has(lead.id) ? 'selected' : ''}><td><input type="checkbox" checked={selected.has(lead.id)} onChange={() => toggleOne(lead)} /></td><td><b>{lead.business_name}</b><small>{lead.name || 'No contact name'}</small></td><td>{lead.email}</td><td>{lead.industry || '—'}<small>{lead.location || '—'}</small></td><td><span className="al-cb-status">{lead.status}</span></td></tr>)}{!loading && !prospects.length && <tr><td colSpan="5" className="al-empty">{filters.audience ? 'No eligible leads match these filters.' : 'Select an audience to load leads.'}</td></tr>}</tbody></table></div>
+            <div className="al-cb-table"><table className="al-table"><thead><tr><th><input type="checkbox" checked={allPageSelected} onChange={togglePage} /></th><th>Contact</th><th>Email</th><th>Industry / location</th><th>Status</th></tr></thead><tbody>{loading ? <tr><td colSpan="5" className="al-empty">Loading leads…</td></tr> : prospects.map((lead) => <tr key={lead.id} className={selected.has(String(lead.id)) ? 'selected' : ''}><td><input type="checkbox" checked={selected.has(String(lead.id))} onChange={() => toggleOne(lead)} /></td><td><b>{lead.business_name}</b><small>{lead.name || 'No contact name'}</small></td><td>{lead.email}</td><td>{lead.industry || '—'}<small>{lead.location || '—'}</small></td><td><span className="al-cb-status">{lead.status}</span></td></tr>)}{!loading && !prospects.length && <tr><td colSpan="5" className="al-empty">{filters.audience ? 'No eligible leads match these filters.' : 'Select an audience to load leads.'}</td></tr>}</tbody></table></div>
             <div className="al-cb-pagination"><span>Page {page} of {pages}</span><div><button disabled={page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={16} /></button><button disabled={page >= pages} onClick={() => setPage(page + 1)}><ChevronRight size={16} /></button></div></div>
           </section>}
 

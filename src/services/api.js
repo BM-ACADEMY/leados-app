@@ -591,6 +591,13 @@ class LeadOSAPI {
     return this.request(`/api/alliance/prospects${query ? `?${query}` : ''}`);
   }
 
+  async createAllianceProspect(prospect) {
+    return this.request('/api/alliance/prospects', {
+      method: 'POST',
+      body: JSON.stringify(prospect),
+    });
+  }
+
   async updateAllianceProspect(id, updates) {
     return this.request(`/api/alliance/prospects/${id}`, {
       method: 'PATCH',

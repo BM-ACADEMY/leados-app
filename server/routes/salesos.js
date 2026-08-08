@@ -851,7 +851,7 @@ router.post('/kb/search', async (req, res) => {
     const kb_snippets = getRelevantKnowledge(knowledgeDocs, contextualQuery) || 'No relevant knowledge found.';
     const bmAcademyCourseRule = isBmAcademy
       ? `BM ACADEMY COURSE LIST RULE:
-When asked for available courses or the full course list, include every PROGRAM entry in the knowledge base, not only the first four. The catalogue has 23 courses. Group the names under Flagship & Placement, Digital Marketing, Creator & Video, Design & Web, AI Tools, and Kids & Teens. Show names first, then ask which course needs details.`
+When asked for available courses or the full course list, use every active course and separate tier in PART 2 of the approved BM Academy data collection form. Do not combine Tier 1 and Tier 2, do not invent missing details, and use the matching individual Course ID record as the source of truth. Show course names first, then ask which course needs details.`
       : '';
     const bmAcademySyllabusRule = isBmAcademy
       ? `BM ACADEMY SYLLABUS RULE:
@@ -1079,7 +1079,7 @@ router.post('/ai/response', async (req, res) => {
       3. Conversation memory: Never ask for something already provided (e.g., don't ask the time slot again after the user gave "4pm", or name if already given).
       4. Fallbacks: If it's a voice note (audio), reply: "Got your voice note 🎧 — could you type it quickly so I can help right away?". If unclear, ask ONE short clarifying question.
       5. Tone: Write a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.
-      6. Routing Numbers: Use these exact numbers if the user asks for contact info: Shared WABA (inbound) is ${process.env.SHARED_WABA_NUMBER || '919944509441'}, Outbound contact for ALL brands is ${process.env.OUTBOUND_CONTACT_NUMBER || '94038 92971'}, General / partnerships is ${process.env.GENERAL_PARTNERSHIPS_NUMBER || '99442 88271'}, BM Academy admissions is ${process.env.BM_ACADEMY_ADMISSIONS_NUMBER || '94038 92971'}.
+      6. Contact routing: For BM Academy and BM TechX/Grow with Kamar, use only the approved primary phone and WhatsApp number 9944940051. BM TechX escalation is 9403892971 and must be used only for escalation. For every other brand, use only contact details present in that brand's approved knowledge; never substitute a number from another brand.
       
       JSON OUTPUT REQUIREMENT:
       You MUST return your response as a raw JSON object with the following keys exactly:

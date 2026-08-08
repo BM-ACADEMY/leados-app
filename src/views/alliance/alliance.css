@@ -382,6 +382,13 @@
 .al-frow .fv { font-family: 'IBM Plex Mono', monospace; font-size: 12px; width: 44px; text-align: right; color: var(--al-ink); }
 
 /* ── campaign planner ── */
+.al-cb-active-campaigns{margin-bottom:18px;background:var(--al-panel2);border:1px solid var(--al-line);border-radius:12px;overflow:hidden}
+.al-cb-active-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 16px;border-bottom:1px solid var(--al-line)}
+.al-cb-active-head>div{display:flex;align-items:baseline;gap:12px}.al-cb-active-head b{color:var(--al-text);font-size:13px}.al-cb-active-head span{color:var(--al-muted);font-size:11px}.al-cb-active-head .al-link{font-size:12px}
+.al-cb-active-list{display:grid;gap:1px;background:var(--al-line)}.al-cb-active-list>button{display:grid;grid-template-columns:minmax(220px,1fr) repeat(3,90px) 20px;align-items:center;gap:14px;width:100%;padding:12px 16px;border:0;background:var(--al-panel2);color:var(--al-text);text-align:left;cursor:pointer}.al-cb-active-list>button:hover{background:rgba(211,166,28,.06)}
+.al-cb-active-list span{display:flex;flex-direction:column;gap:3px}.al-cb-active-list b{font-size:13px;line-height:1.3}.al-cb-active-list small,.al-cb-active-empty{color:var(--al-muted);font-size:10.5px;line-height:1.35}.al-cb-active-list>button>span:not(:first-child){text-align:right}.al-cb-active-list>button>span:not(:first-child) b{font-size:13px}.al-cb-active-empty{padding:14px 16px}
+@media(max-width:760px){.al-cb-active-head>div span{display:none}.al-cb-active-list>button{grid-template-columns:minmax(150px,1fr) repeat(2,55px) 16px}.al-cb-active-list>button>span:nth-child(4){display:none}}
+
 .al-calc { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
 @media (max-width: 640px) { .al-calc { grid-template-columns: 1fr; } }
 .al-calc-in { background: var(--al-panel2); border: 1px solid var(--al-line); border-radius: 12px; padding: 20px; }
@@ -428,4 +435,9 @@
   font-size: 18px;
   line-height: 1.3;
   text-shadow: none;
+}
+
+/* Keep the AI reply editor consistent with the surrounding email text. */
+.al-thread-ai textarea {
+  font-size: 12px;
 }

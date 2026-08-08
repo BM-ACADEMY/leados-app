@@ -6,6 +6,10 @@ import './alliance.css';
 const PAGE_SIZE = 10;
 const statusMap = {
   interested: { label: 'Interested', cls: 'int' },
+  not_interested: { label: 'Not Interested', cls: 'rep' },
+  pending: { label: 'Pending', cls: 'seq' },
+  in_process: { label: 'In Process', cls: 'seq' },
+  converted: { label: 'Converted', cls: 'int' },
   replied: { label: 'Replied', cls: 'rep' },
   in_sequence: { label: 'In sequence', cls: 'seq' },
   new: { label: 'New', cls: 'new' },
@@ -15,6 +19,8 @@ const emptyEdit = {
   name: '', business_name: '', email: '', phone: '', audience: '', industry: '',
   location: '', source: '', channel: 'email', consent: false, consent_source: '',
 };
+
+const emptyCreate = { ...emptyEdit, audience: '', custom_fields: {} };
 
 export const LeadList = () => {
   const [prospects, setProspects] = useState([]);
@@ -31,6 +37,8 @@ export const LeadList = () => {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [createForm, setCreateForm] = useState(emptyCreate);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -60,6 +68,7 @@ export const LeadList = () => {
   useEffect(() => { api.getAllianceAudiences().then((data) => setAudiences(data.audiences || [])).catch(() => {}); }, []);
 
   const audienceLabel = (code) => audiences.find((item) => item.code === code)?.label || code;
+  const selectedAudience = audiences.find((item) => item.code === createForm.audience);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const openEdit = (prospect) => {
@@ -70,6 +79,25 @@ export const LeadList = () => {
       location: prospect.location || '', source: prospect.source || '', channel: prospect.channel || 'email',
       consent: Boolean(prospect.consent), consent_source: prospect.consent_source || '',
     });
+  };
+
+  const selectCreateAudience = (audience) => {
+    const config = audiences.find((item) => item.code === audience);
+    setCreateForm({ ...emptyCreate, audience, channel: config?.default_channel || 'email' });
+  };
+
+  const saveCreate = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await api.createAllianceProspect(createForm);
+      toast.success('Prospect added');
+      setCreating(false);
+      setCreateForm(emptyCreate);
+      if (page === 1) await loadProspects();
+      else setPage(1);
+    } catch (err) { toast.error(err.message || 'Failed to add prospect'); }
+    finally { setSaving(false); }
   };
 
   const saveEdit = async (event) => {
@@ -101,12 +129,15 @@ export const LeadList = () => {
   return (
     <div className="al-wrap">
       <div className="al-eyebrow">AllianceOS · Imported Leads</div>
-      <div className="al-page-title">Prospects</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+        <div className="al-page-title">Prospects</div>
+        <button className="al-btn" type="button" onClick={() => { setCreateForm(emptyCreate); setCreating(true); }}>+ Add prospect</button>
+      </div>
       <p className="al-page-desc">Review, edit, and remove imported prospect records. Showing 10 records per page.</p>
 
       <div className="al-fields" style={{ alignItems: 'flex-end' }}>
         <div className="al-field" style={{ flex: 2 }}><label>Search</label><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search business, contact, or email" /></div>
-        <div className="al-field"><label>Status</label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="new">New</option><option value="in_sequence">In sequence</option><option value="replied">Replied</option><option value="interested">Interested</option></select></div>
+        <div className="al-field"><label>Status</label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="new">New</option><option value="pending">Pending</option><option value="in_process">In Process</option><option value="interested">Interested</option><option value="not_interested">Not Interested</option><option value="converted">Converted</option></select></div>
         <div style={{ color: 'var(--al-muted)', fontSize: 12, paddingBottom: 11 }}>{total.toLocaleString('en-IN')} records</div>
       </div>
 
@@ -150,6 +181,33 @@ export const LeadList = () => {
             <div className="al-fields"><div className="al-field"><label>Industry</label><input value={editForm.industry} onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })} /></div><div className="al-field"><label>Location</label><input value={editForm.location} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })} /></div><div className="al-field"><label>Source</label><input value={editForm.source} onChange={(e) => setEditForm({ ...editForm, source: e.target.value })} /></div></div>
             {editForm.channel === 'whatsapp' && <div className="al-fields"><div className="al-field"><label>WhatsApp consent</label><select value={editForm.consent ? 'yes' : 'no'} onChange={(e) => setEditForm({ ...editForm, consent: e.target.value === 'yes' })}><option value="no">No</option><option value="yes">Yes</option></select></div><div className="al-field"><label>Consent source</label><input value={editForm.consent_source} placeholder="click_to_whatsapp" onChange={(e) => setEditForm({ ...editForm, consent_source: e.target.value })} /></div></div>}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}><button type="button" className="al-btn ghost" disabled={saving} onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="al-btn" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button></div>
+          </form>
+        </div>
+      )}
+
+      {creating && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => !saving && setCreating(false)}>
+          <form onSubmit={saveCreate} onClick={(event) => event.stopPropagation()} style={{ position: 'relative', width: 'min(820px, 100%)', maxHeight: '90vh', overflowY: 'auto', background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 14, padding: 22 }}>
+            <button type="button" aria-label="Close add prospect" title="Close" disabled={saving} onClick={() => setCreating(false)} style={{ position: 'absolute', top: 14, right: 16, width: 34, height: 34, borderRadius: 8, border: '1px solid var(--al-line)', background: 'transparent', color: 'var(--al-muted)', fontSize: 23, lineHeight: 1, cursor: saving ? 'not-allowed' : 'pointer' }}>×</button>
+            <div className="al-page-title" style={{ fontSize: 21 }}>Add prospect</div>
+            <p style={{ color: 'var(--al-muted)', fontSize: 12.5, margin: '5px 0 16px' }}>Select an audience first. The fields for that audience will then be enabled.</p>
+            <div className="al-field">
+              <label>Audience *</label>
+              <select required value={createForm.audience} onChange={(e) => selectCreateAudience(e.target.value)}>
+                <option value="">Select audience</option>
+                {audiences.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}
+              </select>
+            </div>
+
+            {selectedAudience && <>
+              <div className="al-fields"><div className="al-field"><label>Business name *</label><input required value={createForm.business_name} onChange={(e) => setCreateForm({ ...createForm, business_name: e.target.value })} /></div><div className="al-field"><label>Contact name</label><input value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} /></div></div>
+              <div className="al-fields"><div className="al-field"><label>Email {createForm.channel === 'email' ? '*' : ''}</label><input required={createForm.channel === 'email'} type="email" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} /></div><div className="al-field"><label>Phone {createForm.channel === 'whatsapp' ? '*' : ''}</label><input required={createForm.channel === 'whatsapp'} value={createForm.phone} placeholder="919876543210" onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })} /></div></div>
+              <div className="al-fields"><div className="al-field"><label>Channel *</label><select value={createForm.channel} onChange={(e) => setCreateForm({ ...createForm, channel: e.target.value, consent: e.target.value === 'whatsapp' ? createForm.consent : false, consent_source: e.target.value === 'whatsapp' ? createForm.consent_source : '' })}><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select></div><div className="al-field"><label>Industry</label><input value={createForm.industry} onChange={(e) => setCreateForm({ ...createForm, industry: e.target.value })} /></div><div className="al-field"><label>Location</label><input value={createForm.location} onChange={(e) => setCreateForm({ ...createForm, location: e.target.value })} /></div></div>
+              <div className="al-field"><label>Source</label><input value={createForm.source} placeholder="manual_entry" onChange={(e) => setCreateForm({ ...createForm, source: e.target.value })} /></div>
+              {createForm.channel === 'whatsapp' && <div className="al-fields"><div className="al-field"><label>WhatsApp consent *</label><select required value={createForm.consent ? 'yes' : ''} onChange={(e) => setCreateForm({ ...createForm, consent: e.target.value === 'yes' })}><option value="">Select consent</option><option value="yes">Yes</option></select></div><div className="al-field"><label>Consent source *</label><input required value={createForm.consent_source} placeholder="click_to_whatsapp" onChange={(e) => setCreateForm({ ...createForm, consent_source: e.target.value })} /></div></div>}
+              {!!selectedAudience.fields?.length && <div style={{ borderTop: '1px solid var(--al-line)', marginTop: 18, paddingTop: 16 }}><div style={{ color: 'var(--al-gold)', fontSize: 12, fontWeight: 700, marginBottom: 10 }}>AUDIENCE FIELDS</div><div className="al-fields">{selectedAudience.fields.map((field) => <div className="al-field" key={field.field_key}><label>{field.label || field.field_key.replace(/_/g, ' ')} {field.required ? '*' : ''}</label><input required={field.required} type={field.data_type === 'number' || field.data_type === 'integer' ? 'number' : field.data_type === 'date' ? 'date' : 'text'} step={field.data_type === 'number' ? 'any' : undefined} placeholder={field.sample_value ? `Example: ${field.sample_value}` : ''} value={createForm.custom_fields[field.field_key] ?? ''} onChange={(e) => setCreateForm({ ...createForm, custom_fields: { ...createForm.custom_fields, [field.field_key]: e.target.value } })} /></div>)}</div></div>}
+            </>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}><button type="button" className="al-btn ghost" disabled={saving} onClick={() => setCreating(false)}>Cancel</button><button type="submit" className="al-btn" disabled={saving || !selectedAudience}>{saving ? 'Adding…' : 'Add prospect'}</button></div>
           </form>
         </div>
       )}

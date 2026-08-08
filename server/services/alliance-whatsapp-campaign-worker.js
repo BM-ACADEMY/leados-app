@@ -49,7 +49,7 @@ async function storeInboxMessage(job, waMessageId, rendered) {
     await client.query('BEGIN');
     const contact = await client.query(
       `INSERT INTO alliance_inbox_contacts (wa_id,phone,name,source,prospect_id,custom_fields)
-       VALUES ($1,$1,$2,'alliance_bulk',$3,jsonb_build_object('business_name',$4))
+       VALUES ($1,$1,$2,'alliance_bulk',$3,jsonb_build_object('business_name',$4::text))
        ON CONFLICT (wa_id) DO UPDATE SET prospect_id=COALESCE(alliance_inbox_contacts.prospect_id,EXCLUDED.prospect_id),updated_at=NOW() RETURNING id`,
       [job.phone,job.name || job.business_name,job.prospect_id,job.business_name]
     );

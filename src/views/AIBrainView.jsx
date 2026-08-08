@@ -30,7 +30,7 @@ BRAND ROUTING
 BM ACADEMY COURSE LIST RULE
 - The BM Academy knowledge base is the approved data collection form containing a complete course list and individual Course ID records.
 - When someone asks for the course list, available courses, all courses, or "what courses do you have", list every active course and tier in PART 2. Do not combine Tier 1 and Tier 2.
-- Keep the list readable by grouping programs under: Flagship & Placement, Digital Marketing, Creator & Video, Design & Web, AI Tools, and Kids & Teens.
+- Keep the list readable using the categories and ordering present in the current AI Brain memory.
 - For a general course-list request, show course names only and ask which course they want details about. Give duration, fees, syllabus and policy after they choose a course.
 - Do not invent a course or fill unknown fields. The matching individual Course ID record is the source of truth; use needs_confirmation when the approved record does not confirm a detail.
 
@@ -40,6 +40,11 @@ MEMORY
 - Keep the most recently selected course active until the user clearly selects another course.
 - Resolve follow-ups such as "this course", "that course", "it", "fees", "duration", "details", and "the syllabus" to that active course.
 - If the user already selected a course, never ask which course again. Answer using that course's individual Course ID record and syllabus link.
+- If a generic family such as "digital marketing" or "full stack" contains multiple approved programs/tiers, list the exact options and ask the user to choose; never invent an umbrella course, fee, duration, or syllabus.
+- When an active exact course is known and the user asks for both fees and syllabus, answer both in the same reply from that Course ID record.
+- A non-greeting question must never receive the welcome greeting.
+- Recognize BM TechX, TechX, and Tamil "டெக் எக்ஸ்" as explicit BM TechX brand-switch signals.
+- Use previous assistant messages only for conversation continuity. Never reuse an old fee, duration, claim, or link unless the same fact exists in the current approved brand record.
 
 BOOKING
 - Confirm brand/topic, collect missing date, time, name and number, then confirm the full booking.
@@ -57,35 +62,6 @@ FALLBACKS
 - Voice note: "Got your voice note 🎧 — could you type it quickly so I can help right away?"
 - Unclear message: ask one short clarifying question.
 - Send exactly one reply for each inbound WhatsApp message.`;
-
-const BM_ACADEMY_SYLLABUS_CATALOG = `BM ACADEMY - APPROVED SYLLABUS LINKS
-These URLs are authoritative. Copy them exactly; never create or alter a Google Drive URL.
-
-Social Media Creator Bootcamp: https://drive.google.com/file/d/1xSclKumtK7un2YqEGtGFtfRjJvFUIC6q/view?usp=sharing
-Digital Marketing Starter Program: https://drive.google.com/file/d/1uV0Wa5Gk5_N2ppXxiUlfGS66YhoDDG73/view?usp=sharing
-AI-Powered Digital Marketing Professional: https://drive.google.com/file/d/16kR4qgzvhQCcvjGVGZRBCdR-d9bPzc_o/view?usp=sharing
-Performance Marketing Accelerator: https://drive.google.com/file/d/1090r8JUeOlQ02GQ2e4NHk0f3KI_V_Qxh/view?usp=sharing
-Digital Content Creator Program: https://drive.google.com/file/d/1d28V5I5z8XlYabt36q0NNVmSszTibma1/view?usp=drivesdk
-Full Stack Digital Marketing Bundle: https://drive.google.com/file/d/10EELdu9IatnDUdfr6ku4JTYoJ5qpTFLv/view?usp=sharing
-Video Editing Bootcamp: https://drive.google.com/file/d/1TK8c7Fzc6bC7-HTmxuwh1a4PRAMETDy-/view?usp=sharing
-Video Editing Professional: https://drive.google.com/file/d/1gDcTZdUq2L9DDhg-nNKF81tLUGkYWpxu/view?usp=sharing
-Design Basics Bootcamp: https://drive.google.com/file/d/1nkt-42FwF5guyaOQsmA3SI67rDMMFwXO/view?usp=sharing
-Graphic Design Professional: https://drive.google.com/file/d/1IGJb2YSwsOt_xUlhjXTtRr5CxCAnY6Iy/view?usp=sharing
-Web Design Basic Program / Web Dev Basic Bootcamp: https://drive.google.com/file/d/1P758ymghSLLJHvmgQKot7ox7hFBTJ-4h/view?usp=sharing
-WordPress Web Design Program: https://drive.google.com/file/d/1Dv8xPEDn0FItCQk0S42Synh5eO4Biqw0/view?usp=sharing
-AI Starter Bootcamp: https://drive.google.com/file/d/1sjGQ_TYHP2omAgcTBDLhKdCIFEsSIchF/view?usp=sharing
-AI Tools Mastery Program: https://drive.google.com/file/d/11-aloNBPtY2NGh0K_yuXgnTEdqXd-a0X/view?usp=sharing
-Full Stack Developer Tier 1: https://drive.google.com/file/d/189jAkS2YBhp9XILlepsDyy8gy_Vo5b-Z/view?usp=sharing
-Full Stack Developer Tier 2: https://drive.google.com/file/d/1IxoK1896Zptl1Sjplkk4Hz2znmGNy5Z9/view?usp=sharing
-Data Analytics Bootcamp: https://drive.google.com/file/d/1Vh0qCEqQVRLdHsyrwiHH78WKfKiGrfLk/view?usp=sharing
-Data Analytics Tier 1: https://drive.google.com/file/d/1hLTKlWAo8AfjoKbzxAuvuEmgfAMOBPI1/view?usp=sharing
-Data Analytics Tier 2: https://drive.google.com/file/d/1K_bKym9aLwGudUTlvbSpedKQ_yuXWFzC/view?usp=sharing
-Data Analytics Professional: https://drive.google.com/file/d/1pGUSto3KKAOu4osG2dN-BNQvxCNrCo-4/view?usp=sharing
-AI Fun Lab: https://drive.google.com/file/d/15lQVN-T7zGfH-uCJi1XH0H6VE7FLQhf5/view?usp=sharing
-AI Skills for Teens: https://drive.google.com/file/d/1T3ffKgvASOJ2iKQYPk0hO0r_ImR5pqYY/view?usp=sharing
-Pre-College AI + Digital: https://drive.google.com/file/d/1v3NRUhsU5W5grz55eDHIBd1wf-i08IRf/view?usp=sharing
-Career Roadmap: https://drive.google.com/drive/folders/1sQyWtWveqmMegFE7b_-TznoBXqzwYS5-
-Build Your Own AI Marketing Agency in 90 Days: https://drive.google.com/file/d/1GYwTKfOBez6jQ9J3yITglxh248INrqii/view?usp=sharing`;
 
 export const AIBrainView = () => {
   const [clients, setClients] = useState([]);
@@ -469,43 +445,28 @@ tags: internal, todo
     const bmTechxSourceIndex = updatedBrainData.indexOf(bmTechxSourceHeading);
     const bmAcademyContent = updatedBrainData.slice(0, bmTechxSourceIndex).trim();
     const bmTechxContent = updatedBrainData.slice(bmTechxSourceIndex).trim();
-    const defaultTemplate = legacyDefaultTemplate.replace(
-      '__APPROVED_BM_ACADEMY_AND_BM_TECHX_MODULES__',
-      `## MODULE 2 — BM ACADEMY
-tags: brand:bm-academy, module-header
-
-${bmAcademyContent}
-
----
-
-## MODULE 3 — BM TECHX
-tags: brand:bm-techx, module-header
-
-${bmTechxContent}
-
----
-
-`
-    );
-
-    // BM Academy and BM TechX must always come from updated-brain-data.md.
-    // Rebuild those modules on every load so an older saved master prompt can
-    // never reintroduce legacy pricing, contacts, courses, services, or claims.
     const approvedBrandModules = `## MODULE 2 — BM ACADEMY
-tags: brand:bm-academy, module-header, approved-source
+tags: brand:bm-academy, memory-managed
 
-${bmAcademyContent}
+Use only the current BM Academy product/pricing memory. No course facts are stored in this shared prompt.
 
 ---
 
 ## MODULE 3 — BM TECHX
-tags: brand:bm-techx, module-header, approved-source
+tags: brand:bm-techx, memory-managed
 
-${bmTechxContent}
+Use only the current BM TechX product/pricing memory. No service facts are stored in this shared prompt.
 
 ---
 
 `;
+    const defaultTemplate = legacyDefaultTemplate.replace(
+      '__APPROVED_BM_ACADEMY_AND_BM_TECHX_MODULES__',
+      approvedBrandModules
+    );
+
+    // The shared prompt contains routing/behavior only. All mutable BM Academy
+    // and BM TechX facts live in their brand-specific memory documents.
     const replaceBrandModules = (content) => {
       const source = String(content || '');
       const moduleRange = /## MODULE 2[^\n]*BM ACADEMY[\s\S]*?(?=## MODULE 4[^\n]*CORETALENTS)/i;
@@ -519,12 +480,10 @@ ${bmTechxContent}
     const normalizedBrand = selectedBrandName.toLowerCase().replace(/[^a-z0-9]/g, '');
     const isBmAcademy = normalizedBrand === 'bmacademy';
     const isBmTechx = ['bmtechx', 'growwithkamar'].includes(normalizedBrand);
-    const productVal = isBmAcademy
-      ? `${bmAcademyContent}\n\n${BM_ACADEMY_SYLLABUS_CATALOG}`
-      : isBmTechx ? bmTechxContent : (docs.product || '');
-    // Approved BM pricing is already contained in the corresponding source
-    // document. Ignore separate legacy pricing docs for these two brands.
-    const pricingVal = isBmAcademy || isBmTechx ? '' : (docs.pricing || '');
+    const hasProductMemory = Object.prototype.hasOwnProperty.call(docs, 'product');
+    const hasPricingMemory = Object.prototype.hasOwnProperty.call(docs, 'pricing');
+    const productVal = hasProductMemory ? docs.product : (isBmAcademy ? bmAcademyContent : isBmTechx ? bmTechxContent : '');
+    const pricingVal = hasPricingMemory ? docs.pricing : '';
 
     setPromptText(promptVal);
     setBehaviorText(behaviorVal);

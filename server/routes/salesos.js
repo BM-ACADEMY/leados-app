@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/connection');
 const axios = require('axios');
-const { findBmAcademySyllabus, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
+const { buildBmAcademyCatalog, findBmAcademyCourseFamily, findBmAcademySyllabus, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
 const googleCalendar = require('../services/googleCalendar');
 const { sendBookingNotification } = require('../services/bookingNotifications');
 
@@ -215,7 +215,7 @@ const BRAND_KEYWORDS = [
   { name: 'BM Academy', pattern: /\b(course|class|syllabus|placement|job[- ]?ready|batch|fees?|academy|training|learn|learning|certification)\b/i },
   // "Digital marketing" alone is intentionally not a TechX switch signal: it is
   // also an Academy course. TechX requires explicit service/business context.
-  { name: 'BM TechX', pattern: /\b(bm\s*techx|techx|marketing (service|agency)|digital marketing (service|agency)|run (meta |google )?ads?|grow (my |our )?business|business marketing|website|branding service|generate leads?|lead generation|gmb|seo service|social media service)\b/i },
+  { name: 'BM TechX', pattern: /\b(bm\s*techx|techx|marketing (service|agency)|digital marketing (service|agency)|run (meta |google )?ads?|grow (my |our )?business|business marketing|website|branding service|generate leads?|lead generation|gmb|seo service|social media service)\b|டெக்\s*எக்ஸ்|பி\.?\s*எம்\.?\s*டெக்\s*எக்ஸ்/iu },
   { name: 'CoreTalents', pattern: /\b(hiring|recruit|candidate|staff|vacancy|resume|coretalents?)\b/i },
   { name: 'Namma Pondy Properties', pattern: /\b(property|plot|villa|land|patta|ec|real estate|jipmer)\b/i },
   { name: 'TravellersNeed', pattern: /\b(trip|tour|package|travel|holiday|pondy tour|travellers?need)\b/i },
@@ -259,6 +259,11 @@ Keep the detected brand sticky until the user clearly mentions another brand.
 BM Academy is locked. Switch to BM TechX only for explicit service/business intent
 such as marketing service, run ads, grow my business, website or lead generation.
 Remember information already supplied and never ask for it again.
+If a generic family such as digital marketing or full stack has multiple approved
+programs or tiers, list the exact options and ask the user to choose. Never invent
+an umbrella course, fee, duration or syllabus. Once an exact course is selected,
+answer follow-up questions from that same record. A non-greeting question must
+never receive the welcome greeting. Treat TechX and Tamil "டெக் எக்ஸ்" as BM TechX.
 For bookings, collect missing topic, date, time, name and number. Never claim a
 booking, calendar write, reminder or handoff succeeded unless its tool succeeded.
 For a voice note, ask the contact to type it. Send exactly one concise reply.`;
@@ -705,6 +710,17 @@ const getRecentChatHistory = async (leadId, limit = 12) => {
   }));
 };
 
+const loadBmAcademyCatalog = async () => {
+  const result = await pool.query(
+    `SELECT bd.content FROM brain_docs bd
+      JOIN clients c ON c.id=bd.client_id
+     WHERE LOWER(c.name) IN ('bm academy','abm groups')
+       AND bd.doc_type IN ('prompt','product') AND COALESCE(BTRIM(bd.content),'') <> ''
+     ORDER BY bd.updated_at ASC, CASE WHEN LOWER(c.name)='bm academy' THEN 1 ELSE 0 END`
+  );
+  return buildBmAcademyCatalog(result.rows.map((row) => row.content));
+};
+
 const normalizeChatHistory = (history) => (
   Array.isArray(history)
     ? history
@@ -771,7 +787,12 @@ const getRelevantKnowledge = (documents, query = '') => {
   )];
 
   const chunks = documents
-    .flatMap((document) => String(document || '').split(/(?=^#{2,3}\s)/gm))
+    // Support both Markdown modules and the approved BM data-collection form.
+    // Course/service records must be independent retrieval chunks; otherwise
+    // the 18K cap truncates later records and the model fills gaps from memory.
+    .flatMap((document) => String(document || '').split(
+      /(?=^#{2,3}\s)|(?=^(?:\d+\.\s*)?Course ID\s*:)|(?=^Service\s+\d+\s*:)|(?=^Service ID\s*:)|(?=^PART\s+\d+\s+[—-])/gmi
+    ))
     .map((chunk) => chunk.trim())
     .filter(Boolean);
 
@@ -779,8 +800,8 @@ const getRelevantKnowledge = (documents, query = '') => {
     const lower = chunk.toLowerCase();
     let score = queryTerms.reduce((total, term) => total + (lower.includes(term) ? 5 : 0), 0);
     if (/^## brand_router/im.test(chunk)) score += 2;
-    if (wantsCourseList && /complete course catalogue/i.test(chunk)) score += 100;
-    if (wantsCourseList && /^### program_/im.test(chunk)) score += 1;
+    if (wantsCourseList && /PART 2[^\n]*COMPLETE COURSE LIST/i.test(chunk)) score += 100;
+    if (wantsCourseList && /Course ID\s*:/i.test(chunk)) score += 1;
     return { chunk, index, score };
   }).sort((a, b) => b.score - a.score || a.index - b.index);
 
@@ -803,23 +824,15 @@ const getRelevantKnowledge = (documents, query = '') => {
 router.post('/kb/search', async (req, res) => {
   const { brand, query, lead_id, chat_history } = req.body;
   try {
-    let resolvedHistory = normalizeChatHistory(chat_history);
-    if (resolvedHistory.length === 0 && lead_id) {
-      resolvedHistory = await getRecentChatHistory(lead_id);
-    }
+    // The database is authoritative. Workflow payloads are sometimes empty or
+    // contain only the latest turn, which loses the active course/topic.
+    let resolvedHistory = lead_id
+      ? await getRecentChatHistory(lead_id)
+      : normalizeChatHistory(chat_history);
     const targetBrand = brand || 'ABM Groups';
     const isBmAcademy = ['bm academy', 'bm-academy', 'bmacademy'].includes(
       String(targetBrand).trim().toLowerCase()
     );
-    const activeCourse = isBmAcademy
-      ? resolveBmAcademyCourseContext(query, resolvedHistory)
-      : null;
-    // For vague follow-ups ("details", "fees", "duration"), weight the most
-    // recently selected course instead of mixing every old course into retrieval.
-    const contextualQuery = activeCourse
-      ? `${activeCourse.name} ${activeCourse.name} ${query || ''}`
-      : [...resolvedHistory.slice(-10).map((item) => item.text), query].filter(Boolean).join(' ');
-
     // AIBrainView stores the master multi-brand knowledge under ABM Groups.
     // Load it as a fallback and combine it with any brand-specific documents.
     const docsRes = await pool.query(
@@ -845,6 +858,18 @@ router.post('/kb/search', async (req, res) => {
     const trainingDocs = docsRes.rows
       .filter((doc) => doc.doc_type === 'training' && doc.content)
       .map((doc) => doc.content);
+    const courseCatalog = isBmAcademy ? buildBmAcademyCatalog(knowledgeDocs) : [];
+    const requestedCourseOptions = isBmAcademy ? findBmAcademyCourseFamily(query, [], courseCatalog) : [];
+    const activeCourse = isBmAcademy && requestedCourseOptions.length < 2
+      ? resolveBmAcademyCourseContext(query, resolvedHistory, courseCatalog)
+      : null;
+    // For vague follow-ups ("details", "fees", "duration"), weight the most
+    // recently selected course instead of mixing every old course into retrieval.
+    const contextualQuery = activeCourse
+      ? `${activeCourse.id} ${activeCourse.name} ${activeCourse.name} ${query || ''}`
+      : requestedCourseOptions.length > 1
+        ? `${requestedCourseOptions.map((course) => course.name).join(' ')} ${query || ''}`
+        : [...resolvedHistory.slice(-10).map((item) => item.text), query].filter(Boolean).join(' ');
 
     // Follow-up questions such as "what is the syllabus?" need the previously
     // selected program in the retrieval query, not only the latest vague turn.
@@ -921,6 +946,20 @@ router.post('/ai/response', async (req, res) => {
           latest_message: latestInbound,
         });
         effectiveMessage = latestInbound;
+      }
+
+      // Re-evaluate the current turn here as well as in /ai/intent. This keeps
+      // brand switching correct even when n8n skips/retries an earlier node.
+      const explicitBrand = detectExplicitBrand(effectiveMessage);
+      if (explicitBrand && explicitBrand !== persistedBrand) {
+        const targetBrand = await pool.query(
+          `SELECT id,name FROM clients WHERE LOWER(name)=LOWER($1) LIMIT 1`,
+          [explicitBrand]
+        );
+        if (targetBrand.rows[0]) {
+          persistedBrand = targetBrand.rows[0].name;
+          await pool.query(`UPDATE leads SET client_id=$1,updated_at=NOW() WHERE id=$2`, [targetBrand.rows[0].id, lead_id]);
+        }
       }
     }
 
@@ -1002,26 +1041,45 @@ router.post('/ai/response', async (req, res) => {
       return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
     }
 
-    let resolvedHistory = normalizeChatHistory(chat_history);
-    if (resolvedHistory.length === 0 && lead_id) {
-      resolvedHistory = await getRecentChatHistory(lead_id);
-    }
+    let resolvedHistory = lead_id
+      ? await getRecentChatHistory(lead_id)
+      : normalizeChatHistory(chat_history);
 
     // Syllabus links are business data, not generated prose. Resolve the
     // selected course from this turn or the latest course in chat history and
     // return only the approved catalog URL. This prevents invented Drive IDs.
     const isBmAcademy = String(persistedBrand || '').trim().toLowerCase() === 'bm academy';
     if (isBmAcademy) {
-      const syllabusMatch = findBmAcademySyllabus(effectiveMessage, resolvedHistory);
-      if (syllabusMatch.requested && syllabusMatch.course) {
-        const { name: courseName, url } = syllabusMatch.course;
+      const courseCatalog = await loadBmAcademyCatalog();
+      const currentOptions = findBmAcademyCourseFamily(effectiveMessage, [], courseCatalog);
+      const exactCourse = currentOptions.length > 1 ? null : resolveBmAcademyCourseContext(effectiveMessage, resolvedHistory, courseCatalog);
+      const courseOptions = currentOptions.length > 1
+        ? currentOptions
+        : (exactCourse ? [] : findBmAcademyCourseFamily(effectiveMessage, resolvedHistory, courseCatalog));
+      if (courseOptions.length > 1) {
+        const names = courseOptions.map((course) => course.name);
         return res.json({
           ...req.body,
           brand: persistedBrand,
           name: leadName,
-          ai_reply: `Here is the ${courseName} syllabus: ${url}`,
+          ai_reply: `These approved courses match your request:\n\n${names.map((course, index) => `${index + 1}. ${course}`).join('\n')}\n\nWhich exact program would you like fees and syllabus for?`,
+          course_options: names,
+        });
+      }
+      const syllabusMatch = findBmAcademySyllabus(effectiveMessage, resolvedHistory, courseCatalog);
+      const asksForPriceToo = /\b(fees?|price|pricing|cost)\b/i.test(effectiveMessage);
+      if (syllabusMatch.requested && syllabusMatch.course && !asksForPriceToo) {
+        const { name: courseName, syllabusUrl } = syllabusMatch.course;
+        if (!syllabusUrl || /^(no|nil|needs_confirmation|not_applicable)$/i.test(syllabusUrl)) {
+          return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply: `The latest AI Brain memory does not contain a confirmed syllabus URL for ${courseName}. Would you like me to connect you with a mentor?` });
+        }
+        return res.json({
+          ...req.body,
+          brand: persistedBrand,
+          name: leadName,
+          ai_reply: `Here is the ${courseName} syllabus: ${syllabusUrl}`,
           syllabus_course: courseName,
-          syllabus_url: url,
+          syllabus_url: syllabusUrl,
         });
       }
       if (syllabusMatch.requested && syllabusMatch.options?.length) {
@@ -1030,7 +1088,7 @@ router.post('/ai/response', async (req, res) => {
           ...req.body,
           brand: persistedBrand,
           name: leadName,
-          ai_reply: `We have two Full Stack Developer syllabi:\n\n1. ${optionNames[0]}\n2. ${optionNames[1]}\n\nWhich one would you like?`,
+          ai_reply: `These approved courses match your earlier request:\n\n${optionNames.map((course, index) => `${index + 1}. ${course}`).join('\n')}\n\nWhich exact program would you like fees and syllabus for?`,
           syllabus_options: optionNames,
         });
       }
@@ -1060,6 +1118,7 @@ router.post('/ai/response', async (req, res) => {
       - For a greeting, reply only: "${firstName ? `Hey ${firstName}! 👋 How can I help you today?` : 'Hey! 👋 How can I help you today?'}"
       - Never recite ABM Groups and its brand list as a default greeting.
       - Never reset the conversation or ask again for information already present in chat history.
+      - Use chat history for topic and selection memory only. Previous assistant messages are not a factual source; never reuse an old fee, duration, claim, or URL unless it also appears in the current approved KNOWLEDGE BASE REFERENCE.
       - Resolve follow-up phrases such as "this course", "that course", "it", "details", "fees", "duration", and "the syllabus" to the most recently selected course/topic in chat history.
       - If a course was identified earlier, keep it as the active course until the user explicitly selects a different course. Do not ask "which course?" again for a follow-up about that active course.
       - If the user asks a FAQ (like contact number, timings, or fees) mid-booking, provide the answer inline and immediately resume the booking flow. Do not reset the conversation or ask for information again.
@@ -1171,7 +1230,15 @@ router.post('/ai/response', async (req, res) => {
       ai_reply = rawAiResponse; 
     }
 
-    res.json({ ...req.body, ai_reply });
+    // A non-greeting customer question must never be answered with the welcome
+    // message. This protects against provider context loss or stale executions.
+    const returnedGreeting = /^(hey|hi|hello|vanakkam)\b[^?!.]*(how can i help|what can i help)/i.test(String(ai_reply).trim());
+    if (!isSimpleGreeting && returnedGreeting) {
+      ai_reply = persistedBrand === 'BM TechX'
+        ? 'Yes, BM TechX provides website development and related digital services. What type of website or web-development support do you need?'
+        : 'I have your previous messages and will continue from that topic. What specific detail would you like next?';
+    }
+    res.json({ ...req.body, brand: persistedBrand, ai_reply });
   } catch (err) {
     // Keep the WhatsApp workflow moving when every AI model is temporarily
     // slow/unavailable. HTTP 200 prevents an nginx/n8n 504 failure.

@@ -1882,9 +1882,9 @@ async function handleMetaCallback(req, res) {
     return res.status(400).json({ success: false, error: 'Auth code is required' });
   }
 
-  const appId = process.env.META_APP_ID || '953749850406150';
-  const appSecret = process.env.META_APP_SECRET || 'dSSnlAoUGreiJ61yHAU3kSvJ';
-  const redirectUri = reqRedirectUri || process.env.META_REDIRECT_URI || `${process.env.PORTAL_URL || 'https://leados-app.abmgroups.org'}/settings/meta-callback`;
+  const appId = process.env.META_CONTENT_OS_APP_ID || process.env.META_APP_ID || '953749850406150';
+  const appSecret = process.env.META_CONTENT_OS_APP_SECRET || process.env.META_APP_SECRET || 'dSSnlAoUGreiJ61yHAU3kSvJ';
+  const redirectUri = reqRedirectUri || process.env.META_CONTENT_OS_REDIRECT_URI || process.env.META_REDIRECT_URI || `${process.env.PORTAL_URL || 'https://leados-app.abmgroups.org'}/settings/meta-callback`;
 
 
   try {

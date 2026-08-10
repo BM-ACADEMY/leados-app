@@ -8,7 +8,7 @@ router.get("/stats", ctrl.getStats);
 
 // Expose public Meta configuration
 router.get("/config", (req, res) => {
-  res.json({ appId: process.env.META_APP_ID || "" });
+  res.json({ appId: process.env.META_CONTENT_OS_APP_ID || "" });
 });
 
 // Brand social accounts

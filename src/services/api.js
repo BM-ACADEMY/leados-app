@@ -821,9 +821,17 @@ class LeadOSAPI {
     });
   }
 
-  async approveContent(id) {
+  async approveContent(id, body = {}) {
     return this.request(`/api/content/${id}/approve`, {
       method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  async scheduleContent(id, scheduledAt) {
+    return this.request(`/api/content/${id}/schedule`, {
+      method: 'POST',
+      body: JSON.stringify({ scheduled_at: scheduledAt }),
     });
   }
 

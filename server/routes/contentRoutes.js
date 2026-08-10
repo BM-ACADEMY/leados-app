@@ -17,9 +17,10 @@ router.get("/social-accounts", ctrl.getSocialAccounts);
 // List content by status: /api/content?status=PENDING
 router.get("/", ctrl.getContent);
 
-// Approve / Reject
+// Approve / Reject / Schedule
 router.post("/:id/approve", ctrl.approveContent);
 router.post("/:id/reject", ctrl.rejectContent);
+router.post("/:id/schedule", ctrl.scheduleContent);
 
 // AI caption suggestions
 router.post("/:id/suggest-captions", ctrl.suggestCaptions);

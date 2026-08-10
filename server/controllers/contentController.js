@@ -478,9 +478,12 @@ async function getStats(req, res) {
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE status IN ('PENDING', 'pending_approval'))::int AS pending,
         COUNT(*) FILTER (WHERE status IN ('APPROVED', 'approved'))::int AS approved,
+        COUNT(*) FILTER (WHERE status IN ('SCHEDULED', 'scheduled'))::int AS scheduled,
         COUNT(*) FILTER (WHERE status IN ('REJECTED', 'rejected'))::int AS rejected,
         COUNT(*) FILTER (WHERE status IN ('PUBLISHED', 'published', 'PARTIAL', 'partial')
                          AND published_at::date = CURRENT_DATE)::int AS published_today,
+        COUNT(*) FILTER (WHERE status IN ('PUBLISHED', 'published', 'PARTIAL', 'partial')
+                         AND published_at >= CURRENT_DATE - INTERVAL '7 days')::int AS published_this_week,
         COUNT(*) FILTER (WHERE status IN ('FAILED', 'failed', 'PARTIAL', 'partial')
                          AND COALESCE(failed_at, created_at)::date = CURRENT_DATE)::int AS failed_today
       FROM content_queue
@@ -499,25 +502,73 @@ async function getStats(req, res) {
 async function approveContent(req, res) {
   const { id } = req.params;
   const approvedBy = (req.body && req.body.approved_by) || "Kamar";
+  const bodyScheduledAt = (req.body && req.body.scheduled_at) || null;
   try {
+    // Determine status: SCHEDULED if a future scheduled_at exists, otherwise approved
+    let newStatus = 'approved';
+    let resolvedScheduledAt = bodyScheduledAt;
+
+    if (!resolvedScheduledAt) {
+      const { rows: cur } = await pool.query('SELECT scheduled_at FROM content_queue WHERE id = $1', [id]);
+      if (cur.length > 0 && cur[0].scheduled_at) resolvedScheduledAt = cur[0].scheduled_at;
+    }
+
+    if (resolvedScheduledAt && new Date(resolvedScheduledAt) > new Date()) {
+      newStatus = 'SCHEDULED';
+    }
+
     const { rows } = await pool.query(
       `UPDATE content_queue
-         SET status = 'approved', approved_by = $2, approved_at = NOW()
-       WHERE id = $1 AND status IN ('PENDING', 'pending_approval')
-       RETURNING id, brand_name, status`,
-      [id, approvedBy]
+         SET status = $3, approved_by = $2, approved_at = NOW()
+       WHERE id = $1 AND status IN ('PENDING', 'pending_approval', 'pending', 'PENDING_APPROVAL')
+       RETURNING id, brand_name, status, scheduled_at`,
+      [id, approvedBy, newStatus]
     );
 
     if (rows.length === 0) {
       return res.status(409).json({ success: false, error: "Item not found or not in pending state" });
     }
 
-
-
     res.json({ success: true, item: rows[0] });
   } catch (err) {
     console.error("approveContent error:", err);
     res.status(500).json({ success: false, error: "Failed to approve" });
+  }
+}
+
+// ---------------------------------------------------------------
+// POST /api/content/:id/schedule
+// Body: { scheduled_at: "ISO date string" }
+// Sets an APPROVED item's scheduled_at and flips status to SCHEDULED.
+// ---------------------------------------------------------------
+async function scheduleContent(req, res) {
+  const { id } = req.params;
+  const { scheduled_at } = req.body || {};
+
+  if (!scheduled_at) {
+    return res.status(400).json({ success: false, error: "scheduled_at is required" });
+  }
+  if (new Date(scheduled_at) <= new Date()) {
+    return res.status(400).json({ success: false, error: "scheduled_at must be in the future" });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE content_queue
+         SET status = 'SCHEDULED', scheduled_at = $2
+       WHERE id = $1 AND status IN ('APPROVED', 'approved', 'SCHEDULED', 'scheduled')
+       RETURNING id, brand_name, status, scheduled_at`,
+      [id, scheduled_at]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, error: "Item not found or not in approved/scheduled state" });
+    }
+
+    res.json({ success: true, item: rows[0] });
+  } catch (err) {
+    console.error("scheduleContent error:", err);
+    res.status(500).json({ success: false, error: "Failed to schedule content" });
   }
 }
 
@@ -4028,6 +4079,7 @@ module.exports = {
   getContent,
   getStats,
   approveContent,
+  scheduleContent,
   rejectContent,
   updateContent,
   getSocialAccounts,

@@ -4,14 +4,15 @@ export function SchedulerView({
   isSameBrand,
   formatTime,
   getBrandConfig,
-  getPlatformConfig
+  getPlatformConfig,
+  stats
 }) {
   // Filter and sort items that are approved/scheduled
   const getScheduledItems = () => {
     return items
       .filter(item => {
         const s = (item.status || '').toUpperCase();
-        const isScheduled = s === 'APPROVED' || s === 'approved' || s === 'SCHEDULED' || s === 'scheduled';
+        const isScheduled = s === 'SCHEDULED';
         if (!isScheduled) return false;
 
         if (selectedBrand !== 'all') {
@@ -27,6 +28,8 @@ export function SchedulerView({
   };
 
   const scheduledItems = getScheduledItems();
+  const publishedThisWeek = stats?.PUBLISHED_WEEK ?? 0;
+  const approvedCount = stats?.APPROVED ?? 0;
 
   return (
     <div className="page on">
@@ -35,16 +38,16 @@ export function SchedulerView({
         <div className="sc gold">
           <div className="sc-lbl">Scheduled</div>
           <div className="sc-val gold">{scheduledItems.length}</div>
-          <div className="sc-sub">next 24h</div>
+          <div className="sc-sub">pending auto-publish</div>
         </div>
         <div className="sc teal">
           <div className="sc-lbl">WF14 Cron</div>
           <div className="sc-val teal" style={{ fontSize: 16, fontFamily: "'IBM Plex Mono', monospace" }}>every 5m</div>
-          <div className="sc-sub">polling approved</div>
+          <div className="sc-sub">{approvedCount} approved ready</div>
         </div>
         <div className="sc grn">
           <div className="sc-lbl">Auto-published</div>
-          <div className="sc-val grn">38</div>
+          <div className="sc-val grn">{publishedThisWeek}</div>
           <div className="sc-sub">this week</div>
         </div>
       </div>

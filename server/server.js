@@ -4993,10 +4993,10 @@ cron.schedule('*/5 * * * *', async () => {
   console.log('Cron: Checking for scheduled approved content due for publishing...');
   try {
     const { rows: duePosts } = await pool.query(`
-      SELECT id FROM content_queue 
-      WHERE status IN ('APPROVED', 'approved') 
-        AND scheduled_at <= NOW() 
-        AND scheduled_at > NOW() - INTERVAL '2 hours'
+      SELECT id FROM content_queue
+      WHERE status IN ('APPROVED', 'approved', 'SCHEDULED', 'scheduled')
+        AND scheduled_at <= NOW()
+        AND scheduled_at > NOW() - INTERVAL '24 hours'
       ORDER BY scheduled_at ASC
     `);
 

@@ -4995,8 +4995,8 @@ cron.schedule('*/5 * * * *', async () => {
     const { rows: duePosts } = await pool.query(`
       SELECT id FROM content_queue
       WHERE status IN ('APPROVED', 'approved', 'SCHEDULED', 'scheduled')
-        AND scheduled_at <= NOW()
-        AND scheduled_at > NOW() - INTERVAL '24 hours'
+        AND scheduled_at <= (NOW() AT TIME ZONE 'Asia/Kolkata') + INTERVAL '1 minute'
+        AND scheduled_at > (NOW() AT TIME ZONE 'Asia/Kolkata') - INTERVAL '24 hours'
       ORDER BY scheduled_at ASC
     `);
 

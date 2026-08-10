@@ -24,8 +24,6 @@ export default function KeywordTracking() {
   // Add Keyword Form / Modal States
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyword, setNewKeyword] = useState('');
-  const [initialRank, setInitialRank] = useState('1');
-  const [packStatus, setPackStatus] = useState('In Pack');
   const [targetLocation, setTargetLocation] = useState('Pondicherry');
   const [adding, setAdding] = useState(false);
   const [formError, setFormError] = useState('');
@@ -134,9 +132,7 @@ export default function KeywordTracking() {
       const token = localStorage.getItem('leados_token');
       const { data: saved } = await axios.post(`${API_URL}/api/mafiya/turf/keywords`, {
         client_id: activeClient.id,
-        keyword: newKeyword,
-        initial_rank: parseInt(initialRank, 10),
-        pack_status: packStatus
+        keyword: newKeyword
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -523,29 +519,7 @@ export default function KeywordTracking() {
                 />
               </div>
 
-              {/* Initial Rank & Pack Status */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Initial Rank</label>
-                  <input
-                    type="number"
-                    value={initialRank}
-                    onChange={(e) => setInitialRank(e.target.value)}
-                    style={{ width: '100%', background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Pack Status</label>
-                  <select
-                    value={packStatus}
-                    onChange={(e) => setPackStatus(e.target.value)}
-                    style={{ width: '100%', background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none', cursor: 'pointer' }}
-                  >
-                    <option value="In Pack">In Pack</option>
-                    <option value="Not in Pack">Not in Pack</option>
-                  </select>
-                </div>
-              </div>
+              {/* Initial Rank & Pack Status UI Removed for auto-fetch */}
 
               {/* Target Location / City Field */}
               <div>

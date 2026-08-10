@@ -253,7 +253,11 @@ router.post('/keywords/refresh/:id', async (req, res) => {
 
     const updated = await pool.query(
       `UPDATE mafiya_turf_keywords
-       SET previous_rank = current_rank, current_rank = $1, pack_status = $2, last_checked = NOW()
+       SET previous_rank = current_rank, 
+           current_rank = $1, 
+           pack_status = $2, 
+           initial_rank = CASE WHEN initial_rank = 100 THEN $1 ELSE initial_rank END,
+           last_checked = NOW()
        WHERE id = $3
        RETURNING *`,
       [newRank, packStatus, id]

@@ -4988,14 +4988,14 @@ if (process.env.DISABLE_DRIVE_POLLER !== 'true') {
   console.log('DrivePoller: Polling disabled via DISABLE_DRIVE_POLLER=true environment variable.');
 }
 
-// Run every 5 minutes to auto-publish scheduled approved posts (acting as a fallback for n8n)
-cron.schedule('*/5 * * * *', async () => {
+// Run every minute to auto-publish scheduled approved posts (acting as a fallback for n8n)
+cron.schedule('* * * * *', async () => {
   console.log('Cron: Checking for scheduled approved content due for publishing...');
   try {
     const { rows: duePosts } = await pool.query(`
       SELECT id FROM content_queue
       WHERE status IN ('APPROVED', 'approved', 'SCHEDULED', 'scheduled')
-        AND scheduled_at <= (NOW() AT TIME ZONE 'Asia/Kolkata') + INTERVAL '1 minute'
+        AND scheduled_at <= (NOW() AT TIME ZONE 'Asia/Kolkata') + INTERVAL '2 minutes'
         AND scheduled_at > (NOW() AT TIME ZONE 'Asia/Kolkata') - INTERVAL '24 hours'
       ORDER BY scheduled_at ASC
     `);

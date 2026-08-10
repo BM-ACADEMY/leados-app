@@ -189,18 +189,32 @@ async function handleMetaWebhook(req, res) {
             const adNameStr = leadData.ad_name || null;
             const adIdStr = leadData.ad_id || null;
 
-            await db.query(`
-              INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, lead_ad_form_id, campaign_id, campaign_name, ad_name, ad_id)
-              VALUES ($1, $2, $3, 'facebook', 'new', 10, $4, $5, $5, $6, $7, $8, $9, $10)
-              ON CONFLICT (leadgen_id) DO UPDATE SET 
-                  status = COALESCE(NULLIF(TRIM(leads.status), ''), 'new'),
-                  lead_ad_form_id = COALESCE(EXCLUDED.lead_ad_form_id, leads.lead_ad_form_id),
-                  campaign_id = COALESCE(EXCLUDED.campaign_id, leads.campaign_id),
-                  campaign_name = COALESCE(EXCLUDED.campaign_name, leads.campaign_name),
-                  ad_name = COALESCE(EXCLUDED.ad_name, leads.ad_name),
-                  ad_id = COALESCE(EXCLUDED.ad_id, leads.ad_id)
-            `, [name || 'FB Lead', phone, email, clientId, leadgenId, formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr]);
-            
+            // The leads table enforces one row per phone number per tenant (idx_leads_phone_tenant),
+            // regardless of which brand/client the lead is attached to. A raw INSERT can collide with
+            // an existing lead for that phone under a different client, so check by phone first and
+            // update that row with the latest touch instead of letting the insert fail silently.
+            const existingByPhone = phone ? await db.query('SELECT id FROM leads WHERE phone = $1', [phone]) : { rows: [] };
+            if (existingByPhone.rows.length > 0) {
+              await db.query(`
+                UPDATE leads SET leadgen_id = $1, meta_lead_id = $1,
+                  lead_ad_form_id = $2, campaign_id = $3, campaign_name = $4, ad_name = $5, ad_id = $6
+                WHERE id = $7
+              `, [leadgenId, formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr, existingByPhone.rows[0].id]);
+              console.log(`Updated existing lead ${existingByPhone.rows[0].id} with latest Meta touch ${leadgenId}`);
+            } else {
+              await db.query(`
+                INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, meta_lead_id, lead_ad_form_id, campaign_id, campaign_name, ad_name, ad_id)
+                VALUES ($1, $2, $3, 'facebook', 'new', 10, $4, $5, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (leadgen_id) DO UPDATE SET
+                    status = COALESCE(NULLIF(TRIM(leads.status), ''), 'new'),
+                    lead_ad_form_id = COALESCE(EXCLUDED.lead_ad_form_id, leads.lead_ad_form_id),
+                    campaign_id = COALESCE(EXCLUDED.campaign_id, leads.campaign_id),
+                    campaign_name = COALESCE(EXCLUDED.campaign_name, leads.campaign_name),
+                    ad_name = COALESCE(EXCLUDED.ad_name, leads.ad_name),
+                    ad_id = COALESCE(EXCLUDED.ad_id, leads.ad_id)
+              `, [name || 'FB Lead', phone, email, clientId, leadgenId, formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr]);
+            }
+
             const newLead = await db.query('SELECT id FROM leads WHERE leadgen_id = $1', [leadgenId]);
             if(newLead.rows.length) { evaluateLeadBrandAndSchedule(newLead.rows[0].id).catch(console.error); }
             console.log(`Successfully saved Meta lead ${leadgenId}`);
@@ -282,21 +296,24 @@ async function syncHistoricalLeads(req, res) {
         const adIdStr = leadData.ad_id || null;
         const syncedStatus = getMetaLeadStatus(leadData.created_time);
 
-        // Ensure no phone conflict
+        // The leads table enforces one row per phone number per tenant (idx_leads_phone_tenant),
+        // regardless of client_id, so match by phone alone and refresh with the latest touch —
+        // otherwise leads for a phone already attached to a different client get silently dropped.
         if (phone) {
-           const pcRes = await db.query('SELECT id FROM leads WHERE phone = $1 AND client_id = $2', [phone, clientId]);
+           const pcRes = await db.query('SELECT id FROM leads WHERE phone = $1', [phone]);
            if (pcRes.rows.length > 0) {
               await db.query(
                 `UPDATE leads SET leadgen_id = $1, meta_lead_id = $1,
                   status = COALESCE(NULLIF(TRIM(status), ''), $2),
-                  lead_ad_form_id = COALESCE($3, lead_ad_form_id),
-                  campaign_id = COALESCE($4, campaign_id),
-                  campaign_name = COALESCE($5, campaign_name),
-                  ad_name = COALESCE($6, ad_name),
-                  ad_id = COALESCE($7, ad_id)
+                  lead_ad_form_id = $3,
+                  campaign_id = $4,
+                  campaign_name = $5,
+                  ad_name = $6,
+                  ad_id = $7
                 WHERE id = $8`,
                 [leadgenId, syncedStatus, formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr, pcRes.rows[0].id]
               );
+              totalSynced++;
               continue;
            }
         }
@@ -402,19 +419,22 @@ async function syncAllHistoricalLeads(req, res) {
               const syncedStatus = getMetaLeadStatus(leadData.created_time);
 
               if (phone) {
-                 const pcRes = await db.query('SELECT id FROM leads WHERE phone = $1 AND client_id = $2', [phone, clientId]);
+                 // idx_leads_phone_tenant is unique on (phone, tenant_id), not per-client, so match by
+                 // phone alone and refresh with the latest touch instead of dropping the insert on conflict.
+                 const pcRes = await db.query('SELECT id FROM leads WHERE phone = $1', [phone]);
                  if (pcRes.rows.length > 0) {
                     await db.query(
                       `UPDATE leads SET leadgen_id = $1, meta_lead_id = $1,
                         status = COALESCE(NULLIF(TRIM(status), ''), $2),
-                        lead_ad_form_id = COALESCE($3, lead_ad_form_id),
-                        campaign_id = COALESCE($4, campaign_id),
-                        campaign_name = COALESCE($5, campaign_name),
-                        ad_name = COALESCE($6, ad_name),
-                        ad_id = COALESCE($7, ad_id)
+                        lead_ad_form_id = $3,
+                        campaign_id = $4,
+                        campaign_name = $5,
+                        ad_name = $6,
+                        ad_id = $7
                       WHERE id = $8`,
                       [leadgenId, syncedStatus, formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr, pcRes.rows[0].id]
                     );
+                    totalSynced++;
                     continue;
                  }
               }

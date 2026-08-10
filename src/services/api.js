@@ -122,6 +122,7 @@ class LeadOSAPI {
       ...(filters.source && { source: filters.source }),
       ...(filters.campaignName && { campaign_name: filters.campaignName }),
       ...(filters.adName && { ad_name: filters.adName }),
+      ...(filters.metaPageId && { meta_page_id: filters.metaPageId }),
       ...(filters.from && { from: filters.from }),
       ...(filters.to && { to: filters.to }),
     });

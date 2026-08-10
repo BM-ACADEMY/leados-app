@@ -1979,14 +1979,28 @@ cron.schedule('17 */6 * * *', async () => {
 // GET /api/leads
 app.get('/api/leads/facebook-filter-options', auth, async (req, res) => {
   try {
-    const { rows } = await pool.query(`
-      SELECT DISTINCT campaign_name, ad_name
-      FROM leads
-      WHERE LOWER(TRIM(COALESCE(source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'
-        AND (NULLIF(TRIM(campaign_name), '') IS NOT NULL OR NULLIF(TRIM(ad_name), '') IS NOT NULL)
-      ORDER BY campaign_name NULLS LAST, ad_name NULLS LAST
-    `);
-    res.json({ options: rows });
+    const [leadOptions, pageOptions] = await Promise.all([
+      pool.query(`
+        SELECT DISTINCT campaign_name, ad_name
+        FROM leads
+        WHERE LOWER(TRIM(COALESCE(source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'
+          AND (NULLIF(TRIM(campaign_name), '') IS NOT NULL OR NULLIF(TRIM(ad_name), '') IS NOT NULL)
+        ORDER BY campaign_name NULLS LAST, ad_name NULLS LAST
+      `),
+      pool.query(`
+        SELECT DISTINCT platform, account_name AS page_name, brand_name,
+          CASE WHEN LOWER(platform) = 'instagram'
+            THEN COALESCE(NULLIF(instagram_business_id, ''), NULLIF(account_id, ''), NULLIF(facebook_page_id, ''))
+            ELSE COALESCE(NULLIF(facebook_page_id, ''), NULLIF(account_id, ''), NULLIF(instagram_business_id, ''))
+          END AS page_id
+        FROM brand_social_accounts
+        WHERE is_active = TRUE
+          AND LOWER(platform) IN ('facebook', 'instagram')
+          AND NULLIF(TRIM(account_name), '') IS NOT NULL
+        ORDER BY platform, account_name
+      `)
+    ]);
+    res.json({ options: leadOptions.rows, pages: pageOptions.rows.filter(page => page.page_id) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -1995,9 +2009,19 @@ app.get('/api/leads/facebook-filter-options', auth, async (req, res) => {
 
 app.get('/api/leads', auth, async (req, res) => {
   try {
-    const { status, brand, search, source, campaign_name, ad_name, from, to, limit = 100, offset = 0 } = req.query;
+    const { status, brand, search, source, campaign_name, ad_name, meta_page_id, from, to, limit = 100, offset = 0 } = req.query;
     let q = `
       SELECT l.*, COUNT(*) OVER() AS filtered_total, c.name as brand_name, u.name as assigned_name,
+        (
+          SELECT page_account.account_name
+          FROM brand_social_accounts page_account
+          WHERE page_account.brand_name = c.name
+            AND LOWER(page_account.platform) = 'facebook'
+            AND page_account.is_active = TRUE
+            AND NULLIF(TRIM(page_account.account_name), '') IS NOT NULL
+          ORDER BY page_account.id
+          LIMIT 1
+        ) AS facebook_page_name,
         COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id), 0) as unread,
         (SELECT MAX(last_message_at) FROM conversations WHERE lead_id = l.id) as last_contact,
         (
@@ -2061,6 +2085,21 @@ app.get('/api/leads', auth, async (req, res) => {
       params.push(ad_name);
       q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'`;
       q += ` AND l.ad_name = $${params.length}`;
+    }
+    if (meta_page_id) {
+      params.push(meta_page_id);
+      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'`;
+      q += ` AND EXISTS (
+        SELECT 1
+        FROM brand_social_accounts page_account
+        JOIN clients page_client ON page_client.name = page_account.brand_name
+        WHERE page_client.id = l.client_id
+          AND CASE WHEN LOWER(page_account.platform) = 'instagram'
+            THEN COALESCE(NULLIF(page_account.instagram_business_id, ''), NULLIF(page_account.account_id, ''), NULLIF(page_account.facebook_page_id, ''))
+            ELSE COALESCE(NULLIF(page_account.facebook_page_id, ''), NULLIF(page_account.account_id, ''), NULLIF(page_account.instagram_business_id, ''))
+          END = $${params.length}
+          AND page_account.is_active = TRUE
+      )`;
     }
     if (from) {
       const fromDate = new Date(from);
@@ -2583,6 +2622,20 @@ app.post('/webhook/whatsapp', async (req, res) => {
           const phoneNumberId = value.metadata.phone_number_id;
           const isForwarded = msg.context?.forwarded || msg.context?.frequently_forwarded || false;
           const waMessageId = msg.id;
+          const referralAdId = msg.referral?.source_id ? String(msg.referral.source_id) : null;
+          let referralCampaign = null;
+
+          // Click-to-WhatsApp ads include the originating ad in msg.referral.
+          // Reuse campaign metadata already learned from Meta lead-form sync for that ad.
+          if (referralAdId) {
+            referralCampaign = (await pool.query(`
+              SELECT campaign_id, campaign_name, ad_id, ad_name, client_id
+              FROM leads
+              WHERE ad_id = $1
+              ORDER BY campaign_name IS NULL, updated_at DESC
+              LIMIT 1
+            `, [referralAdId])).rows[0] || null;
+          }
 
           // Extract text and media info based on message type
           let text = '';
@@ -2630,10 +2683,22 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
           if (!lead) {
             const newLead = await pool.query(`
-              INSERT INTO leads (name, phone, source, client_id, status, score, flow_step, created_at)
-              VALUES ($1, $2, 'WhatsApp', $3, 'new', 10, 'welcome', NOW())
+              INSERT INTO leads (
+                name, phone, source, client_id, status, score, flow_step, created_at,
+                campaign_id, campaign_name, ad_id, ad_name
+              )
+              VALUES ($1, $2, $3, $4, 'new', 10, 'welcome', NOW(), $5, $6, $7, $8)
               RETURNING *
-            `, [phone, phone, client?.id || null]);
+            `, [
+              value.contacts?.[0]?.profile?.name || phone,
+              phone,
+              referralAdId ? 'facebook' : 'WhatsApp',
+              referralCampaign?.client_id || client?.id || null,
+              referralCampaign?.campaign_id || null,
+              referralCampaign?.campaign_name || null,
+              referralAdId,
+              referralCampaign?.ad_name || msg.referral?.headline || null,
+            ]);
             lead = newLead.rows[0];
             lead.client_wa_token = client?.wa_access_token;
             lead.client_phone_number_id = client?.phone_number_id;
@@ -2642,6 +2707,28 @@ app.post('/webhook/whatsapp', async (req, res) => {
             if (lead.phone !== phone) {
               await pool.query('UPDATE leads SET phone = $1 WHERE id = $2', [phone, lead.id]);
               lead.phone = phone;
+            }
+            if (referralAdId) {
+              const updatedLead = await pool.query(`
+                UPDATE leads SET
+                  source = 'facebook',
+                  client_id = COALESCE($1, client_id),
+                  campaign_id = COALESCE($2, campaign_id),
+                  campaign_name = COALESCE($3, campaign_name),
+                  ad_id = $4,
+                  ad_name = COALESCE($5, ad_name),
+                  updated_at = NOW()
+                WHERE id = $6
+                RETURNING *
+              `, [
+                referralCampaign?.client_id || client?.id || null,
+                referralCampaign?.campaign_id || null,
+                referralCampaign?.campaign_name || null,
+                referralAdId,
+                referralCampaign?.ad_name || msg.referral?.headline || null,
+                lead.id,
+              ]);
+              lead = { ...lead, ...updatedLead.rows[0] };
             }
           }
 

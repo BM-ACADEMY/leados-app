@@ -21,7 +21,7 @@ const SOURCE_FILTERS = [
   { value: 'xls_sheet', label: 'XLS Sheet' },
 ];
 
-function AddLeadModal({ open, onClose, onSaved, clients, users, sources }) {
+function AddLeadModal({ open, onClose, onSaved, clients, users }) {
   const [form, setForm] = useState({ name: '', phone: '', source: '', interest: '', client_id: '', assigned_to: '' });
   const [saving, setSaving] = useState(false);
 
@@ -145,19 +145,8 @@ function AddLeadModal({ open, onClose, onSaved, clients, users, sources }) {
                 onBlur={e => e.target.style.borderColor = '#2a2a3a'}
               >
                 <option value="">— Select Source —</option>
-                {sources.map(s => <option key={s} value={s}>{s}</option>)}
-                <option value="__custom__">+ Custom…</option>
+                {SOURCE_FILTERS.map(source => <option key={source.value} value={source.value}>{source.label}</option>)}
               </select>
-              {form.source === '__custom__' && (
-                <input
-                  style={{ ...inp, marginTop: 6 }}
-                  placeholder="Type custom source…"
-                  onChange={e => set('source', e.target.value || '__custom__')}
-                  onFocus={e => e.target.style.borderColor = C.accent}
-                  onBlur={e => e.target.style.borderColor = '#2a2a3a'}
-                  autoFocus
-                />
-              )}
             </div>
             <div>
               <label style={labelStyle}>Brand</label>
@@ -512,7 +501,9 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [campaignFilter, setCampaignFilter] = useState('');
   const [adFilter, setAdFilter] = useState('');
+  const [metaPageFilter, setMetaPageFilter] = useState('');
   const [facebookFilterOptions, setFacebookFilterOptions] = useState([]);
+  const [metaPageOptions, setMetaPageOptions] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [syncingFB, setSyncingFB] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -526,6 +517,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
     source: sourceFilter !== 'all' ? sourceFilter : undefined,
     campaignName: campaignFilter || undefined,
     adName: adFilter || undefined,
+    metaPageId: metaPageFilter || undefined,
     limit: itemsPerPage,
     offset: (currentPage - 1) * itemsPerPage
   });
@@ -542,7 +534,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filter, search, sourceFilter, campaignFilter, adFilter]);
+  }, [filter, search, sourceFilter, campaignFilter, adFilter, metaPageFilter]);
 
   const totalPages = Math.ceil((total || 0) / itemsPerPage);
 
@@ -553,13 +545,14 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [metaLeadDetails, setMetaLeadDetails] = useState(null);
   const [modalClients, setModalClients] = useState([]);
   const [modalUsers, setModalUsers] = useState([]);
-  const [modalSources, setModalSources] = useState([]);
 
   useEffect(() => {
     api.getClients().then(d => setModalClients(Array.from(new Map((d.clients || []).map(c => [c.id, c])).values()))).catch(() => { });
     api.getUsers().then(d => setModalUsers(Array.from(new Map((d.users || []).map(u => [u.id, u])).values()))).catch(() => { });
-    api.getSources().then(d => setModalSources([...new Set(d.sources || [])])).catch(() => { });
-    api.get('/leads/facebook-filter-options').then(d => setFacebookFilterOptions(d.options || [])).catch(() => { });
+    api.get('/leads/facebook-filter-options').then(d => {
+      setFacebookFilterOptions(d.options || []);
+      setMetaPageOptions(d.pages || []);
+    }).catch(() => { });
   }, []);
 
   const campaignNames = [...new Set(facebookFilterOptions.map(option => option.campaign_name).filter(Boolean))];
@@ -670,7 +663,6 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
         onSaved={() => { if (refetch) refetch(); }}
         clients={modalClients}
         users={modalUsers}
-        sources={modalSources}
       />
       <PaymentLinkModal lead={paymentLead} onClose={() => setPaymentLead(null)} />
       <MetaLeadDetailsModal lead={metaLeadDetails} onClose={() => setMetaLeadDetails(null)} />
@@ -749,7 +741,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or phone..." style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', width: '100%' }} />
           </div>
           <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36, display: 'flex', alignItems: 'center' }}>
-            <select value={sourceFilter} onChange={(e) => { const source = e.target.value; setSourceFilter(source); if (source !== 'facebook') { setCampaignFilter(''); setAdFilter(''); } }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', cursor: 'pointer', textTransform: 'capitalize' }}>
+            <select value={sourceFilter} onChange={(e) => { const source = e.target.value; setSourceFilter(source); if (source !== 'facebook') { setCampaignFilter(''); setAdFilter(''); setMetaPageFilter(''); } }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', cursor: 'pointer', textTransform: 'capitalize' }}>
               <option value="all" style={{ background: C.card, color: C.text }}>All Sources</option>
               {SOURCE_FILTERS.map(source => (
                 <option key={source.value} value={source.value} style={{ background: C.card, color: C.text }}>{source.label}</option>
@@ -768,6 +760,17 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
               <option value="" style={{ background: C.card, color: C.text }}>All Facebook Ads</option>
               {adNames.length === 0 && <option disabled style={{ background: C.card, color: C.muted }}>No ad names found</option>}
               {adNames.map(name => <option key={name} value={name} style={{ background: C.card, color: C.text }}>{name}</option>)}
+            </select>
+          </div>
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 190 }}>
+            <select aria-label="Facebook or Instagram Page" value={metaPageFilter} onChange={(e) => { setMetaPageFilter(e.target.value); if (e.target.value) setSourceFilter('facebook'); }} style={{ width: '100%', background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', cursor: 'pointer' }}>
+              <option value="" style={{ background: C.card, color: C.text }}>All Facebook & Instagram Pages</option>
+              {metaPageOptions.length === 0 && <option disabled style={{ background: C.card, color: C.muted }}>No connected pages found</option>}
+              {metaPageOptions.map(page => (
+                <option key={`${page.platform}-${page.page_id}-${page.brand_name}`} value={page.page_id} style={{ background: C.card, color: C.text }}>
+                  [{page.platform === 'instagram' ? 'Instagram' : 'Facebook'}] {page.page_name}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -808,10 +811,13 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
                           <Info size={12} />
                         </button>
                       )}
-                      {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.campaign_name && (
-                        <span title={l.campaign_name} style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.muted, fontSize: 9 }}>({l.campaign_name})</span>
-                      )}
                     </div>
+                    {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.campaign_name && (
+                      <span title={l.campaign_name} style={{ maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.muted, fontSize: 9 }}>Campaign: {l.campaign_name}</span>
+                    )}
+                    {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.facebook_page_name && (
+                      <span title={l.facebook_page_name} style={{ maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.blue, fontSize: 9 }}>Page: {l.facebook_page_name}</span>
+                    )}
                   </div>
                 </td>
                 <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{l.brand_name || 'N/A'}</td>

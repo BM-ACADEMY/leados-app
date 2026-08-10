@@ -5004,7 +5004,15 @@ cron.schedule('*/5 * * * *', async () => {
       console.log(`Cron: Found ${duePosts.length} posts due for publishing.`);
       for (const post of duePosts) {
         console.log(`Cron: Fallback publishing post ${post.id}...`);
-        const dummyReq = { params: { id: post.id } };
+        const dummyReq = {
+          params: { id: post.id },
+          headers: {
+            'host': 'leados-api.abmgroups.org',
+            'x-forwarded-proto': 'https'
+          },
+          get: (header) => dummyReq.headers[header.toLowerCase()] || null,
+          protocol: 'https'
+        };
         const dummyRes = {
           status: function (code) {
             this.statusCode = code;

@@ -41,6 +41,7 @@ export function ApprovalRoom({
   handleApprove,
   handleReject,
   handlePublishNow,
+  handleScheduleItem,
   editMode,
   setEditMode,
   editValues,
@@ -617,26 +618,57 @@ export function ApprovalRoom({
               {/* Action Buttons */}
               {(() => {
                 const statusUpper = (selectedItem.status || '').toUpperCase();
+                const hasFutureSchedule = editValues.scheduled_at && new Date(editValues.scheduled_at) > new Date();
+                const noPlatforms = !editMode
+                  ? !(selectedItem.platforms && selectedItem.platforms.length > 0)
+                  : !(editValues.platforms && editValues.platforms.length > 0);
                 return (
                   <div className="actions" style={{ padding: '16px', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+
+                    {/* PENDING: Reject + Approve (smart label) */}
                     {canApprove && (statusUpper === 'PENDING' || statusUpper === 'PENDING_APPROVAL') && (
                       <>
                         <button className="act act-reject" onClick={() => setConfirmAction({ type: 'reject', id: selectedItem.id })}>
                           ✕ Reject
                         </button>
                         <button className="act act-approve" onClick={() => onApproveClick(selectedItem.id)}>
-                          ✓ Approve &amp; Schedule
+                          {hasFutureSchedule ? '📅 Approve & Schedule' : '✓ Approve'}
                         </button>
                       </>
                     )}
+
+                    {/* APPROVED: Publish Now + optionally Schedule for Later */}
                     {canApprove && (statusUpper === 'APPROVED' || statusUpper === 'APPROVED_SCHEDULED') && (
+                      <>
+                        {hasFutureSchedule && (
+                          <button
+                            className="act"
+                            onClick={() => handleScheduleItem(selectedItem.id)}
+                            style={{ background: 'rgba(0,196,160,0.12)', color: 'var(--teal)', border: '1px solid rgba(0,196,160,0.3)', padding: '10px 16px', borderRadius: 8, fontWeight: 600, cursor: 'pointer' }}
+                          >
+                            📅 Schedule for Later
+                          </button>
+                        )}
+                        <button
+                          className="act act-approve"
+                          disabled={isPublishing || noPlatforms}
+                          title={noPlatforms ? "Please select at least one publishing channel." : ""}
+                          onClick={() => onPublishClick(selectedItem.id)}
+                        >
+                          {isPublishing ? 'Publishing...' : '🚀 Publish Now'}
+                        </button>
+                      </>
+                    )}
+
+                    {/* SCHEDULED: Publish Now (override) */}
+                    {canApprove && statusUpper === 'SCHEDULED' && (
                       <button
                         className="act act-approve"
-                        disabled={isPublishing || (!editMode ? !(selectedItem.platforms && selectedItem.platforms.length > 0) : !(editValues.platforms && editValues.platforms.length > 0))}
-                        title={(!editMode ? !(selectedItem.platforms && selectedItem.platforms.length > 0) : !(editValues.platforms && editValues.platforms.length > 0)) ? "Please select at least one publishing channel." : ""}
+                        disabled={isPublishing || noPlatforms}
+                        title={noPlatforms ? "Please select at least one publishing channel." : ""}
                         onClick={() => onPublishClick(selectedItem.id)}
                       >
-                        {isPublishing ? 'Publishing...' : '🚀 Publish Now'}
+                        {isPublishing ? 'Publishing...' : '🚀 Publish Now (Override)'}
                       </button>
                     )}
 

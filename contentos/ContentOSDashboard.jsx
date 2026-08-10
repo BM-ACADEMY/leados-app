@@ -220,8 +220,10 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
         setStats({
           PENDING: s.pending || 0,
           APPROVED: s.approved || 0,
+          SCHEDULED: s.scheduled || 0,
           REJECTED: s.rejected || 0,
           PUBLISHED: s.published_today || 0,
+          PUBLISHED_WEEK: s.published_this_week || 0,
           FAILED: s.failed_today || 0
         });
         setAnalytics({
@@ -334,18 +336,45 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
     }
   }
 
-  // Approve content
+  // Approve content (auto-detects future scheduled_at → sets SCHEDULED status)
   async function handleApprove(id) {
     try {
       if (editMode) {
         await api.updateContent(id, editValues);
       }
-      await api.approveContent(id);
-      showToast("Content approved — publishing queued! ✅");
+      const hasFutureSchedule = editValues.scheduled_at && new Date(editValues.scheduled_at) > new Date();
+      await api.approveContent(id, { scheduled_at: editValues.scheduled_at || null });
+      showToast(hasFutureSchedule
+        ? `Scheduled for ${formatTime(editValues.scheduled_at)} 📅`
+        : "Content approved — ready to publish! ✅"
+      );
       setEditMode(false);
       fetchData(false);
     } catch (e) {
       showToast("Approval failed: " + e.message, "error");
+    }
+  }
+
+  // Schedule an already-approved item for a future time
+  async function handleScheduleItem(id) {
+    if (!editValues.scheduled_at) {
+      showToast("Please set a date and time first", "error");
+      return;
+    }
+    if (new Date(editValues.scheduled_at) <= new Date()) {
+      showToast("Scheduled time must be in the future", "error");
+      return;
+    }
+    try {
+      if (editMode) {
+        await api.updateContent(id, editValues);
+      }
+      await api.scheduleContent(id, editValues.scheduled_at);
+      showToast(`Scheduled for ${formatTime(editValues.scheduled_at)} 📅`);
+      setEditMode(false);
+      fetchData(false);
+    } catch (e) {
+      showToast("Scheduling failed: " + e.message, "error");
     }
   }
 
@@ -620,6 +649,7 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
               handleApprove={handleApprove}
               handleReject={handleReject}
               handlePublishNow={handlePublishNow}
+              handleScheduleItem={handleScheduleItem}
               editMode={editMode}
               setEditMode={setEditMode}
               editValues={editValues}
@@ -664,6 +694,7 @@ export default function ContentOSDashboard({ defaultPage = "approval" }) {
               formatTime={formatTime}
               getBrandConfig={getBrandConfig}
               getPlatformConfig={getPlatformConfig}
+              stats={stats}
             />
           )}
 

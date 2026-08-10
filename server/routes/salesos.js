@@ -2638,13 +2638,15 @@ router.get('/sales-tasks', async (req, res) => {
       JOIN leads l ON st.lead_id = l.id
       LEFT JOIN clients c ON c.id = l.client_id
       LEFT JOIN users u ON u.id = l.assigned_to
-      WHERE st.status <> 'completed'
-        AND COALESCE(l.sales_followup_stopped, FALSE) = FALSE
-        AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
-        AND (
-          (st.task_type = 'call' AND l.call_booked_at IS NOT NULL AND LOWER(COALESCE(l.status, '')) = 'booked')
-          OR (st.task_type = 'hot_lead' AND LOWER(COALESCE(l.status, '')) = 'hot')
-          OR (st.task_type IN ('followup', 'overdue') AND l.next_followup_due IS NOT NULL AND LOWER(COALESCE(l.status, '')) NOT IN ('converted', 'booked', 'lost', 'opt-out'))
+      WHERE st.status = 'completed'
+        OR (
+          COALESCE(l.sales_followup_stopped, FALSE) = FALSE
+          AND LOWER(COALESCE(l.sales_status, 'new')) NOT IN ('converted', 'closed', 'not_interested')
+          AND (
+            (st.task_type = 'call' AND l.call_booked_at IS NOT NULL AND LOWER(COALESCE(l.status, '')) = 'booked')
+            OR (st.task_type = 'hot_lead' AND LOWER(COALESCE(l.status, '')) = 'hot')
+            OR (st.task_type IN ('followup', 'overdue') AND l.next_followup_due IS NOT NULL AND LOWER(COALESCE(l.status, '')) NOT IN ('converted', 'booked', 'lost', 'opt-out'))
+          )
         )
       ORDER BY st.created_at DESC, st.id DESC
     `);
@@ -2657,10 +2659,15 @@ router.get('/sales-tasks', async (req, res) => {
 router.put('/sales-tasks/:id/status', async (req, res) => {
   try {
     await salesTasksReady;
-    const { status } = req.body;
+    const status = String(req.body.status || '').toLowerCase();
+    if (!['pending', 'processing', 'completed'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid task status' });
+    }
     let query = `UPDATE sales_tasks SET status = $1, updated_at = NOW()`;
     if (status === 'completed') {
       query += `, completed_at = NOW()`;
+    } else {
+      query += `, completed_at = NULL`;
     }
     query += ` WHERE id = $2 RETURNING *`;
     const result = await pool.query(query, [status, req.params.id]);
@@ -2747,6 +2754,39 @@ Return only JSON: {"stop_followups":boolean,"followup_at":string|null}. Set stop
     await emitSalesTaskUpdate(req, 'note_added', { lead_id: Number(req.params.leadId), note: noteResult.rows[0], ...leadResult.rows[0] });
     res.json({ success: true, note: noteResult.rows[0], lead: leadResult.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/sales-tasks/bulk-delete', async (req, res) => {
+  try {
+    await salesTasksReady;
+    const ids = Array.isArray(req.body.ids)
+      ? [...new Set(req.body.ids.map(Number).filter(Number.isInteger))]
+      : [];
+    const from = String(req.body.from || '');
+    const to = String(req.body.to || '');
+    const validDate = /^\d{4}-\d{2}-\d{2}$/;
+    let result;
+
+    if (ids.length) {
+      result = await pool.query(
+        `DELETE FROM sales_tasks WHERE id = ANY($1::int[]) RETURNING id, lead_id, task_type`,
+        [ids]
+      );
+    } else {
+      if (!validDate.test(from) || !validDate.test(to) || from > to) {
+        return res.status(400).json({ error: 'A valid inclusive from/to date range is required' });
+      }
+      result = await pool.query(
+        `DELETE FROM sales_tasks WHERE created_at::date BETWEEN $1::date AND $2::date RETURNING id, lead_id, task_type`,
+        [from, to]
+      );
+    }
+
+    for (const task of result.rows) await emitSalesTaskUpdate(req, 'deleted', task);
+    res.json({ success: true, deletedCount: result.rowCount, deletedIds: result.rows.map(task => task.id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.delete('/sales-tasks/:id', async (req, res) => {

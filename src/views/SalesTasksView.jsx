@@ -18,6 +18,11 @@ export const SalesTasksView = () => {
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [selectedTaskIds, setSelectedTaskIds] = useState([]);
+  const [bulkDeleteMode, setBulkDeleteMode] = useState(null);
   const [calendarStatus, setCalendarStatus] = useState(null);
   const tasksPerPage = 10;
 
@@ -38,6 +43,7 @@ export const SalesTasksView = () => {
       const res = await api.get('/sales-tasks');
       if (res.success) {
         setTasks(res.tasks || []);
+        setSelectedTaskIds(current => current.filter(id => (res.tasks || []).some(task => task.id === id)));
       }
     } catch (err) {
       console.error('Error fetching tasks:', err);
@@ -64,9 +70,7 @@ export const SalesTasksView = () => {
     try {
       const res = await api.put(`/sales-tasks/${id}/status`, { status });
       if (res.success) {
-        setTasks(current => status === 'completed'
-          ? current.filter(t => t.id !== id)
-          : current.map(t => t.id === id ? { ...t, status: res.task.status } : t));
+        setTasks(current => current.map(t => t.id === id ? { ...t, ...res.task } : t));
         toast.success(`Task marked as ${status}`);
       }
     } catch (err) {
@@ -82,12 +86,38 @@ export const SalesTasksView = () => {
       const res = await api.delete(`/sales-tasks/${deleteConfirmId}`);
       if (res.success) {
         setTasks(tasks.filter(t => t.id !== deleteConfirmId));
+        setCurrentPage(1);
         toast.success('Task deleted successfully');
         setDeleteConfirmId(null);
       }
     } catch (err) {
       console.error('Error deleting task:', err);
       toast.error('Failed to delete task');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const executeBulkDelete = async () => {
+    const deletingBySelection = bulkDeleteMode === 'selected';
+    if (deletingBySelection && selectedTaskIds.length === 0) return;
+    if (!deletingBySelection && (!dateFrom || !dateTo || dateFrom > dateTo)) {
+      return toast.error('Choose a valid from and to date');
+    }
+    setIsDeleting(true);
+    try {
+      const body = deletingBySelection ? { ids: selectedTaskIds } : { from: dateFrom, to: dateTo };
+      const res = await api.post('/sales-tasks/bulk-delete', body);
+      if (res.success) {
+        const deletedIds = new Set(res.deletedIds || []);
+        setTasks(current => current.filter(task => !deletedIds.has(task.id)));
+        setCurrentPage(1);
+        setSelectedTaskIds([]);
+        setBulkDeleteMode(null);
+        toast.success(`${res.deletedCount} task${res.deletedCount === 1 ? '' : 's'} deleted`);
+      }
+    } catch (err) {
+      toast.error('Failed to delete tasks: ' + err.message);
     } finally {
       setIsDeleting(false);
     }
@@ -144,11 +174,23 @@ export const SalesTasksView = () => {
   const normalizedSearch = search.trim().toLowerCase();
   const searchDigits = search.replace(/\D/g, '');
   const filteredTasks = tasks.filter(task => {
+    if (statusFilter !== 'all' && task.status !== statusFilter) return false;
     if (!normalizedSearch) return true;
     const nameMatches = String(task.name || '').toLowerCase().includes(normalizedSearch);
     const phoneDigits = String(task.phone || '').replace(/\D/g, '');
     return nameMatches || Boolean(searchDigits && phoneDigits.includes(searchDigits));
   });
+  const indexOfLastTask = currentPage * tasksPerPage;
+  const currentTasks = filteredTasks.slice(indexOfLastTask - tasksPerPage, indexOfLastTask);
+  const currentTaskIds = currentTasks.map(task => task.id);
+  const allCurrentSelected = currentTaskIds.length > 0 && currentTaskIds.every(id => selectedTaskIds.includes(id));
+  const dateRangeMatchCount = dateFrom && dateTo && dateFrom <= dateTo
+    ? tasks.filter(task => {
+        const date = new Date(task.created_at);
+        const localDate = Number.isNaN(date.getTime()) ? '' : [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+        return localDate >= dateFrom && localDate <= dateTo;
+      }).length
+    : 0;
 
   return (
     <div className="p-mobile" style={{ padding: 26, overflowY: 'auto', height: '100%', background: C.bg, position: 'relative' }}>
@@ -225,6 +267,32 @@ export const SalesTasksView = () => {
         <div><strong style={{ color: '#f59e0b', fontSize: 11 }}>⚠ Overdue</strong><p style={{ color: C.muted, fontSize: 10, marginTop: 3 }}>The scheduled follow-up time has passed and still needs action.</p></div>
       </div>
 
+      <div style={{ marginBottom: 12, padding: 12, border: `1px solid ${C.border}`, background: C.surface, borderRadius: 8, display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
+        <label style={{ display: 'grid', gap: 5, color: C.muted, fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>
+          Task status
+          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setCurrentPage(1); }} style={{ minWidth: 140, height: 34, background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 7, padding: '0 9px', fontSize: 11 }}>
+            <option value="all">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="processing">Processing</option>
+            <option value="completed">Completed</option>
+          </select>
+        </label>
+        <label style={{ display: 'grid', gap: 5, color: C.muted, fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>
+          From date
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ height: 32, colorScheme: 'dark', background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 7, padding: '0 9px', fontSize: 11 }} />
+        </label>
+        <label style={{ display: 'grid', gap: 5, color: C.muted, fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>
+          To date
+          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} style={{ height: 32, colorScheme: 'dark', background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 7, padding: '0 9px', fontSize: 11 }} />
+        </label>
+        <button disabled={!dateFrom || !dateTo || dateFrom > dateTo || dateRangeMatchCount === 0} onClick={() => setBulkDeleteMode('date')} style={{ height: 34, background: 'transparent', border: `1px solid ${C.red}`, color: C.red, borderRadius: 7, padding: '0 11px', cursor: dateRangeMatchCount ? 'pointer' : 'not-allowed', opacity: dateRangeMatchCount ? 1 : .45, display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700 }}>
+          <Trash2 size={13} /> Delete date range ({dateRangeMatchCount})
+        </button>
+        <button disabled={selectedTaskIds.length === 0} onClick={() => setBulkDeleteMode('selected')} style={{ height: 34, marginLeft: 'auto', background: selectedTaskIds.length ? C.red : 'transparent', border: `1px solid ${selectedTaskIds.length ? C.red : C.border}`, color: selectedTaskIds.length ? '#fff' : C.muted, borderRadius: 7, padding: '0 11px', cursor: selectedTaskIds.length ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, fontWeight: 700 }}>
+          <Trash2 size={13} /> Delete selected ({selectedTaskIds.length})
+        </button>
+      </div>
+
       {/* --- TASKS TABLE --- */}
       <div className="table-responsive" style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 14, overflow: 'hidden' }}>
         {loading && tasks.length === 0 ? (
@@ -238,7 +306,10 @@ export const SalesTasksView = () => {
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid ' + C.border }}>
-                {['Lead', 'Contact', 'Lead Status', 'Task Type', 'Task Status', 'Notes', 'Details'].map((h) => (
+                <th style={{ width: 36, padding: '12px 8px 12px 14px' }}>
+                  <input type="checkbox" aria-label="Select tasks on this page" checked={allCurrentSelected} onChange={() => setSelectedTaskIds(current => allCurrentSelected ? current.filter(id => !currentTaskIds.includes(id)) : [...new Set([...current, ...currentTaskIds])])} />
+                </th>
+                {['Lead', 'Contact', 'Lead Status', 'Task Type', 'Task Date', 'Task Status', 'Notes', 'Details'].map((h) => (
                   <th key={h} style={{ padding: '12px 16px', fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8 }}>
                     {h}
                   </th>
@@ -247,9 +318,6 @@ export const SalesTasksView = () => {
             </thead>
             <tbody>
               {(() => {
-                const indexOfLastTask = currentPage * tasksPerPage;
-                const indexOfFirstTask = indexOfLastTask - tasksPerPage;
-                const currentTasks = filteredTasks.slice(indexOfFirstTask, indexOfLastTask);
                 return currentTasks.map((task, idx) => {
                   const styles = getStatusStyles(task.status);
                   const isExpanded = expandedTaskId === task.id;
@@ -263,6 +331,9 @@ export const SalesTasksView = () => {
                       cursor: 'pointer',
                     }}
                   >
+                    <td onClick={e => e.stopPropagation()} style={{ padding: '14px 8px 14px 14px' }}>
+                      <input type="checkbox" aria-label={`Select ${task.name || 'task'}`} checked={selectedTaskIds.includes(task.id)} onChange={() => setSelectedTaskIds(current => current.includes(task.id) ? current.filter(id => id !== task.id) : [...current, task.id])} />
+                    </td>
                     {/* Lead Detail */}
                     <td style={{ padding: '14px 16px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -308,6 +379,10 @@ export const SalesTasksView = () => {
                       }}>
                         {formatTaskType(task.task_type)}
                       </span>
+                    </td>
+
+                    <td style={{ padding: '14px 16px', color: C.muted, fontSize: 10, whiteSpace: 'nowrap' }}>
+                      {formatDateTime(task.created_at)}
                     </td>
 
                     {/* Status Action & Delete */}
@@ -373,7 +448,7 @@ export const SalesTasksView = () => {
                   </tr>
                   {isExpanded && (
                     <tr style={{ background: 'rgba(255,255,255,0.018)', borderBottom: `1px solid ${C.border}` }}>
-                      <td colSpan={7} style={{ padding: '0 16px 16px' }}>
+                      <td colSpan={9} style={{ padding: '0 16px 16px' }}>
                         <div onClick={e => e.stopPropagation()} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))', gap: 12, padding: 16, borderRadius: 10, background: C.surface, border: `1px solid ${C.border}` }}>
                           {[
                             ['Brand', task.brand_name || '—'],
@@ -445,6 +520,27 @@ export const SalesTasksView = () => {
             <textarea autoFocus value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Example: Customer requested a callback tomorrow at 5 PM." rows={5} style={{ width: '100%', marginTop: 14, resize: 'vertical', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 9, color: C.text, padding: 12, fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
             <p style={{ color: C.dim, fontSize: 9, lineHeight: 1.5, marginTop: 7 }}>AI evaluates this note before future messages. “Already enrolled”, “Not interested”, or “Do not contact” stops automation. A future callback time reschedules it.</p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 15 }}><button onClick={() => setNotesTask(null)} disabled={savingNote} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, padding: '8px 14px', borderRadius: 8, cursor: 'pointer' }}>Cancel</button><button onClick={saveNote} disabled={savingNote} style={{ background: C.accent, border: 0, color: '#fff', padding: '8px 16px', borderRadius: 8, fontWeight: 700, cursor: savingNote ? 'wait' : 'pointer' }}>{savingNote ? 'Analyzing & Saving...' : 'Save Note'}</button></div>
+          </div>
+        </div>
+      )}
+
+      {bulkDeleteMode && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, width: '100%', maxWidth: 420, boxShadow: '0 20px 40px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: `1px solid ${C.border}`, background: C.card }}>
+              <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: C.text, display: 'flex', alignItems: 'center', gap: 8 }}><AlertTriangle size={16} color={C.red} />Delete Multiple Tasks</h3>
+              <button onClick={() => setBulkDeleteMode(null)} disabled={isDeleting} title="Close" style={{ background: 'transparent', border: 0, cursor: 'pointer', color: C.muted }}><X size={16} /></button>
+            </div>
+            <div style={{ padding: '22px 20px', color: C.muted, fontSize: 12, lineHeight: 1.6 }}>
+              {bulkDeleteMode === 'selected'
+                ? `Permanently delete ${selectedTaskIds.length} selected task${selectedTaskIds.length === 1 ? '' : 's'}?`
+                : `Permanently delete ${dateRangeMatchCount} task${dateRangeMatchCount === 1 ? '' : 's'} created from ${dateFrom} through ${dateTo}?`}
+              <p style={{ margin: '8px 0 0', color: C.red, fontSize: 10 }}>This action cannot be undone.</p>
+            </div>
+            <div style={{ padding: '14px 20px', background: C.card, borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button onClick={() => setBulkDeleteMode(null)} disabled={isDeleting} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, padding: '8px 14px', borderRadius: 7, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={executeBulkDelete} disabled={isDeleting} style={{ background: C.red, border: 0, color: '#fff', padding: '8px 14px', borderRadius: 7, fontWeight: 700, cursor: isDeleting ? 'wait' : 'pointer', opacity: isDeleting ? .7 : 1 }}>{isDeleting ? 'Deleting...' : 'Delete Tasks'}</button>
+            </div>
           </div>
         </div>
       )}

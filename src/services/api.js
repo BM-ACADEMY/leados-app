@@ -120,6 +120,8 @@ class LeadOSAPI {
       ...(filters.brand && { brand: filters.brand }),
       ...(filters.search && { search: filters.search }),
       ...(filters.source && { source: filters.source }),
+      ...(filters.campaignName && { campaign_name: filters.campaignName }),
+      ...(filters.adName && { ad_name: filters.adName }),
       ...(filters.from && { from: filters.from }),
       ...(filters.to && { to: filters.to }),
     });

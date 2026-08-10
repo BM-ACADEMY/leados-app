@@ -1977,9 +1977,25 @@ cron.schedule('17 */6 * * *', async () => {
 });
 
 // GET /api/leads
+app.get('/api/leads/facebook-filter-options', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT DISTINCT campaign_name, ad_name
+      FROM leads
+      WHERE LOWER(TRIM(COALESCE(source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'
+        AND (NULLIF(TRIM(campaign_name), '') IS NOT NULL OR NULLIF(TRIM(ad_name), '') IS NOT NULL)
+      ORDER BY campaign_name NULLS LAST, ad_name NULLS LAST
+    `);
+    res.json({ options: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.get('/api/leads', auth, async (req, res) => {
   try {
-    const { status, brand, search, source, from, to, limit = 100, offset = 0 } = req.query;
+    const { status, brand, search, source, campaign_name, ad_name, from, to, limit = 100, offset = 0 } = req.query;
     let q = `
       SELECT l.*, COUNT(*) OVER() AS filtered_total, c.name as brand_name, u.name as assigned_name,
         COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id), 0) as unread,
@@ -2035,6 +2051,16 @@ app.get('/api/leads', auth, async (req, res) => {
         params.push(source);
         q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) = LOWER(TRIM($${params.length}))`;
       }
+    }
+    if (campaign_name) {
+      params.push(campaign_name);
+      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'`;
+      q += ` AND l.campaign_name = $${params.length}`;
+    }
+    if (ad_name) {
+      params.push(ad_name);
+      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'`;
+      q += ` AND l.ad_name = $${params.length}`;
     }
     if (from) {
       const fromDate = new Date(from);

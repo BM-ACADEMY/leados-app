@@ -510,6 +510,9 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState('all');
+  const [campaignFilter, setCampaignFilter] = useState('');
+  const [adFilter, setAdFilter] = useState('');
+  const [facebookFilterOptions, setFacebookFilterOptions] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [syncingFB, setSyncingFB] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -521,6 +524,8 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
     status: filter !== 'all' ? filter : undefined,
     search,
     source: sourceFilter !== 'all' ? sourceFilter : undefined,
+    campaignName: campaignFilter || undefined,
+    adName: adFilter || undefined,
     limit: itemsPerPage,
     offset: (currentPage - 1) * itemsPerPage
   });
@@ -537,7 +542,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filter, search, sourceFilter]);
+  }, [filter, search, sourceFilter, campaignFilter, adFilter]);
 
   const totalPages = Math.ceil((total || 0) / itemsPerPage);
 
@@ -554,7 +559,14 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
     api.getClients().then(d => setModalClients(Array.from(new Map((d.clients || []).map(c => [c.id, c])).values()))).catch(() => { });
     api.getUsers().then(d => setModalUsers(Array.from(new Map((d.users || []).map(u => [u.id, u])).values()))).catch(() => { });
     api.getSources().then(d => setModalSources([...new Set(d.sources || [])])).catch(() => { });
+    api.get('/leads/facebook-filter-options').then(d => setFacebookFilterOptions(d.options || [])).catch(() => { });
   }, []);
+
+  const campaignNames = [...new Set(facebookFilterOptions.map(option => option.campaign_name).filter(Boolean))];
+  const adNames = [...new Set(facebookFilterOptions
+    .filter(option => !campaignFilter || option.campaign_name === campaignFilter)
+    .map(option => option.ad_name)
+    .filter(Boolean))];
 
   const handleExport = async ({ mode, source, from, to }) => {
     setExporting(true);
@@ -731,17 +743,31 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
             </button>
           ))}
         </div>
-        <div className="w-full-mobile" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        <div className="w-full-mobile" style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36, flex: 1 }}>
             <Search size={12} color={C.muted} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or phone..." style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', width: '100%' }} />
           </div>
           <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36, display: 'flex', alignItems: 'center' }}>
-            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', cursor: 'pointer', textTransform: 'capitalize' }}>
+            <select value={sourceFilter} onChange={(e) => { const source = e.target.value; setSourceFilter(source); if (source !== 'facebook') { setCampaignFilter(''); setAdFilter(''); } }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', cursor: 'pointer', textTransform: 'capitalize' }}>
               <option value="all" style={{ background: C.card, color: C.text }}>All Sources</option>
               {SOURCE_FILTERS.map(source => (
                 <option key={source.value} value={source.value} style={{ background: C.card, color: C.text }}>{source.label}</option>
               ))}
+            </select>
+          </div>
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 190 }}>
+            <select aria-label="Campaign Name" value={campaignFilter} onChange={(e) => { setCampaignFilter(e.target.value); setAdFilter(''); if (e.target.value) setSourceFilter('facebook'); }} style={{ width: '100%', background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', cursor: 'pointer' }}>
+              <option value="" style={{ background: C.card, color: C.text }}>All Facebook Campaigns</option>
+              {campaignNames.length === 0 && <option disabled style={{ background: C.card, color: C.muted }}>No campaign names found</option>}
+              {campaignNames.map(name => <option key={name} value={name} style={{ background: C.card, color: C.text }}>{name}</option>)}
+            </select>
+          </div>
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 170 }}>
+            <select aria-label="Ad Name" value={adFilter} onChange={(e) => { setAdFilter(e.target.value); if (e.target.value) setSourceFilter('facebook'); }} style={{ width: '100%', background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', cursor: 'pointer' }}>
+              <option value="" style={{ background: C.card, color: C.text }}>All Facebook Ads</option>
+              {adNames.length === 0 && <option disabled style={{ background: C.card, color: C.muted }}>No ad names found</option>}
+              {adNames.map(name => <option key={name} value={name} style={{ background: C.card, color: C.text }}>{name}</option>)}
             </select>
           </div>
         </div>
@@ -781,6 +807,9 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
                         >
                           <Info size={12} />
                         </button>
+                      )}
+                      {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.campaign_name && (
+                        <span title={l.campaign_name} style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.muted, fontSize: 9 }}>({l.campaign_name})</span>
                       )}
                     </div>
                   </div>

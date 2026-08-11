@@ -193,7 +193,7 @@ function createAllianceInboxRouter({ auth, io }) {
             if (updated.rowCount) io.emit('alliance_message_status', { wa_message_id: statusEvent.id, status: statusEvent.status });
             await db.query(
               `UPDATE alliance_whatsapp_campaign_recipients SET status=$1
-               WHERE wa_msg_id=$2 AND status IN ('sent','delivered','read')`,
+               WHERE wa_msg_id=$2 AND status IN ('sent','delivered','read','failed')`,
               [statusEvent.status, statusEvent.id]
             ).catch(() => {});
           }

@@ -696,6 +696,10 @@ class LeadOSAPI {
     return this.request(`/api/alliance/whatsapp-campaigns/${id}/stop`, { method: 'POST' });
   }
 
+  async deleteAllianceWhatsAppCampaign(id) {
+    return this.request(`/api/alliance/whatsapp-campaigns/${id}`, { method: 'DELETE' });
+  }
+
   async sendAllianceEmailReply(id, body) {
     return this.request(`/api/alliance/replies/${id}/send`, {
       method: 'POST',

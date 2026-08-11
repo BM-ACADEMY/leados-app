@@ -8,6 +8,7 @@ import {
   Search,
   Send,
   ShieldCheck,
+  Trash2,
   Users,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -38,6 +39,7 @@ export const WhatsAppCampaignBuilder = () => {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [busy, setBusy] = useState("");
+  const [deletingCampaign, setDeletingCampaign] = useState(null);
   const limit = 10;
   useEffect(() => {
     Promise.all([
@@ -212,6 +214,20 @@ export const WhatsAppCampaignBuilder = () => {
     }
   };
   const pages = Math.max(1, Math.ceil(total / limit));
+  const deleteCampaign = async () => {
+    if (!deletingCampaign) return;
+    setBusy(`delete-${deletingCampaign.id}`);
+    try {
+      const result = await api.deleteAllianceWhatsAppCampaign(deletingCampaign.id);
+      setCampaigns((current) => current.filter((item) => item.id !== deletingCampaign.id));
+      setDeletingCampaign(null);
+      toast.success(result.message);
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setBusy("");
+    }
+  };
   return (
     <div className="al-wrap al-wa-builder">
       <div className="al-eyebrow">AllianceOS · WhatsApp bulk messaging</div>
@@ -586,9 +602,33 @@ export const WhatsAppCampaignBuilder = () => {
                 </small>
                 {item.latest_error && <small className="al-wa-campaign-error">{item.latest_error}</small>}
               </span>
+              <button
+                type="button"
+                className="al-wa-delete"
+                title="Delete campaign"
+                aria-label={`Delete ${item.name}`}
+                onClick={() => setDeletingCampaign(item)}
+              >
+                <Trash2 size={15} />
+              </button>
             </div>
           ))}
         </section>
+      )}
+      {deletingCampaign && (
+        <div className="al-wa-modal-backdrop" role="presentation" onMouseDown={() => setDeletingCampaign(null)}>
+          <div className="al-wa-modal" role="dialog" aria-modal="true" aria-labelledby="delete-wa-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="al-wa-modal-icon"><Trash2 size={20} /></div>
+            <h2 id="delete-wa-title">Delete WhatsApp campaign?</h2>
+            <p><b>{deletingCampaign.name}</b> and its campaign recipient/follow-up records will be removed. Messages already stored in the Alliance Inbox will remain available.</p>
+            <footer>
+              <button className="al-btn ghost" onClick={() => setDeletingCampaign(null)}>Cancel</button>
+              <button className="al-btn al-wa-confirm-delete" disabled={busy === `delete-${deletingCampaign.id}`} onClick={deleteCampaign}>
+                {busy === `delete-${deletingCampaign.id}` ? "Deleting…" : "Delete campaign"}
+              </button>
+            </footer>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -47,12 +47,45 @@ async function storeInboxMessage(job, waMessageId, rendered) {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    const contact = await client.query(
-      `INSERT INTO alliance_inbox_contacts (wa_id,phone,name,source,prospect_id,custom_fields)
-       VALUES ($1,$1,$2,'alliance_bulk',$3,jsonb_build_object('business_name',$4::text))
-       ON CONFLICT (wa_id) DO UPDATE SET prospect_id=COALESCE(alliance_inbox_contacts.prospect_id,EXCLUDED.prospect_id),updated_at=NOW() RETURNING id`,
-      [job.phone,job.name || job.business_name,job.prospect_id,job.business_name]
+    let contact = await client.query(
+      `SELECT id FROM alliance_inbox_contacts
+       WHERE prospect_id=$1
+       ORDER BY id LIMIT 1 FOR UPDATE`,
+      [job.prospect_id]
     );
+    if (!contact.rowCount) {
+      contact = await client.query(
+        `SELECT id FROM alliance_inbox_contacts
+         WHERE wa_id=$1 OR phone=$1
+         ORDER BY id LIMIT 1 FOR UPDATE`,
+        [job.phone]
+      );
+    }
+    if (contact.rowCount) {
+      contact = await client.query(
+        `UPDATE alliance_inbox_contacts c
+         SET name=COALESCE($2,c.name),
+             prospect_id=COALESCE(c.prospect_id,$3),
+             phone=CASE WHEN NOT EXISTS (
+               SELECT 1 FROM alliance_inbox_contacts other WHERE other.id<>c.id AND other.phone=$1
+             ) THEN $1 ELSE c.phone END,
+             wa_id=CASE WHEN NOT EXISTS (
+               SELECT 1 FROM alliance_inbox_contacts other WHERE other.id<>c.id AND other.wa_id=$1
+             ) THEN $1 ELSE c.wa_id END,
+             source='alliance_bulk',
+             custom_fields=COALESCE(c.custom_fields,'{}'::jsonb) || jsonb_build_object('business_name',$4::text),
+             updated_at=NOW()
+         WHERE c.id=$5 RETURNING id`,
+        [job.phone,job.name || job.business_name,job.prospect_id,job.business_name,contact.rows[0].id]
+      );
+    } else {
+      contact = await client.query(
+        `INSERT INTO alliance_inbox_contacts (wa_id,phone,name,source,prospect_id,custom_fields)
+         VALUES ($1,$1,$2,'alliance_bulk',$3,jsonb_build_object('business_name',$4::text))
+         RETURNING id`,
+        [job.phone,job.name || job.business_name,job.prospect_id,job.business_name]
+      );
+    }
     const conversation = await client.query(
       `INSERT INTO alliance_inbox_conversations (contact_id,phone_number_id,last_message,last_message_at)
        VALUES ($1,$2,$3,NOW()) ON CONFLICT (contact_id) DO UPDATE SET last_message=EXCLUDED.last_message,last_message_at=NOW(),updated_at=NOW() RETURNING id`,
@@ -72,6 +105,7 @@ async function storeInboxMessage(job, waMessageId, rendered) {
 }
 
 async function sendRecipient(job, io) {
+  let waMessageId = null;
   try {
     const token = tokenFor(job);
     if (!token || !job.phone_number_id) throw new Error('Alliance WhatsApp credentials are not configured.');
@@ -79,7 +113,7 @@ async function sendRecipient(job, io) {
     const parameters = mapping.map((field) => valueFor(field,job));
     const payload = { messaging_product:'whatsapp',recipient_type:'individual',to:job.phone,type:'template',template:{ name:job.template_name,language:{code:job.template_language || 'en'},...(parameters.length?{components:[{type:'body',parameters:parameters.map((text)=>({type:'text',text}))}]}:{}) } };
     const response = await axios.post(`https://graph.facebook.com/v19.0/${job.phone_number_id}/messages`,payload,{headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},timeout:20000});
-    const waMessageId = response.data?.messages?.[0]?.id || null;
+    waMessageId = response.data?.messages?.[0]?.id || null;
     await db.query(`UPDATE alliance_whatsapp_campaign_recipients SET status='sent',wa_msg_id=$1,sent_at=NOW() WHERE id=$2`,[waMessageId,job.id]);
     const rendered = mapping.reduce((body,field,index)=>body.replaceAll(`{{${index+1}}}`,valueFor(field,job)),job.template_body);
     const inbox = await storeInboxMessage(job,waMessageId,rendered);
@@ -91,7 +125,11 @@ async function sendRecipient(job, io) {
     if(inbox.message) io?.emit('alliance_outgoing_message',{lead_id:String(inbox.contactId),message:{...inbox.message,type:inbox.message.msg_type,timestamp:inbox.message.sent_at}});
   } catch (error) {
     const reason=error.response?.data?.error?.message||error.message||'WhatsApp send failed.';
-    await db.query(`UPDATE alliance_whatsapp_campaign_recipients SET status='failed',error_message=$1 WHERE id=$2`,[String(reason).slice(0,2000),job.id]);
+    await db.query(
+      `UPDATE alliance_whatsapp_campaign_recipients
+       SET status=$1,error_message=$2 WHERE id=$3`,
+      [waMessageId ? 'sent' : 'failed', String(waMessageId ? `Meta accepted the message, but Inbox logging failed: ${reason}` : reason).slice(0,2000), job.id]
+    );
   }
   await db.query(
     `UPDATE alliance_whatsapp_campaigns c SET status='completed',completed_at=NOW(),updated_at=NOW()

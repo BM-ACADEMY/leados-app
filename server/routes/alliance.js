@@ -1405,4 +1405,14 @@ router.post('/whatsapp-campaigns/test',async(req,res)=>{
 
 router.post('/whatsapp-campaigns/:id/stop',async(req,res)=>{try{await db.query(`UPDATE alliance_whatsapp_campaigns SET status='stopped',completed_at=NOW(),updated_at=NOW() WHERE id=$1 AND status IN ('scheduled','running','paused','completed')`,[req.params.id]);await db.query(`UPDATE alliance_whatsapp_campaign_recipients SET status='cancelled',error_message='Campaign stopped by user.' WHERE campaign_id=$1 AND status='queued'`,[req.params.id]);await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='cancelled',error_message='Campaign stopped by user.' WHERE campaign_id=$1 AND status IN ('pending','claimed')`,[req.params.id]);res.json({success:true,message:'WhatsApp campaign and reminders stopped.'});}catch(error){res.status(500).json({error:'Failed to stop campaign.'});}});
 
+router.delete('/whatsapp-campaigns/:id',async(req,res)=>{
+  try{
+    const campaign=await db.query(`SELECT id,name,status FROM alliance_whatsapp_campaigns WHERE id=$1`,[req.params.id]);
+    if(!campaign.rowCount)return res.status(404).json({error:'WhatsApp campaign not found.'});
+    if(['scheduled','running','paused'].includes(campaign.rows[0].status))return res.status(409).json({error:'Stop this campaign before deleting it.'});
+    await db.query(`DELETE FROM alliance_whatsapp_campaigns WHERE id=$1`,[req.params.id]);
+    res.json({success:true,message:'WhatsApp campaign deleted. Existing Alliance Inbox messages were preserved.'});
+  }catch(error){console.error('Alliance WhatsApp campaign delete failed:',error);res.status(500).json({error:'Failed to delete WhatsApp campaign.'});}
+});
+
 module.exports = router;

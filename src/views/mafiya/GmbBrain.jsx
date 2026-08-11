@@ -480,7 +480,7 @@ export default function GmbBrain() {
     { type: 'keyword', title: 'Hashtags', desc: 'Social tags', Icon: Sparkles, color: '#f59e0b' },
     { type: 'qa', title: 'Q&A Bank', desc: 'Questions + answers', Icon: HelpCircle, color: C.blue },
     { type: 'blacklist', title: 'Blacklist', desc: 'Never use words', Icon: ShieldAlert, color: C.red },
-    { type: 'seasonal', title: 'Seasonal', desc: 'Time-based focus', Icon: Calendar, color: C.pink }
+    { type: 'seasonal', title: 'Daily Poster', desc: 'Time-based focus', Icon: Calendar, color: C.pink }
     // { type: 'creative_brief', title: 'AI Creative Brief', desc: 'Poster visual styles & rules', Icon: Sparkles, color: C.accent }
   ];
 
@@ -738,7 +738,7 @@ export default function GmbBrain() {
                     <option value="keyword">Hashtags</option>
                     <option value="qa">Q&A Bank</option>
                     <option value="blacklist">Blacklist</option>
-                    <option value="seasonal">Seasonal</option>
+                    <option value="seasonal">Daily Poster</option>
                     {/* <option value="creative_brief">AI Creative Brief</option> */}
                   </select>
                 </div>
@@ -1164,7 +1164,7 @@ export default function GmbBrain() {
                       onClick={() => setSeasonalList([...seasonalList, { occasion: '', startDate: '', endDate: '', instructions: '' }])}
                       style={{ background: 'rgba(255,255,255,0.04)', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 8, padding: 8, color: '#fff', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
                     >
-                      + Add Seasonal Campaign
+                      + Add Daily Poster Campaign
                     </button>
                   </div>
                 )}

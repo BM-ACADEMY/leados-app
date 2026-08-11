@@ -838,7 +838,7 @@ export default function MafiyaOrders() {
               rawSuggestions.push({
                 rawTitle: `${seas.occasion || 'Seasonal Celebration'}`,
                 title: `${monthPrefix}${seas.occasion || 'Seasonal Celebration'}`,
-                type: 'Seasonal Post',
+                type: 'Daily Poster',
                 caption: `🎉 Celebrating ${seas.occasion || selectedMonthObj.monthName}! ${seas.instructions || `Discover our latest seasonal highlights at ${name}.`}\n\n📍 Location: ${city}\n\n${hashtags}`,
                 visual: `Festive event graphic for ${seas.occasion || selectedMonthObj.monthName} with brand logo overlay.`,
                 tone: `${toneVoice} alignment`,
@@ -856,7 +856,7 @@ export default function MafiyaOrders() {
       rawSuggestions.push({
         rawTitle: `${selectedMonthObj.monthShort} Customer Highlight & Trends`,
         title: `${monthPrefix}${selectedMonthObj.monthShort} Customer Highlight & Trends`,
-        type: 'Seasonal Post',
+        type: 'Daily Poster',
         caption: `✨ Celebrate ${selectedMonthObj.monthName} with ${name}!\n\nWe are committed to delivering the best ${category} experience in ${city}. Check out our latest client work and updates this week.\n\n${hashtags}`,
         visual: `High quality visual showcasing customer satisfaction and team highlights.`,
         tone: `${toneVoice} alignment`,

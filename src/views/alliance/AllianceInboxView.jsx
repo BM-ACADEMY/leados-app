@@ -1,3 +1,3 @@
-import { InboxView } from '../InboxView.jsx';
+import { InboxWorkspace } from '../InboxWorkspace.jsx';
 
-export const AllianceInboxView = () => <InboxView alliance />;
+export const AllianceInboxView = () => <InboxWorkspace mode="alliance" />;

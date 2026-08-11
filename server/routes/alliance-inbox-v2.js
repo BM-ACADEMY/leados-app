@@ -417,12 +417,60 @@ Directly answer the latest inbound message, stay professional and conversational
     );
     if (!contactResult.rowCount) return res.status(404).json({ error: 'Alliance contact not found.' });
     const contact = contactResult.rows[0];
-    if (!contact.last_inbound_at || Date.now() - new Date(contact.last_inbound_at).getTime() > 24 * 60 * 60 * 1000) {
-      return res.status(409).json({ error: 'The 24-hour WhatsApp service window is closed.', reason: 'window_closed' });
-    }
     const settings = await configuredPhoneId();
     const token = accessToken(settings);
     if (!settings?.phone_number_id || !token) return res.status(503).json({ error: 'Alliance WhatsApp Phone Number ID or access token is not configured.' });
+    if (!contact.last_inbound_at || Date.now() - new Date(contact.last_inbound_at).getTime() > 24 * 60 * 60 * 1000) {
+      try {
+        const recent = await db.query(
+          `SELECT id FROM alliance_inbox_messages
+           WHERE contact_id=$1 AND direction='outbound' AND msg_type='template'
+             AND raw_payload->>'purpose'='window_reopen'
+             AND sent_at>NOW()-INTERVAL '6 hours' LIMIT 1`,
+          [contact.id]
+        );
+        if (recent.rowCount) return res.json({
+          success: true, window_closed: true, template_sent: false,
+          message: 'The service window is closed. A reopen template was already sent recently; wait for the recipient to reply.',
+        });
+        const preferred = String(process.env.ALLIANCE_WA_REOPEN_TEMPLATE || 'common_welcome_message');
+        const templateResult = await db.query(
+          `SELECT id,name,language,body,status FROM templates
+           WHERE LOWER(status)='approved' AND name=ANY($1::text[])
+           ORDER BY CASE WHEN name=$2 THEN 0 WHEN name='common_welcome_message' THEN 1 ELSE 2 END`,
+          [[preferred,'common_welcome_message','new_lead_welcome'],preferred]
+        );
+        const reopenTemplate = templateResult.rows.find((item) => !/\{\{\d+\}\}/.test(String(item.body || '')));
+        if (!reopenTemplate) return res.status(409).json({
+          error: 'The 24-hour window is closed and no approved zero-variable reopen template is configured.',
+          reason: 'window_closed', template_sent: false,
+        });
+        const meta = await axios.post(`https://graph.facebook.com/v19.0/${settings.phone_number_id}/messages`, {
+          messaging_product: 'whatsapp', recipient_type: 'individual', to: contact.phone, type: 'template',
+          template: { name: reopenTemplate.name, language: { code: reopenTemplate.language || 'en' } },
+        }, { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 20000 });
+        const waMessageId = meta.data?.messages?.[0]?.id || null;
+        const saved = await db.query(
+          `INSERT INTO alliance_inbox_messages
+            (conversation_id,contact_id,wa_msg_id,direction,msg_type,content,status,raw_payload,sent_at)
+           VALUES($1,$2,$3,'outbound','template',$4,'sent',$5::jsonb,NOW()) RETURNING *`,
+          [contact.conversation_id,contact.id,waMessageId,reopenTemplate.body,JSON.stringify({ purpose:'window_reopen',template_name:reopenTemplate.name,attempted_message:String(req.body.message||'') })]
+        );
+        await db.query(`UPDATE alliance_inbox_conversations SET last_message=$1,last_message_at=NOW(),updated_at=NOW() WHERE id=$2`,[reopenTemplate.body,contact.conversation_id]);
+        const message = { ...saved.rows[0], type: 'template', timestamp: saved.rows[0].sent_at };
+        io.emit('alliance_outgoing_message',{lead_id:String(contact.id),message});
+        return res.json({
+          success: true, window_closed: true, template_sent: true, message,
+          notice: `Normal message was not sent. The approved ${reopenTemplate.name} template was sent; wait for the recipient to reply.`,
+        });
+      } catch (error) {
+        console.error('Alliance reopen template send failed:', error.response?.data || error.message);
+        return res.status(409).json({
+          error: error.response?.data?.error?.message || 'The 24-hour window is closed and the reopen template could not be sent.',
+          reason: 'window_closed', template_sent: false,
+        });
+      }
+    }
     const type = req.body.msgType || req.body.type || 'text';
     const content = String(req.body.message || req.body.content || '');
     const payload = { messaging_product: 'whatsapp', recipient_type: 'individual', to: contact.phone, type };

@@ -260,8 +260,15 @@ const BRAND_WEBSITES = {
 };
 const SHARED_GOOGLE_MAPS_URL = 'https://maps.app.goo.gl/Vc4GAwMjkawSgAyk8';
 
-const detectExplicitBrand = (message = '') =>
-  BRAND_KEYWORDS.find(({ pattern }) => pattern.test(message))?.name || null;
+// Service routing must run before the general brand list. BM Academy is often
+// the sticky brand and its course vocabulary may also appear in a business
+// owner's request, but these explicit phrases always belong to BM TechX.
+const TECHX_SERVICE_PATTERN = /\b(?:bm\s*techx|techx|google\s+(?:my\s+)?business(?:\s+profile)?|google\s+business\s+profile|gmb|marketing\s+(?:service|agency)|digital\s+marketing\s+(?:service|agency)|business\s+services?|run\s+(?:meta\s+|google\s+)?ads?|grow\s+(?:my\s+|our\s+)?business|business\s+marketing|website|branding\s+service|generate\s+leads?|lead\s+generation|seo\s+service|social\s+media\s+service)\b/i;
+
+const detectExplicitBrand = (message = '') => {
+  if (TECHX_SERVICE_PATTERN.test(message)) return 'BM TechX';
+  return BRAND_KEYWORDS.find(({ pattern }) => pattern.test(message))?.name || null;
+};
 
 const getLeadFirstName = (name) => {
   const cleanName = String(name || '').trim();
@@ -929,6 +936,7 @@ router.post('/ai/response', async (req, res) => {
     let brandAddress = '';
     let persistedBrand = brand || 'ABM Groups';
     let effectiveMessage = String(message || '').trim();
+    let isFirstLeadInteraction = false;
     if (lead_id) {
       const leadContext = await pool.query(
         `SELECT l.name, l.email, l.phone, c.name AS brand_name, c.wa_address AS brand_address
@@ -960,6 +968,21 @@ router.post('/ai/response', async (req, res) => {
         [lead_id]
       );
       const latestInbound = String(latestInboundRes.rows[0]?.content || '').trim();
+
+      // Keep the first LeadOS welcome deterministic and contact-aware. This
+      // prevents brand training or long form submissions from changing the
+      // opening message for each new lead.
+      const interactionCounts = await pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE m.direction = 'inbound')::int AS inbound_count,
+           COUNT(*) FILTER (WHERE m.direction = 'outbound')::int AS outbound_count
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.lead_id = $1`,
+        [lead_id]
+      );
+      isFirstLeadInteraction = Number(interactionCounts.rows[0]?.inbound_count || 0) === 1
+        && Number(interactionCounts.rows[0]?.outbound_count || 0) === 0;
       const requestIsGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(effectiveMessage);
       const latestIsGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(latestInbound);
       if (requestIsGreeting && latestInbound && !latestIsGreeting) {
@@ -1023,6 +1046,14 @@ router.post('/ai/response', async (req, res) => {
     const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(effectiveMessage);
     const wantsLocation = /\b(location|address|office address|google maps?|map link)\b/i.test(effectiveMessage);
     const wantsWebsite = /\b(website|official site|official website)\b/i.test(effectiveMessage);
+
+    if (isFirstLeadInteraction) {
+      const wave = '\u{1F44B}';
+      const ai_reply = firstName
+        ? `Hey ${firstName}! ${wave} How can I help you today?`
+        : `Hey! ${wave} How can I help you today?`;
+      return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
+    }
 
     if (wantsLocation) {
       const address = brandAddress || '252, 2nd Floor, MG Road, Kottakuppam, Vanur, Puducherry 605104';

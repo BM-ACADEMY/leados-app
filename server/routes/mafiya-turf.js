@@ -3,16 +3,7 @@ const router = express.Router();
 const axios = require('axios');
 const cheerio = require('cheerio');
 const pool = require('../db/connection');
-const { GoogleGenAI } = require('@google/genai');
-const { OpenAI } = require('openai');
-
-const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
-const apiKey = process.env.OPENAI_API_KEY || 'dummy_key';
-const isGroqKey = apiKey.startsWith('gsk_');
-const openai = new OpenAI({
-  apiKey: apiKey,
-  baseURL: isGroqKey ? 'https://api.groq.com/openai/v1' : undefined
-});
+const { generateContent, DEFAULT_MODEL } = require('../services/openrouter');
 
 // GET keywords for a GMB client
 router.get('/keywords', async (req, res) => {
@@ -253,7 +244,11 @@ router.post('/keywords/refresh/:id', async (req, res) => {
 
     const updated = await pool.query(
       `UPDATE mafiya_turf_keywords
-       SET previous_rank = current_rank, current_rank = $1, pack_status = $2, last_checked = NOW()
+       SET previous_rank = current_rank, 
+           current_rank = $1, 
+           pack_status = $2, 
+           initial_rank = CASE WHEN initial_rank = 100 THEN $1 ELSE initial_rank END,
+           last_checked = NOW()
        WHERE id = $3
        RETURNING *`,
       [newRank, packStatus, id]
@@ -372,15 +367,13 @@ router.get('/ai-suggestions', async (req, res) => {
       {"keyword": "digital marketing training ${targetLoc}", "volume": "~320/mo"}
     ]`;
 
-    const response = await openai.chat.completions.create({
-      model: isGroqKey ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini',
-      max_tokens: 600,
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }]
+    const response = await generateContent({
+      model: DEFAULT_MODEL,
+      contents: prompt,
+      config: { maxOutputTokens: 600, temperature: 0.3, responseMimeType: 'application/json' }
     });
 
-    let suggestions = JSON.parse(response.choices[0].message.content.trim());
+    let suggestions = JSON.parse(response.text.trim());
     if (!Array.isArray(suggestions)) {
       if (suggestions.keywords && Array.isArray(suggestions.keywords)) {
         suggestions = suggestions.keywords;

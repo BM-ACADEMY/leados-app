@@ -34,13 +34,23 @@ const convertContents = (contents) => {
   return contents.map((part) => {
     if (part?.text !== undefined) return { type: 'text', text: String(part.text) };
     if (part?.inlineData?.data) {
-      return {
-        type: 'input_audio',
-        input_audio: {
-          data: part.inlineData.data,
-          format: getAudioFormat(part.inlineData.mimeType),
-        },
-      };
+      const mime = part.inlineData.mimeType || '';
+      if (mime.startsWith('image/')) {
+        return {
+          type: 'image_url',
+          image_url: {
+            url: `data:${mime};base64,${part.inlineData.data}`
+          }
+        };
+      } else {
+        return {
+          type: 'input_audio',
+          input_audio: {
+            data: part.inlineData.data,
+            format: getAudioFormat(mime),
+          },
+        };
+      }
     }
     return { type: 'text', text: String(part || '') };
   });

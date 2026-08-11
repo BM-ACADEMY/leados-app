@@ -24,8 +24,6 @@ export default function KeywordTracking() {
   // Add Keyword Form / Modal States
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyword, setNewKeyword] = useState('');
-  const [initialRank, setInitialRank] = useState('1');
-  const [packStatus, setPackStatus] = useState('In Pack');
   const [targetLocation, setTargetLocation] = useState('Pondicherry');
   const [adding, setAdding] = useState(false);
   const [formError, setFormError] = useState('');
@@ -134,9 +132,7 @@ export default function KeywordTracking() {
       const token = localStorage.getItem('leados_token');
       const { data: saved } = await axios.post(`${API_URL}/api/mafiya/turf/keywords`, {
         client_id: activeClient.id,
-        keyword: newKeyword,
-        initial_rank: parseInt(initialRank, 10),
-        pack_status: packStatus
+        keyword: newKeyword
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -317,77 +313,6 @@ export default function KeywordTracking() {
         </div>
       </div>
 
-      {/* Website Performance & Speed Index (PageSpeed Insights) Card */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 24, marginBottom: 24 }}>
-        <h3 style={{ margin: '0 0 16px 0', fontSize: 14, fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-          ⚡ Website Performance & Speed Index (PageSpeed Insights)
-        </h3>
-        
-        {pagespeedLoading && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 500, padding: '10px 0' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: C.muted }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Loader2 size={15} className="spin" color={C.accent} />
-                Running Google PageSpeed audit...
-              </span>
-              <span style={{ fontWeight: 600 }}>Please wait...</span>
-            </div>
-            <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}` }}>
-              <div 
-                style={{ 
-                  height: '100%', 
-                  background: 'linear-gradient(90deg, #f97316, #ea580c)', 
-                  borderRadius: 10,
-                  animation: 'loadProgress 10s cubic-bezier(0.1, 0.8, 0.1, 1) forwards'
-                }} 
-              />
-            </div>
-          </div>
-        )}
-
-        {!pagespeedLoading && pagespeed && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 40 }} className="flex-col-mobile">
-            {/* Circular score */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div style={{ 
-                width: 58, 
-                height: 58, 
-                borderRadius: '50%', 
-                border: `4px solid ${pagespeed.performance >= 90 ? '#10b981' : pagespeed.performance >= 50 ? '#f59e0b' : '#ef4444'}33`, 
-                borderTopColor: pagespeed.performance >= 90 ? '#10b981' : pagespeed.performance >= 50 ? '#f59e0b' : '#ef4444',
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                fontWeight: 800, 
-                fontSize: 16,
-                color: pagespeed.performance >= 90 ? '#10b981' : pagespeed.performance >= 50 ? '#f59e0b' : '#ef4444'
-              }}>
-                {pagespeed.performance}
-              </div>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Lighthouse Performance</div>
-                <div style={{ fontSize: 11, color: C.muted }}>Mobile audit check</div>
-              </div>
-            </div>
-
-            {/* Metrics grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 30, flex: 1 }}>
-              <div>
-                <div style={{ fontSize: 11, color: C.muted }}>Speed Index</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: '#fff', marginTop: 4 }}>{pagespeed.speedIndex}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: C.muted }}>First Contentful Paint</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: '#fff', marginTop: 4 }}>{pagespeed.firstContentfulPaint}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: C.muted }}>Largest Contentful Paint</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: '#fff', marginTop: 4 }}>{pagespeed.largestContentfulPaint}</div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* STATS CARDS GRID */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, marginBottom: 24 }} className="flex-col-mobile">
@@ -523,29 +448,7 @@ export default function KeywordTracking() {
                 />
               </div>
 
-              {/* Initial Rank & Pack Status */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Initial Rank</label>
-                  <input
-                    type="number"
-                    value={initialRank}
-                    onChange={(e) => setInitialRank(e.target.value)}
-                    style={{ width: '100%', background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Pack Status</label>
-                  <select
-                    value={packStatus}
-                    onChange={(e) => setPackStatus(e.target.value)}
-                    style={{ width: '100%', background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none', cursor: 'pointer' }}
-                  >
-                    <option value="In Pack">In Pack</option>
-                    <option value="Not in Pack">Not in Pack</option>
-                  </select>
-                </div>
-              </div>
+              {/* Initial Rank & Pack Status UI Removed for auto-fetch */}
 
               {/* Target Location / City Field */}
               <div>

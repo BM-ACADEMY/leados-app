@@ -765,7 +765,7 @@ export default function AddClient() {
                 )}
 
                 <div style={{ marginTop: 14 }}>
-                  <label style={labelStyle}>Website URL</label>
+                  <label style={labelStyle}>Website URL <span style={{ textTransform: 'none', fontWeight: 400, color: C.muted }}> (Optional)</span></label>
                   <div style={{ ...inputWrapStyle, border: `1px solid ${C.border}` }}>
                     <Globe size={15} color={C.muted} />
                     <input name="website_url" value={formData.website_url} onChange={handleInputChange} placeholder="E.g. www.raahathdental.com" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />

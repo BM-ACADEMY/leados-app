@@ -4,6 +4,7 @@ const pool = require('../db/connection');
 const axios = require('axios');
 const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
+const { generateContent, DEFAULT_MODEL } = require('../services/openrouter');
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -388,6 +389,7 @@ router.get('/data', async (req, res) => {
           saveToCache(clientId, resData);
           res.json(resData);
           success = true;
+          return;
         } catch (fastErr) {
           console.warn('[Mafiya Reviews] Fast path fetch failed. Falling back to full account traversal...', fastErr.message);
         }
@@ -549,7 +551,9 @@ router.get('/data', async (req, res) => {
       if (realReviewsDfs && realReviewsDfs.length > 0) {
         saveToCache(clientId, resData);
       }
-      res.json(resData);
+      if (!res.headersSent) {
+        res.json(resData);
+      }
     } catch (error) {
       console.error('[Mafiya Reviews] Error fetching GBP data:', error.message);
 
@@ -573,11 +577,15 @@ router.get('/data', async (req, res) => {
         recentReviews: [],
         _debug_google_error: googleApiError || error.message
       };
-      res.json(resData);
+      if (!res.headersSent) {
+        res.json(resData);
+      }
     }
   } catch (err) {
     console.error('[Mafiya Reviews] GET /data error:', err);
-    res.status(500).json({ error: 'Server error' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Server error' });
+    }
   }
 });
 
@@ -607,7 +615,7 @@ router.post('/reply-review', async (req, res) => {
     console.error('[Mafiya Reviews] Failed to save reply / clear cache in DB:', dbErr.message);
   }
 
-  const accessToken = await getClientGoogleToken(clientId);
+  let accessToken = await getClientGoogleToken(clientId);
   if (accessToken) {
     try {
       if (typeof reviewId === 'string' && reviewId.startsWith('accounts/')) {
@@ -619,7 +627,24 @@ router.post('/reply-review', async (req, res) => {
         return res.json({ success: true, message: 'Reply posted to Google successfully via official API!' });
       }
     } catch (e) {
-      console.error('[Mafiya Reviews] Failed to post reply via Google API', e.response?.data || e.message);
+      if (e.response && e.response.status === 401) {
+        console.log('[Mafiya Reviews] Access token 401 expired during reply, attempting refresh...');
+        accessToken = await refreshClientToken(clientId);
+        if (accessToken) {
+          try {
+            await axios.put(`https://mybusiness.googleapis.com/v4/${reviewId}/reply`, {
+              comment: replyText
+            }, {
+              headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            return res.json({ success: true, message: 'Reply posted to Google successfully via official API!' });
+          } catch (retryErr) {
+            console.error('[Mafiya Reviews] Failed to post reply via Google API after refresh', retryErr.response?.data || retryErr.message);
+          }
+        }
+      } else {
+        console.error('[Mafiya Reviews] Failed to post reply via Google API', e.response?.data || e.message);
+      }
     }
   }
 
@@ -737,10 +762,10 @@ router.post('/generate-ai-reply', async (req, res) => {
     );
     const businessName = clientRes.rows[0]?.business_name || 'our company';
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
-      fs.appendFileSync(path.join(__dirname, '../debug_error.log'), `[${new Date().toISOString()}] Error: OPENAI_API_KEY is not configured on server.\n`);
-      return res.status(500).json({ error: 'OPENAI_API_KEY is not configured on server.' });
+      fs.appendFileSync(path.join(__dirname, '../debug_error.log'), `[${new Date().toISOString()}] Error: OPENROUTER_API_KEY is not configured on server.\n`);
+      return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured on server.' });
     }
 
     // Fetch and incorporate GMB Brain entries for this client
@@ -813,23 +838,13 @@ Guidelines:
 - If the reviewer has left a comment/feedback, briefly mention the specific thing they praised.
 - **IMPORTANT**: Generate ONLY the body paragraph(s) of the response. Do NOT start the text with the reviewer's name (e.g. do NOT start with "Aakash," or "[Name],"), and do NOT include any greetings (like "Dear...", "Hi...") or sign-offs (like "Warm Regards", "Best Regards", "Team...") as these will be automatically added by the template.`;
 
-    const chatRes = await axios.post(
-      'https://api.groq.com/openai/v1/chat/completions',
-      {
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'user', content: prompt }
-        ]
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    const response = await generateContent({
+      model: DEFAULT_MODEL,
+      contents: prompt,
+      config: { maxOutputTokens: 1000 }
+    });
 
-    const reply = chatRes.data?.choices?.[0]?.message?.content?.trim() ||
+    const reply = response.text?.trim() ||
                   `Thank you ${author} for your review! We appreciate your feedback.`;
 
     fs.appendFileSync(
@@ -887,8 +902,8 @@ router.post('/brain/polish', async (req, res) => {
   }
   
 
-  if (!process.env.GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+  if (!process.env.OPENROUTER_API_KEY) {
+    return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
   }
 
   const { checkLimit } = require('../utils/limit-checker');
@@ -913,7 +928,6 @@ router.post('/brain/polish', async (req, res) => {
       await pool.query('INSERT INTO mafiya_brain_ai_log (client_id) VALUES ($1)', [clientId]);
     }
 
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `You are an expert prompt engineer for Google My Business settings optimization.
 Optimize and refine the following user instruction under the category "${entryType}".
 Transform it into a clear, professional, and well-structured directive suitable for an LLM constraint.
@@ -923,19 +937,10 @@ User input: "${content}"
 
 Return ONLY the polished instruction. Do NOT wrap in quotes, do NOT add introductory text (like "Here is the polished instruction:"), and do NOT use markdown bolding. Keep it very short (1 to 2 sentences max).`;
 
-    let response;
-    try {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash',
-        contents: prompt
-      });
-    } catch (apiErr) {
-      console.warn('[Gemini 3.5-flash Unavailable, trying gemini-3.5-flash-lite]:', apiErr.message);
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
-        contents: prompt
-      });
-    }
+    const response = await generateContent({
+      model: DEFAULT_MODEL,
+      contents: prompt
+    });
 
     const polishedText = response.text?.trim() || content;
     res.json({ polishedText });
@@ -952,8 +957,8 @@ router.post('/brain/suggest-config', async (req, res) => {
     return res.status(400).json({ error: 'clientId and entryType are required' });
   }
 
-  if (!process.env.GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+  if (!process.env.OPENROUTER_API_KEY) {
+    return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
   }
 
   const { checkLimit } = require('../utils/limit-checker');
@@ -986,7 +991,6 @@ router.post('/brain/suggest-config', async (req, res) => {
     }
     const businessName = clientRes.rows[0].business_name;
 
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     let prompt = '';
     const hasCurrent = currentConfig && Object.keys(currentConfig).length > 0 && JSON.stringify(currentConfig) !== '{}' && (
       (Array.isArray(currentConfig) && currentConfig.length > 0) ||
@@ -1144,19 +1148,10 @@ Return ONLY a valid JSON object matching this structure (no markdown wrapper, no
 }`;
     }
 
-    let response;
-    try {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
-        contents: prompt
-      });
-    } catch (apiErr) {
-      console.warn('[Gemini Lite suggest failed, trying gemini-3.6-flash]:', apiErr.message);
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt
-      });
-    }
+    const response = await generateContent({
+      model: DEFAULT_MODEL,
+      contents: prompt
+    });
 
     let cleanedText = response.text?.trim() || '';
     if (cleanedText.startsWith('```')) {
@@ -1186,9 +1181,21 @@ router.post('/brain/suggest-posts', async (req, res) => {
         [clientId]
       );
       return parseInt(countRes.rows[0].count, 10);
+    }, async () => {
+      const countRes = await pool.query(
+        "SELECT COUNT(*) FROM mafiya_ai_suggestions_log WHERE client_id = $1 AND generated_at >= CURRENT_DATE",
+        [clientId]
+      );
+      return parseInt(countRes.rows[0].count, 10);
     });
 
     if (!limitCheck.allowed) {
+      if (limitCheck.isDailyLimit) {
+        return res.status(403).json({
+          error: 'Limit reached',
+          message: 'Today quota completed. Please try again tomorrow.'
+        });
+      }
       return res.status(403).json({
         error: 'Limit reached',
         message: `Plan limit reached. Up to ${limitCheck.limit} AI suggestions/month. Please upgrade.`
@@ -1235,11 +1242,10 @@ router.post('/brain/suggest-posts', async (req, res) => {
       } catch (e) {}
     });
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+    if (!process.env.OPENROUTER_API_KEY) {
+      return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
     }
 
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `You are an expert Local SEO & GMB Content Planner. Generate a 4-week calendar of GMB Posts specifically for **${targetMonth}** for:
 Business Name: "${name}"
 Category: "${category}"
@@ -1258,6 +1264,8 @@ Week 3 MUST be a Seasonal/Event Post (incorporate seasonal context if available)
 Week 4 MUST be a Brand Core Values/Social proof post.
 
 Ensure the post copy (captions) matches the Tone rules.
+CRITICAL RULE: Google My Business strictly prohibits phone numbers in post captions. DO NOT include any phone numbers in the caption text (they will be rejected by GMB).
+For 'actionButton', you MUST suggest exactly ONE of these valid GMB CTA buttons: BOOK, ORDER, SHOP, LEARN_MORE, SIGN_UP, CALL. Do not use 'Add more details' or any other custom string. HIGHLY PREFER 'CALL' as the action button for most posts unless another button is strictly necessary for the offer.
 Return ONLY a valid JSON array of 4 items with exactly the following structure (no markdown wrapper, no extra text):
 [
   {
@@ -1265,6 +1273,7 @@ Return ONLY a valid JSON array of 4 items with exactly the following structure (
     "title": "Promotion & Service Offer",
     "type": "Offer Post",
     "caption": "Post caption here...",
+    "actionButton": "LEARN_MORE",
     "visual": "Description of recommended banner image to generate...",
     "tone": "Friendly / Conversational compliance description",
     "hashtags": "#Keyword1 #Keyword2"
@@ -1272,18 +1281,10 @@ Return ONLY a valid JSON array of 4 items with exactly the following structure (
   ...
 ]`;
 
-    let response;
-    try {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
-        contents: prompt
-      });
-    } catch (apiErr) {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt
-      });
-    }
+    const response = await generateContent({
+      model: DEFAULT_MODEL,
+      contents: prompt
+    });
 
     let cleanedText = response.text?.trim() || '';
     if (cleanedText.startsWith('```')) {
@@ -2103,9 +2104,21 @@ router.post('/posts/generate-from-image', async (req, res) => {
         [clientId]
       );
       return parseInt(countRes.rows[0].count, 10);
+    }, async () => {
+      const countRes = await pool.query(
+        "SELECT COUNT(*) FROM mafiya_ai_suggestions_log WHERE client_id = $1 AND generated_at >= CURRENT_DATE",
+        [clientId]
+      );
+      return parseInt(countRes.rows[0].count, 10);
     });
 
     if (!limitCheck.allowed) {
+      if (limitCheck.isDailyLimit) {
+        return res.status(403).json({
+          error: 'Limit reached',
+          message: 'Today quota completed. Please try again tomorrow.'
+        });
+      }
       return res.status(403).json({
         error: 'Limit reached',
         message: `Plan limit reached. Up to ${limitCheck.limit} AI suggestions/month. Please upgrade.`
@@ -2122,7 +2135,6 @@ router.post('/posts/generate-from-image', async (req, res) => {
     const mimeType = matches[1];
     const base64Data = matches[2];
 
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `Analyze this uploaded image (which is a digital poster/creative/flyer) and write an engaging post title and description.
 
     Requirements:
@@ -2130,17 +2142,19 @@ router.post('/posts/generate-from-image', async (req, res) => {
     2. Description: Detailed, under 1000 characters. Extract key information from the image (like program name, dates, discounts, fees, contact phone, website) and present them in clear bullet points, followed by a professional call-to-action and relevant hashtags.
     3. Formatting: Do NOT use any markdown bold formatting (like double asterisks **). GMB does not support markdown, so print plain text only. Use capital letters for emphasis if needed.
     4. Emojis: Use plenty of relevant, engaging emojis in both the title and the description to make the copy visually appealing and friendly.
+    5. CRITICAL RULE - NO PHONE NUMBERS: Google My Business strictly prohibits phone numbers in post captions. DO NOT include any phone numbers in the description text.
+    6. Action Button: Suggest EXACTLY ONE valid GMB CTA button: BOOK, ORDER, SHOP, LEARN_MORE, SIGN_UP, CALL. Highly prefer 'CALL' for most posts.
 
     Return ONLY a valid JSON object. Do NOT wrap the JSON in markdown blocks like \`\`\`json. The JSON object must have exactly these keys:
     {
       "title": "the generated title",
-      "description": "the generated caption/description"
+      "description": "the generated caption/description",
+      "actionButton": "CALL"
     }`;
 
-    let response;
     try {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash',
+      const response = await generateContent({
+        model: 'google/gemini-2.5-flash-lite', // Low token model
         contents: [
           {
             inlineData: {
@@ -2149,100 +2163,21 @@ router.post('/posts/generate-from-image', async (req, res) => {
             }
           },
           prompt
-        ]
+        ],
+        config: {
+          responseMimeType: 'application/json'
+        }
       });
-    } catch (firstErr) {
-      console.warn('[Gemini 3.5-flash Unavailable, trying gemini-3.5-flash-lite]:', firstErr.message);
-      try {
-        response = await genAI.models.generateContent({
-          model: 'gemini-3.5-flash-lite',
-          contents: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
-              }
-            },
-            prompt
-          ]
-        });
-      } catch (secondErr) {
-        console.warn('[Gemini 3.5-flash-lite Unavailable, trying gemini-3.6-flash]:', secondErr.message);
-        response = await genAI.models.generateContent({
-          model: 'gemini-3.6-flash',
-          contents: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
-              }
-            },
-            prompt
-          ]
-        });
-      }
-    }
 
-    const parsedResult = parseAIJson(response.text);
-    res.json(parsedResult);
+      const parsedResult = parseAIJson(response.text);
+      res.json(parsedResult);
+    } catch (err) {
+      console.error('[OpenRouter Vision AI failed]:', err.message);
+      res.status(500).json({ error: 'AI processing failed. Please try again or use another image.' });
+    }
   } catch (err) {
-    console.error('[Gemini failed, trying Groq fallback]:', err.message);
-    const groqKey = process.env.OPENAI_API_KEY;
-    if (groqKey) {
-      try {
-        const groqPrompt = `Analyze this uploaded image (which is a digital poster/creative/flyer) and write an engaging post title and description.
-
-        Requirements:
-        1. Title: Under 60 characters, catchy, matches GMB post format.
-        2. Description: Detailed, under 1000 characters. Extract key information from the image (like program name, dates, discounts, fees, contact phone, website) and present them in clear bullet points, followed by a professional call-to-action and relevant hashtags.
-        3. Formatting: Do NOT use any markdown bold formatting (like double asterisks **). GMB does not support markdown, so print plain text only. Use capital letters for emphasis if needed.
-        4. Emojis: Use plenty of relevant, engaging emojis in both the title and the description to make the copy visually appealing and friendly.
-
-        Return ONLY a JSON object. Do NOT wrap the JSON in markdown blocks. The JSON must match this schema:
-        {
-          "title": "the generated title",
-          "description": "the generated caption/description"
-        }`;
-
-        const groqRes = await axios.post(
-          'https://api.groq.com/openai/v1/chat/completions',
-          {
-            model: 'llama-3.2-11b-vision-preview',
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text: groqPrompt
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: {
-                      url: imageBase64
-                    }
-                  }
-                ]
-              }
-            ],
-            response_format: { type: 'json_object' }
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${groqKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-
-        const contentText = groqRes.data.choices[0].message.content;
-        const parsedResult = parseAIJson(contentText);
-        return res.json(parsedResult);
-      } catch (groqErr) {
-        console.error('[Groq fallback failed]:', groqErr.message);
-      }
-    }
-    res.status(500).json({ error: 'AI failed to analyze image: ' + err.message });
+    console.error('Error generating post from image:', err);
+    res.status(500).json({ error: 'Failed to generate post from image' });
   }
 });
 

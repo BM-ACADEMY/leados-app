@@ -6,7 +6,7 @@ import { C } from '../../constants/theme.js';
 import {
   BarChart2, Phone, Navigation, Globe, Search, RefreshCw,
   TrendingUp, TrendingDown, Minus, ChevronDown, AlertTriangle,
-  Wifi, WifiOff, Calendar, Users, MessageSquare, FileText, Sparkles
+  Wifi, WifiOff, Calendar, Users, MessageSquare, FileText, Sparkles, Info
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -1039,7 +1039,13 @@ export default function GbpInsights() {
               </div>
 
               <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', marginBottom: 2 }}>Searches breakdown</div>
-              <div style={{ fontSize: 11, color: C.muted, marginBottom: 20 }}>Search terms that showed your Business Profile in the search results</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                <div style={{ fontSize: 11, color: C.muted }}>Search terms that showed your Business Profile in the search results</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(56, 189, 248, 0.1)', padding: '4px 8px', borderRadius: 4, cursor: 'help' }} title="Google hides exact numbers below 15 to protect user privacy.">
+                  <Info size={12} color="#38bdf8" />
+                  <span style={{ fontSize: 10, color: '#38bdf8', fontWeight: 600 }}>&lt; 15 = Low searches</span>
+                </div>
+              </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}>
                 {data.searchKeywords && data.searchKeywords.length > 0 ? (

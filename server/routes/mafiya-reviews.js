@@ -4,6 +4,7 @@ const pool = require('../db/connection');
 const axios = require('axios');
 const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
+const { generateContent, DEFAULT_MODEL } = require('../services/openrouter');
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -388,6 +389,7 @@ router.get('/data', async (req, res) => {
           saveToCache(clientId, resData);
           res.json(resData);
           success = true;
+          return;
         } catch (fastErr) {
           console.warn('[Mafiya Reviews] Fast path fetch failed. Falling back to full account traversal...', fastErr.message);
         }
@@ -549,7 +551,9 @@ router.get('/data', async (req, res) => {
       if (realReviewsDfs && realReviewsDfs.length > 0) {
         saveToCache(clientId, resData);
       }
-      res.json(resData);
+      if (!res.headersSent) {
+        res.json(resData);
+      }
     } catch (error) {
       console.error('[Mafiya Reviews] Error fetching GBP data:', error.message);
 
@@ -573,11 +577,15 @@ router.get('/data', async (req, res) => {
         recentReviews: [],
         _debug_google_error: googleApiError || error.message
       };
-      res.json(resData);
+      if (!res.headersSent) {
+        res.json(resData);
+      }
     }
   } catch (err) {
     console.error('[Mafiya Reviews] GET /data error:', err);
-    res.status(500).json({ error: 'Server error' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Server error' });
+    }
   }
 });
 
@@ -607,7 +615,7 @@ router.post('/reply-review', async (req, res) => {
     console.error('[Mafiya Reviews] Failed to save reply / clear cache in DB:', dbErr.message);
   }
 
-  const accessToken = await getClientGoogleToken(clientId);
+  let accessToken = await getClientGoogleToken(clientId);
   if (accessToken) {
     try {
       if (typeof reviewId === 'string' && reviewId.startsWith('accounts/')) {
@@ -619,7 +627,24 @@ router.post('/reply-review', async (req, res) => {
         return res.json({ success: true, message: 'Reply posted to Google successfully via official API!' });
       }
     } catch (e) {
-      console.error('[Mafiya Reviews] Failed to post reply via Google API', e.response?.data || e.message);
+      if (e.response && e.response.status === 401) {
+        console.log('[Mafiya Reviews] Access token 401 expired during reply, attempting refresh...');
+        accessToken = await refreshClientToken(clientId);
+        if (accessToken) {
+          try {
+            await axios.put(`https://mybusiness.googleapis.com/v4/${reviewId}/reply`, {
+              comment: replyText
+            }, {
+              headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            return res.json({ success: true, message: 'Reply posted to Google successfully via official API!' });
+          } catch (retryErr) {
+            console.error('[Mafiya Reviews] Failed to post reply via Google API after refresh', retryErr.response?.data || retryErr.message);
+          }
+        }
+      } else {
+        console.error('[Mafiya Reviews] Failed to post reply via Google API', e.response?.data || e.message);
+      }
     }
   }
 
@@ -737,10 +762,10 @@ router.post('/generate-ai-reply', async (req, res) => {
     );
     const businessName = clientRes.rows[0]?.business_name || 'our company';
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
-      fs.appendFileSync(path.join(__dirname, '../debug_error.log'), `[${new Date().toISOString()}] Error: OPENAI_API_KEY is not configured on server.\n`);
-      return res.status(500).json({ error: 'OPENAI_API_KEY is not configured on server.' });
+      fs.appendFileSync(path.join(__dirname, '../debug_error.log'), `[${new Date().toISOString()}] Error: OPENROUTER_API_KEY is not configured on server.\n`);
+      return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured on server.' });
     }
 
     // Fetch and incorporate GMB Brain entries for this client
@@ -813,23 +838,13 @@ Guidelines:
 - If the reviewer has left a comment/feedback, briefly mention the specific thing they praised.
 - **IMPORTANT**: Generate ONLY the body paragraph(s) of the response. Do NOT start the text with the reviewer's name (e.g. do NOT start with "Aakash," or "[Name],"), and do NOT include any greetings (like "Dear...", "Hi...") or sign-offs (like "Warm Regards", "Best Regards", "Team...") as these will be automatically added by the template.`;
 
-    const chatRes = await axios.post(
-      'https://api.groq.com/openai/v1/chat/completions',
-      {
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'user', content: prompt }
-        ]
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    const response = await generateContent({
+      model: DEFAULT_MODEL,
+      contents: prompt,
+      config: { maxOutputTokens: 1000 }
+    });
 
-    const reply = chatRes.data?.choices?.[0]?.message?.content?.trim() ||
+    const reply = response.text?.trim() ||
                   `Thank you ${author} for your review! We appreciate your feedback.`;
 
     fs.appendFileSync(
@@ -887,8 +902,8 @@ router.post('/brain/polish', async (req, res) => {
   }
   
 
-  if (!process.env.GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+  if (!process.env.OPENROUTER_API_KEY) {
+    return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
   }
 
   const { checkLimit } = require('../utils/limit-checker');
@@ -913,7 +928,6 @@ router.post('/brain/polish', async (req, res) => {
       await pool.query('INSERT INTO mafiya_brain_ai_log (client_id) VALUES ($1)', [clientId]);
     }
 
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `You are an expert prompt engineer for Google My Business settings optimization.
 Optimize and refine the following user instruction under the category "${entryType}".
 Transform it into a clear, professional, and well-structured directive suitable for an LLM constraint.
@@ -923,19 +937,10 @@ User input: "${content}"
 
 Return ONLY the polished instruction. Do NOT wrap in quotes, do NOT add introductory text (like "Here is the polished instruction:"), and do NOT use markdown bolding. Keep it very short (1 to 2 sentences max).`;
 
-    let response;
-    try {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash',
-        contents: prompt
-      });
-    } catch (apiErr) {
-      console.warn('[Gemini 3.5-flash Unavailable, trying gemini-3.5-flash-lite]:', apiErr.message);
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
-        contents: prompt
-      });
-    }
+    const response = await generateContent({
+      model: DEFAULT_MODEL,
+      contents: prompt
+    });
 
     const polishedText = response.text?.trim() || content;
     res.json({ polishedText });
@@ -952,8 +957,8 @@ router.post('/brain/suggest-config', async (req, res) => {
     return res.status(400).json({ error: 'clientId and entryType are required' });
   }
 
-  if (!process.env.GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+  if (!process.env.OPENROUTER_API_KEY) {
+    return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
   }
 
   const { checkLimit } = require('../utils/limit-checker');
@@ -986,7 +991,6 @@ router.post('/brain/suggest-config', async (req, res) => {
     }
     const businessName = clientRes.rows[0].business_name;
 
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     let prompt = '';
     const hasCurrent = currentConfig && Object.keys(currentConfig).length > 0 && JSON.stringify(currentConfig) !== '{}' && (
       (Array.isArray(currentConfig) && currentConfig.length > 0) ||
@@ -1144,19 +1148,10 @@ Return ONLY a valid JSON object matching this structure (no markdown wrapper, no
 }`;
     }
 
-    let response;
-    try {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
-        contents: prompt
-      });
-    } catch (apiErr) {
-      console.warn('[Gemini Lite suggest failed, trying gemini-3.6-flash]:', apiErr.message);
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt
-      });
-    }
+    const response = await generateContent({
+      model: DEFAULT_MODEL,
+      contents: prompt
+    });
 
     let cleanedText = response.text?.trim() || '';
     if (cleanedText.startsWith('```')) {
@@ -1235,11 +1230,10 @@ router.post('/brain/suggest-posts', async (req, res) => {
       } catch (e) {}
     });
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+    if (!process.env.OPENROUTER_API_KEY) {
+      return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
     }
 
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `You are an expert Local SEO & GMB Content Planner. Generate a 4-week calendar of GMB Posts specifically for **${targetMonth}** for:
 Business Name: "${name}"
 Category: "${category}"
@@ -1272,18 +1266,10 @@ Return ONLY a valid JSON array of 4 items with exactly the following structure (
   ...
 ]`;
 
-    let response;
-    try {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
-        contents: prompt
-      });
-    } catch (apiErr) {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt
-      });
-    }
+    const response = await generateContent({
+      model: DEFAULT_MODEL,
+      contents: prompt
+    });
 
     let cleanedText = response.text?.trim() || '';
     if (cleanedText.startsWith('```')) {

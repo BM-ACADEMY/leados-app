@@ -305,7 +305,7 @@ export default function LocalSeoBridge() {
             <div style={{ background: 'rgba(245, 158, 11, 0.1)', padding: 10, borderRadius: 10 }}>
               <MousePointerClick size={20} color="#f59e0b" />
             </div>
-            <h3 style={{ color: C.muted, fontSize: 14, fontWeight: 600, margin: 0 }}>Customer Actions</h3>
+            <h3 style={{ color: C.muted, fontSize: 14, fontWeight: 600, margin: 0 }}>Customer Interactions</h3>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
             <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{data?.insights.actions.toLocaleString()}</span>
@@ -373,6 +373,12 @@ export default function LocalSeoBridge() {
                     {replyingTo === review.id ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <textarea 
+                          ref={(el) => {
+                            if (el) {
+                              el.style.height = 'auto';
+                              el.style.height = el.scrollHeight + 'px';
+                            }
+                          }}
                           value={replyText}
                           onChange={e => setReplyText(e.target.value.slice(0, 1500))}
                           maxLength={1500}
@@ -385,9 +391,14 @@ export default function LocalSeoBridge() {
                             padding: 12,
                             color: '#fff',
                             fontSize: 14,
-                            minHeight: 80,
-                            resize: 'vertical',
-                            outline: 'none'
+                            minHeight: 120,
+                            resize: 'none',
+                            overflow: 'hidden',
+                            outline: 'none',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontFamily: 'inherit',
+                            lineHeight: '1.5'
                           }}
                         />
                         <div style={{ fontSize: 11, color: C.muted, textAlign: 'right', marginTop: -4 }}>
@@ -399,6 +410,14 @@ export default function LocalSeoBridge() {
                             style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
                           >
                             Cancel
+                          </button>
+                          <button
+                            onClick={() => generateAiReply(review)}
+                            disabled={generatingAiFor === review.id}
+                            style={{ background: 'transparent', border: '1px solid rgba(236,72,153,0.3)', color: '#f472b6', padding: '6px 16px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: generatingAiFor === review.id ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                          >
+                            {generatingAiFor === review.id ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                            {generatingAiFor === review.id ? 'Regenerating...' : 'AI Reply'}
                           </button>
                           <button 
                             onClick={() => submitReply(review.id)}

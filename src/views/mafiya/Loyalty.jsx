@@ -6,7 +6,8 @@ import { C } from '../../constants/theme.js';
 import {
   Loader2, MapPin, Star, MessageCircle, Eye, Search,
   MousePointerClick, CheckCircle, Megaphone, Send, LogOut,
-  Image as ImageIcon, Shield, Sparkles, AlertTriangle, RefreshCw, Heart
+  Image as ImageIcon, Shield, Sparkles, AlertTriangle, RefreshCw, Heart,
+  Filter, Calendar, X
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -105,6 +106,12 @@ export default function Loyalty() {
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const reviewsPerPage = 5;
+
+  // Filter states
+  const [filterType, setFilterType] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [searchName, setSearchName] = useState('');
 
   const [generatingAiFor, setGeneratingAiFor] = useState(null);
 
@@ -266,13 +273,38 @@ export default function Loyalty() {
     );
   }
 
-  const sortedReviews = data?.recentReviews
-    ? [...data.recentReviews].sort((a, b) => {
-        const timeA = (a.timestamp && !isNaN(new Date(a.timestamp).getTime())) ? new Date(a.timestamp).getTime() : parseRelativeTime(a.date);
-        const timeB = (b.timestamp && !isNaN(new Date(b.timestamp).getTime())) ? new Date(b.timestamp).getTime() : parseRelativeTime(b.date);
-        return timeB - timeA;
-      })
-    : [];
+  let filteredReviews = data?.recentReviews ? [...data.recentReviews] : [];
+
+  if (searchName) {
+    filteredReviews = filteredReviews.filter(r => r.author?.toLowerCase().includes(searchName.toLowerCase()));
+  }
+  
+  if (filterType === 'unreplied') {
+    filteredReviews = filteredReviews.filter(r => !r.replied);
+  } else if (filterType === 'replied') {
+    filteredReviews = filteredReviews.filter(r => r.replied);
+  }
+  
+  if (filterType === 'custom_date') {
+    if (startDate) {
+      filteredReviews = filteredReviews.filter(r => {
+        const time = (r.timestamp && !isNaN(new Date(r.timestamp).getTime())) ? new Date(r.timestamp).getTime() : parseRelativeTime(r.date);
+        return time >= new Date(startDate).getTime();
+      });
+    }
+    if (endDate) {
+      filteredReviews = filteredReviews.filter(r => {
+        const time = (r.timestamp && !isNaN(new Date(r.timestamp).getTime())) ? new Date(r.timestamp).getTime() : parseRelativeTime(r.date);
+        return time <= new Date(endDate).getTime() + 86400000;
+      });
+    }
+  }
+
+  const sortedReviews = filteredReviews.sort((a, b) => {
+    const timeA = (a.timestamp && !isNaN(new Date(a.timestamp).getTime())) ? new Date(a.timestamp).getTime() : parseRelativeTime(a.date);
+    const timeB = (b.timestamp && !isNaN(new Date(b.timestamp).getTime())) ? new Date(b.timestamp).getTime() : parseRelativeTime(b.date);
+    return timeB - timeA;
+  });
 
   return (
     <div style={{ padding: 40, color: C.text, height: '100%', overflowY: 'auto', background: C.background }}>
@@ -381,45 +413,46 @@ export default function Loyalty() {
 
           {/* INSIGHTS CARDS */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, marginBottom: 30 }}>
-            {/* Views */}
+            {/* Total Reviews */}
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
                 <div style={{ background: 'rgba(59, 130, 246, 0.1)', padding: 10, borderRadius: 10 }}>
-                  <Eye size={20} color="#3b82f6" />
+                  <MessageCircle size={20} color="#3b82f6" />
                 </div>
-                <h3 style={{ color: C.muted, fontSize: 14, fontWeight: 600, margin: 0 }}>Total Views</h3>
+                <h3 style={{ color: C.muted, fontSize: 14, fontWeight: 600, margin: 0 }}>Total Reviews</h3>
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
-                <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{data?.insights?.views?.toLocaleString() || '0'}</span>
-                <span style={{ color: '#10b981', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{data?.insights?.viewsTrend || '0%'}</span>
+                <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{data?.business?.totalReviews?.toLocaleString() || '0'}</span>
               </div>
             </div>
 
-            {/* Searches */}
-            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-                <div style={{ background: 'rgba(168, 85, 247, 0.1)', padding: 10, borderRadius: 10 }}>
-                  <Search size={20} color="#a855f7" />
-                </div>
-                <h3 style={{ color: C.muted, fontSize: 14, fontWeight: 600, margin: 0 }}>Direct Searches</h3>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
-                <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{data?.insights?.searches?.toLocaleString() || '0'}</span>
-                <span style={{ color: '#10b981', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{data?.insights?.searchesTrend || '0%'}</span>
-              </div>
-            </div>
-
-            {/* Actions */}
+            {/* Average Rating */}
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
                 <div style={{ background: 'rgba(245, 158, 11, 0.1)', padding: 10, borderRadius: 10 }}>
-                  <MousePointerClick size={20} color="#f59e0b" />
+                  <Star size={20} color="#f59e0b" fill="#f59e0b" />
                 </div>
-                <h3 style={{ color: C.muted, fontSize: 14, fontWeight: 600, margin: 0 }}>Customer Actions</h3>
+                <h3 style={{ color: C.muted, fontSize: 14, fontWeight: 600, margin: 0 }}>Average Rating</h3>
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
-                <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{data?.insights?.actions?.toLocaleString() || '0'}</span>
-                <span style={{ color: '#10b981', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{data?.insights?.actionsTrend || '0%'}</span>
+                <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>{data?.business?.rating || '0.0'}</span>
+                <span style={{ color: C.muted, fontSize: 14, fontWeight: 600, marginBottom: 6 }}>/ 5.0</span>
+              </div>
+            </div>
+
+            {/* Unreplied Reviews */}
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                <div style={{ background: 'rgba(239, 68, 68, 0.1)', padding: 10, borderRadius: 10 }}>
+                  <MessageCircle size={20} color="#ef4444" />
+                </div>
+                <h3 style={{ color: C.muted, fontSize: 14, fontWeight: 600, margin: 0 }}>Unreplied Reviews</h3>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
+                <span style={{ fontSize: 32, fontWeight: 800, color: '#fff' }}>
+                  {data?.recentReviews ? data.recentReviews.filter(r => !r.replied).length : '0'}
+                </span>
+                <span style={{ color: '#ef4444', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Action needed</span>
               </div>
             </div>
           </div>
@@ -433,6 +466,83 @@ export default function Loyalty() {
                 <span style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 8px', borderRadius: 12, fontSize: 12, fontWeight: 600 }}>
                   {data?.business?.rating || '0.0'} ★ ({data?.business?.totalReviews || 0})
                 </span>
+              </div>
+
+              {/* FILTERS */}
+              <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* Search */}
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <Search size={14} color={C.muted} style={{ position: 'absolute', left: 12 }} />
+                  <input 
+                    type="text" 
+                    placeholder="Search by name..." 
+                    value={searchName}
+                    onChange={e => { setSearchName(e.target.value); setCurrentPage(1); }}
+                    style={{ 
+                      background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, borderRadius: 8, 
+                      padding: '0 12px 0 34px', color: '#fff', fontSize: 13, outline: 'none',
+                      width: 200, height: 38, boxSizing: 'border-box', transition: 'all 0.2s'
+                    }}
+                  />
+                </div>
+
+                {/* Status Filter */}
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <Filter size={14} color={C.muted} style={{ position: 'absolute', left: 12 }} />
+                  <select
+                    value={filterType}
+                    onChange={e => { setFilterType(e.target.value); setCurrentPage(1); }}
+                    style={{ 
+                      background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, borderRadius: 8, 
+                      padding: '0 32px 0 34px', color: '#fff', fontSize: 13, outline: 'none',
+                      appearance: 'none', cursor: 'pointer', minWidth: 160, height: 38, boxSizing: 'border-box'
+                    }}
+                  >
+                    <option style={{ background: C.surface, color: '#fff' }} value="all">All Reviews</option>
+                    <option style={{ background: C.surface, color: '#fff' }} value="unreplied">New / Unreplied</option>
+                    <option style={{ background: C.surface, color: '#fff' }} value="replied">Replied</option>
+                    <option style={{ background: C.surface, color: '#fff' }} value="custom_date">Custom Date</option>
+                  </select>
+                  <div style={{ position: 'absolute', right: 12, pointerEvents: 'none', display: 'flex', alignItems: 'center' }}>
+                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke={C.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </div>
+                </div>
+
+                {/* Date Filter */}
+                {filterType === 'custom_date' && (
+                  <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '0 12px', height: 38, boxSizing: 'border-box' }}>
+                    <Calendar size={14} color={C.muted} style={{ marginRight: 8 }} />
+                    <input 
+                      type="date" 
+                      value={startDate}
+                      onChange={e => { setStartDate(e.target.value); setCurrentPage(1); }}
+                      style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: 13, outline: 'none', colorScheme: 'dark', height: '100%' }}
+                    />
+                    <span style={{ color: C.muted, margin: '0 8px', fontSize: 12 }}>to</span>
+                    <input 
+                      type="date" 
+                      value={endDate}
+                      onChange={e => { setEndDate(e.target.value); setCurrentPage(1); }}
+                      style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: 13, outline: 'none', colorScheme: 'dark', height: '100%' }}
+                    />
+                  </div>
+                )}
+
+                {/* Clear Filters */}
+                { (searchName || filterType !== 'all' || startDate || endDate) && (
+                  <button 
+                    onClick={() => { setSearchName(''); setFilterType('all'); setStartDate(''); setEndDate(''); setCurrentPage(1); }}
+                    style={{ 
+                      background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171', 
+                      fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: '0 16px', borderRadius: 8,
+                      display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s', height: 38, boxSizing: 'border-box'
+                    }}
+                    onMouseOver={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'}
+                    onMouseOut={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}
+                  >
+                    <X size={14} /> Clear
+                  </button>
+                )}
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -516,6 +626,12 @@ export default function Loyalty() {
                               ) : (
                                 <>
                                   <textarea
+                                    ref={(el) => {
+                                      if (el) {
+                                        el.style.height = 'auto';
+                                        el.style.height = el.scrollHeight + 'px';
+                                      }
+                                    }}
                                     value={replyText}
                                     onChange={e => setReplyText(e.target.value.slice(0, 1500))}
                                     maxLength={1500}
@@ -528,9 +644,14 @@ export default function Loyalty() {
                                       padding: 12,
                                       color: '#fff',
                                       fontSize: 14,
-                                      minHeight: 80,
-                                      resize: 'vertical',
-                                      outline: 'none'
+                                      minHeight: 120,
+                                      resize: 'none',
+                                      overflow: 'hidden',
+                                      outline: 'none',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-word',
+                                      fontFamily: 'inherit',
+                                      lineHeight: '1.5'
                                     }}
                                   />
                                   <div style={{ fontSize: 11, color: C.muted, textAlign: 'right', marginTop: -4 }}>
@@ -544,6 +665,14 @@ export default function Loyalty() {
                                   style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
                                 >
                                   Cancel
+                                </button>
+                                <button
+                                  onClick={() => generateAiReply(review)}
+                                  disabled={generatingAiFor === review.id}
+                                  style={{ background: 'transparent', border: '1px solid rgba(236,72,153,0.3)', color: '#f472b6', padding: '6px 16px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: generatingAiFor === review.id ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                                >
+                                  {generatingAiFor === review.id ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                                  {generatingAiFor === review.id ? 'Regenerating...' : 'AI Reply'}
                                 </button>
                                 <button
                                   onClick={() => submitReply(review.id)}

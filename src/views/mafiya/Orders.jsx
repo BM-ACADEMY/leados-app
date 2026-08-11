@@ -6,7 +6,7 @@ import {
   CheckCircle, Copy, Plus, Search, Filter, User, Clock,
   Sparkles, AlertTriangle, Check, Trash2, Shield, Zap,
   ExternalLink, ListOrdered, Camera, Briefcase, RefreshCw, X,
-  Globe, Calendar, Volume2, Tag, BookOpen, AlertCircle, Info, Link, Target
+  Globe, Calendar, Volume2, Tag, BookOpen, AlertCircle, Info, Link, Target, MousePointerClick
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -800,10 +800,11 @@ export default function MafiyaOrders() {
                 rawTitle: `${off.title || 'Special Promotion'}`,
                 title: `${monthPrefix}${off.title || 'Special Promotion'}`,
                 type: 'Offer Post',
-                caption: `🔥 ${off.title || 'Special Offer'}: ${off.description || `Get exclusive discounts on our services in ${city}.`}${off.validUntil ? ` (Valid until ${off.validUntil})` : ''}\n\n📍 ${name} | ${city}\n📞 Call: ${phone}\n\n${hashtags}`,
+                caption: `🔥 ${off.title || 'Special Offer'}: ${off.description || `Get exclusive discounts on our services in ${city}.`}${off.validUntil ? ` (Valid until ${off.validUntil})` : ''}\n\n📍 ${name} | ${city}\n\n${hashtags}`,
                 visual: `Promotional banner highlighting "${off.title || 'Special Discount'}" with brand logo.`,
                 tone: `${toneVoice} alignment`,
-                hashtags
+                hashtags,
+                actionButton: 'CALL'
               });
               offerAdded = true;
             }
@@ -817,10 +818,11 @@ export default function MafiyaOrders() {
         rawTitle: `${selectedMonthObj.monthShort} Business Special`,
         title: `${monthPrefix}Exclusive ${selectedMonthObj.monthShort} Business Special`,
         type: 'Offer Post',
-        caption: `🔥 Limited Time Offer for ${selectedMonthObj.monthName}!\n\nUpgrade your experience with top-rated ${category} solutions at ${name}. Book your appointment or visit us in ${city} today!\n\n📞 Call us now: ${phone}\n📍 Location: ${city}\n\n${hashtags}`,
+        caption: `🔥 Limited Time Offer for ${selectedMonthObj.monthName}!\n\nUpgrade your experience with top-rated ${category} solutions at ${name}. Book your appointment or visit us in ${city} today!\n\n📍 Location: ${city}\n\n${hashtags}`,
         visual: `Modern promo card showcasing ${category} services with a gold discount badge.`,
         tone: `${toneVoice} alignment`,
-        hashtags
+        hashtags,
+        actionButton: 'CALL'
       });
     }
 
@@ -837,10 +839,11 @@ export default function MafiyaOrders() {
                 rawTitle: `${seas.occasion || 'Seasonal Celebration'}`,
                 title: `${monthPrefix}${seas.occasion || 'Seasonal Celebration'}`,
                 type: 'Seasonal Post',
-                caption: `🎉 Celebrating ${seas.occasion || selectedMonthObj.monthName}! ${seas.instructions || `Discover our latest seasonal highlights at ${name}.`}\n\n📞 Contact: ${phone}\n📍 Location: ${city}\n\n${hashtags}`,
+                caption: `🎉 Celebrating ${seas.occasion || selectedMonthObj.monthName}! ${seas.instructions || `Discover our latest seasonal highlights at ${name}.`}\n\n📍 Location: ${city}\n\n${hashtags}`,
                 visual: `Festive event graphic for ${seas.occasion || selectedMonthObj.monthName} with brand logo overlay.`,
                 tone: `${toneVoice} alignment`,
-                hashtags
+                hashtags,
+                actionButton: 'CALL'
               });
               seasonalAdded = true;
             }
@@ -854,10 +857,11 @@ export default function MafiyaOrders() {
         rawTitle: `${selectedMonthObj.monthShort} Customer Highlight & Trends`,
         title: `${monthPrefix}${selectedMonthObj.monthShort} Customer Highlight & Trends`,
         type: 'Seasonal Post',
-        caption: `✨ Celebrate ${selectedMonthObj.monthName} with ${name}!\n\nWe are committed to delivering the best ${category} experience in ${city}. Check out our latest client work and updates this week.\n\n📞 Reach us at ${phone}\n\n${hashtags}`,
+        caption: `✨ Celebrate ${selectedMonthObj.monthName} with ${name}!\n\nWe are committed to delivering the best ${category} experience in ${city}. Check out our latest client work and updates this week.\n\n${hashtags}`,
         visual: `High quality visual showcasing customer satisfaction and team highlights.`,
         tone: `${toneVoice} alignment`,
-        hashtags
+        hashtags,
+        actionButton: 'CALL'
       });
     }
 
@@ -874,10 +878,11 @@ export default function MafiyaOrders() {
                 rawTitle: `${item.question ? `Q: ${item.question.slice(0, 32)}...` : 'FAQ Feature'}`,
                 title: `${monthPrefix}${item.question ? `Q: ${item.question.slice(0, 32)}...` : 'FAQ Feature'}`,
                 type: 'Educational Post',
-                caption: `💡 Frequently Asked Question:\n\n❓ Q: ${item.question || ''}\n✅ A: ${item.answer || ''}\n\nHave more questions? Ask ${name} today at ${phone}!\n\n${hashtags}`,
+                caption: `💡 Frequently Asked Question:\n\n❓ Q: ${item.question || ''}\n✅ A: ${item.answer || ''}\n\nHave more questions? Contact ${name} today!\n\n${hashtags}`,
                 visual: 'Question mark icon graphic with answer text card layout.',
                 tone: `${toneVoice} alignment`,
-                hashtags
+                hashtags,
+                actionButton: 'CALL'
               });
               qaAdded = true;
             }
@@ -891,10 +896,11 @@ export default function MafiyaOrders() {
         rawTitle: `Expert Tips & Customer FAQ`,
         title: `${monthPrefix}Expert Tips & Customer FAQ`,
         type: 'Educational Post',
-        caption: `💡 FAQ Spotlight:\n\n❓ Q: Why choose ${name} for ${category} in ${city}?\n✅ A: We combine certified expertise, quick turnarounds, and transparent pricing tailored to your needs!\n\n📞 Call us for details: ${phone}\n\n${hashtags}`,
+        caption: `💡 FAQ Spotlight:\n\n❓ Q: Why choose ${name} for ${category} in ${city}?\n✅ A: We combine certified expertise, quick turnarounds, and transparent pricing tailored to your needs!\n\n${hashtags}`,
         visual: 'Infographic explaining core benefits and FAQ answers.',
         tone: `${toneVoice} alignment`,
-        hashtags
+        hashtags,
+        actionButton: 'CALL'
       });
     }
 
@@ -904,10 +910,11 @@ export default function MafiyaOrders() {
         rawTitle: `Top Rated ${category} Services in ${city}`,
         title: `${monthPrefix}Top Rated ${category} Services in ${city}`,
         type: 'Brand Feature',
-        caption: `🏆 Looking for trusted ${category} services in ${city}?\n\n${name} offers industry leading solutions backed by 5-star customer reviews.\n\n📍 Visit us in ${city}\n📞 Contact: ${phone}\n\n${hashtags}`,
+        caption: `🏆 Looking for trusted ${category} services in ${city}?\n\n${name} offers industry leading solutions backed by 5-star customer reviews.\n\n📍 Visit us in ${city}\n\n${hashtags}`,
         visual: `Brand feature card displaying 5-star rating graphic and client testimonials.`,
         tone: `${toneVoice} alignment`,
-        hashtags
+        hashtags,
+        actionButton: 'CALL'
       });
     }
 
@@ -946,7 +953,8 @@ export default function MafiyaOrders() {
     navigate('/mafiya/street-posts', {
       state: {
         caption: sugg.caption,
-        title: sugg.title
+        title: sugg.title,
+        actionButton: sugg.actionButton
       }
     });
   };
@@ -2079,7 +2087,14 @@ export default function MafiyaOrders() {
                   </div>
 
                   <div style={{ background: '#060c17', border: '1px solid #1e293b', borderRadius: 10, padding: 16, position: 'relative', opacity: isDone ? 0.5 : 1 }}>
-                    <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 8, fontWeight: 700 }}>RECOMMENDED CAPTION COPY</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, color: '#64748b', fontWeight: 700 }}>RECOMMENDED CAPTION COPY</span>
+                      {sugg.actionButton && (
+                        <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(245, 158, 11, 0.1)', padding: '2px 8px', borderRadius: 4 }}>
+                          <MousePointerClick size={12} /> CTA: {sugg.actionButton}
+                        </span>
+                      )}
+                    </div>
                     <p style={{
                       fontSize: 13,
                       color: '#e2e8f0',
@@ -2247,7 +2262,14 @@ export default function MafiyaOrders() {
                   </div>
 
                   <div style={{ background: '#060c17', border: '1px solid #1e293b', borderRadius: 10, padding: 16, position: 'relative', opacity: isDone ? 0.5 : 1 }}>
-                    <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 8, fontWeight: 700 }}>RECOMMENDED CAPTION COPY</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, color: '#64748b', fontWeight: 700 }}>RECOMMENDED CAPTION COPY</span>
+                      {sugg.actionButton && (
+                        <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(245, 158, 11, 0.1)', padding: '2px 8px', borderRadius: 4 }}>
+                          <MousePointerClick size={12} /> CTA: {sugg.actionButton}
+                        </span>
+                      )}
+                    </div>
                     <p style={{
                       fontSize: 13,
                       color: '#e2e8f0',

@@ -477,11 +477,11 @@ export default function GmbBrain() {
     { type: 'tone', title: 'Tone', desc: 'How AI sounds', Icon: Volume2, color: C.purple },
     { type: 'review_rules', title: 'Review Guidelines', desc: 'Rules for review replies', Icon: MessageSquare, color: '#06b6d4' },
     { type: 'offer', title: 'Offers', desc: 'Current deals', Icon: Tag, color: C.green },
-    { type: 'keyword', title: 'Keywords', desc: 'Target terms', Icon: Sparkles, color: '#f59e0b' },
+    { type: 'keyword', title: 'Hashtags', desc: 'Social tags', Icon: Sparkles, color: '#f59e0b' },
     { type: 'qa', title: 'Q&A Bank', desc: 'Questions + answers', Icon: HelpCircle, color: C.blue },
     { type: 'blacklist', title: 'Blacklist', desc: 'Never use words', Icon: ShieldAlert, color: C.red },
-    { type: 'seasonal', title: 'Seasonal', desc: 'Time-based focus', Icon: Calendar, color: C.pink },
-    { type: 'creative_brief', title: 'AI Creative Brief', desc: 'Poster visual styles & rules', Icon: Sparkles, color: C.accent }
+    { type: 'seasonal', title: 'Seasonal', desc: 'Time-based focus', Icon: Calendar, color: C.pink }
+    // { type: 'creative_brief', title: 'AI Creative Brief', desc: 'Poster visual styles & rules', Icon: Sparkles, color: C.accent }
   ];
 
   const getBadgeStyle = (type) => {
@@ -735,11 +735,11 @@ export default function GmbBrain() {
                     <option value="tone">Tone</option>
                     <option value="review_rules">Review Guidelines</option>
                     <option value="offer">Offers</option>
-                    <option value="keyword">Keywords</option>
+                    <option value="keyword">Hashtags</option>
                     <option value="qa">Q&A Bank</option>
                     <option value="blacklist">Blacklist</option>
                     <option value="seasonal">Seasonal</option>
-                    <option value="creative_brief">AI Creative Brief</option>
+                    {/* <option value="creative_brief">AI Creative Brief</option> */}
                   </select>
                 </div>
 
@@ -939,10 +939,10 @@ export default function GmbBrain() {
 
                 {entryType === 'keyword' && (
                   <div>
-                    <label style={{ display: 'block', fontSize: 11, color: '#71717a', fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Target Keywords</label>
+                    <label style={{ display: 'block', fontSize: 11, color: '#71717a', fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Target Hashtags</label>
                     <input
                       type="text"
-                      placeholder="Type keyword and press Enter"
+                      placeholder="Type hashtag and press Enter"
                       value={kwText}
                       onChange={(e) => setKwText(e.target.value)}
                       onKeyDown={(e) => {

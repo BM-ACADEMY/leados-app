@@ -1252,6 +1252,8 @@ Week 3 MUST be a Seasonal/Event Post (incorporate seasonal context if available)
 Week 4 MUST be a Brand Core Values/Social proof post.
 
 Ensure the post copy (captions) matches the Tone rules.
+CRITICAL RULE: Google My Business strictly prohibits phone numbers in post captions. DO NOT include any phone numbers in the caption text (they will be rejected by GMB).
+For 'actionButton', you MUST suggest exactly ONE of these valid GMB CTA buttons: BOOK, ORDER, SHOP, LEARN_MORE, SIGN_UP, CALL. Do not use 'Add more details' or any other custom string. HIGHLY PREFER 'CALL' as the action button for most posts unless another button is strictly necessary for the offer.
 Return ONLY a valid JSON array of 4 items with exactly the following structure (no markdown wrapper, no extra text):
 [
   {
@@ -1259,6 +1261,7 @@ Return ONLY a valid JSON array of 4 items with exactly the following structure (
     "title": "Promotion & Service Offer",
     "type": "Offer Post",
     "caption": "Post caption here...",
+    "actionButton": "LEARN_MORE",
     "visual": "Description of recommended banner image to generate...",
     "tone": "Friendly / Conversational compliance description",
     "hashtags": "#Keyword1 #Keyword2"
@@ -2108,7 +2111,6 @@ router.post('/posts/generate-from-image', async (req, res) => {
     const mimeType = matches[1];
     const base64Data = matches[2];
 
-    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `Analyze this uploaded image (which is a digital poster/creative/flyer) and write an engaging post title and description.
 
     Requirements:
@@ -2116,17 +2118,19 @@ router.post('/posts/generate-from-image', async (req, res) => {
     2. Description: Detailed, under 1000 characters. Extract key information from the image (like program name, dates, discounts, fees, contact phone, website) and present them in clear bullet points, followed by a professional call-to-action and relevant hashtags.
     3. Formatting: Do NOT use any markdown bold formatting (like double asterisks **). GMB does not support markdown, so print plain text only. Use capital letters for emphasis if needed.
     4. Emojis: Use plenty of relevant, engaging emojis in both the title and the description to make the copy visually appealing and friendly.
+    5. CRITICAL RULE - NO PHONE NUMBERS: Google My Business strictly prohibits phone numbers in post captions. DO NOT include any phone numbers in the description text.
+    6. Action Button: Suggest EXACTLY ONE valid GMB CTA button: BOOK, ORDER, SHOP, LEARN_MORE, SIGN_UP, CALL. Highly prefer 'CALL' for most posts.
 
     Return ONLY a valid JSON object. Do NOT wrap the JSON in markdown blocks like \`\`\`json. The JSON object must have exactly these keys:
     {
       "title": "the generated title",
-      "description": "the generated caption/description"
+      "description": "the generated caption/description",
+      "actionButton": "CALL"
     }`;
 
-    let response;
     try {
-      response = await genAI.models.generateContent({
-        model: 'gemini-3.5-flash',
+      const response = await generateContent({
+        model: 'google/gemini-2.5-flash-lite', // Low token model
         contents: [
           {
             inlineData: {
@@ -2135,100 +2139,21 @@ router.post('/posts/generate-from-image', async (req, res) => {
             }
           },
           prompt
-        ]
+        ],
+        config: {
+          responseMimeType: 'application/json'
+        }
       });
-    } catch (firstErr) {
-      console.warn('[Gemini 3.5-flash Unavailable, trying gemini-3.5-flash-lite]:', firstErr.message);
-      try {
-        response = await genAI.models.generateContent({
-          model: 'gemini-3.5-flash-lite',
-          contents: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
-              }
-            },
-            prompt
-          ]
-        });
-      } catch (secondErr) {
-        console.warn('[Gemini 3.5-flash-lite Unavailable, trying gemini-3.6-flash]:', secondErr.message);
-        response = await genAI.models.generateContent({
-          model: 'gemini-3.6-flash',
-          contents: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
-              }
-            },
-            prompt
-          ]
-        });
-      }
-    }
 
-    const parsedResult = parseAIJson(response.text);
-    res.json(parsedResult);
+      const parsedResult = parseAIJson(response.text);
+      res.json(parsedResult);
+    } catch (err) {
+      console.error('[OpenRouter Vision AI failed]:', err.message);
+      res.status(500).json({ error: 'AI processing failed. Please try again or use another image.' });
+    }
   } catch (err) {
-    console.error('[Gemini failed, trying Groq fallback]:', err.message);
-    const groqKey = process.env.OPENAI_API_KEY;
-    if (groqKey) {
-      try {
-        const groqPrompt = `Analyze this uploaded image (which is a digital poster/creative/flyer) and write an engaging post title and description.
-
-        Requirements:
-        1. Title: Under 60 characters, catchy, matches GMB post format.
-        2. Description: Detailed, under 1000 characters. Extract key information from the image (like program name, dates, discounts, fees, contact phone, website) and present them in clear bullet points, followed by a professional call-to-action and relevant hashtags.
-        3. Formatting: Do NOT use any markdown bold formatting (like double asterisks **). GMB does not support markdown, so print plain text only. Use capital letters for emphasis if needed.
-        4. Emojis: Use plenty of relevant, engaging emojis in both the title and the description to make the copy visually appealing and friendly.
-
-        Return ONLY a JSON object. Do NOT wrap the JSON in markdown blocks. The JSON must match this schema:
-        {
-          "title": "the generated title",
-          "description": "the generated caption/description"
-        }`;
-
-        const groqRes = await axios.post(
-          'https://api.groq.com/openai/v1/chat/completions',
-          {
-            model: 'llama-3.2-11b-vision-preview',
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text: groqPrompt
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: {
-                      url: imageBase64
-                    }
-                  }
-                ]
-              }
-            ],
-            response_format: { type: 'json_object' }
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${groqKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-
-        const contentText = groqRes.data.choices[0].message.content;
-        const parsedResult = parseAIJson(contentText);
-        return res.json(parsedResult);
-      } catch (groqErr) {
-        console.error('[Groq fallback failed]:', groqErr.message);
-      }
-    }
-    res.status(500).json({ error: 'AI failed to analyze image: ' + err.message });
+    console.error('Error generating post from image:', err);
+    res.status(500).json({ error: 'Failed to generate post from image' });
   }
 });
 

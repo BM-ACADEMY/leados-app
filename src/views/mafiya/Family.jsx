@@ -131,8 +131,33 @@ export default function Family() {
       current = client.scans_used || 0;
     }
 
-    const pct = isInternal ? 0 : Math.round((current / Math.max(1, limit)) * 100);
-    return { current, limit: isInternal ? '∞' : limit, pct };
+    if (limit === -1) limit = 10000;
+    const pct = isInternal || limit === 10000 ? 0 : Math.round((current / Math.max(1, limit)) * 100);
+    return { current, limit: isInternal || limit === 10000 ? '∞' : limit, pct };
+  };
+
+  const getDailyUsagePercent = (client, type) => {
+    const isInternal = client.client_type === 'internal';
+    let limit = 100;
+    let current = 0;
+
+    if (type === 'ai_replies') {
+      limit = isInternal ? 100 : (client.ai_replies_daily_limit !== undefined ? client.ai_replies_daily_limit : 5);
+      current = client.ai_replies_today_used || 0;
+    } else if (type === 'ai_suggestions') {
+      limit = isInternal ? 100 : (client.ai_sug_daily_limit !== undefined ? client.ai_sug_daily_limit : 3);
+      current = client.ai_sug_today_used || 0;
+    } else if (type === 'brain_ai') {
+      limit = isInternal ? 100 : (client.brain_ai_daily_limit !== undefined ? client.brain_ai_daily_limit : 2);
+      current = client.brain_ai_today_used || 0;
+    } else {
+      limit = isInternal ? 100 : (client.scans_daily_limit !== undefined ? client.scans_daily_limit : 1);
+      current = client.scans_today_used || 0;
+    }
+
+    if (limit === -1) limit = 10000;
+    const pct = isInternal || limit === 10000 ? 0 : Math.round((current / Math.max(1, limit)) * 100);
+    return { current, limit: isInternal || limit === 10000 ? '∞' : limit, pct };
   };
 
   if (isLoading) {
@@ -293,10 +318,10 @@ export default function Family() {
                             <span style={{ color: C.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
                               <Brain size={12} /> AI Replies
                             </span>
-                            <span style={{ color: '#fff', fontWeight: 600 }}>{getUsagePercent(client, 'ai_replies').current} / {getUsagePercent(client, 'ai_replies').limit} replies</span>
+                            <span style={{ color: '#fff', fontWeight: 600 }}>{getDailyUsagePercent(client, 'ai_replies').current} / {getDailyUsagePercent(client, 'ai_replies').limit} replies (Today)</span>
                           </div>
                           <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ width: `${getUsagePercent(client, 'ai_replies').pct}%`, height: '100%', background: getUsagePercent(client, 'ai_replies').pct > 80 ? '#ef4444' : C.accent, borderRadius: 3 }} />
+                            <div style={{ width: `${getDailyUsagePercent(client, 'ai_replies').pct}%`, height: '100%', background: getDailyUsagePercent(client, 'ai_replies').pct > 80 ? '#ef4444' : C.accent, borderRadius: 3 }} />
                           </div>
                         </div>
  
@@ -306,10 +331,10 @@ export default function Family() {
                             <span style={{ color: C.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
                               <Brain size={12} /> AI Post Suggestions
                             </span>
-                            <span style={{ color: '#fff', fontWeight: 600 }}>{getUsagePercent(client, 'ai_suggestions').current} / {getUsagePercent(client, 'ai_suggestions').limit} posts</span>
+                            <span style={{ color: '#fff', fontWeight: 600 }}>{getDailyUsagePercent(client, 'ai_suggestions').current} / {getDailyUsagePercent(client, 'ai_suggestions').limit} posts (Today)</span>
                           </div>
                           <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ width: `${getUsagePercent(client, 'ai_suggestions').pct}%`, height: '100%', background: getUsagePercent(client, 'ai_suggestions').pct > 80 ? '#ef4444' : C.accent, borderRadius: 3 }} />
+                            <div style={{ width: `${getDailyUsagePercent(client, 'ai_suggestions').pct}%`, height: '100%', background: getDailyUsagePercent(client, 'ai_suggestions').pct > 80 ? '#ef4444' : C.accent, borderRadius: 3 }} />
                           </div>
                         </div>
  
@@ -319,10 +344,10 @@ export default function Family() {
                             <span style={{ color: C.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
                               <Brain size={12} /> GMB Brain AI
                             </span>
-                            <span style={{ color: '#fff', fontWeight: 600 }}>{getUsagePercent(client, 'brain_ai').current} / {getUsagePercent(client, 'brain_ai').limit} actions</span>
+                            <span style={{ color: '#fff', fontWeight: 600 }}>{getDailyUsagePercent(client, 'brain_ai').current} / {getDailyUsagePercent(client, 'brain_ai').limit} actions (Today)</span>
                           </div>
                           <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ width: `${getUsagePercent(client, 'brain_ai').pct}%`, height: '100%', background: getUsagePercent(client, 'brain_ai').pct > 80 ? '#ef4444' : C.accent, borderRadius: 3 }} />
+                            <div style={{ width: `${getDailyUsagePercent(client, 'brain_ai').pct}%`, height: '100%', background: getDailyUsagePercent(client, 'brain_ai').pct > 80 ? '#ef4444' : C.accent, borderRadius: 3 }} />
                           </div>
                         </div>
  
@@ -332,10 +357,10 @@ export default function Family() {
                             <span style={{ color: C.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
                               <Target size={12} /> ValueSERP
                             </span>
-                            <span style={{ color: '#fff', fontWeight: 600 }}>{getUsagePercent(client, 'serp').current} / {getUsagePercent(client, 'serp').limit} scans</span>
+                            <span style={{ color: '#fff', fontWeight: 600 }}>{getDailyUsagePercent(client, 'serp').current} / {getDailyUsagePercent(client, 'serp').limit} scans (Today)</span>
                           </div>
                           <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ width: `${getUsagePercent(client, 'serp').pct}%`, height: '100%', background: getUsagePercent(client, 'serp').pct > 80 ? '#ef4444' : '#3b82f6', borderRadius: 3 }} />
+                            <div style={{ width: `${getDailyUsagePercent(client, 'serp').pct}%`, height: '100%', background: getDailyUsagePercent(client, 'serp').pct > 80 ? '#ef4444' : '#3b82f6', borderRadius: 3 }} />
                           </div>
                         </div>
                       </div>

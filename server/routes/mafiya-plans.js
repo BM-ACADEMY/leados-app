@@ -43,8 +43,8 @@ router.post('/', async (req, res) => {
       for (const f of features) {
         if (f.feature_key) {
           const featRes = await pool.query(
-            'INSERT INTO mafiya_plan_features (plan_id, feature_key, feature_name, limit_value) VALUES ($1, $2, $3, $4) RETURNING *',
-            [newPlan.id, f.feature_key, f.feature_name, f.limit_value !== undefined ? parseInt(f.limit_value) : -1]
+            'INSERT INTO mafiya_plan_features (plan_id, feature_key, feature_name, limit_value, daily_limit) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [newPlan.id, f.feature_key, f.feature_name, f.limit_value !== undefined ? parseInt(f.limit_value) : -1, f.daily_limit !== undefined ? parseInt(f.daily_limit) : -1]
           );
           insertedFeatures.push(featRes.rows[0]);
         }
@@ -91,8 +91,8 @@ router.put('/:id', async (req, res) => {
       for (const f of features) {
         if (f.feature_key) {
           const featRes = await pool.query(
-            'INSERT INTO mafiya_plan_features (plan_id, feature_key, feature_name, limit_value) VALUES ($1, $2, $3, $4) RETURNING *',
-            [id, f.feature_key, f.feature_name, f.limit_value !== undefined ? parseInt(f.limit_value) : -1]
+            'INSERT INTO mafiya_plan_features (plan_id, feature_key, feature_name, limit_value, daily_limit) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [id, f.feature_key, f.feature_name, f.limit_value !== undefined ? parseInt(f.limit_value) : -1, f.daily_limit !== undefined ? parseInt(f.daily_limit) : -1]
           );
           insertedFeatures.push(featRes.rows[0]);
         }

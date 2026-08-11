@@ -10,7 +10,7 @@ const pool = require('../db/connection');
  * @param {function} countGetter - An async function that returns the current count of usage (e.g. current keywords tracked, monthly AI replies used, etc.).
  * @returns {Promise<{allowed: boolean, limit: number, current: number}>}
  */
-async function checkLimit(clientId, featureKey, countGetter) {
+async function checkLimit(clientId, featureKey, countGetter, dailyCountGetter = null) {
   try {
     // 1. Fetch GMB Client details
     const clientRes = await pool.query(
@@ -36,25 +36,37 @@ async function checkLimit(clientId, featureKey, countGetter) {
 
     // 4. Fetch Plan Feature limit
     const featureRes = await pool.query(
-      'SELECT limit_value FROM mafiya_plan_features WHERE plan_id = $1 AND feature_key = $2',
+      'SELECT limit_value, daily_limit FROM mafiya_plan_features WHERE plan_id = $1 AND feature_key = $2',
       [plan_id, featureKey]
     );
 
     let limit = 0;
+    let daily_limit = -1;
     if (featureRes.rows.length > 0) {
       limit = featureRes.rows[0].limit_value;
+      daily_limit = featureRes.rows[0].daily_limit !== undefined ? featureRes.rows[0].daily_limit : -1;
     }
 
     // -1 represents unlimited on a paid plan
-    if (limit === -1) {
+    if (limit === -1 && daily_limit === -1) {
       return { allowed: true, limit: -1, current: 0 };
     }
 
-    // 5. Evaluate current usage using countGetter callback
-    const current = await countGetter();
+    let current = 0;
+    // 5. Evaluate current usage using countGetter callback (Monthly)
+    if (limit !== -1 && countGetter) {
+      current = await countGetter();
+      if (current >= limit) {
+        return { allowed: false, limit, current, isDailyLimit: false };
+      }
+    }
 
-    if (current >= limit) {
-      return { allowed: false, limit, current };
+    // Evaluate daily limit
+    if (daily_limit !== -1 && dailyCountGetter) {
+      const dailyCurrent = await dailyCountGetter();
+      if (dailyCurrent >= daily_limit) {
+        return { allowed: false, limit: daily_limit, current: dailyCurrent, isDailyLimit: true };
+      }
     }
 
     return { allowed: true, limit, current };

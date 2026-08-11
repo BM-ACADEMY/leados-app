@@ -112,6 +112,22 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
 
       if (res.data.title) setPostTitle(res.data.title);
       if (res.data.description) setDescription(res.data.description);
+      if (res.data.actionButton) {
+        const actionMap = {
+          'BOOK': 'Book',
+          'ORDER': 'Order online',
+          'SHOP': 'Buy',
+          'LEARN_MORE': 'Learn more',
+          'SIGN_UP': 'Sign up',
+          'CALL': 'Call now'
+        };
+        const mappedAction = actionMap[res.data.actionButton] || res.data.actionButton;
+        if (mappedAction !== 'None') {
+          setHasButton(true);
+          setButtonType(mappedAction);
+          setButtonLink('');
+        }
+      }
       toast.success('AI suggestions loaded successfully!', { id: aiToast });
     } catch (err) {
       console.error('[AI Generation error]:', err);
@@ -195,6 +211,25 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
           setHasButton(true);
           setButtonType(bType);
           setButtonLink(bLink || '');
+        } else if (editingPost.action_button) {
+          const actionMap = {
+            'BOOK': 'Book',
+            'ORDER': 'Order online',
+            'SHOP': 'Buy',
+            'LEARN_MORE': 'Learn more',
+            'SIGN_UP': 'Sign up',
+            'CALL': 'Call now'
+          };
+          const mappedAction = actionMap[editingPost.action_button] || editingPost.action_button;
+          if (mappedAction !== 'None') {
+            setHasButton(true);
+            setButtonType(mappedAction);
+            setButtonLink('');
+          } else {
+            setHasButton(false);
+            setButtonType('None');
+            setButtonLink('');
+          }
         } else {
           setHasButton(false);
           setButtonType('None');
@@ -525,7 +560,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                     })}
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 32 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 32 }} className="grid-responsive">
 
                     {/* Left Column (Inputs) */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -624,7 +659,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                       {/* Date and Time Fields for Offer / Event */}
                       {(postType === 'Offer' || postType === 'Event') && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, background: '#27272a4d', padding: 16, borderRadius: 12, border: '1px solid rgba(255,255,255,0.04)' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }} className="grid-responsive">
                             <div style={{ position: 'relative' }}>
                               <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>Start Date*</label>
                               <input
@@ -645,7 +680,7 @@ const GmbPostModal = ({ activeClient, fetchGmbPosts, showModal, setShowModal, ed
                             </div>
                           </div>
 
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }} className="grid-responsive">
                             <div style={{ position: 'relative' }}>
                               <label style={{ fontSize: 11, color: '#a1a1aa', display: 'block', marginBottom: 6 }}>End Date*</label>
                               <input
@@ -1592,8 +1627,10 @@ export default function StreetPosts() {
       setEditingPost({
         caption: location.state.caption,
         post_title: location.state.title,
-        post_type: 'Update'
+        post_type: 'Update',
+        action_button: location.state.actionButton
       });
+      
       setShowModal(true);
     }
   }, [location.state]);

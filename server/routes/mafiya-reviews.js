@@ -1181,9 +1181,21 @@ router.post('/brain/suggest-posts', async (req, res) => {
         [clientId]
       );
       return parseInt(countRes.rows[0].count, 10);
+    }, async () => {
+      const countRes = await pool.query(
+        "SELECT COUNT(*) FROM mafiya_ai_suggestions_log WHERE client_id = $1 AND generated_at >= CURRENT_DATE",
+        [clientId]
+      );
+      return parseInt(countRes.rows[0].count, 10);
     });
 
     if (!limitCheck.allowed) {
+      if (limitCheck.isDailyLimit) {
+        return res.status(403).json({
+          error: 'Limit reached',
+          message: 'Today quota completed. Please try again tomorrow.'
+        });
+      }
       return res.status(403).json({
         error: 'Limit reached',
         message: `Plan limit reached. Up to ${limitCheck.limit} AI suggestions/month. Please upgrade.`
@@ -2092,9 +2104,21 @@ router.post('/posts/generate-from-image', async (req, res) => {
         [clientId]
       );
       return parseInt(countRes.rows[0].count, 10);
+    }, async () => {
+      const countRes = await pool.query(
+        "SELECT COUNT(*) FROM mafiya_ai_suggestions_log WHERE client_id = $1 AND generated_at >= CURRENT_DATE",
+        [clientId]
+      );
+      return parseInt(countRes.rows[0].count, 10);
     });
 
     if (!limitCheck.allowed) {
+      if (limitCheck.isDailyLimit) {
+        return res.status(403).json({
+          error: 'Limit reached',
+          message: 'Today quota completed. Please try again tomorrow.'
+        });
+      }
       return res.status(403).json({
         error: 'Limit reached',
         message: `Plan limit reached. Up to ${limitCheck.limit} AI suggestions/month. Please upgrade.`

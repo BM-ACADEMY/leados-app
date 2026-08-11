@@ -206,44 +206,69 @@ router.get('/family/dashboard', async (req, res) => {
       return acc;
     }, {});
 
+    // Daily (Today) counts
+    const aiRepliesTodayRes = await pool.query("SELECT client_id, COUNT(*)::int as count FROM mafiya_review_replies WHERE created_at >= CURRENT_DATE GROUP BY client_id");
+    const aiRepliesToday = aiRepliesTodayRes.rows.reduce((acc, row) => { acc[row.client_id] = row.count; return acc; }, {});
+
+    const aiSugTodayRes = await pool.query("SELECT client_id, COUNT(*)::int as count FROM mafiya_ai_suggestions_log WHERE generated_at >= CURRENT_DATE GROUP BY client_id");
+    const aiSugToday = aiSugTodayRes.rows.reduce((acc, row) => { acc[row.client_id] = row.count; return acc; }, {});
+
+    const brainAiTodayRes = await pool.query("SELECT client_id, COUNT(*)::int as count FROM mafiya_brain_ai_log WHERE used_at >= CURRENT_DATE GROUP BY client_id");
+    const brainAiToday = brainAiTodayRes.rows.reduce((acc, row) => { acc[row.client_id] = row.count; return acc; }, {});
+
+    const scansTodayRes = await pool.query("SELECT client_id, COUNT(*)::int as count FROM mafiya_geogrid_scans_log WHERE scanned_at >= CURRENT_DATE GROUP BY client_id");
+    const scansToday = scansTodayRes.rows.reduce((acc, row) => { acc[row.client_id] = row.count; return acc; }, {});
+
     // Map limits per plan_id
     const limitsMap = {};
     planFeatures.forEach(pf => {
       if (!limitsMap[pf.plan_id]) {
-        limitsMap[pf.plan_id] = { aiRepliesLimit: 20, aiSugLimit: 10, brainAiLimit: 10, scansLimit: 3 };
+        limitsMap[pf.plan_id] = { aiRepliesLimit: 20, aiSugLimit: 10, brainAiLimit: 10, scansLimit: 3, aiRepliesDailyLimit: -1, aiSugDailyLimit: -1, brainAiDailyLimit: -1, scansDailyLimit: -1 };
       }
       if (pf.feature_key === 'mafiya_ai_replies') {
-        limitsMap[pf.plan_id].aiRepliesLimit = pf.limit_value;
+        limitsMap[pf.plan_id].aiRepliesLimit = pf.limit_value; limitsMap[pf.plan_id].aiRepliesDailyLimit = pf.daily_limit;
       }
       if (pf.feature_key === 'mafiya_ai_suggestions') {
-        limitsMap[pf.plan_id].aiSugLimit = pf.limit_value;
+        limitsMap[pf.plan_id].aiSugLimit = pf.limit_value; limitsMap[pf.plan_id].aiSugDailyLimit = pf.daily_limit;
       }
       if (pf.feature_key === 'mafiya_brain_ai') {
-        limitsMap[pf.plan_id].brainAiLimit = pf.limit_value;
+        limitsMap[pf.plan_id].brainAiLimit = pf.limit_value; limitsMap[pf.plan_id].brainAiDailyLimit = pf.daily_limit;
       }
       if (pf.feature_key === 'mafiya_geogrid_scans') {
-        limitsMap[pf.plan_id].scansLimit = pf.limit_value;
+        limitsMap[pf.plan_id].scansLimit = pf.limit_value; limitsMap[pf.plan_id].scansDailyLimit = pf.daily_limit;
       }
     });
 
     // Attach usage to clients
     clients = clients.map(c => {
-      const planLimits = limitsMap[c.plan_id] || { aiRepliesLimit: 20, aiSugLimit: 10, brainAiLimit: 10, scansLimit: 3 };
+      const planLimits = limitsMap[c.plan_id] || { aiRepliesLimit: 20, aiSugLimit: 10, brainAiLimit: 10, scansLimit: 3, aiRepliesDailyLimit: -1, aiSugDailyLimit: -1, brainAiDailyLimit: -1, scansDailyLimit: -1 };
       const currentReplies = aiRepliesCounts[c.id] || 0;
       const currentSug = aiSugCounts[c.id] || 0;
       const currentBrain = brainAiCounts[c.id] || 0;
       const currentScans = scansCounts[c.id] || 0;
+      const todayReplies = aiRepliesToday[c.id] || 0;
+      const todaySug = aiSugToday[c.id] || 0;
+      const todayBrain = brainAiToday[c.id] || 0;
+      const todayScans = scansToday[c.id] || 0;
 
       return {
         ...c,
         ai_replies_used: currentReplies,
         ai_replies_limit: c.client_type === 'internal' ? -1 : planLimits.aiRepliesLimit,
+        ai_replies_today_used: todayReplies,
+        ai_replies_daily_limit: c.client_type === 'internal' ? -1 : planLimits.aiRepliesDailyLimit,
         ai_sug_used: currentSug,
         ai_sug_limit: c.client_type === 'internal' ? -1 : planLimits.aiSugLimit,
+        ai_sug_today_used: todaySug,
+        ai_sug_daily_limit: c.client_type === 'internal' ? -1 : planLimits.aiSugDailyLimit,
         brain_ai_used: currentBrain,
         brain_ai_limit: c.client_type === 'internal' ? -1 : planLimits.brainAiLimit,
+        brain_ai_today_used: todayBrain,
+        brain_ai_daily_limit: c.client_type === 'internal' ? -1 : planLimits.brainAiDailyLimit,
         scans_used: currentScans,
-        scans_limit: c.client_type === 'internal' ? -1 : planLimits.scansLimit
+        scans_limit: c.client_type === 'internal' ? -1 : planLimits.scansLimit,
+        scans_today_used: todayScans,
+        scans_daily_limit: c.client_type === 'internal' ? -1 : planLimits.scansDailyLimit
       };
     });
  

@@ -62,7 +62,21 @@ export default function PlanManagement() {
   const handleFeatureLimitChange = (key, value) => {
     const updatedFeatures = formData.features.map(f => {
       if (f.feature_key === key) {
-        return { ...f, limit_value: value === '' ? '' : (!isNaN(parseInt(value)) ? parseInt(value) : 0) };
+        const numVal = value === '' ? '' : (!isNaN(parseInt(value)) ? parseInt(value) : 0);
+        let autoDaily = -1;
+        if (numVal !== '' && numVal > 0) autoDaily = Math.ceil(numVal / 30);
+        else if (numVal === 0) autoDaily = 0;
+        return { ...f, limit_value: numVal, daily_limit: autoDaily };
+      }
+      return f;
+    });
+    setFormData({ ...formData, features: updatedFeatures });
+  };
+
+  const handleFeatureDailyLimitChange = (key, value) => {
+    const updatedFeatures = formData.features.map(f => {
+      if (f.feature_key === key) {
+        return { ...f, daily_limit: value === '' ? '' : (!isNaN(parseInt(value)) ? parseInt(value) : 0) };
       }
       return f;
     });
@@ -78,7 +92,8 @@ export default function PlanManagement() {
         return {
           feature_key: def.key,
           feature_name: def.name,
-          limit_value: existing !== undefined ? existing.limit_value : def.defaultVal
+          limit_value: existing !== undefined ? existing.limit_value : def.defaultVal,
+          daily_limit: existing !== undefined ? (existing.daily_limit !== undefined ? existing.daily_limit : Math.ceil(existing.limit_value / 30)) : Math.ceil(def.defaultVal / 30)
         };
       });
 
@@ -99,7 +114,8 @@ export default function PlanManagement() {
         features: MAFIYA_FEATURE_DEFS.map(f => ({
           feature_key: f.key,
           feature_name: f.name,
-          limit_value: f.defaultVal
+          limit_value: f.defaultVal,
+          daily_limit: Math.ceil(f.defaultVal / 30)
         }))
       });
     }
@@ -121,7 +137,8 @@ export default function PlanManagement() {
         ...formData,
         features: formData.features.map(f => ({
           ...f,
-          limit_value: f.limit_value === '' ? 0 : parseInt(f.limit_value)
+          limit_value: f.limit_value === '' ? 0 : parseInt(f.limit_value),
+          daily_limit: f.daily_limit === '' ? -1 : parseInt(f.daily_limit)
         }))
       };
 
@@ -228,6 +245,7 @@ export default function PlanManagement() {
                       <span style={{ color: C.muted }}>{feat.feature_name}</span>
                       <span style={{ color: '#fff', fontWeight: 600 }}>
                         {feat.limit_value === -1 ? 'Unlimited' : feat.limit_value}
+                        {feat.limit_value !== -1 && feat.daily_limit !== undefined && feat.daily_limit !== -1 ? <span style={{ color: C.muted, fontSize: 10, marginLeft: 4 }}>({feat.daily_limit}/day)</span> : null}
                       </span>
                     </div>
                   ))}
@@ -294,14 +312,29 @@ export default function PlanManagement() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 220, overflowY: 'auto', paddingRight: 6 }}>
                   {formData.features.map(feat => (
                     <div key={feat.feature_key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, color: C.muted }}>{feat.feature_name}</span>
-                      <input
-                        type="number"
-                        value={feat.limit_value}
-                        onChange={(e) => handleFeatureLimitChange(feat.feature_key, e.target.value)}
-                        placeholder="-1 for Unlimited"
-                        style={{ width: 80, padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, color: '#fff', fontSize: 12, textAlign: 'center' }}
-                      />
+                      <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{feat.feature_name}</span>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          <span style={{ fontSize: 9, color: C.muted, marginBottom: 2 }}>Monthly</span>
+                          <input
+                            type="number"
+                            value={feat.limit_value}
+                            onChange={(e) => handleFeatureLimitChange(feat.feature_key, e.target.value)}
+                            placeholder="-1"
+                            style={{ width: 70, padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, color: '#fff', fontSize: 12, textAlign: 'center' }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          <span style={{ fontSize: 9, color: C.muted, marginBottom: 2 }}>Daily</span>
+                          <input
+                            type="number"
+                            value={feat.daily_limit}
+                            onChange={(e) => handleFeatureDailyLimitChange(feat.feature_key, e.target.value)}
+                            placeholder="-1"
+                            style={{ width: 70, padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, color: '#fff', fontSize: 12, textAlign: 'center' }}
+                          />
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>

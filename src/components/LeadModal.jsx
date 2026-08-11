@@ -90,9 +90,9 @@ export const LeadModal = ({lead, onClose, onUpdate}) => {
                 return (
                   <div key={m.id} style={{display:'flex',justifyContent:isLead ? 'flex-start' : 'flex-end'}}>
                     <div style={{maxWidth:'73%',background:isLead ? C.card : C.accent+'20',border:'1px solid '+(isLead ? C.border : C.accentDim),borderRadius:isLead ? '4px 12px 12px 12px' : '12px 4px 12px 12px',padding:'9px 12px'}}>
-                      {!isLead && m.sender === 'ai' && <p style={{fontSize:8,color:C.accent,fontWeight:700,letterSpacing:0.8,marginBottom:4}}>AI AGENT</p>}
-                      {!isLead && m.sender === 'human' && <p style={{fontSize:8,color:C.blue,fontWeight:700,letterSpacing:0.8,marginBottom:4}}>HUMAN</p>}
-                      <p style={{fontSize:12,color:C.text,whiteSpace:'pre-wrap',lineHeight:1.6}}>{m.message}</p>
+                      {!isLead && (m.is_ai === true || m.sender === 'ai') && <p style={{fontSize:8,color:C.accent,fontWeight:700,letterSpacing:0.8,marginBottom:4}}>AI AGENT</p>}
+                      {!isLead && !(m.is_ai === true || m.sender === 'ai') && <p style={{fontSize:8,color:C.blue,fontWeight:700,letterSpacing:0.8,marginBottom:4}}>HUMAN</p>}
+                      <p style={{fontSize:12,color:C.text,whiteSpace:'pre-wrap',lineHeight:1.6}}>{m.content || m.message}</p>
                       <p style={{fontSize:9,color:C.muted,marginTop:3,textAlign:'right'}}>{(() => {
                         const raw = m.timestamp || m.sent_at || m.time || m.created_at;
                         if (!raw) return '';

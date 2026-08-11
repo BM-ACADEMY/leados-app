@@ -1148,7 +1148,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
               itemContent={(i, m) => {
                 const messageIndex = i - messageFirstItemIndex;
                 const isLead = m.direction === 'inbound' || m.from === 'lead';
-                const isAI = m.sender === 'ai' || m.from === 'ai';
+                const isAI = m.is_ai === true || m.sender === 'ai' || m.from === 'ai';
                 const isSending = m.id?.toString().startsWith('optimistic-');
 
                 // Determine if we should show date header

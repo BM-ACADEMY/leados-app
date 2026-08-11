@@ -304,7 +304,10 @@ For a voice note, ask the contact to type it. Send exactly one concise reply.`;
 
 // Gemini-only fallback chain (paid key — higher rate limits).
 // Tries 4 models in order: if one is busy/overloaded the next kicks in automatically.
-async function generateOpenRouterContent(prompt) {
+// temperature is left undefined (provider default) for creative call sites
+// (nurture nudges, objection handling, summaries) so their phrasing keeps
+// varying naturally. Only the factual WhatsApp reply path passes a low value.
+async function generateOpenRouterContent(prompt, temperature) {
   if (!ai) {
     throw new OpenRouterServiceError({
       message: 'OPENROUTER_API_KEY is not configured on the API server.',
@@ -321,7 +324,11 @@ async function generateOpenRouterContent(prompt) {
     for (let attempt = 1; attempt <= 1; attempt += 1) {
       try {
         const aiRes = await withTimeout(
-          ai.models.generateContent({ model, contents: prompt }),
+          ai.models.generateContent({
+            model,
+            contents: prompt,
+            ...(temperature !== undefined && { config: { temperature } }),
+          }),
           OPENROUTER_REQUEST_TIMEOUT_MS,
           `OpenRouter ${model}`
         );
@@ -903,7 +910,16 @@ router.post('/kb/search', async (req, res) => {
 
     // Follow-up questions such as "what is the syllabus?" need the previously
     // selected program in the retrieval query, not only the latest vague turn.
-    const kb_snippets = getRelevantKnowledge(knowledgeDocs, contextualQuery) || 'No relevant knowledge found.';
+    // BM Academy and BM TechX facts live in one approved markdown file that
+    // comfortably fits in the model's context window, so send the whole brand
+    // section instead of keyword-scoring it into chunks. Literal word-overlap
+    // scoring (e.g. on "google"/"business") is noisy across this document, and
+    // folding chat history into the scoring query made two leads asking the
+    // identical question retrieve different chunks depending on what they'd
+    // said earlier — giving inconsistent answers for the same fact.
+    const kb_snippets = (isBmAcademy || isBmTechx)
+      ? knowledgeDocs.join('\n\n')
+      : getRelevantKnowledge(knowledgeDocs, contextualQuery) || 'No relevant knowledge found.';
     const bmAcademyCourseRule = isBmAcademy
       ? `BM ACADEMY COURSE LIST RULE:
 When asked for available courses or the full course list, use every active course and separate tier in PART 2 of the approved BM Academy data collection form. Do not combine Tier 1 and Tier 2, do not invent missing details, and use the matching individual Course ID record as the source of truth. Show course names first, then ask which course needs details.`
@@ -915,11 +931,13 @@ When the user asks for a syllabus, resolve the active BM Academy course from the
     const bmAcademyActiveCourseRule = activeCourse
       ? `ACTIVE BM ACADEMY COURSE: ${activeCourse.name}\nAnswer course-detail follow-ups only about this active course. Do not use details, fees, duration, curriculum, placement claims, or links from any other course. If a requested fact is absent from the knowledge base, say it needs confirmation instead of guessing.`
       : '';
-    // Put runtime course state first so the 8k prompt cap can never truncate it.
+    // Runtime course state goes first for readability. No length cap here:
+    // the model's context window is large enough that a silent slice() was
+    // just a latent bug waiting for the editable "training" doc in AI Brain
+    // to grow past 8k chars and quietly lose rules off the end with no error.
     const system_instructions = [bmAcademyActiveCourseRule, bmAcademySyllabusRule, bmAcademyCourseRule, ...trainingDocs]
       .filter(Boolean)
-      .join('\n\n')
-      .slice(0, 8000);
+      .join('\n\n');
     res.json({ ...req.body, chat_history: resolvedHistory, kb_snippets, system_instructions, active_course: activeCourse?.name || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1204,7 +1222,10 @@ router.post('/ai/response', async (req, res) => {
       }
       Respond ONLY with the JSON object, no markdown formatting, no backticks.`;
 
-    const rawAiResponse = await generateOpenRouterContent(prompt);
+    // Low temperature: this reply must state facts (services, fees, links)
+    // consistently from the KNOWLEDGE BASE REFERENCE rather than varying
+    // wording/hedging between two leads who ask the same factual question.
+    const rawAiResponse = await generateOpenRouterContent(prompt, 0.2);
       
     let ai_reply = "I'm sorry, I couldn't process that. Can you repeat?";
     let extractedData = null;

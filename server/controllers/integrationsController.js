@@ -23,9 +23,11 @@ async function linkMetaAccount(req, res) {
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + 60);
 
-    // Manual check to avoid constraint issues during development
+    // lead_ads_access_token is a dedicated column separate from access_token, which Content OS's
+    // own Facebook connect flow (contentController.js) also writes to on this same table. Keeping
+    // them separate means reconnecting a page in Content OS can never break Lead Ads sync, and vice versa.
     const checkQuery = `
-      SELECT id FROM brand_social_accounts 
+      SELECT id FROM brand_social_accounts
       WHERE brand_name = $1 AND platform = $2 AND account_name = $3
     `;
     const checkRes = await db.query(checkQuery, [brand_name, platform, account_name]);
@@ -34,9 +36,9 @@ async function linkMetaAccount(req, res) {
     if (checkRes.rows.length > 0) {
       // Update existing
       const updateQuery = `
-        UPDATE brand_social_accounts SET 
-          account_id = $1, facebook_page_id = $2, instagram_business_id = $3, 
-          access_token = $4, token_expires_at = $5, is_active = true
+        UPDATE brand_social_accounts SET
+          account_id = $1, facebook_page_id = $2, instagram_business_id = $3,
+          lead_ads_access_token = $4, token_expires_at = $5, is_active = true
         WHERE id = $6
         RETURNING *;
       `;
@@ -49,8 +51,8 @@ async function linkMetaAccount(req, res) {
       // We will try an insert, and if it fails, we will fall back to updating based on just (brand_name, platform)
       try {
         const insertQuery = `
-          INSERT INTO brand_social_accounts 
-            (brand_name, platform, account_name, account_id, facebook_page_id, instagram_business_id, access_token, token_expires_at, is_active)
+          INSERT INTO brand_social_accounts
+            (brand_name, platform, account_name, account_id, facebook_page_id, instagram_business_id, lead_ads_access_token, token_expires_at, is_active)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
           RETURNING *;
         `;
@@ -62,9 +64,9 @@ async function linkMetaAccount(req, res) {
         if (insertErr.code === '23505') {
           // Fallback update on the existing duplicate if the constraint is blocking us
           const fallbackQuery = `
-            UPDATE brand_social_accounts SET 
-              account_name = $1, account_id = $2, facebook_page_id = $3, 
-              instagram_business_id = $4, access_token = $5, token_expires_at = $6, is_active = true
+            UPDATE brand_social_accounts SET
+              account_name = $1, account_id = $2, facebook_page_id = $3,
+              instagram_business_id = $4, lead_ads_access_token = $5, token_expires_at = $6, is_active = true
             WHERE brand_name = $7 AND platform = $8
             RETURNING *;
           `;
@@ -146,15 +148,15 @@ async function handleMetaWebhook(req, res) {
           
           try {
             const { rows } = await db.query(`
-              SELECT access_token, brand_name, c.id as client_id 
+              SELECT lead_ads_access_token, brand_name, c.id as client_id
               FROM brand_social_accounts bsa
               LEFT JOIN clients c ON bsa.brand_name = c.name
               WHERE bsa.facebook_page_id = $1 AND bsa.is_active = true LIMIT 1
             `, [pageId]);
-            
+
             if (rows.length === 0) continue;
-            
-            const masterTokenEncrypted = rows[0].access_token;
+
+            const masterTokenEncrypted = rows[0].lead_ads_access_token;
             const masterToken = cryptoHelper.decrypt(masterTokenEncrypted);
             const clientId = rows[0].client_id;
             
@@ -245,8 +247,8 @@ async function syncHistoricalLeads(req, res) {
     const acc = rows[0];
     const pageId = acc.facebook_page_id;
     if (!pageId) return res.status(400).json({ error: 'Not a Facebook Page' });
-    
-    const masterToken = cryptoHelper.decrypt(acc.access_token);
+
+    const masterToken = cryptoHelper.decrypt(acc.lead_ads_access_token);
     const clientId = acc.client_id;
     
     const pageTokenRes = await axios.get(
@@ -366,7 +368,7 @@ async function syncAllHistoricalLeads(req, res) {
       let totalSynced = 0;
       for (const acc of rows) {
         const pageId = acc.facebook_page_id;
-        const masterToken = cryptoHelper.decrypt(acc.access_token);
+        const masterToken = cryptoHelper.decrypt(acc.lead_ads_access_token);
         const clientId = acc.client_id;
         
         try {

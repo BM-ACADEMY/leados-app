@@ -6,7 +6,7 @@ const cryptoHelper = require('./utils/crypto');
 async function checkMetaLeads() {
   try {
     const { rows } = await db.query(`
-      SELECT bsa.account_name, bsa.brand_name, bsa.facebook_page_id, bsa.access_token 
+      SELECT bsa.account_name, bsa.brand_name, bsa.facebook_page_id, bsa.lead_ads_access_token AS access_token
       FROM brand_social_accounts bsa
       WHERE bsa.platform = 'facebook' AND bsa.is_active = true AND bsa.facebook_page_id IS NOT NULL
     `);

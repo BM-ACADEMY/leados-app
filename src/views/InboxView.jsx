@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
-import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut, Phone, Video, User } from 'lucide-react';
+import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut, Phone, Video, User, Sparkles } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 import { io as socketIO } from 'socket.io-client';
 import { C } from '../constants/theme.js';
@@ -141,6 +141,7 @@ export const InboxView = ({ alliance = false }) => {
   const { lead: activeLead, conversations, loadingMore, hasMore, loadMoreMessages, refetch: refetchLead, loading: loadingLead } = useInboxLead(activeLeadId);
   const [msg, setMsg] = useState('');
   const [sending, setSending] = useState(false);
+  const [suggestingReply, setSuggestingReply] = useState(false);
   const [showChatOnMobile, setShowChatOnMobile] = useState(!!location.state?.leadId);
   const [localMessages, setLocalMessages] = useState([]);
   const [connected, setConnected] = useState(false);
@@ -539,6 +540,20 @@ export const InboxView = ({ alliance = false }) => {
       }
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleAllianceSuggestion = async () => {
+    if (!alliance || !activeLeadId || suggestingReply) return;
+    setSuggestingReply(true);
+    try {
+      const result = await allianceInboxApi.suggestReply(activeLeadId);
+      setMsg(result.suggestion || '');
+      toast.success('AI suggestion ready. Review and edit it before sending.');
+    } catch (error) {
+      toast.error(error.message || 'Unable to generate an AI suggestion.');
+    } finally {
+      setSuggestingReply(false);
     }
   };
 
@@ -1637,6 +1652,18 @@ export const InboxView = ({ alliance = false }) => {
                   <Smile size={15} color={C.muted} />
                 </button>
               </div>
+
+              {alliance && (
+                <button
+                  type="button"
+                  onClick={handleAllianceSuggestion}
+                  disabled={suggestingReply || !activeLeadId}
+                  style={{ background: suggestingReply ? C.card : 'rgba(216,170,35,.12)', border: '1px solid rgba(216,170,35,.45)', width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: suggestingReply ? 'wait' : 'pointer', opacity: suggestingReply ? .65 : 1 }}
+                  title="Generate AI reply suggestion"
+                >
+                  <Sparkles size={15} color="#e0b52f" />
+                </button>
+              )}
 
               {isRecording ? (
                 <div style={{ flex: 1, background: C.card, border: '1px solid ' + C.border, borderRadius: 11, padding: '10px 13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

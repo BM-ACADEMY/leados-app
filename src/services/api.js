@@ -994,6 +994,7 @@ export const allianceInboxApi = {
   getMessages(id, limit = 100, offset = 0) { return api.request(`/api/alliance-inbox/contacts/${id}/messages?limit=${limit}&offset=${offset}`); },
   readConversation(id) { return api.request(`/api/alliance-inbox/conversations/${id}/read`, { method: 'PUT' }); },
   updateLead(id, updates) { return api.request(`/api/alliance-inbox/contacts/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }); },
+  suggestReply(id) { return api.request(`/api/alliance-inbox/contacts/${id}/ai-suggestion`, { method: 'POST' }); },
   sendWhatsAppMessage(id, message, mediaUrl = null, msgType = 'text', replyToWaId = null, isForwarded = false) {
     return api.request(`/api/alliance-inbox/contacts/${id}/messages`, {
       method: 'POST', body: JSON.stringify({ message, mediaUrl, msgType, replyToMessageId: replyToWaId, isForwarded }),

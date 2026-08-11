@@ -7,7 +7,9 @@ const ffmpeg = require('fluent-ffmpeg');
 ffmpeg.setFfmpegPath(require('@ffmpeg-installer/ffmpeg').path);
 const db = require('../db/connection');
 const ensureAllianceSchema = require('../db/alliance-schema');
+const openRouter = require('../services/openrouter');
 const { processQueuedAllianceWelcomes } = require('../services/alliance-welcome');
+const { scheduleAllianceInactivityReminder } = require('../services/alliance-whatsapp-campaign-worker');
 
 function createAllianceInboxRouter({ auth, io }) {
   const router = express.Router();
@@ -323,6 +325,14 @@ function createAllianceInboxRouter({ auth, io }) {
       [req.body.name || null, req.body.status || null, req.body.interest || null, req.params.id]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Alliance contact not found.' });
+    if (result.rows[0].prospect_id && req.body.status) {
+      const status = String(req.body.status).toLowerCase();
+      const allowed = ['pending','in_process','interested','converted','closed','not_interested','unsubscribed'];
+      if (allowed.includes(status)) await db.query(`UPDATE alliance_prospects SET status=$1,updated_at=NOW() WHERE id=$2`,[status,result.rows[0].prospect_id]);
+      if (['converted','closed','not_interested','unsubscribed'].includes(status)) {
+        await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='cancelled',error_message=$1 WHERE prospect_id=$2 AND status IN ('pending','claimed')`,[`Prospect ${status}.`,result.rows[0].prospect_id]);
+      }
+    }
     res.json({ lead: result.rows[0] });
   });
 
@@ -339,6 +349,40 @@ function createAllianceInboxRouter({ auth, io }) {
   router.put('/conversations/:contactId/read', async (req, res) => {
     await db.query(`UPDATE alliance_inbox_conversations SET unread_count = 0 WHERE contact_id = $1`, [req.params.contactId]);
     res.json({ success: true });
+  });
+
+  router.post('/contacts/:id/ai-suggestion', async (req, res) => {
+    try {
+      if (!openRouter.isConfigured) return res.status(503).json({ error: 'OpenRouter is not configured on the API server.' });
+      const contact = await db.query(
+        `SELECT c.id,c.name,c.phone,c.prospect_id,p.business_name,p.audience,p.industry,p.location,p.status,a.brand
+         FROM alliance_inbox_contacts c
+         LEFT JOIN alliance_prospects p ON p.id=c.prospect_id
+         LEFT JOIN alliance_audiences a ON a.code=p.audience
+         WHERE c.id=$1`, [req.params.id]
+      );
+      if (!contact.rowCount) return res.status(404).json({ error: 'Alliance contact not found.' });
+      const history = await db.query(
+        `SELECT direction,content,msg_type,sent_at FROM alliance_inbox_messages
+         WHERE contact_id=$1 AND is_deleted=FALSE ORDER BY sent_at DESC LIMIT 20`, [req.params.id]
+      );
+      const facts = contact.rows[0].audience ? await db.query(
+        `SELECT fact_key,fact_value FROM alliance_kb WHERE audience=$1 AND active=TRUE ORDER BY id LIMIT 30`,
+        [contact.rows[0].audience]
+      ) : { rows: [] };
+      const prompt = `Write one concise WhatsApp reply suggestion for HUMAN REVIEW. Never claim it was sent.
+Lead context: ${JSON.stringify(contact.rows[0])}
+Approved brand knowledge: ${JSON.stringify(facts.rows)}
+Conversation oldest to newest: ${JSON.stringify(history.rows.reverse())}
+Directly answer the latest inbound message, stay professional and conversational, use only known facts, and end with at most one useful question. Return only the message text.`;
+      const generated = await openRouter.generateContent({ contents: prompt, config: { temperature: 0.3, maxOutputTokens: 350 } });
+      const suggestion = String(generated.text || '').trim();
+      if (!suggestion) return res.status(502).json({ error: 'AI returned an empty suggestion.' });
+      res.json({ success: true, suggestion });
+    } catch (error) {
+      console.error('Alliance WhatsApp AI suggestion failed:', error.message);
+      res.status(502).json({ error: error.message || 'Unable to generate suggestion.' });
+    }
   });
 
   router.post('/media/upload', upload.single('file'), async (req, res) => {
@@ -405,6 +449,11 @@ function createAllianceInboxRouter({ auth, io }) {
           req.body.replyToMessageId || null, JSON.stringify(meta.data)]
       );
       await db.query(`UPDATE alliance_inbox_conversations SET last_message = $1, last_message_at = NOW(), updated_at = NOW() WHERE id = $2`, [content || `[${type}]`, contact.conversation_id]);
+      if (contact.prospect_id) {
+        scheduleAllianceInactivityReminder(contact.prospect_id, saved.rows[0].sent_at).catch((error) => {
+          console.error('Alliance inactivity reminder scheduling failed:', error.message);
+        });
+      }
       const message = { ...saved.rows[0], type, timestamp: saved.rows[0].sent_at };
       io.emit('alliance_outgoing_message', { lead_id: String(contact.id), message });
       res.json({ success: true, message });

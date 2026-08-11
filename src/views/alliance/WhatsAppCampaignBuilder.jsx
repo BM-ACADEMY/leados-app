@@ -29,8 +29,7 @@ export const WhatsAppCampaignBuilder = () => {
     scheduled_at: "",
     test_phone: "",
     followup_template_id: "",
-    followup_delay_days: 4,
-    followup_repeat_days: 4,
+    followup_delay_minutes: 5760,
     max_followups: 1,
   });
   const [mapping, setMapping] = useState([]);
@@ -196,9 +195,8 @@ export const WhatsAppCampaignBuilder = () => {
         parameter_mapping: mapping,
         followup_template_id: followupTemplate?.id || null,
         followup_parameter_mapping: followupMapping,
-        followup_delay_days: Number(form.followup_delay_days),
-        followup_repeat_days: Number(form.followup_repeat_days),
-        max_followups: Number(form.max_followups),
+        followup_delay_minutes: Number(form.followup_delay_minutes),
+        max_followups: 1,
         scheduled_at: form.delivery_mode === "schedule" && form.scheduled_at
           ? new Date(form.scheduled_at).toISOString()
           : null,
@@ -353,18 +351,21 @@ export const WhatsAppCampaignBuilder = () => {
                 </div>
                 <div className="al-field">
                   <label>First reminder after</label>
-                  <select value={form.followup_delay_days} onChange={(e) => setForm({ ...form, followup_delay_days: e.target.value })} disabled={!followupTemplate}>
-                    {[1,2,3,4,5,7,10].map((day) => <option key={day} value={day}>{day} day{day === 1 ? '' : 's'}</option>)}
+                  <select value={form.followup_delay_minutes} onChange={(e) => setForm({ ...form, followup_delay_minutes: e.target.value })} disabled={!followupTemplate}>
+                    <option value="10">10 minutes (testing only)</option>
+                    <option value="1440">1 day</option>
+                    <option value="2880">2 days</option>
+                    <option value="4320">3 days</option>
+                    <option value="5760">4 days (recommended)</option>
+                    <option value="7200">5 days</option>
+                    <option value="10080">7 days</option>
                   </select>
                 </div>
               </div>
               {followupTemplate && <>
                 <div className="al-wa-template"><header><b>{followupTemplate.name}</b><span>n8n reminder · approved</span></header><div>{followupTemplate.body}</div></div>
                 {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field,index) => <label key={index}><span>{`{{${index + 1}}}`}</span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value,i) => i === index ? e.target.value : value))}><option value="name">Lead name</option><option value="business_name">Business name</option><option value="location">Location</option></select><em>{valueFor(field)}</em></label>)}</div>}
-                <div className="al-cb-grid two">
-                  <div className="al-field"><label>Maximum reminders</label><select value={form.max_followups} onChange={(e) => setForm({ ...form, max_followups: e.target.value })}>{[1,2,3,4,5].map((count) => <option key={count} value={count}>{count}</option>)}</select><small className="al-help">Recommended: one reminder to protect quality.</small></div>
-                  <div className="al-field"><label>Repeat interval</label><select value={form.followup_repeat_days} onChange={(e) => setForm({ ...form, followup_repeat_days: e.target.value })}>{[2,3,4,5,7,10,14].map((day) => <option key={day} value={day}>{day} days</option>)}</select></div>
-                </div>
+                <small className="al-help">One approved reminder is sent only when there is no reply. This follows the documented maximum of two WhatsApp touches: initial message plus one gentle reminder.</small>
               </>}
             </div>
           </section>

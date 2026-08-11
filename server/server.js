@@ -2514,6 +2514,32 @@ app.post('/webhook/whatsapp', async (req, res) => {
     
     if (!body.object || body.object !== 'whatsapp_business_account') return;
 
+    // n8n may relay every Meta callback through this legacy LeadOS endpoint.
+    // Route Alliance events into the isolated Alliance webhook before any
+    // LeadOS contacts, conversations, messages, or campaign logs are touched.
+    const alliancePhoneNumberId = String(process.env.ALLIANCE_WA_PHONE_NUMBER_ID || '');
+    const isAllianceEvent = alliancePhoneNumberId && (body.entry || []).some((entry) =>
+      (entry.changes || []).some((change) =>
+        String(change.value?.metadata?.phone_number_id || '') === alliancePhoneNumberId
+      )
+    );
+    if (isAllianceEvent) {
+      const localPort = Number(process.env.PORT) || 3600;
+      await require('axios').post(
+        `http://127.0.0.1:${localPort}/api/alliance-inbox/webhook`,
+        body,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-internal-key': process.env.INTERNAL_API_KEY || '',
+          },
+          timeout: 10000,
+        }
+      );
+      console.log('[Alliance Webhook] Routed n8n callback to isolated Alliance Inbox');
+      return;
+    }
+
     // ── FILTER UNMANAGED PHONE NUMBERS ─────────────────────
     let hasValidPhoneNumber = true; // Default true for non-message events
     for (const entry of body.entry || []) {

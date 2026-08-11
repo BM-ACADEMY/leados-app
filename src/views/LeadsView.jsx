@@ -727,8 +727,8 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
         </div>
       )}
 
-      <div className="flex-col-mobile" style={{ display: 'flex', gap: 10, marginBottom: 18, alignItems: 'flex-start' }}>
-        <div className="w-full-mobile table-responsive" style={{ display: 'flex', background: C.card, border: '1px solid ' + C.border, borderRadius: 9, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18, alignItems: 'stretch' }}>
+        <div className="w-full-mobile table-responsive" style={{ display: 'flex', background: C.card, border: '1px solid ' + C.border, borderRadius: 9, overflow: 'hidden', alignSelf: 'flex-start' }}>
           {tabs.map((t) => (
             <button key={t} onClick={() => setFilter(t)} style={{ padding: '7px 13px', fontSize: 11, fontWeight: 600, border: 'none', background: filter === t ? C.accent : 'transparent', color: filter === t ? '#fff' : C.muted, textTransform: 'capitalize' }}>
               {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}

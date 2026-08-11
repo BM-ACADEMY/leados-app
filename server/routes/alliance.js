@@ -1352,7 +1352,8 @@ router.get('/whatsapp-campaigns', async (_req,res)=>{
     COUNT(r.id) FILTER(WHERE r.status='read')::int AS read,
     COUNT(r.id) FILTER(WHERE r.status='failed')::int AS failed,
     COUNT(r.id) FILTER(WHERE r.status='skipped')::int AS skipped,
-    (ARRAY_AGG(r.error_message ORDER BY r.id DESC) FILTER(WHERE r.error_message IS NOT NULL))[1] AS latest_error
+    (ARRAY_AGG(r.error_message ORDER BY r.id DESC) FILTER(WHERE r.error_message IS NOT NULL))[1] AS latest_error,
+    (SELECT MIN(j.scheduled_at) FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status IN ('pending','claimed')) AS next_followup_at
     FROM alliance_whatsapp_campaigns c LEFT JOIN alliance_whatsapp_campaign_recipients r ON r.campaign_id=c.id GROUP BY c.id ORDER BY c.created_at DESC`);res.json({campaigns:result.rows});}
   catch(error){res.status(500).json({error:'Failed to load WhatsApp campaigns.'});}
 });
@@ -1373,7 +1374,7 @@ const getAllianceWhatsAppSettings = async (queryable = db) => {
 
 router.post('/whatsapp-campaigns', async (req,res)=>{
   const name=text(req.body.name);const templateId=Number(req.body.template_id);const prospectIds=[...new Set((req.body.prospect_ids||[]).map(Number).filter(Number.isInteger))];const mapping=Array.isArray(req.body.parameter_mapping)?req.body.parameter_mapping.map(text):[];
-  const followupTemplateId=Number(req.body.followup_template_id)||null;const followupMapping=Array.isArray(req.body.followup_parameter_mapping)?req.body.followup_parameter_mapping.map(text):[];const followupDelay=Math.min(Math.max(Number(req.body.followup_delay_days)||4,1),30);const followupRepeat=Math.min(Math.max(Number(req.body.followup_repeat_days)||4,1),30);const maxFollowups=Math.min(Math.max(Number(req.body.max_followups)||1,1),5);
+  const followupTemplateId=Number(req.body.followup_template_id)||null;const followupMapping=Array.isArray(req.body.followup_parameter_mapping)?req.body.followup_parameter_mapping.map(text):[];const followupDelayMinutes=Math.min(Math.max(Number(req.body.followup_delay_minutes)||5760,10),43200);const followupDelay=Math.max(1,Math.ceil(followupDelayMinutes/1440));const followupRepeat=4;const maxFollowups=1;
   if(!name||!templateId||!prospectIds.length)return res.status(400).json({error:'Campaign name, approved template, and at least one lead are required.'});
   const client=await db.connect();
   try{await client.query('BEGIN');
@@ -1388,7 +1389,7 @@ router.post('/whatsapp-campaigns', async (req,res)=>{
     const eligible=await client.query(`SELECT id FROM alliance_prospects WHERE id=ANY($1::bigint[]) AND phone IS NOT NULL AND consent=TRUE AND consent_source IS NOT NULL AND suppressed=FALSE AND status NOT IN ('converted','closed','not_interested','unsubscribed')`,[prospectIds]);
     if(!eligible.rowCount)throw Object.assign(new Error('No selected leads have valid WhatsApp consent.'),{status:409});
     const scheduledAt=req.body.scheduled_at?new Date(req.body.scheduled_at):new Date();if(Number.isNaN(scheduledAt.getTime()))throw Object.assign(new Error('Enter a valid schedule date and time.'),{status:400});
-    const campaign=await client.query(`INSERT INTO alliance_whatsapp_campaigns(name,audience,template_id,template_name,template_language,template_body,parameter_mapping,phone_number_id,status,scheduled_at,created_by,followup_template_id,followup_template_name,followup_template_language,followup_template_body,followup_parameter_mapping,followup_delay_days,followup_repeat_days,max_followups) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,'scheduled',$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18) RETURNING *`,[name,text(req.body.audience)||null,templateId,template.rows[0].name,template.rows[0].language||'en',template.rows[0].body,JSON.stringify(mapping),settings.phone_number_id,scheduledAt,req.user?.id||null,followup?.id||null,followup?.name||null,followup?.language||null,followup?.body||null,JSON.stringify(followupMapping),followupDelay,followupRepeat,maxFollowups]);
+    const campaign=await client.query(`INSERT INTO alliance_whatsapp_campaigns(name,audience,template_id,template_name,template_language,template_body,parameter_mapping,phone_number_id,status,scheduled_at,created_by,followup_template_id,followup_template_name,followup_template_language,followup_template_body,followup_parameter_mapping,followup_delay_days,followup_delay_minutes,followup_repeat_days,max_followups) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,'scheduled',$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19) RETURNING *`,[name,text(req.body.audience)||null,templateId,template.rows[0].name,template.rows[0].language||'en',template.rows[0].body,JSON.stringify(mapping),settings.phone_number_id,scheduledAt,req.user?.id||null,followup?.id||null,followup?.name||null,followup?.language||null,followup?.body||null,JSON.stringify(followupMapping),followupDelay,followupDelayMinutes,followupRepeat,maxFollowups]);
     await client.query(`INSERT INTO alliance_whatsapp_campaign_recipients(campaign_id,prospect_id,scheduled_at) SELECT $1,id,$2 FROM alliance_prospects WHERE id=ANY($3::bigint[])`,[campaign.rows[0].id,scheduledAt,eligible.rows.map(row=>row.id)]);
     await client.query('COMMIT');setImmediate(()=>processAllianceWhatsAppCampaigns(req.app.get('io')).catch(error=>console.error('[Alliance WhatsApp bulk]',error)));
     res.status(201).json({success:true,campaign:campaign.rows[0],recipients:eligible.rowCount,message:`WhatsApp campaign scheduled for ${eligible.rowCount} opted-in leads.`});

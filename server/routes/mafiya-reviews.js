@@ -1420,7 +1420,11 @@ router.post('/posts', async (req, res) => {
 
         // Dynamically get the exact API domain that this request came from (e.g. leados-api.abmgroups.org)
         const host = req.headers['x-forwarded-host'] || req.headers.host || 'leados-api.abmgroups.org';
-        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+        let protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+        // Force HTTPS for live domains because GMB requires it
+        if (host.includes('leados-api.abmgroups.org') || host.includes('abmgroups.org')) {
+          protocol = 'https';
+        }
         const apiUrl = `${protocol}://${host}`;
 
         // Use a dedicated dynamic API route to serve the image, bypassing Nginx static file intercepts
@@ -2061,6 +2065,24 @@ router.delete('/posts/:id', async (req, res) => {
       }
     }
 
+    // Delete post from Google My Business if it was published
+    if (deletedPost.gmb_post_name) {
+      try {
+        const tokenString = await getClientGoogleToken(deletedPost.client_id);
+        if (tokenString) {
+          await axios.delete(
+            `https://mybusiness.googleapis.com/v4/${deletedPost.gmb_post_name}`,
+            { headers: { Authorization: `Bearer ${tokenString}` } }
+          );
+          console.log(`[GMB API] Successfully deleted post on Google: ${deletedPost.gmb_post_name}`);
+        } else {
+          console.log(`[GMB API] Skipped GMB delete: Missing token for client ${deletedPost.client_id}`);
+        }
+      } catch (gmbErr) {
+        console.error('[GMB API] Failed to delete post on Google:', gmbErr.response ? JSON.stringify(gmbErr.response.data) : gmbErr.message);
+      }
+    }
+
     res.json({ message: 'Post deleted successfully' });
   } catch (err) {
     console.error('[Mafiya Reviews] DELETE /posts error:', err);
@@ -2081,6 +2103,19 @@ const parseAIJson = (text) => {
   try {
     return JSON.parse(cleaned.trim());
   } catch (e) {
+    // Fallback regex extraction if JSON parse fails due to unescaped quotes
+    console.error('[parseAIJson] Failed to parse JSON, falling back to regex. Error:', e.message);
+    const titleMatch = cleaned.match(/"title"\s*:\s*"([\s\S]*?)"\s*,/);
+    const descMatch = cleaned.match(/"description"\s*:\s*"([\s\S]*?)"\s*,/);
+    const actionMatch = cleaned.match(/"actionButton"\s*:\s*"([^"]*)"/);
+
+    if (titleMatch || descMatch) {
+      return {
+        title: titleMatch ? titleMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : 'New GMB Post',
+        description: descMatch ? descMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : cleaned,
+        actionButton: actionMatch ? actionMatch[1] : 'CALL'
+      };
+    }
     return { title: 'New GMB Post', description: cleaned };
   }
 };
@@ -2144,6 +2179,7 @@ router.post('/posts/generate-from-image', async (req, res) => {
     4. Emojis: Use plenty of relevant, engaging emojis in both the title and the description to make the copy visually appealing and friendly.
     5. CRITICAL RULE - NO PHONE NUMBERS: Google My Business strictly prohibits phone numbers in post captions. DO NOT include any phone numbers in the description text.
     6. Action Button: Suggest EXACTLY ONE valid GMB CTA button: BOOK, ORDER, SHOP, LEARN_MORE, SIGN_UP, CALL. Highly prefer 'CALL' for most posts.
+    7. JSON Escaping: CRITICAL! You must properly escape any internal double quotes inside the string values. Do not use unescaped double quotes inside the description.
 
     Return ONLY a valid JSON object. Do NOT wrap the JSON in markdown blocks like \`\`\`json. The JSON object must have exactly these keys:
     {

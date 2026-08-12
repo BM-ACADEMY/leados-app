@@ -270,6 +270,43 @@ const detectExplicitBrand = (message = '') => {
   return BRAND_KEYWORDS.find(({ pattern }) => pattern.test(message))?.name || null;
 };
 
+// Last-resort brand identification: only reached once keyword matching,
+// phone-number lock, and phone_number_id lookup have all failed to find a
+// brand. ABM Groups is deliberately excluded as a candidate — it is the
+// umbrella company, never a product a lead is actually asking about, so a
+// guess of "ABM Groups" is treated the same as "couldn't tell" (null).
+const guessBrandWithAI = async (message) => {
+  const text = String(message || '').trim();
+  if (!text || !ai) return null;
+  try {
+    const candidates = (await pool.query(
+      `SELECT id, name, type, wa_category, wa_description
+       FROM clients
+       WHERE status = 'active' AND name <> 'ABM Groups'`
+    )).rows;
+    if (candidates.length === 0) return null;
+
+    const brandList = candidates
+      .map((c) => `- ${c.name}: ${c.wa_description || c.wa_category || c.type || 'no description'}`)
+      .join('\n');
+    const prompt = `A WhatsApp lead sent this message to a shared business number covering several unrelated brands:
+"${text}"
+
+BRANDS:
+${brandList}
+
+Which single brand is this message about? Reply with ONLY the exact brand name from the list above, and nothing else.
+If the message is too generic/unclear to confidently tell (e.g. just a greeting, or no brand-specific signal), reply with exactly: UNCLEAR`;
+
+    const raw = (await generateOpenRouterContent(prompt, 0.1)).trim();
+    const matched = candidates.find((c) => c.name.toLowerCase() === raw.toLowerCase());
+    return matched ? { id: matched.id, name: matched.name } : null;
+  } catch (err) {
+    console.warn('[Brand Detect] AI guess failed:', err.message);
+    return null;
+  }
+};
+
 const getLeadFirstName = (name) => {
   const cleanName = String(name || '').trim();
   // Empty, numbers only, or too short names return empty to avoid broken greetings
@@ -564,10 +601,20 @@ router.post('/brand/detect', async (req, res) => {
       }
     }
 
+    // Nothing deterministic matched. Ask the model to read the actual message
+    // and pick a real brand instead of defaulting straight to the ABM Groups
+    // umbrella. If it can't confidently tell either, leave brandId unset —
+    // the lead stays unassigned (client_id NULL) rather than getting a
+    // placeholder brand baked in. brandName stays 'ABM Groups' purely so the
+    // reply-generation prompt still has *some* label to greet with; it is
+    // never written to leads.client_id.
+    let aiGuessed = false;
     if (!brandId) {
-      const fallbackRes = await pool.query(`SELECT id, name FROM clients WHERE name = 'ABM Groups' LIMIT 1`);
-      if (fallbackRes.rows.length > 0) {
-        brandId = fallbackRes.rows[0].id;
+      const guess = await guessBrandWithAI(message);
+      if (guess) {
+        brandId = guess.id;
+        brandName = guess.name;
+        aiGuessed = true;
       }
     }
 
@@ -577,7 +624,7 @@ router.post('/brand/detect', async (req, res) => {
       brand_name: brandName,
       brand: brandName,
       brand_locked: Boolean(brandId),
-      brand_switched: Boolean(explicitBrand),
+      brand_switched: Boolean(explicitBrand) || aiGuessed,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

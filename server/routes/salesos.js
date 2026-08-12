@@ -2864,7 +2864,7 @@ router.get('/auth/google', (req, res) => {
   }
 });
 
-router.get('/auth/google/callback', async (req, res) => {
+router.get('/auth/google/callback-calender', async (req, res) => {
   try {
     if (!req.query.code) return res.status(400).send('Google authorization code is missing.');
     const email = await googleCalendar.exchangeAndStoreCode(String(req.query.code));

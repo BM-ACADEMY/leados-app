@@ -2205,18 +2205,28 @@ export default function StreetPosts() {
                                       <BarChart2 size={13} /> Analysis
                                     </button>
                                   )}
-                                  <button
-                                    onClick={() => {
-                                      setEditingPost(post);
-                                      setShowModal(true);
-                                    }}
-                                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 8, color: '#a1a1aa', display: 'flex', cursor: 'pointer', transition: 'all 0.2s' }}
-                                    onMouseEnter={e => e.currentTarget.style.color = '#fff'}
-                                    onMouseLeave={e => e.currentTarget.style.color = '#a1a1aa'}
-                                  >
-                                    <Plus size={14} style={{ transform: 'rotate(45deg)' }} />
-                                  </button>
-                                </div>
+                                    <button
+                                      onClick={() => {
+                                        setEditingPost(post);
+                                        setShowModal(true);
+                                      }}
+                                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 8, color: '#a1a1aa', display: 'flex', cursor: 'pointer', transition: 'all 0.2s' }}
+                                      onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+                                      onMouseLeave={e => e.currentTarget.style.color = '#a1a1aa'}
+                                      title="Edit Post"
+                                    >
+                                      <Plus size={14} style={{ transform: 'rotate(45deg)' }} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeletePost(post.id)}
+                                      style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 8, padding: 8, color: '#ef4444', display: 'flex', cursor: 'pointer', transition: 'all 0.2s' }}
+                                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)'; e.currentTarget.style.color = '#fff'; }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; e.currentTarget.style.color = '#ef4444'; }}
+                                      title="Delete Post"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
                               </div>
                             );
                           })}

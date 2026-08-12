@@ -18,12 +18,12 @@ const calendarCredentialsReady = pool.query(`
 const createOAuthClient = () => new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_CALLBACK_URL || process.env.GOOGLE_REDIRECT_URI
+  process.env.GOOGLE_REDIRECT_URI
 );
 
 const requireOAuthConfig = () => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET ||
-      !(process.env.GOOGLE_CALLBACK_URL || process.env.GOOGLE_REDIRECT_URI)) {
+    !(process.env.GOOGLE_REDIRECT_URI)) {
     throw new Error('Google Calendar OAuth is not configured');
   }
 };

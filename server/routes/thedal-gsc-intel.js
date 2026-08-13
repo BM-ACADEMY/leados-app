@@ -17,8 +17,8 @@ const saveTokens = (data) => fs.writeFileSync(tokensFile, JSON.stringify(data, n
 // Initialize OAuth2 client
 const port = process.env.PORT || 3600;
 const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID_GSC_I,
-  process.env.GOOGLE_CLIENT_SECRET_GSC_I,
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
   process.env.GOOGLE_CALLBACK_GSCINTEL
 );
 
@@ -27,7 +27,7 @@ router.get('/status', (req, res) => {
   const { clientId = 'default' } = req.query; // Support multi-client
   const tokens = getTokens();
 
-  if (!process.env.GOOGLE_CLIENT_ID_GSC_I || !process.env.GOOGLE_CLIENT_SECRET_GSC_I) {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     return res.json({ isVerified: false, error: 'MISSING_ENV_KEYS' });
   }
 
@@ -42,8 +42,8 @@ router.get('/status', (req, res) => {
 router.get('/auth/google', (req, res) => {
   const { clientId = 'default' } = req.query;
 
-  if (!process.env.GOOGLE_CLIENT_ID_GSC_I) {
-    return res.status(500).json({ error: 'Please set GOOGLE_CLIENT_ID_GSC_I in your .env file.' });
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    return res.status(500).json({ error: 'Please set GOOGLE_CLIENT_ID in your .env file.' });
   }
 
   const url = oauth2Client.generateAuthUrl({

@@ -347,6 +347,34 @@ const getLeadFirstName = (name) => {
   return '';
 };
 
+// Romanized Indian languages use the Latin alphabet, so script detection alone
+// incorrectly labels messages such as "enaku oru summary pathi therinjikanum"
+// as English. Give the reply model an explicit target when the current turn has
+// enough strong Tamil markers; the model still mirrors mixed/other languages.
+const getResponseLanguageTarget = (message) => {
+  const text = String(message || '').trim();
+  if (!text) return 'Mirror the language and script style of the current user message.';
+
+  if (/\p{Script=Tamil}/u.test(text)) {
+    return 'Tamil in Tamil script. Do not answer in English or romanized Tamil.';
+  }
+
+  const words = text.toLowerCase().match(/[a-z]+/g) || [];
+  const tamilMarkers = new Set([
+    'aama', 'ama', 'enna', 'enaku', 'enakku', 'enga', 'engaluku', 'eppo',
+    'epdi', 'eppadi', 'evlo', 'illa', 'illai', 'iruka', 'irukku', 'kanum',
+    'konjam', 'kudunga', 'na', 'naan', 'neenga', 'nee', 'oda', 'oru', 'pathi',
+    'pannanum', 'pannunga', 'pannuvinga', 'sollunga', 'seri', 'theriji',
+    'therinjikanum', 'venam', 'venum', 'vanakkam', 'ungal', 'ungaluku', 'yen'
+  ]);
+  const markerCount = words.filter((word) => tamilMarkers.has(word)).length;
+  if (markerCount >= 2) {
+    return 'Romanized Tamil (Tanglish) using Latin letters, matching the user\'s casual spelling. Do not answer in English and do not use Tamil script.';
+  }
+
+  return 'Mirror the language, language mix, and script style of the current user message.';
+};
+
 const DEFAULT_BOT_BEHAVIOR = `You are the ABM Groups shared WhatsApp assistant.
 Use the current contact's first name naturally. For a greeting, reply only:
 "Hey {first_name}! 👋 How can I help you today?"
@@ -1130,7 +1158,7 @@ router.post('/ai/response', async (req, res) => {
     const firstName = getLeadFirstName(leadName);
     const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(effectiveMessage);
 
-    if (isFirstLeadInteraction) {
+    if (isFirstLeadInteraction && isSimpleGreeting) {
       const wave = '\u{1F44B}';
       const ai_reply = firstName
         ? `Hey ${firstName}! ${wave} How can I help you today?`
@@ -1180,8 +1208,10 @@ router.post('/ai/response', async (req, res) => {
       historyText = "Chat History (oldest to newest):\n" + resolvedHistory.map(h => `${h.role}: ${h.text}`).join("\n") + "\n\n";
     }
 
+    const responseLanguageTarget = getResponseLanguageTarget(effectiveMessage);
     const prompt = `AI BRAIN SYSTEM INSTRUCTIONS (editable in LeadOS):\n${system_instructions || DEFAULT_BOT_BEHAVIOR}\n\n
       NON-NEGOTIABLE ORCHESTRATION RULES:
+      - REQUIRED RESPONSE LANGUAGE FOR THIS TURN: ${responseLanguageTarget}
       - Current date/time: ${new Date().toISOString()}. Scheduling timezone: ${googleCalendar.TIME_ZONE}.
       - Reply in the same language the lead's current message is written in, regardless of what language earlier turns used. Judge this by the actual words used, not the script: Tamil/Hindi words typed in English letters (Tanglish/Hinglish, e.g. "eppo course start pannuvinga", "kitna fees hai") are that language, not English — reply in that same romanized Tanglish/Hinglish, not in English and not by switching to Tamil/Devanagari script. If the message is written in native Tamil/Hindi script, reply in that same native script. If the message mixes languages, mirror that mix rather than picking one.
       - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${persistedBrand}".

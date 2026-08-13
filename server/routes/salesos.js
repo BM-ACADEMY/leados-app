@@ -1129,8 +1129,6 @@ router.post('/ai/response', async (req, res) => {
 
     const firstName = getLeadFirstName(leadName);
     const isSimpleGreeting = /^(hi+|hello+|hey+|vanakkam)[\s!.,👋😊🙏]*$/iu.test(effectiveMessage);
-    const wantsLocation = /\b(location|address|office address|google maps?|map link)\b/i.test(effectiveMessage);
-    const wantsWebsite = /\b(website|official site|official website)\b/i.test(effectiveMessage);
 
     if (isFirstLeadInteraction) {
       const wave = '\u{1F44B}';
@@ -1138,25 +1136,6 @@ router.post('/ai/response', async (req, res) => {
         ? `Hey ${firstName}! ${wave} How can I help you today?`
         : `Hey! ${wave} How can I help you today?`;
       return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
-    }
-
-    if (wantsLocation) {
-      const address = brandAddress || '252, 2nd Floor, MG Road, Kottakuppam, Vanur, Puducherry 605104';
-      return res.json({
-        ...req.body,
-        brand: persistedBrand,
-        ai_reply: `${persistedBrand}\nOffice Address: ${address}\nGoogle Maps: ${SHARED_GOOGLE_MAPS_URL}\n\nWould you like to visit our office or schedule an online meeting?`,
-        crm_tag: `LOCATION_SHARED | ${persistedBrand}`,
-      });
-    }
-
-    if (wantsWebsite) {
-      const website = BRAND_WEBSITES[persistedBrand];
-      return res.json({
-        ...req.body,
-        brand: persistedBrand,
-        ai_reply: website ? `${persistedBrand} official website: ${website}` : `Please tell me which ABM Groups brand website you need.`,
-      });
     }
 
     // Detect voice/audio messages - respond immediately without AI
@@ -1204,7 +1183,7 @@ router.post('/ai/response', async (req, res) => {
     const prompt = `AI BRAIN SYSTEM INSTRUCTIONS (editable in LeadOS):\n${system_instructions || DEFAULT_BOT_BEHAVIOR}\n\n
       NON-NEGOTIABLE ORCHESTRATION RULES:
       - Current date/time: ${new Date().toISOString()}. Scheduling timezone: ${googleCalendar.TIME_ZONE}.
-      - Reply in the same language the lead's current message is written in (English, Tamil, Hindi, Tanglish/Hinglish, etc.), regardless of what language earlier turns used. If the message mixes languages, mirror that mix.
+      - Reply in the same language the lead's current message is written in, regardless of what language earlier turns used. Judge this by the actual words used, not the script: Tamil/Hindi words typed in English letters (Tanglish/Hinglish, e.g. "eppo course start pannuvinga", "kitna fees hai") are that language, not English — reply in that same romanized Tanglish/Hinglish, not in English and not by switching to Tamil/Devanagari script. If the message is written in native Tamil/Hindi script, reply in that same native script. If the message mixes languages, mirror that mix rather than picking one.
       - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${persistedBrand}".
       - Address the contact naturally by first name ("${firstName || 'there'}") when useful, but do not repeat their name in every sentence.
       - The brand is sticky. Stay with "${persistedBrand}" unless the current message explicitly names or clearly keywords another ABM brand.
@@ -1224,6 +1203,11 @@ router.post('/ai/response', async (req, res) => {
       - Never claim a booking, calendar entry, reminder, or handoff succeeded unless the corresponding workflow result confirms it.
       - If the lead clearly wants to cancel or call off their already-booked meeting, set cancel_meeting to true and do not say it's cancelled yourself in "reply" — the real Calendar outcome is reported automatically and overrides your reply text for this case.
 
+      VERIFIED BRAND CONTACT FACTS (use exactly as given if the lead asks for these, whether alone or combined with anything else in the same message — never invent or alter them):
+      Office Address: ${brandAddress || '252, 2nd Floor, MG Road, Kottakuppam, Vanur, Puducherry 605104'}
+      Google Maps: ${SHARED_GOOGLE_MAPS_URL}
+      Official Website: ${BRAND_WEBSITES[persistedBrand] || 'not available for this brand — say it needs confirmation'}
+
       KNOWLEDGE BASE REFERENCE:
       ${kb_snippets}
       ${isBmAcademy ? `\n      BM ACADEMY COURSE ID INDEX (every active course/tier; use the exact ID from here — never invent one):\n      ${bmAcademyCourseIndex}\n` : ''}
@@ -1236,9 +1220,10 @@ router.post('/ai/response', async (req, res) => {
       3. Conversation memory: Never ask for something already provided (e.g., don't ask the time slot again after the user gave "4pm", or name if already given).
       4. Fallbacks: If it's a voice note (audio), reply: "Got your voice note 🎧 — could you type it quickly so I can help right away?". If unclear, ask ONE short clarifying question.
       5. Tone: Write a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.
-      6. Contact routing: For BM Academy and BM TechX/Grow with Kamar, use only the approved primary phone and WhatsApp number 9944940051. BM TechX escalation is 9403892971 and must be used only for escalation. For every other brand, use only contact details present in that brand's approved knowledge; never substitute a number from another brand.
-      ${isBmAcademy ? `7. Course/tier matching: Understand which course(s) the lead means from natural language — loose names, abbreviations, typos, "both"/"all"/"either", or a bare follow-up referring back to chat history. Never require exact wording. If genuinely nothing in the current message or chat history narrows it down, ask ONE short clarifying question instead of guessing.
-      8. Syllabus links: Never type, paraphrase, or invent a syllabus URL in "reply" — omit it entirely, even if you recall one from earlier in the conversation. Instead, report every course the lead is asking about (one or more) as exact IDs from the BM ACADEMY COURSE ID INDEX in "syllabus_course_ids". The real link(s) are inserted automatically after your reply from the approved catalog.` : ''}
+      6. Contact routing: For BM Academy and BM TechX/Grow with Kamar, use only the approved primary phone and WhatsApp number 9944940051. BM TechX escalation is 9403892971 and must be used only for escalation. For every other brand, use only contact details present in that brand's approved knowledge; never substitute a number from another brand. For address/location/Maps or website questions, use the VERIFIED BRAND CONTACT FACTS above exactly as given.
+      7. Multi-part messages: A single message can ask several things at once (e.g. price + syllabus + duration, or address + fees). Identify every distinct thing being asked and answer all of them in the one reply — never answer only the first or most obvious part and silently drop the rest.
+      ${isBmAcademy ? `8. Course/tier matching: Understand which course(s) the lead means from natural language — loose names, abbreviations, typos, "both"/"all"/"either", or a bare follow-up referring back to chat history. Never require exact wording. If genuinely nothing in the current message or chat history narrows it down, ask ONE short clarifying question instead of guessing.
+      9. Syllabus links: Never type, paraphrase, or invent a syllabus URL yourself. If the lead asked for anything else too in the same message (fees, duration, comparison, etc.), answer that normally in "reply" — do not drop it. Wherever the link belongs in your reply, write the exact placeholder {{SYLLABUS_LINKS}} once (e.g. "Here's the syllabus: {{SYLLABUS_LINKS}}"); it is replaced automatically with the real verified link(s) afterward. Also report every course the lead wants a syllabus for as exact IDs from the BM ACADEMY COURSE ID INDEX in "syllabus_course_ids".` : ''}
 
       JSON OUTPUT REQUIREMENT:
       You MUST return your response as a raw JSON object with the following keys exactly:
@@ -1277,6 +1262,10 @@ router.post('/ai/response', async (req, res) => {
       // lead means (that's the language-understanding part it's good at);
       // the actual URL sent always comes from our own catalog by exact
       // Course ID, so a hallucinated or stale link can never reach a lead.
+      // This only swaps the {{SYLLABUS_LINKS}} placeholder for the verified
+      // link(s) — it must NOT replace the whole reply, or anything else the
+      // model correctly answered in the same message (fees, comparisons,
+      // etc.) gets silently discarded along with it.
       if (isBmAcademy && Array.isArray(extractedData.syllabus_course_ids) && extractedData.syllabus_course_ids.length) {
         const matchedCourses = extractedData.syllabus_course_ids
           .map((id) => courseCatalog.find((course) => course.id === id))
@@ -1286,9 +1275,15 @@ router.post('/ai/response', async (req, res) => {
             const hasUrl = course.syllabusUrl && !/^(no|nil|needs_confirmation|not_applicable)$/i.test(course.syllabusUrl);
             return hasUrl ? `${course.name}: ${course.syllabusUrl}` : `${course.name}: syllabus needs confirmation`;
           });
-          ai_reply = matchedCourses.length > 1
-            ? `Here are the syllabus links:\n\n${lines.join('\n')}`
-            : `Here is the ${matchedCourses[0].name} syllabus: ${lines[0].slice(lines[0].indexOf(': ') + 2)}`;
+          const verifiedLinks = matchedCourses.length > 1
+            ? lines.join('\n')
+            : lines[0].slice(lines[0].indexOf(': ') + 2);
+          // Safety net: if the model forgot the placeholder despite the
+          // instruction, append the verified link(s) rather than silently
+          // losing them — better shown twice than never sent.
+          ai_reply = ai_reply.includes('{{SYLLABUS_LINKS}}')
+            ? ai_reply.replaceAll('{{SYLLABUS_LINKS}}', verifiedLinks)
+            : `${ai_reply}\n\n${verifiedLinks}`;
         }
       }
 

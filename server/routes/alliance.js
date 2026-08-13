@@ -371,18 +371,20 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       const consent = TRUTHY.has(text(valueFrom(row, ['consent', 'whatsapp_consent', 'whatsapp consent'])).toLowerCase());
       const consentSource = text(valueFrom(row, ['consent_source', 'consent source']));
       const channelPref = rowChannel || (requestedChannel === 'auto' ? '' : requestedChannel);
-      const channel = channelPref || audienceConfig.default_channel;
+      const hasWhatsAppAccess = Boolean(phone && consent && consentSource);
+      const inferredChannel = email && hasWhatsAppAccess ? 'both' : email ? 'email' : 'whatsapp';
+      const channel = channelPref || (requestedChannel === 'auto' ? inferredChannel : audienceConfig.default_channel);
       const problems = [];
 
       if (!businessName) problems.push('business_name is required');
       if (audience !== defaultAudience) problems.push(`audience must be ${defaultAudience} for this campaign`);
-      if (rowChannel && !['email', 'whatsapp'].includes(rowChannel)) problems.push('invalid channel_pref');
+      if (rowChannel && !['email', 'whatsapp', 'both'].includes(rowChannel)) problems.push('invalid channel_pref');
       if (emailRaw && !email) problems.push('invalid email');
       if (phoneRaw && !phone) problems.push('invalid mobile number');
-      if (channel === 'email' && !email) problems.push('email is required for email outreach');
-      if (channel === 'whatsapp' && !phone) problems.push('mobile number is required for WhatsApp');
-      if (channel === 'whatsapp' && !consent) problems.push('WhatsApp consent is required');
-      if (channel === 'whatsapp' && !consentSource) problems.push('consent_source is required for WhatsApp');
+      if (['email', 'both'].includes(channel) && !email) problems.push('email is required for email outreach');
+      if (['whatsapp', 'both'].includes(channel) && !phone) problems.push('mobile number is required for WhatsApp');
+      if (['whatsapp', 'both'].includes(channel) && !consent) problems.push('WhatsApp consent is required');
+      if (['whatsapp', 'both'].includes(channel) && !consentSource) problems.push('consent_source is required for WhatsApp');
 
       const customFields = {};
       for (const field of audienceConfig.fields) {
@@ -531,7 +533,9 @@ router.get('/prospects', async (req, res) => {
   const add = (sql, value) => { values.push(value); where.push(sql.replace('?', `$${values.length}`)); };
   if (req.query.audience) add('p.audience = ?', req.query.audience);
   if (req.query.status) add('p.status = ?', req.query.status);
-  if (req.query.channel && ['email', 'whatsapp'].includes(req.query.channel)) add('p.channel = ?', req.query.channel);
+  if (req.query.channel && ['email', 'whatsapp'].includes(req.query.channel)) {
+    add(`p.channel IN (?, 'both')`, req.query.channel);
+  }
   if (req.query.search) {
     values.push(req.query.search);
     const searchParam = `$${values.length}`;
@@ -598,11 +602,11 @@ router.post('/prospects', async (req, res) => {
     const consent = Boolean(req.body.consent);
     const consentSource = text(req.body.consent_source);
     if (!businessName) return res.status(400).json({ error: 'Business name is required.' });
-    if (!['email', 'whatsapp'].includes(channel)) return res.status(400).json({ error: 'Channel must be email or whatsapp.' });
+    if (!['email', 'whatsapp', 'both'].includes(channel)) return res.status(400).json({ error: 'Channel must be email, whatsapp, or both.' });
     if (emailInput && !email) return res.status(400).json({ error: 'Enter a valid email address.' });
     if (phoneInput && !phone) return res.status(400).json({ error: 'Enter a valid mobile number.' });
-    if (channel === 'email' && !email) return res.status(400).json({ error: 'Email is required for email outreach.' });
-    if (channel === 'whatsapp' && (!phone || !consent || !consentSource)) {
+    if (['email', 'both'].includes(channel) && !email) return res.status(400).json({ error: 'Email is required for email outreach.' });
+    if (['whatsapp', 'both'].includes(channel) && (!phone || !consent || !consentSource)) {
       return res.status(400).json({ error: 'WhatsApp requires phone, consent, and consent source.' });
     }
 
@@ -658,11 +662,11 @@ router.patch('/prospects/:id', async (req, res) => {
     const channel = text(req.body.channel ?? existing.channel).toLowerCase();
     const consent = req.body.consent !== undefined ? Boolean(req.body.consent) : existing.consent;
     const consentSource = req.body.consent_source !== undefined ? text(req.body.consent_source) : existing.consent_source;
-    if (!['email', 'whatsapp'].includes(channel)) return res.status(400).json({ error: 'Channel must be email or whatsapp.' });
+    if (!['email', 'whatsapp', 'both'].includes(channel)) return res.status(400).json({ error: 'Channel must be email, whatsapp, or both.' });
     if (emailInput && !email) return res.status(400).json({ error: 'Enter a valid email address.' });
     if (phoneInput && !phone) return res.status(400).json({ error: 'Enter a valid mobile number.' });
-    if (channel === 'email' && !email) return res.status(400).json({ error: 'Email is required for email outreach.' });
-    if (channel === 'whatsapp' && (!phone || !consent || !consentSource)) return res.status(400).json({ error: 'WhatsApp requires phone, consent, and consent source.' });
+    if (['email', 'both'].includes(channel) && !email) return res.status(400).json({ error: 'Email is required for email outreach.' });
+    if (['whatsapp', 'both'].includes(channel) && (!phone || !consent || !consentSource)) return res.status(400).json({ error: 'WhatsApp requires phone, consent, and consent source.' });
     const businessName = text(req.body.business_name ?? existing.business_name);
     if (!businessName) return res.status(400).json({ error: 'Business name is required.' });
 
@@ -1374,7 +1378,7 @@ const getAllianceWhatsAppSettings = async (queryable = db) => {
 
 router.post('/whatsapp-campaigns', async (req,res)=>{
   const name=text(req.body.name);const templateId=Number(req.body.template_id);const prospectIds=[...new Set((req.body.prospect_ids||[]).map(Number).filter(Number.isInteger))];const mapping=Array.isArray(req.body.parameter_mapping)?req.body.parameter_mapping.map(text):[];
-  const followupTemplateId=Number(req.body.followup_template_id)||null;const followupMapping=Array.isArray(req.body.followup_parameter_mapping)?req.body.followup_parameter_mapping.map(text):[];const followupDelayMinutes=Math.min(Math.max(Number(req.body.followup_delay_minutes)||5760,10),43200);const followupDelay=Math.max(1,Math.ceil(followupDelayMinutes/1440));const followupRepeat=4;const maxFollowups=1;
+  const followupTemplateId=Number(req.body.followup_template_id)||null;const followupMapping=Array.isArray(req.body.followup_parameter_mapping)?req.body.followup_parameter_mapping.map(text):[];const followupDelayMinutes=Math.min(Math.max(Number(req.body.followup_delay_minutes)||5760,10),43200);const followupDelay=Math.max(1,Math.ceil(followupDelayMinutes/1440));const followupRepeat=Math.min(Math.max(Number(req.body.followup_repeat_days)||4,1),30);const maxFollowups=0;
   if(!name||!templateId||!prospectIds.length)return res.status(400).json({error:'Campaign name, approved template, and at least one lead are required.'});
   const client=await db.connect();
   try{await client.query('BEGIN');
@@ -1386,7 +1390,7 @@ router.post('/whatsapp-campaigns', async (req,res)=>{
     const settings=await getAllianceWhatsAppSettings(client);
     if(!settings)throw Object.assign(new Error('Configure ALLIANCE_WA_PHONE_NUMBER_ID or an active Alliance WhatsApp number.'),{status:409});
     if(!process.env[settings.access_token_env||'ALLIANCE_WA_ACCESS_TOKEN'])throw Object.assign(new Error('Alliance WhatsApp access token is missing.'),{status:409});
-    const eligible=await client.query(`SELECT id FROM alliance_prospects WHERE id=ANY($1::bigint[]) AND phone IS NOT NULL AND consent=TRUE AND consent_source IS NOT NULL AND suppressed=FALSE AND status NOT IN ('converted','closed','not_interested','unsubscribed')`,[prospectIds]);
+    const eligible=await client.query(`SELECT id FROM alliance_prospects WHERE id=ANY($1::bigint[]) AND phone IS NOT NULL AND consent=TRUE AND consent_source IS NOT NULL AND suppressed=FALSE AND status NOT IN ('converted','closed','complete','completed','not_interested','unsubscribed')`,[prospectIds]);
     if(!eligible.rowCount)throw Object.assign(new Error('No selected leads have valid WhatsApp consent.'),{status:409});
     const scheduledAt=req.body.scheduled_at?new Date(req.body.scheduled_at):new Date();if(Number.isNaN(scheduledAt.getTime()))throw Object.assign(new Error('Enter a valid schedule date and time.'),{status:400});
     const campaign=await client.query(`INSERT INTO alliance_whatsapp_campaigns(name,audience,template_id,template_name,template_language,template_body,parameter_mapping,phone_number_id,status,scheduled_at,created_by,followup_template_id,followup_template_name,followup_template_language,followup_template_body,followup_parameter_mapping,followup_delay_days,followup_delay_minutes,followup_repeat_days,max_followups) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,'scheduled',$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19) RETURNING *`,[name,text(req.body.audience)||null,templateId,template.rows[0].name,template.rows[0].language||'en',template.rows[0].body,JSON.stringify(mapping),settings.phone_number_id,scheduledAt,req.user?.id||null,followup?.id||null,followup?.name||null,followup?.language||null,followup?.body||null,JSON.stringify(followupMapping),followupDelay,followupDelayMinutes,followupRepeat,maxFollowups]);

@@ -186,7 +186,7 @@ export const UploadLeads = () => {
         <div>
           <b>Required:</b> business_name, audience, and the contact field needed by the selected channel.
           Email requires email. WhatsApp requires phone, consent=true, and consent_source.
-          <div style={{ marginTop: 5 }}>Audience must match the selected configuration. channel_pref can be blank, email, or whatsapp.</div>
+          <div style={{ marginTop: 5 }}>Audience must match the selected configuration. channel_pref can be blank, email, whatsapp, or both. Both requires email plus a consented WhatsApp number.</div>
           {!!selectedAudience?.fields?.length && (
             <div style={{ marginTop: 5 }}>Custom columns: {selectedAudience.fields.map((field) => `${field.field_key}${field.required ? ' (required)' : ''}`).join(', ')}</div>
           )}

@@ -143,7 +143,12 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
   const [msg, setMsg] = useState('');
   const [sending, setSending] = useState(false);
   const [suggestingReply, setSuggestingReply] = useState(false);
+  const [allianceDraftSource, setAllianceDraftSource] = useState('human');
   const [showChatOnMobile, setShowChatOnMobile] = useState(!!location.state?.leadId);
+
+  useEffect(() => {
+    setAllianceDraftSource('human');
+  }, [activeLeadId]);
   const [localMessages, setLocalMessages] = useState([]);
   const [connected, setConnected] = useState(false);
   const [typingLeadIds, setTypingLeadIds] = useState(() => new Map()); // Map<lead_id, 'waiting'|'composing'>
@@ -507,13 +512,17 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
         media_url: mediaUrl,
         reply_to: replyingTo,
         timestamp: new Date().toISOString(),
+        is_ai: alliance && allianceDraftSource === 'ai',
       };
       setLocalMessages((prev) => [...prev, optimisticMsg]);
       setReplyingTo(null);
       setMsg('');
       setAttachedFile(null);
 
-      const sentMsg = await inboxApi.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
+      const sentMsg = alliance
+        ? await inboxApi.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id, false, allianceDraftSource)
+        : await inboxApi.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
+      setAllianceDraftSource('human');
 
       // If window was closed, backend sent a template to reopen it silently.
       // We must remove the optimistic message because WhatsApp API STRICTLY blocks 
@@ -549,6 +558,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
     try {
       const result = await allianceInboxApi.suggestReply(activeLeadId);
       setMsg(result.suggestion || '');
+      setAllianceDraftSource('ai');
       toast.success('AI suggestion ready. Review and edit it before sending.');
     } catch (error) {
       toast.error(error.message || 'Unable to generate an AI suggestion.');
@@ -1148,7 +1158,8 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
               itemContent={(i, m) => {
                 const messageIndex = i - messageFirstItemIndex;
                 const isLead = m.direction === 'inbound' || m.from === 'lead';
-                const isAI = m.is_ai === true || m.sender === 'ai' || m.from === 'ai';
+                const isAI = m.is_ai === true || m.sender_type === 'ai' || m.sender === 'ai' || m.from === 'ai';
+                const isAutomation = !isLead && m.sender_type === 'automation';
                 const isSending = m.id?.toString().startsWith('optimistic-');
 
                 // Determine if we should show date header
@@ -1325,7 +1336,8 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
                         </p>
                       )}
                       {isAI && <p style={{ fontSize: 8, color: C.accent, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>AI AGENT</p>}
-                      {!isLead && !isAI && <p style={{ fontSize: 8, color: C.blue, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>HUMAN AGENT</p>}
+                      {isAutomation && <p style={{ fontSize: 8, color: C.green, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>AUTOMATED REMINDER</p>}
+                      {!isLead && !isAI && !isAutomation && <p style={{ fontSize: 8, color: C.blue, fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>HUMAN AGENT</p>}
 
                       {m.reply_to && (
                         <div style={{ padding: '6px 10px', background: C.bg + '50', borderLeft: `4px solid ${C.accent}`, borderRadius: 4, marginBottom: 6, opacity: 0.8 }}>

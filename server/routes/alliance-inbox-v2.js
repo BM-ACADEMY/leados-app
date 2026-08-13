@@ -155,6 +155,8 @@ function createAllianceInboxRouter({ auth, io }) {
     SELECT m.id, m.wa_msg_id, m.direction, m.msg_type, m.msg_type AS type, m.content,
            m.media_id, m.media_url, m.mime_type, m.filename, m.status, m.reactions,
            m.is_starred, m.is_deleted, m.pinned_until, m.sent_at, m.sent_at AS timestamp,
+           (m.raw_payload->>'sender_type' = 'ai') AS is_ai,
+           COALESCE(m.raw_payload->>'sender_type', CASE WHEN m.raw_payload->>'purpose'='automated_followup' THEN 'automation' END) AS sender_type,
            CASE WHEN parent.id IS NULL THEN NULL ELSE json_build_object(
              'id', parent.id, 'wa_msg_id', parent.wa_msg_id, 'content', parent.content,
              'media_url', parent.media_url, 'type', parent.msg_type
@@ -327,9 +329,9 @@ function createAllianceInboxRouter({ auth, io }) {
     if (!result.rowCount) return res.status(404).json({ error: 'Alliance contact not found.' });
     if (result.rows[0].prospect_id && req.body.status) {
       const status = String(req.body.status).toLowerCase();
-      const allowed = ['pending','in_process','interested','converted','closed','not_interested','unsubscribed'];
+      const allowed = ['pending','in_process','interested','converted','closed','complete','completed','not_interested','unsubscribed'];
       if (allowed.includes(status)) await db.query(`UPDATE alliance_prospects SET status=$1,updated_at=NOW() WHERE id=$2`,[status,result.rows[0].prospect_id]);
-      if (['converted','closed','not_interested','unsubscribed'].includes(status)) {
+      if (['converted','closed','complete','completed','not_interested','unsubscribed'].includes(status)) {
         await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='cancelled',error_message=$1 WHERE prospect_id=$2 AND status IN ('pending','claimed')`,[`Prospect ${status}.`,result.rows[0].prospect_id]);
       }
     }
@@ -494,7 +496,7 @@ Directly answer the latest inbound message, stay professional and conversational
           (conversation_id, contact_id, wa_msg_id, direction, msg_type, content, media_url, status, reply_to_wa_msg_id, raw_payload)
          VALUES ($1,$2,$3,'outbound',$4,$5,$6,'sent',$7,$8) RETURNING *`,
         [contact.conversation_id, contact.id, waMessageId, type, content, req.body.mediaUrl || null,
-          req.body.replyToMessageId || null, JSON.stringify(meta.data)]
+          req.body.replyToMessageId || null, JSON.stringify({ ...meta.data, sender_type: req.body.senderType === 'ai' ? 'ai' : 'human' })]
       );
       await db.query(`UPDATE alliance_inbox_conversations SET last_message = $1, last_message_at = NOW(), updated_at = NOW() WHERE id = $2`, [content || `[${type}]`, contact.conversation_id]);
       if (contact.prospect_id) {
@@ -502,7 +504,8 @@ Directly answer the latest inbound message, stay professional and conversational
           console.error('Alliance inactivity reminder scheduling failed:', error.message);
         });
       }
-      const message = { ...saved.rows[0], type, timestamp: saved.rows[0].sent_at };
+      const senderType = req.body.senderType === 'ai' ? 'ai' : 'human';
+      const message = { ...saved.rows[0], type, timestamp: saved.rows[0].sent_at, sender_type: senderType, is_ai: senderType === 'ai' };
       io.emit('alliance_outgoing_message', { lead_id: String(contact.id), message });
       res.json({ success: true, message });
     } catch (error) {

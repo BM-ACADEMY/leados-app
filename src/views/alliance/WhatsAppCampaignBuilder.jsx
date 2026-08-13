@@ -30,7 +30,8 @@ export const WhatsAppCampaignBuilder = () => {
     test_phone: "",
     followup_template_id: "",
     followup_delay_minutes: 5760,
-    max_followups: 1,
+    followup_repeat_days: 4,
+    max_followups: 0,
   });
   const [mapping, setMapping] = useState([]);
   const [followupMapping, setFollowupMapping] = useState([]);
@@ -120,10 +121,10 @@ export const WhatsAppCampaignBuilder = () => {
   const selectedIds = Object.keys(selected).map(Number);
   const previewLead = Object.values(selected)[0] ||
     prospects[0] || {
-      name: "Sample Contact",
-      business_name: "Example Organisation",
-      location: "Pondicherry",
-    };
+    name: "Sample Contact",
+    business_name: "Example Organisation",
+    location: "Pondicherry",
+  };
   const valueFor = (field) => previewLead[field] || "—";
   const preview = mapping.reduce(
     (body, field, index) =>
@@ -196,7 +197,8 @@ export const WhatsAppCampaignBuilder = () => {
         followup_template_id: followupTemplate?.id || null,
         followup_parameter_mapping: followupMapping,
         followup_delay_minutes: Number(form.followup_delay_minutes),
-        max_followups: 1,
+        followup_repeat_days: Number(form.followup_repeat_days),
+        max_followups: 0,
         scheduled_at: form.delivery_mode === "schedule" && form.scheduled_at
           ? new Date(form.scheduled_at).toISOString()
           : null,
@@ -253,7 +255,7 @@ export const WhatsAppCampaignBuilder = () => {
                 <MessageCircle size={20} />
               </span>
               <div>
-                <h2>Campaign and registered template</h2>
+                <h2 className="text-white">Campaign and registered template</h2>
                 <p>
                   Templates below come directly from the same GET /api/templates
                   source used by the Templates page.
@@ -361,11 +363,22 @@ export const WhatsAppCampaignBuilder = () => {
                     <option value="10080">7 days</option>
                   </select>
                 </div>
+                <div className="al-field">
+                  <label>Repeat while inactive</label>
+                  <select value={form.followup_repeat_days} onChange={(e) => setForm({ ...form, followup_repeat_days: e.target.value })} disabled={!followupTemplate}>
+                    <option value="1">Every 1 day</option>
+                    <option value="2">Every 2 days</option>
+                    <option value="3">Every 3 days</option>
+                    <option value="4">Every 4 days (recommended)</option>
+                    <option value="5">Every 5 days</option>
+                    <option value="7">Every 7 days</option>
+                  </select>
+                </div>
               </div>
               {followupTemplate && <>
                 <div className="al-wa-template"><header><b>{followupTemplate.name}</b><span>n8n reminder · approved</span></header><div>{followupTemplate.body}</div></div>
-                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field,index) => <label key={index}><span>{`{{${index + 1}}}`}</span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value,i) => i === index ? e.target.value : value))}><option value="name">Lead name</option><option value="business_name">Business name</option><option value="location">Location</option></select><em>{valueFor(field)}</em></label>)}</div>}
-                <small className="al-help">One approved reminder is sent only when there is no reply. This follows the documented maximum of two WhatsApp touches: initial message plus one gentle reminder.</small>
+                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field, index) => <label key={index}><span>{`{{${index + 1}}}`}</span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value, i) => i === index ? e.target.value : value))}><option value="name">Lead name</option><option value="business_name">Business name</option><option value="location">Location</option></select><em>{valueFor(field)}</em></label>)}</div>}
+                <small className="al-help">The approved reminder repeats only while the lead is inactive. It stops automatically for Not Interested, Closed, Converted, Completed, Unsubscribed, or suppressed leads. A recipient reply pauses reminders; a later admin/AI reply starts a fresh inactivity timer.</small>
               </>}
             </div>
           </section>
@@ -375,7 +388,7 @@ export const WhatsAppCampaignBuilder = () => {
                 <Users size={20} />
               </span>
               <div>
-                <h2>Select opted-in leads</h2>
+                <h2 className="text-white">Select opted-in leads</h2>
                 <p>Non-consented phone numbers are excluded by the server.</p>
               </div>
             </div>
@@ -585,7 +598,7 @@ export const WhatsAppCampaignBuilder = () => {
       </div>
       {campaigns.length > 0 && (
         <section className="al-wa-recent">
-          <h2>Recent WhatsApp campaigns</h2>
+          <h2 className="text-white" >Recent WhatsApp campaigns</h2>
           {campaigns.slice(0, 5).map((item) => (
             <div key={item.id}>
               <span>

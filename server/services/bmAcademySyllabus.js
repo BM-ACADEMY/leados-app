@@ -6,17 +6,36 @@ const normalize = (value) => String(value || '')
   .replace(/\s+/g, ' ')
   .trim();
 
+const tokenize = (value) => normalize(value).split(' ').filter(Boolean);
+
 const field = (record, label) => {
   const match = String(record || '').match(new RegExp(`^${label}\\s*:\\s*([^\\r\\n]*)`, 'im'));
   return match ? match[1].trim() : '';
 };
 
-const meaningfulTerms = (value) => normalize(value)
-  .split(' ')
-  .filter((term) => term.length > 1 && ![
-    'a', 'about', 'any', 'course', 'courses', 'details', 'for', 'have', 'how',
-    'i', 'in', 'is', 'me', 'need', 'of', 'program', 'programs', 'the', 'what',
-  ].includes(term));
+// Words a lead naturally wraps a request in ("I want...", "can you share...")
+// that carry no course-identifying signal. This list only needs to cover
+// conversational filler, not course vocabulary, so it stays short and safe.
+const GENERIC_WORDS = new Set([
+  'a', 'about', 'also', 'and', 'any', 'both', 'can', 'could', 'course', 'courses',
+  'curriculum', 'details', 'detail', 'each', 'every', 'for', 'get', 'give', 'gives',
+  'give', 'got', 'have', 'how', 'i', 'in', 'info', 'information', 'is', 'it', 'kindly',
+  'know', 'me', 'more', 'my', 'need', 'of', 'please', 'pls', 'program', 'programs',
+  'provide', 'send', 'share', 'shared', 'should', 'syllabi', 'syllabus', 'tell', 'the',
+  'this', 'us', 'want', 'wanted', 'wants', 'we', 'what', 'would', 'you', 'your',
+]);
+
+const meaningfulTerms = (value) => tokenize(value)
+  .filter((term) => term.length > 1 && !GENERIC_WORDS.has(term));
+
+// Two words are treated as the same signal if one is a prefix of the other
+// (min length 3), so informal abbreviations ("dev" for "developer") still
+// resolve without maintaining a per-course alias list.
+const wordsMatch = (a, b) => {
+  if (a === b) return true;
+  if (a.length < 3 || b.length < 3) return false;
+  return a.startsWith(b) || b.startsWith(a);
+};
 
 /**
  * Builds the course catalog exclusively from current AI Brain documents.
@@ -52,24 +71,43 @@ function buildBmAcademyCatalog(documents = []) {
   return [...unique.values()];
 }
 
+// Resolves a message to exactly one course only when it's unambiguous: every
+// word of the course name has a matching word in the message, AND (when two
+// or more catalog entries share that name, differing only by tier) the tier
+// is also matched. A name-only match that's shared by multiple tiers is
+// deliberately NOT resolved here — the caller falls back to the family/option
+// list instead of silently guessing a tier.
 function findExactCourse(text, catalog = []) {
-  const haystack = normalize(text);
-  if (!haystack) return null;
-  return catalog
-    .map((course) => ({
-      course,
-      keys: [course.id, course.name, `${course.name} ${course.tier || ''}`]
-        .map(normalize).filter(Boolean),
-    }))
-    .filter(({ keys }) => keys.some((key) => key.length > 2 && haystack.includes(key)))
-    .sort((a, b) => Math.max(...b.keys.map((key) => key.length)) - Math.max(...a.keys.map((key) => key.length)))[0]?.course || null;
+  const haystackWords = tokenize(text);
+  if (!haystackWords.length) return null;
+
+  const scored = catalog.map((course) => {
+    const nameWords = tokenize(course.name);
+    const nameHit = nameWords.length > 0 && nameWords.every((w) => haystackWords.some((h) => wordsMatch(h, w)));
+    const tierWords = course.tier ? tokenize(`${course.name} ${course.tier}`) : [];
+    const tierHit = tierWords.length > nameWords.length
+      && tierWords.every((w) => haystackWords.some((h) => wordsMatch(h, w)));
+    return { course, nameHit, tierHit };
+  });
+
+  const tierMatches = scored.filter((s) => s.tierHit);
+  if (tierMatches.length === 1) return tierMatches[0].course;
+  if (tierMatches.length > 1) return null;
+
+  const nameMatches = scored.filter((s) => s.nameHit);
+  return nameMatches.length === 1 ? nameMatches[0].course : null;
 }
 
 function findCourseOptions(text, catalog = []) {
   const terms = meaningfulTerms(text);
   if (!terms.length) return [];
+  // Match against the course's own name only. Parent/category are shared
+  // across a whole program (e.g. a prerequisite bootcamp's "Parent Course"
+  // is the same text as the main program's name), so including them here
+  // pulls unrelated prerequisite courses into what should be a same-name
+  // tier family (e.g. "Full stack developer Tier 1/2").
   return catalog.filter((course) => {
-    const searchable = normalize([course.name, course.parent, course.category, course.tier].filter(Boolean).join(' '));
+    const searchable = normalize(course.name);
     return terms.every((term) => searchable.includes(term));
   });
 }
@@ -105,8 +143,14 @@ function resolveBmAcademyCourseContext(message, chatHistory = [], catalog = []) 
     const role = item?.role || (item?.direction === 'inbound' ? 'user' : 'assistant');
     if (role !== 'user') continue;
     const text = item?.text || item?.content || item?.message || '';
-    const selected = numberedCourseSelection(text, history, catalog, index) || findExactCourse(text, catalog);
-    if (selected) return selected;
+    const histNumbered = numberedCourseSelection(text, history, catalog, index);
+    if (histNumbered) return histNumbered;
+    const exact = findExactCourse(text, catalog);
+    if (exact) return exact;
+    // A family reference ("full stack dev" with no tier) establishes the
+    // active topic but is not itself a single-course selection. Stop walking
+    // further back into unrelated earlier topics once that's found.
+    if (findCourseOptions(text, catalog).length > 1) return null;
   }
   return null;
 }
@@ -125,17 +169,8 @@ function findBmAcademyCourseFamily(message, chatHistory = [], catalog = []) {
   return [];
 }
 
-function findBmAcademySyllabus(message, chatHistory = [], catalog = []) {
-  const asksForSyllabus = /\b(syllabus|curriculum|course outline|syllabus link)\b/i.test(String(message || ''));
-  if (!asksForSyllabus) return { requested: false, course: null, options: [] };
-  const course = resolveBmAcademyCourseContext(message, chatHistory, catalog);
-  if (course) return { requested: true, course, options: [] };
-  return { requested: true, course: null, options: findBmAcademyCourseFamily(message, chatHistory, catalog) };
-}
-
 module.exports = {
   buildBmAcademyCatalog,
   findBmAcademyCourseFamily,
-  findBmAcademySyllabus,
   resolveBmAcademyCourseContext,
 };

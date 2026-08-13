@@ -995,9 +995,9 @@ export const allianceInboxApi = {
   readConversation(id) { return api.request(`/api/alliance-inbox/conversations/${id}/read`, { method: 'PUT' }); },
   updateLead(id, updates) { return api.request(`/api/alliance-inbox/contacts/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }); },
   suggestReply(id) { return api.request(`/api/alliance-inbox/contacts/${id}/ai-suggestion`, { method: 'POST' }); },
-  sendWhatsAppMessage(id, message, mediaUrl = null, msgType = 'text', replyToWaId = null, isForwarded = false) {
+  sendWhatsAppMessage(id, message, mediaUrl = null, msgType = 'text', replyToWaId = null, isForwarded = false, senderType = 'human') {
     return api.request(`/api/alliance-inbox/contacts/${id}/messages`, {
-      method: 'POST', body: JSON.stringify({ message, mediaUrl, msgType, replyToMessageId: replyToWaId, isForwarded }),
+      method: 'POST', body: JSON.stringify({ message, mediaUrl, msgType, replyToMessageId: replyToWaId, isForwarded, senderType }),
     });
   },
   editMessage(id, content) { return api.request(`/api/alliance-inbox/messages/${id}/edit`, { method: 'PUT', body: JSON.stringify({ content }) }); },

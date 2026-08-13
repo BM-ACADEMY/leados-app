@@ -4,7 +4,7 @@ const path = require('path');
 const router = express.Router();
 const pool = require('../db/connection');
 const axios = require('axios');
-const { buildBmAcademyCatalog, findBmAcademyCourseFamily, findBmAcademySyllabus, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
+const { buildBmAcademyCatalog, findBmAcademyCourseFamily, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
 const googleCalendar = require('../services/googleCalendar');
 const { sendBookingNotification } = require('../services/bookingNotifications');
 
@@ -97,18 +97,35 @@ async function ensureSalesTask(req, leadId, taskType) {
 // Resolve a raw Meta WhatsApp payload synchronously so n8n can continue the
 // same execution with the spoken text instead of ending on an audio placeholder.
 router.post('/whatsapp/transcribe', async (req, res) => {
-  try {
-    const payload = req.body?.payload || req.body;
-    const value = payload?.entry?.[0]?.changes?.[0]?.value;
-    const audio = value?.messages?.[0]?.audio;
+  const payload = req.body?.payload || req.body;
+  const value = payload?.entry?.[0]?.changes?.[0]?.value;
+  const audio = value?.messages?.[0]?.audio;
 
-    if (!audio?.id) {
-      return res.json(payload);
-    }
+  if (!audio?.id) {
+    return res.json(payload);
+  }
+
+  // A failed or slow transcription must never leave the lead with silence.
+  // This used to return a bare HTTP error on every failure path (missing
+  // token, Meta media fetch failing, empty transcript, or — with no timeout
+  // at all on the transcription call itself — simply hanging). Any of those
+  // likely killed the n8n run right here with nothing ever sent back to the
+  // lead. Instead, degrade to the same "please type it" marker /ai/response
+  // already recognizes and replies to warmly, so the workflow always
+  // continues and the lead always gets *something*.
+  const fallbackToTypedRequest = () => {
+    const message = value.messages[0];
+    message.type = 'text';
+    message.text = { body: '[voice_message]' };
+    message.original_type = 'audio';
+    delete message.audio;
+    return res.json(payload);
+  };
+
+  try {
     if (!ai) {
-      return res.status(503).json({
-        error: 'Voice transcription is not configured. Set OPENROUTER_API_KEY on the API server.',
-      });
+      console.error('[WhatsApp Transcription] OPENROUTER_API_KEY is not configured.');
+      return fallbackToTypedRequest();
     }
 
     const phoneNumberId = value?.metadata?.phone_number_id;
@@ -117,39 +134,48 @@ router.post('/whatsapp/transcribe', async (req, res) => {
       : { rows: [] };
     const waToken = clientResult.rows[0]?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
     if (!waToken) {
-      return res.status(503).json({ error: 'No WhatsApp access token is configured for this phone number.' });
+      console.error('[WhatsApp Transcription] No WhatsApp access token configured for phone_number_id', phoneNumberId);
+      return fallbackToTypedRequest();
     }
 
     const mediaResponse = await axios.get(`https://graph.facebook.com/v18.0/${audio.id}`, {
       headers: { Authorization: `Bearer ${waToken}` },
+      timeout: 10000,
     });
     const mediaUrl = mediaResponse.data?.url;
     if (!mediaUrl) {
-      return res.status(502).json({ error: 'Meta did not return a URL for the voice note.' });
+      console.error('[WhatsApp Transcription] Meta did not return a media URL for audio id', audio.id);
+      return fallbackToTypedRequest();
     }
 
     const audioResponse = await axios.get(mediaUrl, {
       headers: { Authorization: `Bearer ${waToken}` },
       responseType: 'arraybuffer',
+      timeout: 15000,
     });
     const mimeType = mediaResponse.data?.mime_type || audio.mime_type || 'audio/ogg';
-    const result = await ai.models.generateContent({
-      model: openRouter.AUDIO_MODEL,
-      contents: [
-        {
-          text: 'Transcribe this WhatsApp voice note precisely in its original language. Return only the spoken words, without commentary or formatting.',
-        },
-        {
-          inlineData: {
-            mimeType,
-            data: Buffer.from(audioResponse.data).toString('base64'),
+    const result = await withTimeout(
+      ai.models.generateContent({
+        model: openRouter.AUDIO_MODEL,
+        contents: [
+          {
+            text: 'Transcribe this WhatsApp voice note precisely in its original language. Return only the spoken words, without commentary or formatting.',
           },
-        },
-      ],
-    });
+          {
+            inlineData: {
+              mimeType,
+              data: Buffer.from(audioResponse.data).toString('base64'),
+            },
+          },
+        ],
+      }),
+      20000,
+      'Voice transcription'
+    );
     const transcription = String(result?.text || '').trim();
     if (!transcription) {
-      return res.status(502).json({ error: 'The transcription provider returned an empty transcript.' });
+      console.error('[WhatsApp Transcription] Provider returned an empty transcript for audio id', audio.id);
+      return fallbackToTypedRequest();
     }
 
     // Present the transcript to WF00 exactly like a normal text message so the
@@ -162,7 +188,7 @@ router.post('/whatsapp/transcribe', async (req, res) => {
     return res.json(payload);
   } catch (err) {
     console.error('[WhatsApp Transcription Error]', err.response?.data || err.message);
-    return res.status(502).json({ error: 'Voice-note transcription failed.', detail: err.message });
+    return fallbackToTypedRequest();
   }
 });
 
@@ -344,7 +370,7 @@ For a voice note, ask the contact to type it. Send exactly one concise reply.`;
 // temperature is left undefined (provider default) for creative call sites
 // (nurture nudges, objection handling, summaries) so their phrasing keeps
 // varying naturally. Only the factual WhatsApp reply path passes a low value.
-async function generateOpenRouterContent(prompt, temperature) {
+async function generateOpenRouterContent(prompt, temperature, maxOutputTokens) {
   if (!ai) {
     throw new OpenRouterServiceError({
       message: 'OPENROUTER_API_KEY is not configured on the API server.',
@@ -360,11 +386,15 @@ async function generateOpenRouterContent(prompt, temperature) {
     // reverse-proxy timeout. The next configured model is the retry/fallback.
     for (let attempt = 1; attempt <= 1; attempt += 1) {
       try {
+        const generationConfig = {
+          ...(temperature !== undefined && { temperature }),
+          ...(maxOutputTokens !== undefined && { maxOutputTokens }),
+        };
         const aiRes = await withTimeout(
           ai.models.generateContent({
             model,
             contents: prompt,
-            ...(temperature !== undefined && { config: { temperature } }),
+            ...(Object.keys(generationConfig).length > 0 && { config: generationConfig }),
           }),
           OPENROUTER_REQUEST_TIMEOUT_MS,
           `OpenRouter ${model}`
@@ -541,6 +571,12 @@ router.post('/leads/deduplicate', async (req, res) => {
 router.post('/brand/detect', async (req, res) => {
   const { phone_number_id, phone, message } = req.body;
   try {
+    // AllianceOS owns this WhatsApp number. It must never enter LeadOS AI,
+    // even if the number also exists in the shared clients configuration.
+    if (phone_number_id && String(phone_number_id) === String(process.env.ALLIANCE_WA_PHONE_NUMBER_ID || '')) {
+      console.log('[Brand Detect] Blocked AllianceOS callback from LeadOS AI:', phone_number_id);
+      return res.status(409).json({ error: 'AllianceOS callback ignored by LeadOS.', ignored: true, owner: 'alliance' });
+    }
     if (phone_number_id) {
       let isManaged = false;
       if (phone_number_id === process.env.WA_PHONE_NUMBER_ID) {
@@ -644,22 +680,50 @@ router.post('/leads/createOrUpdate', async (req, res) => {
       const brandRes = await pool.query(`SELECT id FROM clients WHERE name = $1 LIMIT 1`, [req.body.brand]);
       brand_id = brandRes.rows[0]?.id || null;
     }
-    const check = await pool.query(`SELECT id FROM leads WHERE phone = $1 LIMIT 1`, [phone]);
-    let lead_id;
-    if (check.rows.length > 0) {
-      lead_id = check.rows[0].id;
-      await pool.query(
-        `UPDATE leads SET name = COALESCE($1, name), email = COALESCE($2, email), source = COALESCE($3, source), client_id = COALESCE($4, client_id), updated_at = NOW() WHERE id = $5`,
-        [name, email, source, brand_id, lead_id]
-      );
-    } else {
-      const insert = await pool.query(
-        `INSERT INTO leads (name, phone, email, source, client_id, status, score, next_followup_due) VALUES ($1, $2, $3, $4, $5, 'new', 10, NOW() + INTERVAL '4 hours') RETURNING id`,
-        [name, phone, email, source, brand_id]
-      );
-      lead_id = insert.rows[0].id;
+    // This runs on every inbound webhook. A plain SELECT-then-INSERT here lets
+    // two near-simultaneous events for the same new phone number (a fast
+    // follow-up message, or Meta retrying a slow webhook — most likely on the
+    // voice-note path, which has real transcription latency) both see "no
+    // lead yet" and each create their own lead row for the same person,
+    // splitting their conversation across two lead_ids. The second lead_id
+    // then has no message history, so it looks like a brand-new contact and
+    // gets the welcome message again mid-conversation.
+    // leads.phone has no plain UNIQUE constraint (migrate_meta_leads_webhook.js
+    // dropped it in favor of a composite UNIQUE(phone, client_id), so one
+    // phone can be a separate lead per brand) — and that composite constraint
+    // gives no protection here anyway while client_id is still unresolved
+    // (NULL), since Postgres never treats two NULLs as conflicting. So this
+    // can't be closed with ON CONFLICT; instead take a transaction-scoped
+    // advisory lock keyed by the phone number to serialize concurrent
+    // requests for the same person before the check-then-insert runs.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [phone]);
+
+      const check = await client.query(`SELECT id FROM leads WHERE phone = $1 LIMIT 1`, [phone]);
+      let lead_id;
+      if (check.rows.length > 0) {
+        lead_id = check.rows[0].id;
+        await client.query(
+          `UPDATE leads SET name = COALESCE($1, name), email = COALESCE($2, email), source = COALESCE($3, source), client_id = COALESCE($4, client_id), updated_at = NOW() WHERE id = $5`,
+          [name, email, source, brand_id, lead_id]
+        );
+      } else {
+        const insert = await client.query(
+          `INSERT INTO leads (name, phone, email, source, client_id, status, score, next_followup_due) VALUES ($1, $2, $3, $4, $5, 'new', 10, NOW() + INTERVAL '4 hours') RETURNING id`,
+          [name, phone, email, source, brand_id]
+        );
+        lead_id = insert.rows[0].id;
+      }
+      await client.query('COMMIT');
+      res.json({ ...req.body, success: true, lead_id });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
     }
-    res.json({ ...req.body, success: true, lead_id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -813,50 +877,6 @@ const normalizeChatHistory = (history) => (
     : []
 );
 
-const MONTH_INDEX = {
-  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2,
-  apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6,
-  aug: 7, august: 7, augest: 7, sep: 8, sept: 8, september: 8,
-  oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
-};
-
-// Preserve a date supplied in an earlier WhatsApp turn and combine it with a
-// later time-only reply (for example: "08 August" followed by "2 PM"). The
-// LLM may otherwise treat the second message as incomplete and ask again.
-const resolveBookingTimeFromConversation = (history, currentMessage) => {
-  const userText = [
-    ...normalizeChatHistory(history).filter(item => item.role === 'user').map(item => item.text),
-    String(currentMessage || ''),
-  ].join('\n');
-
-  const dateMatches = [...userText.matchAll(/\b(0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?[\s./-]+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|augest|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[\s,./-]+(20\d{2}))?\b/gi)];
-  const numericDateMatches = [...userText.matchAll(/\b(0?[1-9]|[12]\d|3[01])[\/.\-](0?[1-9]|1[0-2])(?:[\/.\-](20\d{2}))?\b/g)];
-  const timeMatches = [...userText.matchAll(/\b(0?[1-9]|1[0-2])(?:[:.]([0-5]\d))?\s*(am|pm)\b/gi)];
-  if ((!dateMatches.length && !numericDateMatches.length) || !timeMatches.length) return null;
-
-  const namedDate = dateMatches.at(-1);
-  const numericDate = numericDateMatches.at(-1);
-  const useNamedDate = namedDate && (!numericDate || namedDate.index > numericDate.index);
-  const day = Number((useNamedDate ? namedDate : numericDate)[1]);
-  const month = useNamedDate
-    ? MONTH_INDEX[String(namedDate[2]).toLowerCase()]
-    : Number(numericDate[2]) - 1;
-  let year = Number((useNamedDate ? namedDate : numericDate)[3]) || new Date().getFullYear();
-  const time = timeMatches.at(-1);
-  let hour = Number(time[1]) % 12;
-  if (String(time[3]).toLowerCase() === 'pm') hour += 12;
-  const minute = Number(time[2] || 0);
-
-  // Convert an Asia/Kolkata wall-clock value to UTC without depending on the
-  // API server's host timezone.
-  let value = new Date(Date.UTC(year, month, day, hour - 5, minute - 30));
-  if (value <= new Date() && !(useNamedDate ? namedDate[3] : numericDate[3])) {
-    year += 1;
-    value = new Date(Date.UTC(year, month, day, hour - 5, minute - 30));
-  }
-  return Number.isNaN(value.getTime()) ? null : value.toISOString();
-};
-
 const getRelevantKnowledge = (documents, query = '') => {
   const normalizedQuery = String(query).toLowerCase();
   const wantsCourseList = /\b(all|available|offer|show|what|which)\b.*\b(course|courses|program|programs)\b|\bcourse list\b/i.test(normalizedQuery);
@@ -973,7 +993,7 @@ When asked for available courses or the full course list, use every active cours
       : '';
     const bmAcademySyllabusRule = isBmAcademy
       ? `BM ACADEMY SYLLABUS RULE:
-When the user asks for a syllabus, resolve the active BM Academy course from the current message and chat history. Return the syllabus URL exactly as stored in the KNOWLEDGE BASE REFERENCE for that course. Never substitute a link from another brand or course, alter the URL, or invent a URL. If no syllabus URL for the active course is present in the retrieved knowledge, ask one short course clarification question instead.`
+When the user asks for a syllabus, resolve which course(s) they mean from the current message and chat history. Do not type, paraphrase, or invent the syllabus URL yourself — report the matching Course ID(s) in "syllabus_course_ids" as instructed below and the real link is inserted automatically. If no course is identified yet, ask one short course clarification question instead.`
       : '';
     const bmAcademyActiveCourseRule = activeCourse
       ? `ACTIVE BM ACADEMY COURSE: ${activeCourse.name}\nAnswer course-detail follow-ups only about this active course. Do not use details, fees, duration, curriculum, placement claims, or links from any other course. If a requested fact is absent from the knowledge base, say it needs confirmation instead of guessing.`
@@ -1164,62 +1184,18 @@ router.post('/ai/response', async (req, res) => {
       ? await getRecentChatHistory(lead_id)
       : normalizeChatHistory(chat_history);
 
-    // Syllabus links are business data, not generated prose. Resolve the
-    // selected course from this turn or the latest course in chat history and
-    // return only the approved catalog URL. This prevents invented Drive IDs.
+    // Which course(s) a lead means is a language-understanding problem — the
+    // model reads the message + chat history and decides that itself (any
+    // phrasing, typos, abbreviations, "both"/"all", follow-ups). Code never
+    // pattern-matches the request. What code DOES own is the syllabus URL
+    // itself: the model reports back which Course ID(s) it resolved to, and
+    // the exact URL for those IDs is substituted in below from the approved
+    // catalog, so a lead can never receive a link the model typed/invented.
     const isBmAcademy = String(persistedBrand || '').trim().toLowerCase() === 'bm academy';
-    if (isBmAcademy) {
-      const courseCatalog = await loadBmAcademyCatalog();
-      const currentOptions = findBmAcademyCourseFamily(effectiveMessage, [], courseCatalog);
-      const exactCourse = currentOptions.length > 1 ? null : resolveBmAcademyCourseContext(effectiveMessage, resolvedHistory, courseCatalog);
-      const courseOptions = currentOptions.length > 1
-        ? currentOptions
-        : (exactCourse ? [] : findBmAcademyCourseFamily(effectiveMessage, resolvedHistory, courseCatalog));
-      if (courseOptions.length > 1) {
-        const names = courseOptions.map((course) => course.name);
-        return res.json({
-          ...req.body,
-          brand: persistedBrand,
-          name: leadName,
-          ai_reply: `These approved courses match your request:\n\n${names.map((course, index) => `${index + 1}. ${course}`).join('\n')}\n\nWhich exact program would you like fees and syllabus for?`,
-          course_options: names,
-        });
-      }
-      const syllabusMatch = findBmAcademySyllabus(effectiveMessage, resolvedHistory, courseCatalog);
-      const asksForPriceToo = /\b(fees?|price|pricing|cost)\b/i.test(effectiveMessage);
-      if (syllabusMatch.requested && syllabusMatch.course && !asksForPriceToo) {
-        const { name: courseName, syllabusUrl } = syllabusMatch.course;
-        if (!syllabusUrl || /^(no|nil|needs_confirmation|not_applicable)$/i.test(syllabusUrl)) {
-          return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply: `The latest AI Brain memory does not contain a confirmed syllabus URL for ${courseName}. Would you like me to connect you with a mentor?` });
-        }
-        return res.json({
-          ...req.body,
-          brand: persistedBrand,
-          name: leadName,
-          ai_reply: `Here is the ${courseName} syllabus: ${syllabusUrl}`,
-          syllabus_course: courseName,
-          syllabus_url: syllabusUrl,
-        });
-      }
-      if (syllabusMatch.requested && syllabusMatch.options?.length) {
-        const optionNames = syllabusMatch.options.map((course) => course.name);
-        return res.json({
-          ...req.body,
-          brand: persistedBrand,
-          name: leadName,
-          ai_reply: `These approved courses match your earlier request:\n\n${optionNames.map((course, index) => `${index + 1}. ${course}`).join('\n')}\n\nWhich exact program would you like fees and syllabus for?`,
-          syllabus_options: optionNames,
-        });
-      }
-      if (syllabusMatch.requested) {
-        return res.json({
-          ...req.body,
-          brand: persistedBrand,
-          name: leadName,
-          ai_reply: 'Which BM Academy course syllabus would you like?',
-        });
-      }
-    }
+    const courseCatalog = isBmAcademy ? await loadBmAcademyCatalog() : [];
+    const bmAcademyCourseIndex = isBmAcademy
+      ? courseCatalog.map((course) => `${course.id} | ${course.name}`).join('\n')
+      : '';
     let historyText = "";
     if (resolvedHistory.length > 0) {
       historyText = "Chat History (oldest to newest):\n" + resolvedHistory.map(h => `${h.role}: ${h.text}`).join("\n") + "\n\n";
@@ -1228,6 +1204,7 @@ router.post('/ai/response', async (req, res) => {
     const prompt = `AI BRAIN SYSTEM INSTRUCTIONS (editable in LeadOS):\n${system_instructions || DEFAULT_BOT_BEHAVIOR}\n\n
       NON-NEGOTIABLE ORCHESTRATION RULES:
       - Current date/time: ${new Date().toISOString()}. Scheduling timezone: ${googleCalendar.TIME_ZONE}.
+      - Reply in the same language the lead's current message is written in (English, Tamil, Hindi, Tanglish/Hinglish, etc.), regardless of what language earlier turns used. If the message mixes languages, mirror that mix.
       - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${persistedBrand}".
       - Address the contact naturally by first name ("${firstName || 'there'}") when useful, but do not repeat their name in every sentence.
       - The brand is sticky. Stay with "${persistedBrand}" unless the current message explicitly names or clearly keywords another ABM brand.
@@ -1242,12 +1219,14 @@ router.post('/ai/response', async (req, res) => {
       - If a course was identified earlier, keep it as the active course until the user explicitly selects a different course. Do not ask "which course?" again for a follow-up about that active course.
       - If the user asks a FAQ (like contact number, timings, or fees) mid-booking, provide the answer inline and immediately resume the booking flow. Do not reset the conversation or ask for information again.
       - For meeting requests collect name, mobile number, email, preferred date, and preferred time one missing field at a time. Do not say the meeting is confirmed; Calendar automation decides that after this response.
+      - If the lead gave a date in an earlier message and now gives only a time (or vice versa), combine them from chat history into one extracted_booking_time instead of asking for the date again.
       - Send exactly one concise WhatsApp reply for this user message.
       - Never claim a booking, calendar entry, reminder, or handoff succeeded unless the corresponding workflow result confirms it.
+      - If the lead clearly wants to cancel or call off their already-booked meeting, set cancel_meeting to true and do not say it's cancelled yourself in "reply" — the real Calendar outcome is reported automatically and overrides your reply text for this case.
 
       KNOWLEDGE BASE REFERENCE:
       ${kb_snippets}
-
+      ${isBmAcademy ? `\n      BM ACADEMY COURSE ID INDEX (every active course/tier; use the exact ID from here — never invent one):\n      ${bmAcademyCourseIndex}\n` : ''}
       ${historyText}User Intent detected: ${intent}
       User Message: "${effectiveMessage}"
 
@@ -1258,21 +1237,33 @@ router.post('/ai/response', async (req, res) => {
       4. Fallbacks: If it's a voice note (audio), reply: "Got your voice note 🎧 — could you type it quickly so I can help right away?". If unclear, ask ONE short clarifying question.
       5. Tone: Write a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.
       6. Contact routing: For BM Academy and BM TechX/Grow with Kamar, use only the approved primary phone and WhatsApp number 9944940051. BM TechX escalation is 9403892971 and must be used only for escalation. For every other brand, use only contact details present in that brand's approved knowledge; never substitute a number from another brand.
-      
+      ${isBmAcademy ? `7. Course/tier matching: Understand which course(s) the lead means from natural language — loose names, abbreviations, typos, "both"/"all"/"either", or a bare follow-up referring back to chat history. Never require exact wording. If genuinely nothing in the current message or chat history narrows it down, ask ONE short clarifying question instead of guessing.
+      8. Syllabus links: Never type, paraphrase, or invent a syllabus URL in "reply" — omit it entirely, even if you recall one from earlier in the conversation. Instead, report every course the lead is asking about (one or more) as exact IDs from the BM ACADEMY COURSE ID INDEX in "syllabus_course_ids". The real link(s) are inserted automatically after your reply from the approved catalog.` : ''}
+
       JSON OUTPUT REQUIREMENT:
       You MUST return your response as a raw JSON object with the following keys exactly:
       {
         "reply": "your generated reply message following the behavior specs",
         "extracted_name": "John Doe", (or null if the user has not provided their name)
         "extracted_email": "john@example.com", (or null if unavailable)
-        "extracted_booking_time": "2026-07-25T16:00:00Z" (or null if the user has not provided a preferred date/time for a call)
+        "extracted_booking_time": "2026-07-25T16:00:00Z" (or null if the user has not provided a preferred date/time for a call),
+        "cancel_meeting": false (true ONLY if the lead is clearly asking to cancel/call off their already-booked meeting)${isBmAcademy ? `,
+        "syllabus_course_ids": ["BMA-CFSD-010"] (array of Course IDs from the BM ACADEMY COURSE ID INDEX the lead wants a syllabus for; empty array [] if this message isn't a syllabus request or no course is identified yet)` : ''}
       }
       Respond ONLY with the JSON object, no markdown formatting, no backticks.`;
 
     // Low temperature: this reply must state facts (services, fees, links)
     // consistently from the KNOWLEDGE BASE REFERENCE rather than varying
     // wording/hedging between two leads who ask the same factual question.
-    const rawAiResponse = await generateOpenRouterContent(prompt, 0.2);
+    // Generous max_tokens: with no cap, the provider's own default applied —
+    // small enough that a full BM Academy course listing (a couple dozen
+    // course/tier names, wrapped in the required JSON) could get cut off
+    // mid-array. That produces invalid JSON, which falls back to the raw,
+    // truncated text below — showing up as "half the course list" or a
+    // reply that just stops. Longer chat history eats into the same budget,
+    // so this got worse the further into a conversation a lead was, which
+    // is why some testers saw it and others didn't.
+    const rawAiResponse = await generateOpenRouterContent(prompt, 0.2, 3000);
       
     let ai_reply = "I'm sorry, I couldn't process that. Can you repeat?";
     let extractedData = null;
@@ -1281,9 +1272,25 @@ router.post('/ai/response', async (req, res) => {
       const cleanJsonStr = rawAiResponse.replace(/\s*```json\s*/gi, '').replace(/\s*```\s*/g, '').trim();
       extractedData = JSON.parse(cleanJsonStr);
       ai_reply = extractedData.reply || rawAiResponse;
-      extractedData.extracted_booking_time =
-        resolveBookingTimeFromConversation(resolvedHistory, effectiveMessage) ||
-        extractedData.extracted_booking_time;
+
+      // Ground truth substitution: the model decided WHICH course(s) the
+      // lead means (that's the language-understanding part it's good at);
+      // the actual URL sent always comes from our own catalog by exact
+      // Course ID, so a hallucinated or stale link can never reach a lead.
+      if (isBmAcademy && Array.isArray(extractedData.syllabus_course_ids) && extractedData.syllabus_course_ids.length) {
+        const matchedCourses = extractedData.syllabus_course_ids
+          .map((id) => courseCatalog.find((course) => course.id === id))
+          .filter(Boolean);
+        if (matchedCourses.length) {
+          const lines = matchedCourses.map((course) => {
+            const hasUrl = course.syllabusUrl && !/^(no|nil|needs_confirmation|not_applicable)$/i.test(course.syllabusUrl);
+            return hasUrl ? `${course.name}: ${course.syllabusUrl}` : `${course.name}: syllabus needs confirmation`;
+          });
+          ai_reply = matchedCourses.length > 1
+            ? `Here are the syllabus links:\n\n${lines.join('\n')}`
+            : `Here is the ${matchedCourses[0].name} syllabus: ${lines[0].slice(lines[0].indexOf(': ') + 2)}`;
+        }
+      }
 
       if (lead_id) {
          if (extractedData.extracted_name) {
@@ -1293,6 +1300,37 @@ router.post('/ai/response', async (req, res) => {
            leadEmail = String(extractedData.extracted_email).trim();
            await pool.query(`UPDATE leads SET email = $1, updated_at = NOW() WHERE id = $2`, [leadEmail, lead_id]);
          }
+
+         // The model decided the lead wants to cancel (language understanding);
+         // the actual cancellation is a real Calendar delete here, and the
+         // reply is overwritten with the true outcome — never the model's own
+         // prose — so a lead can never be told "cancelled" when it wasn't.
+         if (extractedData.cancel_meeting) {
+           try {
+             const cancelResult = await googleCalendar.cancelMeeting(lead_id);
+             if (cancelResult.cancelled) {
+               await pool.query(`
+                 UPDATE leads SET booking_status = 'cancelled', calendar_event_id = NULL,
+                   calendar_event_url = NULL, google_meet_link = NULL, call_booked_at = NULL, updated_at = NOW()
+                 WHERE id = $1
+               `, [lead_id]);
+               ai_reply = 'Your meeting has been cancelled.';
+             } else {
+               ai_reply = "I couldn't find an upcoming meeting booked for you to cancel.";
+             }
+           } catch (cancelError) {
+             console.error('[AI Booking] Calendar cancellation failed:', cancelError.message);
+             ai_reply = "I'm unable to reach Calendar right now, so I couldn't cancel your meeting. Please try again shortly.";
+           }
+           // Only stop here if this message was purely a cancellation. If the
+           // lead also gave a new time in the same message, fall through so
+           // the block below books it fresh (the old event is now gone, so
+           // this creates a new event instead of confusingly rescheduling it).
+           if (!extractedData.extracted_booking_time) {
+             return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply, booking_status: 'cancelled' });
+           }
+         }
+
          if (extractedData.extracted_booking_time) {
            if (!leadEmail) {
              ai_reply = 'Please share your email address so I can check the slot and send the Calendar and Google Meet invitation.';
@@ -1349,7 +1387,13 @@ router.post('/ai/response', async (req, res) => {
       }
     } catch (parseErr) {
       console.error("Failed to parse Gemini JSON:", parseErr.message, rawAiResponse);
-      ai_reply = rawAiResponse; 
+      // A truncated response still has a well-formed "reply" value up to the
+      // cut point (only later fields/closing braces are missing) — salvage
+      // that instead of showing the lead raw, escaped JSON syntax.
+      const replyMatch = rawAiResponse.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/);
+      ai_reply = replyMatch
+        ? replyMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+        : rawAiResponse;
     }
 
     // A non-greeting customer question must never be answered with the welcome
@@ -2155,6 +2199,7 @@ Naturally reference relevant details already discussed when useful. Do not inven
 
     let delivered = false;
     let waMessageId = null;
+    let outboundMessageType = 'text';
     const phoneNumberId = lead.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
     const waAccessToken = lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN;
     if (lead.phone && phoneNumberId && waAccessToken) {

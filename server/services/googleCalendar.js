@@ -181,6 +181,32 @@ const bookMeeting = async ({ leadId, brand, name, email, phone, start, durationM
   };
 };
 
+// Mirrors bookMeeting's own lookup (by lead_id/source on the event, not a
+// DB column) so cancellation is correct even if the leads table's cached
+// calendar_event_id is stale or was never written.
+const cancelMeeting = async (leadId) => {
+  const auth = await getAuthorizedClient();
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  const existing = await calendar.events.list({
+    calendarId: ORGANIZER_EMAIL,
+    privateExtendedProperty: [`lead_id=${leadId}`, 'source=LeadOS'],
+    timeMin: new Date().toISOString(),
+    singleEvents: true,
+    maxResults: 1,
+    orderBy: 'startTime',
+  });
+  const existingEvent = existing.data.items?.[0];
+  if (!existingEvent) return { cancelled: false, reason: 'not_found' };
+
+  await calendar.events.delete({
+    calendarId: ORGANIZER_EMAIL,
+    eventId: existingEvent.id,
+    sendUpdates: 'all',
+  });
+  return { cancelled: true, event_id: existingEvent.id, start: existingEvent.start?.dateTime };
+};
+
 module.exports = {
   TIME_ZONE,
   ORGANIZER_EMAIL,
@@ -189,4 +215,5 @@ module.exports = {
   getConnectionStatus,
   isSlotAvailable,
   bookMeeting,
+  cancelMeeting,
 };

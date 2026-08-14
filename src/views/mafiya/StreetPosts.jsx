@@ -2183,7 +2183,11 @@ export default function StreetPosts() {
                                 {/* Middle Side: Relative time info on the clean row background */}
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', flex: 1 }}>
                                   <span style={{ fontSize: 13.5, color: '#f4f4f5', fontWeight: 500 }}>
-                                    {post.status === 'published' ? formatTimeAgo(post.created_at) : 'Draft'}
+                                    {post.status === 'published' 
+                                      ? formatTimeAgo(post.created_at) 
+                                      : post.status === 'scheduled' 
+                                        ? `Scheduled for ${new Date(post.scheduled_at || post.created_at).toLocaleDateString()}`
+                                        : 'Draft'}
                                   </span>
                                   {post.status === 'published' && (
                                     <div style={{ display: 'flex', gap: 12, fontSize: 11, color: '#71717a', alignItems: 'center' }}>

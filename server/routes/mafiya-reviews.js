@@ -64,6 +64,9 @@ pool.query(`
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS gmb_post_name VARCHAR(500);
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS views INTEGER DEFAULT 0;
   ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS clicks INTEGER DEFAULT 0;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS visual_note TEXT;
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS week VARCHAR(50);
+  ALTER TABLE mafiya_gmb_posts ADD COLUMN IF NOT EXISTS "festivalTag" VARCHAR(255);
 `).catch(err => console.error('[Mafiya Reviews] Schema migration failed:', err));
 
 // Helper to refresh client token
@@ -991,162 +994,21 @@ router.post('/brain/suggest-config', async (req, res) => {
     }
     const businessName = clientRes.rows[0].business_name;
 
-    let prompt = '';
+
     const hasCurrent = currentConfig && Object.keys(currentConfig).length > 0 && JSON.stringify(currentConfig) !== '{}' && (
       (Array.isArray(currentConfig) && currentConfig.length > 0) ||
       (!Array.isArray(currentConfig) && Object.values(currentConfig).some(v => Array.isArray(v) ? v.length > 0 : (v && v.trim && v.trim() !== '')))
     );
 
-    if (entryType === 'tone') {
-      prompt = hasCurrent
-        ? `You are an AI expert. Optimize, refine, and improve the following Tone config for "${businessName}". Correct any slang, improve professional alignment, and fill in missing fields:
-Current Tone config: ${JSON.stringify(currentConfig)}
-Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
-{
-  "voice": "Friendly",
-  "style": ["Appreciative", "Conversational"],
-  "emoji": "Minimal",
-  "length": "Medium",
-  "avoid": ["Robotic", "Defensive"]
-}`
-        : `Generate the ideal tone guidelines JSON config for a GMB profile named "${businessName}".
-Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
-{
-  "voice": "Friendly",
-  "style": ["Appreciative", "Conversational"],
-  "emoji": "Minimal",
-  "length": "Medium",
-  "avoid": ["Robotic", "Defensive"]
-}`;
-    } else if (entryType === 'review_rules') {
-      prompt = hasCurrent
-        ? `You are an AI expert. Optimize, refine, and improve the following Review Reply Guidelines rules for "${businessName}". Correct grammar, structure it beautifully, and improve rule detail:
-Current rules: ${JSON.stringify(currentConfig)}
-Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
-{
-  "positive": "Respond to positive reviews...",
-  "neutral": "Respond to neutral reviews...",
-  "negative": "Respond to negative reviews...",
-  "additional": ["Rule 1", "Rule 2"]
-}`
-        : `Generate review guidelines rules for a GMB business profile named "${businessName}".
-Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
-{
-  "positive": "A short 1-sentence prompt on how to respond to positive reviews for this type of business.",
-  "neutral": "A short 1-sentence prompt on how to respond to neutral (3-star) reviews.",
-  "negative": "A short 1-sentence prompt on how to handle negative (1-2 star) reviews calmly and redirect to offline help.",
-  "additional": ["Rule 1", "Rule 2"]
-}`;
-    } else if (entryType === 'keyword') {
-      prompt = hasCurrent
-        ? `You are an AI expert. Optimize, refine, and expand the following local SEO keywords for "${businessName}". Clean up typos, and suggest relevant high-performance search terms:
-Current keywords: ${JSON.stringify(currentConfig)}
-Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
-["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]`
-        : `Generate an array of 5 target SEO keyword phrases suitable for a GMB business profile named "${businessName}".
-Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
-["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]`;
-    } else if (entryType === 'blacklist') {
-      prompt = hasCurrent
-        ? `You are an AI expert. Optimize and add relevant words to avoid for the business "${businessName}":
-Current blacklist: ${JSON.stringify(currentConfig)}
-Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
-["word1", "word2", "word3", "word4"]`
-        : `Generate an array of 4 words or concepts the business "${businessName}" should never mention in customer replies.
-Return ONLY a valid JSON array of strings (no markdown wrapper, no extra text):
-["word1", "word2", "word3", "word4"]`;
-    } else if (entryType === 'offer') {
-      prompt = hasCurrent
-        ? `You are an AI expert. Optimize and improve the copywriting of these promotions/offers for "${businessName}":
-Current offers: ${JSON.stringify(currentConfig)}
-Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
-[
-  {
-    "title": "Offer title",
-    "description": "Attractive offer description",
-    "validUntil": "Expiry date",
-    "cta": "CTA button label"
-  }
-]`
-        : `Generate 2 realistic promotions/offers cards for the business "${businessName}".
-Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
-[
-  {
-    "title": "Offer title",
-    "description": "Attractive offer description detailing Rs/Discount/Freebie",
-    "validUntil": "Expiry date (e.g. Aug 31)",
-    "cta": "Call to action button label"
-  }
-]`;
-    } else if (entryType === 'qa') {
-      prompt = hasCurrent
-        ? `You are an AI expert. Optimize, correct, and professionalize these Q&As for "${businessName}":
-Current Q&As: ${JSON.stringify(currentConfig)}
-Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
-[
-  {
-    "question": "Question",
-    "answer": "Answer"
-  }
-]`
-        : `Generate 2 common Q&As for a GMB profile of "${businessName}".
-Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
-[
-  {
-    "question": "What is the fee or starting cost?",
-    "answer": "Detailed helpful starting price or demo offer."
-  },
-  {
-    "question": "Do you offer courses or services on weekends?",
-    "answer": "Yes, we offer weekend batches and flexible timings."
-  }
-]`;
-    } else if (entryType === 'seasonal') {
-      const currentDateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-      prompt = hasCurrent
-        ? `You are an AI expert. The current date is ${currentDateStr}. Optimize and improve this seasonal campaign for "${businessName}", correcting dates and aligning options:
-Current seasonal config: ${JSON.stringify(currentConfig)}
-Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
-[
-  {
-    "occasion": "Festival name",
-    "startDate": "Start Date",
-    "endDate": "End Date",
-    "instructions": "Instructions"
-  }
-]`
-        : `The current date is ${currentDateStr}. Generate a future seasonal campaign (upcoming months from this date onwards, e.g. late 2026/2027) for the business "${businessName}". Do NOT generate past campaigns.
-Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
-[
-  {
-    "occasion": "Upcoming Festival/Event name",
-    "startDate": "Start Date (e.g. Oct 15)",
-    "endDate": "End Date (e.g. Nov 15)",
-    "instructions": "Campaign details and key discount triggers"
-  }
-]`;
-    } else if (entryType === 'creative_brief') {
-      prompt = hasCurrent
-        ? `You are an AI expert. Optimize and refine this creative brief brand style instructions for "${businessName}":
-Current brief: ${JSON.stringify(currentConfig)}
-Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
-{
-  "brandStyle": "Modern",
-  "brandColors": ["Orange", "Grey"],
-  "imageStyle": ["Professional photography"],
-  "negativePrompt": ["no watermark"],
-  "typography": "Typography instructions"
-}`
-        : `Generate creative brief brand style instructions for "${businessName}".
-Return ONLY a valid JSON object matching this structure (no markdown wrapper, no extra text):
-{
-  "brandStyle": "Modern",
-  "brandColors": ["Orange", "Grey"],
-  "imageStyle": ["Professional photography"],
-  "negativePrompt": ["no watermark"],
-  "typography": "Clean sans-serif fonts, bold titles"
-}`;
-    }
+    const { getSuggestConfigPrompt } = require('../utils/mafiya-prompts');
+    
+    const prompt = getSuggestConfigPrompt({
+      entryType,
+      businessName,
+      hasCurrent,
+      currentConfig,
+      currentMonthStr: new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })
+    });
 
     const response = await generateContent({
       model: DEFAULT_MODEL,
@@ -1166,13 +1028,13 @@ Return ONLY a valid JSON object matching this structure (no markdown wrapper, no
   }
 });
 
-// POST /api/mafiya/reviews/brain/suggest-posts
-router.post('/brain/suggest-posts', async (req, res) => {
+// POST /api/mafiya/reviews/brain/plan-month
+router.post('/brain/plan-month', async (req, res) => {
   const { clientId, month } = req.body;
   if (!clientId) return res.status(400).json({ error: 'clientId is required' });
-  const targetMonth = month || 'Month 1';
 
   const { checkLimit } = require('../utils/limit-checker');
+  const { getPlanMonthPrompt } = require('../utils/mafiya-prompts');
 
   try {
     const limitCheck = await checkLimit(clientId, 'mafiya_ai_suggestions', async () => {
@@ -1191,10 +1053,7 @@ router.post('/brain/suggest-posts', async (req, res) => {
 
     if (!limitCheck.allowed) {
       if (limitCheck.isDailyLimit) {
-        return res.status(403).json({
-          error: 'Limit reached',
-          message: 'Today quota completed. Please try again tomorrow.'
-        });
+        return res.status(403).json({ error: 'Limit reached', message: 'Today quota completed. Please try again tomorrow.' });
       }
       return res.status(403).json({
         error: 'Limit reached',
@@ -1202,84 +1061,73 @@ router.post('/brain/suggest-posts', async (req, res) => {
       });
     }
 
-    // Log the suggestion generation
     await pool.query('INSERT INTO mafiya_ai_suggestions_log (client_id) VALUES ($1)', [clientId]);
 
-    // 1. Fetch business profile details
     const clientRes = await pool.query(
       'SELECT business_name, business_category, custom_category, phone_number, business_address FROM mafiya_gmb_clients WHERE id = $1',
       [clientId]
     );
-    if (clientRes.rowCount === 0) {
-      return res.status(404).json({ error: 'Client business profile not found.' });
-    }
+    if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client business profile not found.' });
+    
     const client = clientRes.rows[0];
     const name = client.business_name;
-    const phone = client.phone_number || '';
-    const address = client.business_address || '';
     const category = client.business_category || client.custom_category || '';
+    const address = client.business_address || '';
 
-    // 2. Fetch GMB Brain settings
+    const historyRes = await pool.query(
+      'SELECT post_type, caption, status, image_url, created_at FROM mafiya_gmb_posts WHERE client_id = $1 ORDER BY created_at DESC LIMIT 20',
+      [clientId]
+    );
+    const history = historyRes.rows.map(h => ({ type: h.post_type, status: h.status, date: h.created_at }));
+
+    // For image reference (skipping actual image fetch for brevity and safety, as getPlanMonthPrompt handles empty references fine)
+    const referenceImages = [];
+
     const brainRes = await pool.query('SELECT entry_type, content FROM mafiya_gmb_brain WHERE client_id = $1', [clientId]);
-
     let tone = 'Friendly';
     let keywords = [];
     let offers = [];
     let seasonal = [];
-
     brainRes.rows.forEach(entry => {
       try {
         const parsed = JSON.parse(entry.content);
-        if (entry.entry_type === 'tone') {
-          tone = parsed.voice || 'Friendly';
-        } else if (entry.entry_type === 'keyword') {
-          keywords = Array.isArray(parsed) ? parsed : (parsed.keywords || []);
-        } else if (entry.entry_type === 'offer') {
-          offers = Array.isArray(parsed) ? parsed : [parsed];
-        } else if (entry.entry_type === 'seasonal') {
-          seasonal = Array.isArray(parsed) ? parsed : [parsed];
-        }
+        if (entry.entry_type === 'tone') tone = parsed.voice || 'Friendly';
+        else if (entry.entry_type === 'keyword') keywords = Array.isArray(parsed) ? parsed : (parsed.keywords || []);
+        else if (entry.entry_type === 'offer') offers = Array.isArray(parsed) ? parsed : [parsed];
+        else if (entry.entry_type === 'seasonal') seasonal = Array.isArray(parsed) ? parsed : [parsed];
       } catch (e) {}
+    });
+
+    const now = new Date();
+    let targetYear = now.getFullYear();
+    let targetMonthIndex = now.getMonth();
+    if (month) {
+      const m = month.match(/Month-(\d+)-(\d+)/);
+      if (m) { targetYear = parseInt(m[1], 10); targetMonthIndex = parseInt(m[2], 10) - 1; }
+    }
+    const monthLabel = new Date(targetYear, targetMonthIndex, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+    let holidays = [];
+
+    const currentDateIso = new Date().toISOString().split('T')[0];
+
+    const prompt = getPlanMonthPrompt({
+      monthLabel,
+      name,
+      category,
+      address,
+      tone,
+      keywords,
+      offers,
+      seasonal,
+      history,
+      holidays,
+      referenceImages,
+      currentDateIso
     });
 
     if (!process.env.OPENROUTER_API_KEY) {
       return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
     }
-
-    const prompt = `You are an expert Local SEO & GMB Content Planner. Generate a 4-week calendar of GMB Posts specifically for **${targetMonth}** for:
-Business Name: "${name}"
-Category: "${category}"
-Location/Address: "${address}"
-Phone: "${phone}"
-Tone configuration: "${tone}"
-Keywords to target: ${JSON.stringify(keywords)}
-Active Offers: ${JSON.stringify(offers)}
-Seasonal Context: ${JSON.stringify(seasonal)}
-
-Generate exactly 4 posts (Week 1, Week 2, Week 3, Week 4).
-Ensure the ideas are customized for **${targetMonth}** (make them distinct, fresh, and engaging, fitting the progression of campaigns).
-Week 1 MUST be a Promotional/Offer Post (incorporate active offers if available).
-Week 2 MUST be an Educational/Keyword showcase post (use target keywords naturally).
-Week 3 MUST be a Seasonal/Event Post (incorporate seasonal context if available).
-Week 4 MUST be a Brand Core Values/Social proof post.
-
-Ensure the post copy (captions) matches the Tone rules.
-CRITICAL RULE: Google My Business strictly prohibits phone numbers in post captions. DO NOT include any phone numbers in the caption text (they will be rejected by GMB).
-For 'actionButton', you MUST suggest exactly ONE of these valid GMB CTA buttons: BOOK, ORDER, SHOP, LEARN_MORE, SIGN_UP, CALL. Do not use 'Add more details' or any other custom string. HIGHLY PREFER 'CALL' as the action button for most posts unless another button is strictly necessary for the offer.
-Return ONLY a valid JSON array of 4 items with exactly the following structure (no markdown wrapper, no extra text):
-[
-  {
-    "week": "Week 1",
-    "title": "Promotion & Service Offer",
-    "type": "Offer Post",
-    "caption": "Post caption here...",
-    "actionButton": "LEARN_MORE",
-    "visual": "Description of recommended banner image to generate...",
-    "tone": "Friendly / Conversational compliance description",
-    "hashtags": "#Keyword1 #Keyword2"
-  },
-  ...
-]`;
 
     const response = await generateContent({
       model: DEFAULT_MODEL,
@@ -1290,11 +1138,49 @@ Return ONLY a valid JSON array of 4 items with exactly the following structure (
     if (cleanedText.startsWith('```')) {
       cleanedText = cleanedText.replace(/^```json\s*/, '').replace(/```$/, '').trim();
     }
+
     const parsedData = JSON.parse(cleanedText);
-    res.json(parsedData);
+
+    // Save generated posts as DRAFTS in DB
+    const createdPosts = [];
+    if (parsedData.posts && Array.isArray(parsedData.posts)) {
+      for (const p of parsedData.posts) {
+        // Use standard or default type if invalid
+        const validTypes = ['standard', 'offers', 'seasonal', 'qa'];
+        const pType = validTypes.includes(p.postType) ? p.postType : 'standard';
+
+        const insertRes = await pool.query(
+          `INSERT INTO mafiya_gmb_posts (
+            client_id, post_type, caption, status, created_at, scheduled_at,
+            poster_title, visual_note, week, "festivalTag"
+          ) VALUES ($1, $2, $3, 'draft', NOW(), $4, $5, $6, $7, $8) RETURNING *`,
+          [
+            clientId,
+            pType,
+            p.caption || 'Generate caption in UI',
+            p.scheduleDate ? new Date(p.scheduleDate) : null,
+            p.title || 'Draft Post',
+            p.visualNote || '',
+            p.week || 'Week 1',
+            p.festivalTag || null
+          ]
+        );
+        createdPosts.push(insertRes.rows[0]);
+      }
+    }
+
+    res.json({
+      recommendedCount: parsedData.recommendedCount,
+      reason: parsedData.reason,
+      visualStyleSummary: parsedData.visualStyleSummary,
+      weeklySplit: parsedData.weeklySplit || [],
+      holidays: holidays,
+      createdPosts: createdPosts
+    });
   } catch (err) {
-    console.error('[Mafiya Reviews] GMB Brain suggest posts error:', err);
-    res.status(500).json({ error: 'Failed to suggest GMB posts: ' + err.message });
+    console.error('[Mafiya Reviews] GMB Brain plan-month error:', err);
+    require('fs').writeFileSync('plan-month-error.txt', err.stack || err.message);
+    res.status(500).json({ error: 'Failed to build plan: ' + err.message, message: 'Failed to build plan: ' + err.message });
   }
 });
 

@@ -1,0 +1,189 @@
+Created At: 2026-08-14T16:23:26+05:30
+Completed At: 2026-08-14T16:23:27+05:30
+File Path: `file:///c:/Users/ADMIN/Desktop/mafiyaos/server/routes/mafiya-reviews.js`
+Total Lines: 2844
+Total Bytes: 122166
+Showing lines 2450 to 2630
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+2450: async function generatePostContent({ clientId, postType, selectedEntryText, selectedEntryTitle, customImagePrompt, generateImage = true }) {
+2451:     // 1. Fetch GMB Client details
+2452:     const clientRes = await pool.query(
+2453:       'SELECT business_name, phone_number FROM mafiya_gmb_clients WHERE id = $1',
+2454:       [clientId]
+2455:     );
+2456:     if (clientRes.rowCount === 0) throw Object.assign(new Error('Client not found'), { statusCode: 404 });
+2457:     const { business_name: businessName, phone_number: phoneNumber } = clientRes.rows[0];
+2458: 
+2459:     // 2. Fetch AI Brain entries
+2460:     const brainRes = await pool.query(
+2461:       'SELECT entry_type, content FROM mafiya_gmb_brain WHERE client_id = $1',
+2462:       [clientId]
+2463:     );
+2464: 
+2465:     const brain = {
+2466:       tone: [],
+2467:       offer: [],
+2468:       keyword: [],
+2469:       qa: [],
+2470:       blacklist: [],
+2471:       seasonal: [],
+2472:       creative_brief: []
+2473:     };
+2474:     brainRes.rows.forEach(row => {
+2475:       const k = (row.entry_type || '').toLowerCase().trim();
+2476:       // Map frontend category names to DB types
+2477:       const mappedKey = k === 'offers' ? 'offer' : k === 'q&a bank' ? 'qa' : k === 'keywords' ? 'keyword' : k;
+2478:       if (brain[mappedKey]) {
+2479:         brain[mappedKey].push(formatBrainContent(mappedKey, row.content));
+2480:       }
+2481:     });
+2482: 
+2483:     // 3. Select directives based on type
+2484:     let toneRules = brain.tone.length > 0 ? brain.tone.join(', ') : 'Warm, professional, engaging';
+2485:     let blacklistRules = brain.blacklist.length > 0 ? `NEVER use these words: ${brain.blacklist.join(', ')}` : '';
+2486:     let keywordRules = brain.keyword.length > 0 ? `Include these terms naturally: ${brain.keyword.join(', ')}` : '';
+2487: 
+2488:     // Handle Creative Brief details if available
+2489:     let creativeBriefContext = '';
+2490:     let imageDesignPrompt = '';
+2491:     let dallENegative = '';
+2492: 
+2493:     if (brain.creative_brief && brain.creative_brief.length > 0) {
+2494:       try {
+2495:         const briefData = JSON.parse(brain.creative_brief[0]);
+2496:         creativeBriefContext = `AI Creative Brief Guidelines:
+2497: - Target Audience: ${briefData.targetAudience || 'General'}
+2498: - Core Goal: ${briefData.goal || 'Awareness'}
+2499: - Brand Style: ${briefData.brandStyle || 'Modern'}
+2500: - Color Palette: ${briefData.brandColors || 'Aesthetic colors'}
+2501: - Visual Theme: ${briefData.imageStyle || 'Realistic photography'}
+2502: - Camera Perspective: ${briefData.cameraAngle || 'Front shot'}
+2503: - Lighting: ${briefData.lighting || 'Cinematic lighting'}`;
+2504: 
+2505:         imageDesignPrompt = `Theme colors: ${briefData.brandColors}. Style: ${briefData.brandStyle}. Quality/Look: ${briefData.imageStyle}, using ${briefData.cameraAngle} and ${briefData.lighting}. Make it look like a highly professional, state-of-the-art visual ad suitable for Google Business.`;
+2506:         dallENegative = briefData.negativePrompt ? `, avoid ${briefData.negativePrompt}` : '';
+2507:       } catch (e) {
+2508:         console.error('Error parsing creative brief content:', e);
+2509:       }
+2510:     }
+2511: 
+2512:     let typeContext = '';
+2513:     if (selectedEntryText) {
+2514:       typeContext = `Based on this specific entry from our brand's AI Brain [Category: ${postType}]:
+2515: ${selectedEntryTitle ? `Title: ${selectedEntryTitle}\n` : ''}Content: ${selectedEntryText}`;
+2516:     } else {
+2517:       if (postType === 'offers' && brain.offer.length > 0) {
+2518:         typeContext = `Here are active offers: \n${brain.offer.map(o => `- ${o}`).join('\n')}`;
+2519:       } else if (postType === 'seasonal' && brain.seasonal.length > 0) {
+2520:         typeContext = `Here are seasonal focal campaigns: \n${brain.seasonal.map(s => {
+2521:           try {
+2522:             const parsed = JSON.parse(s);
+2523:             return `- Campaign [${parsed.title}]: ${parsed.text}`;
+2524:           } catch (e) {
+2525:             return `- ${s}`;
+2526:           }
+2527:         }).join('\n')}`;
+2528:       } else if (postType === 'qa' && brain.qa.length > 0) {
+2529:         typeContext = `Here are Q&As / facts: \n${brain.qa.map(q => `- ${q}`).join('\n')}`;
+2530:       } else {
+2531:         typeContext = `Active offers: ${brain.offer.slice(0,2).join('; ') || 'None'}\nQ&A Info: ${brain.qa.slice(0,2).join('; ') || 'None'}`;
+2532:       }
+2533:     }
+2534: 
+2535:     const apiKey = process.env.OPENAI_API_KEY;
+2536:     if (!apiKey) throw Object.assign(new Error('OPENAI_API_KEY is not configured.'), { statusCode: 500 });
+2537: 
+2538:     const prompt = `You are an expert customer relations and content marketer representing the business "${businessName}" (Phone: ${phoneNumber}).
+2539: We need to generate a Google Business Profile (GMB) local post of type "${postType.toUpperCase()}".
+2540: 
+2541: ${creativeBriefContext ? `Follow this Brand Strategy:\n${creativeBriefContext}\n` : ''}
+2542: Brand Tone/Voice: ${toneRules}
+2543: ${blacklistRules}
+2544: ${keywordRules}
+2545: 
+2546: Context Data (incorporate this info):
+2547: ${typeContext}
+2548: 
+2549: Generate a JSON object with exactly these fields:
+2550: 1. "caption": A search-optimized GMB post caption (about 80 to 120 words). It should contain a clear call-to-action (e.g. Call us at ${phoneNumber}!).
+2551: 2. "posterTitle": A short, catchy title text optimized for a flyer/poster (max 3-4 words, uppercase, e.g. "SPECIAL OFFER!" or "JOIN NOW!").
+2552: 3. "posterSubtitle": A short subtitle highlighting the key benefit (max 5-7 words, e.g. "100% Placement Course Support").
+2553: 
+2554: **CRITICAL**: Return ONLY the raw JSON block. Do not include markdown code block syntax (like \`\`\`json) or any wrapping text. Respond with pure JSON.`;
+2555: 
+2556:     const chatRes = await axios.post(
+2557:       'https://api.groq.com/openai/v1/chat/completions',
+2558:       {
+2559:         model: 'llama-3.3-70b-versatile',
+2560:         messages: [
+2561:           { role: 'user', content: prompt }
+2562:         ]
+2563:       },
+2564:       {
+2565:         headers: {
+2566:           'Authorization': `Bearer ${apiKey}`,
+2567:           'Content-Type': 'application/json'
+2568:         }
+2569:       }
+2570:     );
+2571: 
+2572:     let rawOutput = chatRes.data?.choices?.[0]?.message?.content?.trim() || '';
+2573: 
+2574:     // Clean code fences if LLM ignored instructions
+2575:     if (rawOutput.startsWith('```')) {
+2576:       rawOutput = rawOutput.replace(/^```(json)?/, '').replace(/```$/, '').trim();
+2577:     }
+2578: 
+2579:     let parsed;
+2580:     try {
+2581:       parsed = JSON.parse(rawOutput);
+2582:     } catch (e) {
+2583:       console.warn('[Mafiya Posts] AI returned invalid JSON:', rawOutput);
+2584:       const capMatch = rawOutput.match(/"caption":\s*"([^"]+)"/);
+2585:       const titleMatch = rawOutput.match(/"posterTitle":\s*"([^"]+)"/);
+2586:       const subMatch = rawOutput.match(/"posterSubtitle":\s*"([^"]+)"/);
+2587: 
+2588:       parsed = {
+2589:         caption: capMatch ? capMatch[1] : `Visit ${businessName} today! Call us at ${phoneNumber}.`,
+2590:         posterTitle: titleMatch ? titleMatch[1] : 'Special Announcement',
+2591:         posterSubtitle: subMatch ? subMatch[1] : 'Contact us for details'
+2592:       };
+2593:     }
+2594: 
+2595:     // 4. Generate AI Image using Pollinations.ai (Free, Fast, Keyless, no fallback needed)
+2596:     // Skipped entirely when generateImage=false (e.g. the monthly planner only wants a text
+2597:     // poster-style suggestion, not an actual generated image).
+2598:     let imageUrl = '';
+2599:     if (generateImage) {
+2600:       try {
+2601:         // Build visual prompt integrating design instruction brief
+2602:         let dallEPrompt = `A premium advertisement visual poster for "${businessName}". Heading: "${parsed.posterTitle}". Subheading: "${parsed.posterSubtitle}". ${imageDesignPrompt || 'Clean modern ad design, 3D style marketing flyer.'}${dallENegative}`;
+2603:         if (customImagePrompt) {
+2604:           dallEPrompt = `A premium advertisement visual poster for "${businessName}". Heading: "${parsed.posterTitle}". Subheading: "${parsed.posterSubtitle}". Prompt: ${customImagePrompt}`;
+2605:         }
+2606: 
+2607:         const encodedPrompt = encodeURIComponent(dallEPrompt);
+2608:         imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
+2609:       } catch (err) {
+2610:         console.error('[Image Generation Error]:', err.message);
+2611:         imageUrl = 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=600&auto=format&fit=crop';
+2612:       }
+2613:     }
+2614: 
+2615:     return {
+2616:       caption: parsed.caption,
+2617:       posterTitle: parsed.posterTitle,
+2618:       posterSubtitle: parsed.posterSubtitle,
+2619:       imageUrl
+2620:     };
+2621: }
+2622: 
+2623: router.post('/posts/generate', async (req, res) => {
+2624:   const { clientId, postType, selectedEntryText, selectedEntryTitle, customImagePrompt } = req.body;
+2625:   if (!clientId || !postType) {
+2626:     return res.status(400).json({ error: 'clientId and postType are required' });
+2627:   }
+2628: 
+2629:   try {
+2630:     const result = await generatePostContent({ clientId, postType, selectedEntryText, selectedEntryTitle, customImagePrompt });
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

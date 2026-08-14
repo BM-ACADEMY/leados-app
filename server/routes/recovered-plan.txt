@@ -1,0 +1,121 @@
+Created At: 2026-08-14T16:35:51+05:30
+Completed At: 2026-08-14T16:35:51+05:30
+File Path: `file:///c:/Users/ADMIN/Desktop/mafiyaos/server/routes/mafiya-reviews.js`
+Total Lines: 2842
+Total Bytes: 122549
+Showing lines 1338 to 1450
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1338: // POST /api/mafiya/reviews/brain/plan-month
+1339: // AI analyzes the connected GMB profile + real post history (including looking at past poster
+1340: // IMAGES, not just captions) + Brain config + real festival dates for the target month, decides
+1341: // how many posts should go out (not a fixed number) + why, and auto-creates that many DRAFT post
+1342: // slots (caption + poster style suggestion + suggested date) in the DB. No image is auto-generated
+1343: // per slot — the AI only writes a text description of what the poster should look like.
+1344: // Nothing here ever sets status to 'scheduled' or 'published' — the cron only picks up
+1345: // status='scheduled', so these drafts sit in the Planner until the user reviews and publishes them.
+1346: router.post('/brain/plan-month', async (req, res) => {
+1347:   const { clientId, month } = req.body;
+1348:   if (!clientId) return res.status(400).json({ error: 'clientId is required' });
+1349: 
+1350:   const { checkLimit } = require('../utils/limit-checker');
+1351: 
+1352:   try {
+1353:     const limitCheck = await checkLimit(clientId, 'mafiya_ai_suggestions', async () => {
+1354:       const countRes = await pool.query(
+1355:         "SELECT COUNT(*) FROM mafiya_ai_suggestions_log WHERE client_id = $1 AND generated_at >= NOW() - INTERVAL '30 days'",
+1356:         [clientId]
+1357:       );
+1358:       return parseInt(countRes.rows[0].count, 10);
+1359:     }, async () => {
+1360:       const countRes = await pool.query(
+1361:         "SELECT COUNT(*) FROM mafiya_ai_suggestions_log WHERE client_id = $1 AND generated_at >= CURRENT_DATE",
+1362:         [clientId]
+1363:       );
+1364:       return parseInt(countRes.rows[0].count, 10);
+1365:     });
+1366: 
+1367:     if (!limitCheck.allowed) {
+1368:       if (limitCheck.isDailyLimit) {
+1369:         return res.status(403).json({ error: 'Limit reached', message: 'Today quota completed. Please try again tomorrow.' });
+1370:       }
+1371:       return res.status(403).json({
+1372:         error: 'Limit reached',
+1373:         message: `Plan limit reached. Up to ${limitCheck.limit} AI suggestions/month. Please upgrade.`
+1374:       });
+1375:     }
+1376:     await pool.query('INSERT INTO mafiya_ai_suggestions_log (client_id) VALUES ($1)', [clientId]);
+1377: 
+1378:     // 1. Business profile
+1379:     const clientRes = await pool.query(
+1380:       'SELECT business_name, business_category, custom_category, phone_number, business_address FROM mafiya_gmb_clients WHERE id = $1',
+1381:       [clientId]
+1382:     );
+1383:     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client business profile not found.' });
+1384:     const client = clientRes.rows[0];
+1385:     const name = client.business_name;
+1386:     const phone = client.phone_number || '';
+1387:     const address = client.business_address || '';
+1388:     const category = client.business_category || client.custom_category || '';
+1389: 
+1390:     // 2. Real post history (imported via Sync GMB Posts + previously created posts)
+1391:     const historyRes = await pool.query(
+1392:       'SELECT post_type, caption, status, image_url, created_at FROM mafiya_gmb_posts WHERE client_id = $1 ORDER BY created_at DESC LIMIT 20',
+1393:       [clientId]
+1394:     );
+1395:     const history = historyRes.rows;
+1396: 
+1397:     // 2b. Pull actual poster images from the 2 most recent past posts that have one, so the AI can
+1398:     // visually analyze the business's real poster style (colors/layout/tone) instead of guessing.
+1399:     const pastPosterUrls = history.filter(h => h.image_url && h.image_url.startsWith('http')).slice(0, 2).map(h => h.image_url);
+1400:     const referenceImages = (await Promise.all(pastPosterUrls.map(fetchImageAsInlineData))).filter(Boolean);
+1401: 
+1402:     // 3. Brain settings
+1403:     const brainRes = await pool.query('SELECT entry_type, content FROM mafiya_gmb_brain WHERE client_id = $1', [clientId]);
+1404:     let tone = 'Friendly';
+1405:     let keywords = [];
+1406:     let offers = [];
+1407:     let seasonal = [];
+1408:     brainRes.rows.forEach(entry => {
+1409:       try {
+1410:         const parsed = JSON.parse(entry.content);
+1411:         if (entry.entry_type === 'tone') tone = parsed.voice || 'Friendly';
+1412:         else if (entry.entry_type === 'keyword') keywords = Array.isArray(parsed) ? parsed : (parsed.keywords || []);
+1413:         else if (entry.entry_type === 'offer') offers = Array.isArray(parsed) ? parsed : [parsed];
+1414:         else if (entry.entry_type === 'seasonal') seasonal = Array.isArray(parsed) ? parsed : [parsed];
+1415:       } catch (e) {}
+1416:     });
+1417: 
+1418:     // 4. Target month + real festival dates for it
+1419:     const now = new Date();
+1420:     let targetYear = now.getFullYear();
+1421:     let targetMonthIndex = now.getMonth();
+1422:     if (month) {
+1423:       const m = month.match(/Month-(\d+)-(\d+)/);
+1424:       if (m) { targetYear = parseInt(m[1], 10); targetMonthIndex = parseInt(m[2], 10) - 1; }
+1425:     }
+1426:     const monthLabel = new Date(targetYear, targetMonthIndex, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+1427:     const holidays = await getIndianHolidays(targetYear, targetMonthIndex);
+1428: 
+1429:     if (!process.env.OPENROUTER_API_KEY) {
+1430:       return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
+1431:     }
+1432: 
+1433:     // 5. AI decides count + reason + weekly split (grounded in profile, history, and real festivals)
+1434:     const planPrompt = `You are an expert Local SEO & GMB Content Strategist. Analyze this business and build a posting PLAN for **${monthLabel}**.
+1435: 
+1436: Business Name: "${name}"
+1437: Category: "${category}"
+1438: Location: "${address}"
+1439: Brand Tone: "${tone}"
+1440: Target Keywords: ${JSON.stringify(keywords)}
+1441: Active Offers: ${JSON.stringify(offers)}
+1442: Seasonal Campaigns on file: ${JSON.stringify(seasonal)}
+1443: 
+1444: Recent Post History (most recent first, up to 20): ${JSON.stringify(history.map(h => ({ type: h.post_type, status: h.status, date: h.created_at })))}
+1445: 
+1446: Real festival/holiday dates confirmed for ${monthLabel} (ONLY use these — do NOT invent any other festival or date): ${JSON.stringify(holidays)}
+1447: 
+1448: ${referenceImages.length > 0
+1449:   ? `Attached below are ${referenceImages.length} of this business's actual recent GMB poster images. Study their color palette, layout, typography style, and overall visual tone before writing your poster suggestions.`
+1450:   : `No past poster images are available for this client yet — base poster style suggestions on the business category and brand tone only.`}
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

@@ -56,7 +56,7 @@ export default function GmbBrain() {
   const [qaList, setQaList] = useState([{ question: '', answer: '' }]);
 
   // 7. Seasonal Repeatable Cards State
-  const [seasonalList, setSeasonalList] = useState([{ occasion: '', startDate: '', endDate: '', instructions: '' }]);
+  const [seasonalList, setSeasonalList] = useState([{ occasion: '', instructions: '' }]);
 
   // 8. Creative Brief Form States
   const [cbBrandStyle, setCbBrandStyle] = useState('Modern');
@@ -137,7 +137,7 @@ export default function GmbBrain() {
       } else if (entryType === 'qa') {
         setQaList([{ question: '', answer: '' }]);
       } else if (entryType === 'seasonal') {
-        setSeasonalList([{ occasion: '', startDate: '', endDate: '', instructions: '' }]);
+        setSeasonalList([{ occasion: '', instructions: '' }]);
       } else if (entryType === 'creative_brief') {
         setCbBrandStyle('Modern');
         setCbBrandColors([]);
@@ -384,9 +384,9 @@ export default function GmbBrain() {
         }
         finalContent = JSON.stringify(validQa);
       } else if (entryType === 'seasonal') {
-        const validSeasonal = seasonalList.filter(s => s.occasion.trim() || s.instructions.trim());
+        const validSeasonal = seasonalList.filter(s => (s.occasion && s.occasion.trim()) || (s.instructions && s.instructions.trim()));
         if (validSeasonal.length === 0) {
-          toast.error('Please add at least one seasonal occasion or instructions');
+          toast.error('Please add at least one theme or instruction');
           setSaving(false);
           return;
         }
@@ -1113,7 +1113,7 @@ export default function GmbBrain() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           <input
                             type="text"
-                            placeholder="Occasion (e.g. Diwali Sale 2026)"
+                            placeholder="Theme / Topic (e.g. Monday Motivation, Weekly Tips)"
                             value={item.occasion}
                             onChange={(e) => {
                               const updated = [...seasonalList];
@@ -1122,49 +1122,25 @@ export default function GmbBrain() {
                             }}
                             style={{ background: 'transparent', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: 13, padding: '4px 0', outline: 'none' }}
                           />
-                          <div style={{ display: 'flex', gap: 10 }}>
-                            <input
-                              type="text"
-                              placeholder="Start Date (e.g. Oct 20)"
-                              value={item.startDate}
-                              onChange={(e) => {
-                                const updated = [...seasonalList];
-                                updated[idx].startDate = e.target.value;
-                                setSeasonalList(updated);
-                              }}
-                              style={{ width: '50%', background: 'transparent', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', color: '#a1a1aa', fontSize: 11.5, outline: 'none' }}
-                            />
-                            <input
-                              type="text"
-                              placeholder="End Date (e.g. Oct 31)"
-                              value={item.endDate}
-                              onChange={(e) => {
-                                const updated = [...seasonalList];
-                                updated[idx].endDate = e.target.value;
-                                setSeasonalList(updated);
-                              }}
-                              style={{ width: '50%', background: 'transparent', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', color: '#a1a1aa', fontSize: 11.5, outline: 'none' }}
-                            />
-                          </div>
                           <textarea
-                            placeholder="Campaign Instructions"
+                            placeholder="Design & Content Instructions (e.g. Use bright colors, focus on real estate tips)"
                             value={item.instructions}
                             onChange={(e) => {
                               const updated = [...seasonalList];
                               updated[idx].instructions = e.target.value;
                               setSeasonalList(updated);
                             }}
-                            style={{ background: 'transparent', border: 'none', color: '#a1a1aa', fontSize: 12.5, outline: 'none', resize: 'none', height: 45 }}
+                            style={{ background: 'transparent', border: 'none', color: '#a1a1aa', fontSize: 12.5, outline: 'none', resize: 'none', height: 65 }}
                           />
                         </div>
                       </div>
                     ))}
                     <button
                       type="button"
-                      onClick={() => setSeasonalList([...seasonalList, { occasion: '', startDate: '', endDate: '', instructions: '' }])}
+                      onClick={() => setSeasonalList([...seasonalList, { occasion: '', instructions: '' }])}
                       style={{ background: 'rgba(255,255,255,0.04)', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 8, padding: 8, color: '#fff', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
                     >
-                      + Add Daily Poster Campaign
+                      + Add Daily Poster Rule
                     </button>
                   </div>
                 )}
@@ -1292,7 +1268,7 @@ export default function GmbBrain() {
                   } else if (entryType === 'qa') {
                     previewText = qaList.map(q => `Q: ${q.question || 'Empty'}\nA: ${q.answer || 'Empty'}`).join('\n\n');
                   } else if (entryType === 'seasonal') {
-                    previewText = seasonalList.map(s => `[Season: ${s.occasion || 'Untitled'}] ${s.startDate} to ${s.endDate} - Instructions: ${s.instructions || 'None'}`).join('\n');
+                    previewText = seasonalList.map(s => `[Theme: ${s.occasion || 'Untitled'}] - Instructions: ${s.instructions || 'None'}`).join('\n');
                   } else if (entryType === 'creative_brief') {
                     previewText = `Style: ${cbBrandStyle}\nColors: ${cbBrandColors.join(', ')}\nVisuals: ${cbImageStyle.join(', ')}\nAvoid: ${cbNegative.join(', ')}\nTypography: ${cbTypography}`;
                   }
@@ -1498,7 +1474,7 @@ export default function GmbBrain() {
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                                     {parsed.map((s, idx) => (
                                       <div key={idx} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 6, padding: '8px 12px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                                        <div style={{ fontSize: 13, fontWeight: 700, color: '#ec4899' }}>{s.occasion} ({s.startDate} to {s.endDate})</div>
+                                        <div style={{ fontSize: 13, fontWeight: 700, color: '#ec4899' }}>{s.occasion}</div>
                                         <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 2 }}>{s.instructions}</div>
                                       </div>
                                     ))}

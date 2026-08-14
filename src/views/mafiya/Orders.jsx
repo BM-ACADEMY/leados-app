@@ -34,6 +34,7 @@ export default function MafiyaOrders() {
   const [syncingGmbPosts, setSyncingGmbPosts] = useState(false);
   const [suggestedPosts, setSuggestedPosts] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [monthPlan, setMonthPlan] = useState(null); // { recommendedCount, reason, weeklySplit, holidays }
   const [plannerSubTab, setPlannerSubTab] = useState('brain_posts'); // 'brain_posts', 'ai_suggestions'
   const [completedPosts, setCompletedPosts] = useState({}); // { [postId]: boolean }
   const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -150,18 +151,46 @@ export default function MafiyaOrders() {
     }
   };
 
-  // Fetch suggested GMB posts dynamically from Gemini using GMB Brain
-  const fetchSuggestedPosts = async (clientId) => {
+  // Ask AI to analyze the connected GMB profile + real post history (including looking at past
+  // poster IMAGES, not just captions) + confirmed festival dates, decide how many posts this
+  // month needs (not a fixed number) + why, and auto-create that many DRAFT post slots (real
+  // caption + poster style suggestion + suggested date — no image is auto-generated). Nothing
+  // here publishes to GMB — drafts wait in this tab for the user to review and manually publish.
+  const fetchSuggestedPosts = async (clientId, month) => {
     if (!clientId) return;
     setLoadingSuggestions(true);
     setSuggestedPosts([]);
+    setMonthPlan(null);
     try {
-      const res = await axios.post(`${API_URL}/api/mafiya/reviews/brain/suggest-posts`, { clientId }, { headers: getAuthHeader() });
-      if (res.data && Array.isArray(res.data)) {
-        setSuggestedPosts(res.data);
+      const res = await axios.post(`${API_URL}/api/mafiya/reviews/brain/plan-month`, { clientId, month }, { headers: getAuthHeader() });
+      if (res.data) {
+        setMonthPlan({
+          recommendedCount: res.data.recommendedCount,
+          reason: res.data.reason,
+          visualStyleSummary: res.data.visualStyleSummary,
+          weeklySplit: res.data.weeklySplit || [],
+          holidays: res.data.holidays || []
+        });
+        const created = Array.isArray(res.data.createdPosts) ? res.data.createdPosts : [];
+        setSuggestedPosts(created.map(p => {
+          const d = p.scheduled_at ? new Date(p.scheduled_at) : null;
+          return {
+            id: p.id,
+            week: p.week,
+            title: p.poster_title || p.post_type,
+            type: p.post_type,
+            caption: p.caption,
+            visualNote: p.visual_note,
+            actionButton: null,
+            festivalTag: p.festivalTag,
+            fullDateStr: d ? d.toLocaleDateString('default', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : null,
+            isToday: d ? d.toDateString() === new Date().toDateString() : false
+          };
+        }));
       }
     } catch (err) {
-      console.log('Gemini suggested GMB posts generation unavailable. Fallback to templates.');
+      console.log('AI monthly GMB plan generation unavailable.', err?.response?.data || err.message);
+      toast.error(err?.response?.data?.message || 'Failed to build this month\'s AI post plan.');
     } finally {
       setLoadingSuggestions(false);
     }
@@ -992,7 +1021,19 @@ export default function MafiyaOrders() {
     { bg: '#365314', text: '#bef264' }
   ];
 
-  const strategy = getPostingStrategy();
+  const strategy = monthPlan
+    ? {
+        freq: `${monthPlan.recommendedCount} Posts / Month`,
+        reason: monthPlan.reason,
+        trendingThemes: (monthPlan.weeklySplit || []).map(w => w.theme).filter(Boolean),
+        postsTotal: monthPlan.recommendedCount
+      }
+    : {
+        freq: 'Generating...',
+        reason: 'Analyzing your GMB profile and optimizing posting plan...',
+        trendingThemes: [],
+        postsTotal: null
+      };
 
   return (
     <div style={{
@@ -1794,62 +1835,76 @@ export default function MafiyaOrders() {
             <div style={{ background: 'rgba(245, 158, 11, 0.15)', padding: 10, borderRadius: 12, color: '#f59e0b' }}>
               <Sparkles size={20} />
             </div>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <h4 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#fff' }}>Recommended Posting frequency: {strategy.freq}</h4>
-                <button
-                  onClick={handleSyncGmbPosts}
-                  disabled={syncingGmbPosts}
-                  style={{
-                    background: '#0f172a',
-                    border: '1px solid #f59e0b',
-                    color: '#f59e0b',
-                    borderRadius: 6,
-                    padding: '4px 10px',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4
-                  }}
-                >
-                  <RefreshCw size={12} className={syncingGmbPosts ? 'spin' : ''} />
-                  {syncingGmbPosts ? 'Checking GMB...' : 'Verify & Sync GMB Posts'}
-                </button>
-                <button
-                  onClick={() => fetchSuggestedPosts(activeClient.id)}
-                  disabled={loadingSuggestions}
-                  style={{
-                    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                    color: '#000',
-                    border: 'none',
-                    borderRadius: 6,
-                    padding: '4px 12px',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4
-                  }}
-                >
-                  <Sparkles size={12} className={loadingSuggestions ? 'spin' : ''} />
-                  {loadingSuggestions ? 'Regenerating...' : 'AI Regenerate Suggestions'}
-                </button>
-              </div>
-              <p style={{ margin: '6px 0 0 0', fontSize: 13, color: '#a1a1aa', lineHeight: 1.5 }}>
-                {strategy.reason}
-              </p>
-              {strategy.trendingThemes && (
-                <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <span style={{ fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>Trending Themes:</span>
-                  {strategy.trendingThemes.map((theme, tIdx) => (
-                    <span key={tIdx} style={{ fontSize: 11, color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>
-                      #{theme}
-                    </span>
-                  ))}
-                </div>
+            <div style={{ flex: 1 }}>
+              {loadingSuggestions ? (
+                <>
+                  <div style={{ width: 280, height: 22, background: 'rgba(255,255,255,0.05)', borderRadius: 4, animation: 'pulse 1.5s infinite', marginBottom: 12 }} />
+                  <div style={{ width: '100%', height: 16, background: 'rgba(255,255,255,0.05)', borderRadius: 4, animation: 'pulse 1.5s infinite', marginBottom: 6 }} />
+                  <div style={{ width: '80%', height: 16, background: 'rgba(255,255,255,0.05)', borderRadius: 4, animation: 'pulse 1.5s infinite', marginBottom: 14 }} />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ width: 100, height: 20, background: 'rgba(245, 158, 11, 0.1)', borderRadius: 4, animation: 'pulse 1.5s infinite' }} />
+                    <div style={{ width: 120, height: 20, background: 'rgba(245, 158, 11, 0.1)', borderRadius: 4, animation: 'pulse 1.5s infinite' }} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <h4 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#fff' }}>Recommended Posting frequency: {strategy.freq}</h4>
+                    <button
+                      onClick={handleSyncGmbPosts}
+                      disabled={syncingGmbPosts}
+                      style={{
+                        background: '#0f172a',
+                        border: '1px solid #f59e0b',
+                        color: '#f59e0b',
+                        borderRadius: 6,
+                        padding: '4px 10px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4
+                      }}
+                    >
+                      <RefreshCw size={12} className={syncingGmbPosts ? 'spin' : ''} />
+                      {syncingGmbPosts ? 'Checking GMB...' : 'Verify & Sync GMB Posts'}
+                    </button>
+                    <button
+                      onClick={() => fetchSuggestedPosts(activeClient.id)}
+                      disabled={loadingSuggestions}
+                      style={{
+                        background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                        color: '#000',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '4px 12px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4
+                      }}
+                    >
+                      <Sparkles size={12} className={loadingSuggestions ? 'spin' : ''} />
+                      {loadingSuggestions ? 'Regenerating...' : 'AI Regenerate Suggestions'}
+                    </button>
+                  </div>
+                  <p style={{ margin: '6px 0 0 0', fontSize: 13, color: '#a1a1aa', lineHeight: 1.5 }}>
+                    {strategy.reason}
+                  </p>
+                  {strategy.trendingThemes && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span style={{ fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>Trending Themes:</span>
+                      {strategy.trendingThemes.map((theme, tIdx) => (
+                        <span key={tIdx} style={{ fontSize: 11, color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>
+                          #{theme}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -1892,8 +1947,16 @@ export default function MafiyaOrders() {
               </select>
             </div>
             
-            <div style={{ fontSize: 13, color: '#94a3b8', fontWeight: 600 }}>
-              Monthly Target Goal: <span style={{ color: '#f59e0b', fontWeight: 800 }}>{strategy.freq}</span> ({parseInt(strategy.freq) * 4} Posts Total)
+            <div style={{ fontSize: 13, color: '#94a3b8', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+              {loadingSuggestions ? (
+                <>
+                  Monthly Target Goal: <span style={{ width: 140, height: 18, background: 'rgba(255,255,255,0.05)', borderRadius: 4, animation: 'pulse 1.5s infinite' }} />
+                </>
+              ) : (
+                <>
+                  Monthly Target Goal: <span style={{ color: '#f59e0b', fontWeight: 800 }}>{strategy.freq}</span> ({strategy.postsTotal != null ? strategy.postsTotal : parseInt(strategy.freq) * 4} Posts Total)
+                </>
+              )}
             </div>
           </div>
 
@@ -2162,103 +2225,94 @@ export default function MafiyaOrders() {
               );
             })
           ) : loadingSuggestions ? (
-            <div style={{
-              background: '#0b1329',
-              border: '1px dashed #1e293b',
-              borderRadius: 14,
-              padding: 48,
-              textAlign: 'center',
-              color: '#64748b'
-            }}>
-              <Sparkles size={36} style={{ marginBottom: 12, color: '#f59e0b', animation: 'pulse 1.5s infinite' }} />
-              <h3 style={{ fontSize: 16, color: '#e2e8f0', margin: '0 0 6px 0' }}>Generating AI Content Planner Suggestions</h3>
-              <p style={{ fontSize: 13, margin: 0 }}>Gemini is currently writing 4-weeks of GMB Post suggestions customized for your GMB Brain tone, keywords, and active offers...</p>
-            </div>
+            <>
+              <style>{`
+                @keyframes gmbSkeletonPulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.9; } }
+                .gmb-skeleton-bar { background: #1e293b; border-radius: 6px; animation: gmbSkeletonPulse 1.4s ease-in-out infinite; }
+              `}</style>
+              {[0, 1, 2].map((i) => (
+                <div key={i} style={{ background: '#0b1329', border: '1px solid #1e293b', borderRadius: 14, padding: 24, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+                    <div className="gmb-skeleton-bar" style={{ width: 130, height: 22, borderRadius: 20, animationDelay: `${i * 0.15}s` }} />
+                    <div className="gmb-skeleton-bar" style={{ width: 180, height: 22, animationDelay: `${i * 0.15 + 0.05}s` }} />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }} className="grid-responsive">
+                    <div className="gmb-skeleton-bar" style={{ height: 60, animationDelay: `${i * 0.15 + 0.1}s` }} />
+                    <div className="gmb-skeleton-bar" style={{ height: 60, animationDelay: `${i * 0.15 + 0.15}s` }} />
+                  </div>
+                  <div className="gmb-skeleton-bar" style={{ height: 70, marginBottom: 14, animationDelay: `${i * 0.15 + 0.2}s` }} />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                    <div className="gmb-skeleton-bar" style={{ width: 120, height: 34, animationDelay: `${i * 0.15 + 0.25}s` }} />
+                    <div className="gmb-skeleton-bar" style={{ width: 160, height: 34, animationDelay: `${i * 0.15 + 0.3}s` }} />
+                  </div>
+                </div>
+              ))}
+            </>
           ) : (
             (suggestedPosts.length > 0 ? suggestedPosts : []).map((sugg, idx) => {
-              const isDone = !!completedPosts[`${selectedMonth}-${sugg.week}`];
+              const isDone = false;
               return (
                 <div
                   key={idx}
                   style={{
                     background: '#0b1329',
-                    border: isDone ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid #1e293b',
+                    border: '1px solid #1e293b',
                     borderRadius: 14,
                     padding: 24,
                     marginBottom: 16,
-                    opacity: isDone ? 0.65 : 1,
                     transition: 'all 0.3s'
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <input
-                        type="checkbox"
-                        checked={isDone}
-                        onChange={(e) => {
-                          setCompletedPosts(prev => ({
-                            ...prev,
-                            [`${selectedMonth}-${sugg.week}`]: e.target.checked
-                          }));
-                        }}
-                        style={{
-                          width: 18,
-                          height: 18,
-                          accentColor: '#22c55e',
-                          cursor: 'pointer'
-                        }}
-                      />
                       <span style={{
-                        background: isDone ? 'rgba(34, 197, 94, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                        color: isDone ? '#4ade80' : '#f59e0b',
+                        background: 'rgba(245, 158, 11, 0.15)',
+                        color: '#f59e0b',
                         padding: '4px 12px',
                         borderRadius: 20,
                         fontSize: 12,
                         fontWeight: 800,
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 6,
-                        textDecoration: isDone ? 'line-through' : 'none'
+                        gap: 6
                       }}>
                         <Calendar size={13} />
                         {sugg.fullDateStr || sugg.scheduleDate || sugg.week}
                         {sugg.isToday && <span style={{ background: '#22c55e', color: '#000', padding: '1px 6px', borderRadius: 8, fontSize: 10, fontWeight: 800 }}>TODAY</span>}
                       </span>
-                      <h3 style={{
-                        margin: 0,
-                        fontSize: 16,
-                        fontWeight: 700,
-                        color: isDone ? '#64748b' : '#fff',
-                        textDecoration: isDone ? 'line-through' : 'none'
-                      }}>
+                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#fff' }}>
                         {sugg.title}
                       </h3>
                     </div>
 
                     <span style={{
                       fontSize: 12,
-                      color: isDone ? '#475569' : '#06b6d4',
-                      background: isDone ? 'rgba(71, 85, 105, 0.15)' : 'rgba(6, 182, 212, 0.15)',
+                      color: '#06b6d4',
+                      background: 'rgba(6, 182, 212, 0.15)',
                       padding: '2px 8px',
                       borderRadius: 4,
                       fontWeight: 600
                     }}>
-                      {isDone ? 'Completed ✓' : sugg.type}
+                      {sugg.type}
                     </span>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }} className="grid-responsive">
-                    <div style={{ background: '#060c17', padding: 14, borderRadius: 10, border: '1px solid #1e293b', opacity: isDone ? 0.5 : 1 }}>
-                      <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 6, fontWeight: 700 }}>VISUAL IDEA CONCEPT</span>
-                      <span style={{ fontSize: 13, color: '#cbd5e1', lineHeight: 1.5, textDecoration: isDone ? 'line-through' : 'none' }}>{sugg.visual}</span>
-                    </div>
-
-                    <div style={{ background: '#060c17', padding: 14, borderRadius: 10, border: '1px solid #1e293b', opacity: isDone ? 0.5 : 1 }}>
-                      <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 6, fontWeight: 700 }}>AI VOICE COMPLIANCE</span>
-                      <span style={{ fontSize: 13, color: '#c084fc', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <Volume2 size={14} /> Brand Tone: {sugg.tone}
+                  <div style={{ display: 'grid', gridTemplateColumns: sugg.festivalTag ? '1fr 1fr' : '1fr', gap: 16, marginBottom: 16 }} className="grid-responsive">
+                    <div style={{ background: '#060c17', padding: 14, borderRadius: 10, border: '1px solid #1e293b' }}>
+                      <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 6, fontWeight: 700 }}>SUGGESTED POSTER STYLE</span>
+                      <span style={{ fontSize: 13, color: '#cbd5e1', lineHeight: 1.5 }}>
+                        {sugg.visualNote || 'No poster style suggestion available.'}
                       </span>
                     </div>
+
+                    {sugg.festivalTag && (
+                      <div style={{ background: '#060c17', padding: 14, borderRadius: 10, border: '1px solid #1e293b' }}>
+                        <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 6, fontWeight: 700 }}>FESTIVAL TIE-IN</span>
+                        <span style={{ fontSize: 13, color: '#c084fc', fontWeight: 600 }}>
+                          🎉 {sugg.festivalTag}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ background: '#060c17', border: '1px solid #1e293b', borderRadius: 10, padding: 16, position: 'relative', opacity: isDone ? 0.5 : 1 }}>

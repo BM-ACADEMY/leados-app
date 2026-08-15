@@ -2119,33 +2119,35 @@ export default function StreetPosts() {
                                   onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
                                 >
                                   {/* Media Container */}
-                                  <div style={{
-                                    width: 90,
-                                    height: 75,
-                                    borderRadius: 6,
-                                    overflow: 'hidden',
-                                    position: 'relative',
-                                    background: 'rgba(255,255,255,0.02)',
-                                    flexShrink: 0,
-                                    border: '1px solid rgba(255,255,255,0.06)'
-                                  }}>
-                                    {post.image_url ? (
-                                      isVideo ? (
-                                        <>
-                                          <video src={post.image_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted />
-                                          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
-                                            <Play size={14} color="#fff" fill="#fff" />
-                                          </div>
-                                        </>
+                                  {post.status !== 'draft' && (
+                                    <div style={{
+                                      width: 90,
+                                      height: 75,
+                                      borderRadius: 6,
+                                      overflow: 'hidden',
+                                      position: 'relative',
+                                      background: 'rgba(255,255,255,0.02)',
+                                      flexShrink: 0,
+                                      border: '1px solid rgba(255,255,255,0.06)'
+                                    }}>
+                                      {post.image_url ? (
+                                        isVideo ? (
+                                          <>
+                                            <video src={post.image_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted />
+                                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
+                                              <Play size={14} color="#fff" fill="#fff" />
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <img src={post.image_url} alt="Post Visual" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        )
                                       ) : (
-                                        <img src={post.image_url} alt="Post Visual" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                      )
-                                    ) : (
-                                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.04)' }}>
-                                        <Megaphone size={18} color="#71717a" />
-                                      </div>
-                                    )}
-                                  </div>
+                                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.04)' }}>
+                                          <Megaphone size={18} color="#71717a" />
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
 
                                   {/* Text / Details Container */}
                                   <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>

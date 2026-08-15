@@ -405,31 +405,31 @@ router.get('/data', async (req, res) => {
         } catch (err) {
           googleApiError = err.response ? err.response.data : err.message;
 
-        if (err.response && err.response.status === 401) {
-          console.log('[Mafiya Reviews] Access token 401 expired, attempting refresh...');
-          const newAccessToken = await refreshClientToken(clientId);
-          if (newAccessToken) {
-            try {
-              await attemptFetch(newAccessToken);
-              return;
-            } catch (retryErr) {
-              googleApiError = retryErr.response ? retryErr.response.data : retryErr.message;
-              console.error('[Mafiya Reviews] Failed to fetch reviews after refreshing token:', googleApiError);
+          if (err.response && err.response.status === 401) {
+            console.log('[Mafiya Reviews] Access token 401 expired, attempting refresh...');
+            const newAccessToken = await refreshClientToken(clientId);
+            if (newAccessToken) {
+              try {
+                await attemptFetch(newAccessToken);
+                return;
+              } catch (retryErr) {
+                googleApiError = retryErr.response ? retryErr.response.data : retryErr.message;
+                console.error('[Mafiya Reviews] Failed to fetch reviews after refreshing token:', googleApiError);
+                await pool.query('DELETE FROM mafiya_gmb_tokens WHERE client_id = $1', [clientId]);
+                await pool.query('UPDATE mafiya_gmb_clients SET gmb_verified = false WHERE id = $1', [clientId]);
+              }
+            } else {
+              console.error('[Mafiya Reviews] Failed to refresh token (refresh token might be missing or invalid):', googleApiError);
               await pool.query('DELETE FROM mafiya_gmb_tokens WHERE client_id = $1', [clientId]);
               await pool.query('UPDATE mafiya_gmb_clients SET gmb_verified = false WHERE id = $1', [clientId]);
             }
+          } else if (err.response) {
+            console.error(`[Mafiya Reviews] Google API failed with status ${err.response.status}:`, err.response.data);
           } else {
-            console.error('[Mafiya Reviews] Failed to refresh token (refresh token might be missing or invalid):', googleApiError);
-            await pool.query('DELETE FROM mafiya_gmb_tokens WHERE client_id = $1', [clientId]);
-            await pool.query('UPDATE mafiya_gmb_clients SET gmb_verified = false WHERE id = $1', [clientId]);
+            console.error('[Mafiya Reviews] Google API failed with message:', err.message);
           }
-        } else if (err.response) {
-          console.error(`[Mafiya Reviews] Google API failed with status ${err.response.status}:`, err.response.data);
-        } else {
-          console.error('[Mafiya Reviews] Google API failed with message:', err.message);
         }
       }
-    }
     }
 
     // Fallback to DataForSEO Maps SERP scraping and polling reviews
@@ -848,7 +848,7 @@ Guidelines:
     });
 
     const reply = response.text?.trim() ||
-                  `Thank you ${author} for your review! We appreciate your feedback.`;
+      `Thank you ${author} for your review! We appreciate your feedback.`;
 
     fs.appendFileSync(
       path.join(__dirname, '../debug_error.log'),
@@ -903,7 +903,7 @@ router.post('/brain/polish', async (req, res) => {
   if (!content || !entryType) {
     return res.status(400).json({ error: 'content and entryType are required' });
   }
-  
+
 
   if (!process.env.OPENROUTER_API_KEY) {
     return res.status(500).json({ error: 'OPENROUTER_API_KEY is not configured.' });
@@ -1001,7 +1001,7 @@ router.post('/brain/suggest-config', async (req, res) => {
     );
 
     const { getSuggestConfigPrompt } = require('../utils/mafiya-prompts');
-    
+
     const prompt = getSuggestConfigPrompt({
       entryType,
       businessName,
@@ -1068,7 +1068,7 @@ router.post('/brain/plan-month', async (req, res) => {
       [clientId]
     );
     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client business profile not found.' });
-    
+
     const client = clientRes.rows[0];
     const name = client.business_name;
     const category = client.business_category || client.custom_category || '';
@@ -1095,7 +1095,7 @@ router.post('/brain/plan-month', async (req, res) => {
         else if (entry.entry_type === 'keyword') keywords = Array.isArray(parsed) ? parsed : (parsed.keywords || []);
         else if (entry.entry_type === 'offer') offers = Array.isArray(parsed) ? parsed : [parsed];
         else if (entry.entry_type === 'seasonal') seasonal = Array.isArray(parsed) ? parsed : [parsed];
-      } catch (e) {}
+      } catch (e) { }
     });
 
     const now = new Date();
@@ -1149,23 +1149,20 @@ router.post('/brain/plan-month', async (req, res) => {
         const validTypes = ['standard', 'offers', 'seasonal', 'qa'];
         const pType = validTypes.includes(p.postType) ? p.postType : 'standard';
 
-        const insertRes = await pool.query(
-          `INSERT INTO mafiya_gmb_posts (
-            client_id, post_type, caption, status, created_at, scheduled_at,
-            poster_title, visual_note, week, "festivalTag"
-          ) VALUES ($1, $2, $3, 'draft', NOW(), $4, $5, $6, $7, $8) RETURNING *`,
-          [
-            clientId,
-            pType,
-            p.caption || 'Generate caption in UI',
-            p.scheduleDate ? new Date(p.scheduleDate) : null,
-            p.title || 'Draft Post',
-            p.visualNote || '',
-            p.week || 'Week 1',
-            p.festivalTag || null
-          ]
-        );
-        createdPosts.push(insertRes.rows[0]);
+        const mockPost = {
+          id: Math.floor(Math.random() * 1000000),
+          client_id: clientId,
+          post_type: pType,
+          caption: p.caption || 'Generate caption in UI',
+          status: 'draft',
+          created_at: new Date().toISOString(),
+          scheduled_at: p.scheduleDate ? new Date(p.scheduleDate).toISOString() : null,
+          poster_title: p.title || 'Draft Post',
+          visual_note: p.visualNote || '',
+          week: p.week || 'Week 1',
+          festivalTag: p.festivalTag || null
+        };
+        createdPosts.push(mockPost);
       }
     }
 
@@ -1238,7 +1235,7 @@ router.get('/posts', async (req, res) => {
   if (!clientId) return res.status(400).json({ error: 'clientId is required' });
   try {
     const result = await pool.query(
-      'SELECT * FROM mafiya_gmb_posts WHERE client_id = $1 ORDER BY created_at DESC',
+      "SELECT * FROM mafiya_gmb_posts WHERE client_id = $1 AND status != 'draft' ORDER BY created_at DESC",
       [clientId]
     );
     res.json(result.rows);
@@ -1481,22 +1478,22 @@ router.post('/posts', async (req, res) => {
 
         // Add image (Google requires a public URL, so base64 won't work natively without upload)
         if (finalImageUrl && finalImageUrl.startsWith('http')) {
-            // Automatically detect if running on local Windows PC vs Live Ubuntu Server
-             const isLocalWindows = __dirname.includes(':\\') || __dirname.includes('Desktop');
-             const isVideo = finalImageUrl.endsWith('.mp4') || finalImageUrl.endsWith('.webm') || finalImageUrl.endsWith('.mov') || finalImageUrl.endsWith('.avi');
-             let googleImageUrl = isLocalWindows
-               ? (isVideo ? 'https://www.w3schools.com/html/mov_bbb.mp4' : 'https://picsum.photos/600/400') // Use dummy public media for local testing
-               : finalImageUrl; // Use actual media on live server
+          // Automatically detect if running on local Windows PC vs Live Ubuntu Server
+          const isLocalWindows = __dirname.includes(':\\') || __dirname.includes('Desktop');
+          const isVideo = finalImageUrl.endsWith('.mp4') || finalImageUrl.endsWith('.webm') || finalImageUrl.endsWith('.mov') || finalImageUrl.endsWith('.avi');
+          let googleImageUrl = isLocalWindows
+            ? (isVideo ? 'https://www.w3schools.com/html/mov_bbb.mp4' : 'https://picsum.photos/600/400') // Use dummy public media for local testing
+            : finalImageUrl; // Use actual media on live server
 
-             console.log(`[GMB API Debug] Local OS detected? ${isLocalWindows}`);
-             console.log(`[GMB API Debug] finalImageUrl saved to DB: ${finalImageUrl}`);
-             console.log(`[GMB API Debug] googleImageUrl sent to API: ${googleImageUrl}`);
+          console.log(`[GMB API Debug] Local OS detected? ${isLocalWindows}`);
+          console.log(`[GMB API Debug] finalImageUrl saved to DB: ${finalImageUrl}`);
+          console.log(`[GMB API Debug] googleImageUrl sent to API: ${googleImageUrl}`);
 
-             gmbPostBody.media = [{
-                 mediaFormat: isVideo ? 'VIDEO' : 'PHOTO',
-                 sourceUrl: googleImageUrl
-             }];
-         }
+          gmbPostBody.media = [{
+            mediaFormat: isVideo ? 'VIDEO' : 'PHOTO',
+            sourceUrl: googleImageUrl
+          }];
+        }
 
         let activeToken = tokenString;
         let gmbResponse;
@@ -2190,7 +2187,7 @@ ${selectedEntryTitle ? `Title: ${selectedEntryTitle}\n` : ''}Content: ${selected
       } else if (postType === 'qa' && brain.qa.length > 0) {
         typeContext = `Here are Q&As / facts: \n${brain.qa.map(q => `- ${q}`).join('\n')}`;
       } else {
-        typeContext = `Active offers: ${brain.offer.slice(0,2).join('; ') || 'None'}\nQ&A Info: ${brain.qa.slice(0,2).join('; ') || 'None'}`;
+        typeContext = `Active offers: ${brain.offer.slice(0, 2).join('; ') || 'None'}\nQ&A Info: ${brain.qa.slice(0, 2).join('; ') || 'None'}`;
       }
     }
 

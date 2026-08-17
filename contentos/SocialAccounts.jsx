@@ -94,8 +94,7 @@ export function SocialAccounts({
       return;
     }
     const redirectUri = window.location.origin + '/admin/content-os/social-connection';
-    const fbUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${metaAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,business_management,public_profile&response_type=code`;
-    window.location.href = fbUrl;
+    const fbUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${metaAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=pages_show_list,pages_read_engagement,pages_manage_posts,instagram_business_basic,instagram_business_content_publish,business_management,public_profile&response_type=code`;    window.location.href = fbUrl;
   };
 
   const handleLinkToBrand = async (brandName, platform, accountName, accountId, facebookPageId, instagramBusinessId, accessToken, expiresAt) => {
@@ -201,7 +200,7 @@ export function SocialAccounts({
           <div style={{ marginBottom: 22 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', marginBottom: 5 }}>Meta · Facebook &amp; Instagram</div>
             <div className="mono" style={{ fontSize: 9.5, color: 'var(--t3)', marginBottom: 9 }}>
-              scopes: pages_show_list · pages_manage_posts · instagram_basic · instagram_content_publish
+              scopes: pages_show_list · pages_manage_posts · instagram_business_basic · instagram_business_content_publish
             </div>
             <button
               onClick={handleConnectMeta}

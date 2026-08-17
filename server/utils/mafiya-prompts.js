@@ -77,12 +77,12 @@ Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
     "instructions": "Design & Content Instructions"
   }
 ]`
-      : `The current month is ${currentMonthStr}. Generate 4 to 6 distinct Daily Poster campaign rules (recurring weekly/daily themes or month-specific topics) for the business "${businessName}" to post on Google My Business. Examples: 'Tip of the Day', 'Monday Motivation', 'Customer Spotlight', or topics relevant to ${currentMonthStr}.
+      : `The current month is ${currentMonthStr}. Based on the business profile "${businessName}", generate 4 to 6 distinct Poster Campaign strategies. DO NOT just suggest daily posts. Instead, analyze the business type and suggest *WHEN* and *HOW OFTEN* these posters should go out (e.g., "Every Monday", "Twice a month", "Weekends"). 
 Return ONLY a valid JSON array of objects (no markdown wrapper, no extra text):
 [
   {
-    "occasion": "Theme / Topic name",
-    "instructions": "Specific design, color scheme, and content instructions for this theme"
+    "occasion": "Theme / Topic name (e.g. Monday Motivation, Weekly Offers)",
+    "instructions": "Specific design, content instructions, AND the recommended posting frequency/schedule based on the business profile."
   }
 ]`;
   } else if (entryType === 'creative_brief') {

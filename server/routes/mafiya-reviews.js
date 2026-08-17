@@ -1188,6 +1188,7 @@ router.post('/brain', async (req, res) => {
     return res.status(400).json({ error: 'clientId, entryType, and content are required' });
   }
   try {
+    let savedEntry;
     if (id) {
       const result = await pool.query(
         `UPDATE mafiya_gmb_brain
@@ -1197,7 +1198,7 @@ router.post('/brain', async (req, res) => {
         [entryType, content, id, clientId]
       );
       if (result.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
-      return res.json(result.rows[0]);
+      savedEntry = result.rows[0];
     } else {
       const result = await pool.query(
         `INSERT INTO mafiya_gmb_brain (client_id, entry_type, content)
@@ -1205,8 +1206,53 @@ router.post('/brain', async (req, res) => {
          RETURNING *`,
         [clientId, entryType, content]
       );
-      return res.status(201).json(result.rows[0]);
+      savedEntry = result.rows[0];
     }
+
+    // --- Create Mafiya Order for Poster Strategy ('seasonal') ---
+    if (entryType === 'seasonal') {
+      try {
+        const clientRes = await pool.query('SELECT display_name, business_name FROM mafiya_gmb_clients WHERE id = $1', [clientId]);
+        const clientName = clientRes.rows[0]?.display_name || clientRes.rows[0]?.business_name || 'Client';
+        
+        const seasonalItems = JSON.parse(content);
+        if (Array.isArray(seasonalItems)) {
+          
+          // Clear existing OPEN orders for this client's brain posts to prevent extras/duplicates
+          await pool.query(
+            `DELETE FROM mafiya_orders WHERE client_name = $1 AND tag_category = 'Don''s brain posts' AND status = 'open'`,
+            [clientName]
+          );
+
+          for (const item of seasonalItems) {
+            if (!item.occasion) continue; // Skip if no title/occasion
+            
+            const title = `${item.occasion} — ${clientName}`;
+            const description = item.instructions || 'Create a poster based on Don Brain instructions.';
+            
+            await pool.query(
+              `INSERT INTO mafiya_orders (title, priority, tag_category, assignee, client_name, description, box_type, box_content, status)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              [
+                title, 
+                'Medium', 
+                "Don's brain posts", 
+                'Design Team', 
+                clientName, 
+                description, 
+                'steps', 
+                JSON.stringify({ steps: ['Design poster based on AI strategy', 'Get approval', 'Schedule Post'] }), 
+                'open'
+              ]
+            );
+          }
+        }
+      } catch (err) {
+        console.error('[Mafiya] Failed to create order for poster strategy:', err);
+      }
+    }
+
+    return res.status(id ? 200 : 201).json(savedEntry);
   } catch (err) {
     console.error('[Mafiya Reviews] POST /brain error:', err);
     res.status(500).json({ error: 'Server error' });

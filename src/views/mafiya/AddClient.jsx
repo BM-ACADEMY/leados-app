@@ -242,7 +242,7 @@ export default function AddClient() {
         ...formData,
         business_category: showOtherCategory ? formData.custom_category : formData.business_category,
         client_type: formData.client_type || 'internal',
-        plan_id: formData.client_type === 'paid' && formData.plan_id ? parseInt(formData.plan_id) : null
+        plan_id: formData.plan_id ? parseInt(formData.plan_id) : null
       };
       
       if (editingClient) {
@@ -351,12 +351,12 @@ export default function AddClient() {
     >
       {/* Card Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 36, height: 36, background: 'linear-gradient(135deg, rgba(249,115,22,0.15), rgba(234,88,12,0.08))', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(249,115,22,0.2)' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <div style={{ width: 36, height: 36, flexShrink: 0, background: 'linear-gradient(135deg, rgba(249,115,22,0.15), rgba(234,88,12,0.08))', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(249,115,22,0.2)' }}>
             <Building size={16} color="#f97316" />
           </div>
-          <div>
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#fff' }}>{client.display_name || client.business_name}</h3>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#fff', wordBreak: 'break-word' }}>{client.display_name || client.business_name}</h3>
             {client.display_name && (
               <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }} title="Official Google Business Name">GBP: {client.business_name}</div>
             )}
@@ -392,8 +392,9 @@ export default function AddClient() {
               borderRadius: 8,
               boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)',
               zIndex: 50,
-              minWidth: 140,
-              overflow: 'hidden'
+              minWidth: 160,
+              overflow: 'hidden',
+              whiteSpace: 'nowrap'
             }}>
               <button
                 onClick={() => handleEditClick(client)}
@@ -699,11 +700,11 @@ export default function AddClient() {
 
       {/* ═══ Add Client Modal ═══ */}
       {showModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 50, zIndex: 9999, overflowY: 'auto' }}>
-          <div ref={modalRef} style={{ background: C.surface, width: '100%', maxWidth: 640, borderRadius: 16, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)', marginBottom: 50, animation: 'slideUp 0.25s ease-out' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: 20, zIndex: 9999 }}>
+          <div ref={modalRef} style={{ background: C.surface, width: '100%', maxWidth: 640, maxHeight: '90vh', display: 'flex', flexDirection: 'column', borderRadius: 16, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)', animation: 'slideUp 0.25s ease-out' }}>
 
             {/* Modal Header */}
-            <div style={{ padding: '20px 28px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'linear-gradient(135deg, rgba(249,115,22,0.08) 0%, rgba(234,88,12,0.01) 100%)' }}>
+            <div style={{ padding: '20px 28px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'linear-gradient(135deg, rgba(249,115,22,0.08) 0%, rgba(234,88,12,0.01) 100%)', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ width: 36, height: 36, background: 'linear-gradient(135deg, #ea580c, #f97316)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Shield size={18} color="#fff" />
@@ -726,7 +727,7 @@ export default function AddClient() {
             </div>
 
             {/* Modal Form */}
-            <form onSubmit={handleSave} style={{ padding: 28, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <form onSubmit={handleSave} style={{ padding: 28, display: 'flex', flexDirection: 'column', gap: 20, overflowY: 'auto' }}>
 
               {/* Section 1: Business Basics */}
               <div>
@@ -786,7 +787,7 @@ export default function AddClient() {
                     {errors.contact_person && <span style={{ color: '#ef4444', fontSize: 11, marginTop: 4, display: 'block' }}>{errors.contact_person}</span>}
                   </div>
                   <div>
-                    <label style={labelStyle}>Phone Number *</label>
+                    <label style={labelStyle}>GMB Registered Mobile *</label>
                     <div style={{ ...inputWrapStyle, border: `1px solid ${errors.phone_number ? '#ef4444' : C.border}` }}>
                       <Phone size={15} color={C.muted} />
                       <input name="phone_number" value={formData.phone_number} onChange={handleInputChange} placeholder="E.g. 9876543210" style={{ background: 'transparent', border: 'none', color: '#fff', padding: '12px 8px', width: '100%', outline: 'none', fontSize: 13 }} />
@@ -847,25 +848,44 @@ export default function AddClient() {
               {/* Section 4: Client Settings & Plan */}
               <div>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: C.accent, marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 }}>Client Settings & Plan</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   <div>
                     <label style={labelStyle}>Client Type</label>
-                    <select name="client_type" value={formData.client_type} onChange={handleInputChange} style={{ ...inputStyle, background: '#0a0f1d' }}>
-                      <option value="internal">Internal Brand (Unlimited)</option>
-                      <option value="paid">Paid Client (Plan-based)</option>
+                    <div style={{ display: 'flex', gap: 16 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#fff', fontSize: 13 }}>
+                        <input
+                          type="radio"
+                          name="client_type"
+                          value="internal"
+                          checked={formData.client_type === 'internal'}
+                          onChange={handleInputChange}
+                          style={{ cursor: 'pointer', accentColor: C.accent }}
+                        />
+                        Internal Brand
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#fff', fontSize: 13 }}>
+                        <input
+                          type="radio"
+                          name="client_type"
+                          value="paid"
+                          checked={formData.client_type === 'paid'}
+                          onChange={handleInputChange}
+                          style={{ cursor: 'pointer', accentColor: C.accent }}
+                        />
+                        Paid Client
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={labelStyle}>Assigned Pricing Plan</label>
+                    <select name="plan_id" value={formData.plan_id} onChange={handleInputChange} style={{ ...inputStyle, background: '#0a0f1d' }}>
+                      <option value="">Select Plan...</option>
+                      {plans.map(p => (
+                        <option key={p.id} value={p.id}>{p.name} (₹{parseFloat(p.price).toLocaleString()})</option>
+                      ))}
                     </select>
                   </div>
-                  {formData.client_type === 'paid' && (
-                    <div>
-                      <label style={labelStyle}>Assigned Pricing Plan</label>
-                      <select name="plan_id" value={formData.plan_id} onChange={handleInputChange} style={{ ...inputStyle, background: '#0a0f1d' }}>
-                        <option value="">Select Plan...</option>
-                        {plans.map(p => (
-                          <option key={p.id} value={p.id}>{p.name} (₹{parseFloat(p.price).toLocaleString()})</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
                 </div>
               </div>
 

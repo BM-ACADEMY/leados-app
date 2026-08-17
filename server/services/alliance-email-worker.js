@@ -1,6 +1,6 @@
 const db = require('../db/connection');
 const ensureAllianceSchema = require('../db/alliance-schema');
-const { createAllianceEmailTransport, getAllianceEmailConfig } = require('./alliance-email');
+const { createAllianceEmailTransport, getAllianceEmailConfig, isAllianceSenderAllowed, allowedAllianceFromAddresses } = require('./alliance-email');
 
 let interval;
 let processing = false;
@@ -30,6 +30,7 @@ async function claimDueTouch() {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query(`UPDATE alliance_domains SET sent_today=0,last_reset=NOW() WHERE last_reset::date<CURRENT_DATE`);
     await client.query(
       `UPDATE alliance_touches SET status = 'scheduled', processing_started_at = NULL,
               error_message = 'Recovered after interrupted email processing.'
@@ -114,6 +115,7 @@ async function scheduleRemainingTouches(touch) {
 }
 
 async function finalEligibilityCheck(touch) {
+  await db.query(`UPDATE alliance_domains SET sent_today=0,last_reset=NOW() WHERE last_reset::date<CURRENT_DATE`);
   const result = await db.query(
     `SELECT c.status AS campaign_status, p.status AS prospect_status, p.suppressed,
             cp.enrollment_status, d.status AS sender_status, d.sent_today, d.daily_cap
@@ -154,14 +156,14 @@ async function deliverTouch(touch, io) {
       );
       return;
     }
-    if (normalizeEmail(config.from) !== normalizeEmail(touch.inbox_email)) {
-      throw new Error(`Selected sender ${touch.inbox_email} does not match ALLIANCE_EMAIL_FROM.`);
+    if (!isAllianceSenderAllowed(touch.inbox_email, config)) {
+      throw new Error(`Selected sender ${touch.inbox_email} is not an allowed Zoho SMTP sender. Configured senders: ${[...allowedAllianceFromAddresses(config)].join(', ') || 'none'}.`);
     }
     const subject = renderTemplate(touch.subject, touch);
     const body = renderTemplate(touch.message_body, touch);
     const transporter = createAllianceEmailTransport();
     const result = await transporter.sendMail({
-      from: { name: config.fromName, address: config.from },
+      from: { name: config.fromName, address: touch.inbox_email },
       to: touch.email,
       replyTo: config.replyTo,
       subject,

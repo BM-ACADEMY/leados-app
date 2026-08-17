@@ -5,10 +5,12 @@ const axios = require('axios');
 const db = require('../db/connection');
 const ensureAllianceSchema = require('../db/alliance-schema');
 const { processQueuedAllianceWelcomes } = require('../services/alliance-welcome');
-const { publicAllianceEmailConfig, verifyAllianceEmailTransport, createAllianceEmailTransport, getAllianceEmailConfig } = require('../services/alliance-email');
+const { publicAllianceEmailConfig, verifyAllianceEmailTransport, createAllianceEmailTransport, getAllianceEmailConfig, isAllianceSenderAllowed, allowedAllianceFromAddresses } = require('../services/alliance-email');
 const openRouter = require('../services/openrouter');
 const { regenerateReplySuggestion } = require('../services/alliance-email-replies');
 const { processAllianceWhatsAppCampaigns } = require('../services/alliance-whatsapp-campaign-worker');
+const { getAllianceBrainContext } = require('../services/alliance-brain-context');
+const { getAlliancePromptRules } = require('../services/alliance-prompt-rules');
 
 const router = express.Router();
 const upload = multer({
@@ -24,9 +26,33 @@ function text(value) {
   return value == null ? '' : String(value).trim();
 }
 
+function isValidEmailAddress(value) {
+  const email = text(value);
+  if (!email || email.length > 254) return false;
+  const parts = email.split('@');
+  if (parts.length !== 2) return false;
+  const [local, domain] = parts;
+  if (!local || local.length > 64 || local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/i.test(local)) return false;
+  const labels = domain.split('.');
+  return labels.length >= 2
+    && /^[a-z]{2,}$/i.test(labels[labels.length - 1])
+    && labels.every((label) => label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
+}
+
+function isValidOptionalTenDigitPhone(value) {
+  const phone = text(value);
+  return !phone || /^\d{10}$/.test(phone);
+}
+
+function isValidBusinessHours(value) {
+  const hours = text(value);
+  return !hours || /^(?:0?[1-9]|1[0-2]):[0-5]\d\s(?:AM|PM)\s-\s(?:0?[1-9]|1[0-2]):[0-5]\d\s(?:AM|PM)$/i.test(hours);
+}
+
 function normalizeEmail(value) {
   const email = text(value).toLowerCase();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+  return isValidEmailAddress(email) ? email : null;
 }
 
 function normalizePhone(value) {
@@ -546,6 +572,8 @@ router.get('/prospects', async (req, res) => {
           REGEXP_REPLACE(COALESCE(p.phone, ''), '[^0-9]', '', 'g') LIKE '%' ||
           REGEXP_REPLACE(${searchParam}, '[^0-9]', '', 'g') || '%'))`);
   }
+  if (req.query.dateFrom) add('p.created_at >= ?::date', req.query.dateFrom);
+  if (req.query.dateTo) add(`p.created_at < (?::date + INTERVAL '1 day')`, req.query.dateTo);
 
   const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 500);
   const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -855,7 +883,7 @@ router.post('/replies/:id/send', async (req, res) => {
     const result = await db.query(
       `SELECT r.id, r.status, r.prospect_id, p.email, p.name, p.business_name,
               ei.message_id, ei.message_references, ei.subject, ei.campaign_id,
-              c.sender_domain_id, d.inbox_email, d.status AS sender_status
+               c.sender_domain_id, d.inbox_email, d.status AS sender_status,d.sent_today,d.daily_cap
        FROM alliance_replies r
        JOIN alliance_prospects p ON p.id = r.prospect_id
        JOIN alliance_email_inbound ei ON ei.id = r.email_inbound_id
@@ -868,14 +896,15 @@ router.post('/replies/:id/send', async (req, res) => {
     const reply = result.rows[0];
     if (reply.status === 'sent') return res.status(409).json({ error: 'This reply has already been sent.' });
     if (reply.sender_status !== 'active') return res.status(409).json({ error: 'The campaign email sender is not active.' });
+    if (Number(reply.sent_today) >= Number(reply.daily_cap)) return res.status(409).json({ error: 'The email sender has reached its daily cap.' });
     const config = getAllianceEmailConfig();
-    if (normalizeEmail(config.from) !== normalizeEmail(reply.inbox_email)) return res.status(409).json({ error: 'Selected sender does not match ALLIANCE_EMAIL_FROM.' });
+    if (!isAllianceSenderAllowed(reply.inbox_email, config)) return res.status(409).json({ error: `Selected sender is not allowed by the Zoho SMTP configuration. Configured senders: ${[...allowedAllianceFromAddresses(config)].join(', ') || 'none'}.` });
     const subject = /^re:/i.test(reply.subject || '') ? reply.subject : `Re: ${reply.subject || 'Your reply'}`;
     const html = body.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
     const originalId = String(reply.message_id || '').replace(/^<|>$/g, '');
     const references = [...(reply.message_references || []), originalId].filter(Boolean).map((id) => `<${String(id).replace(/^<|>$/g, '')}>`);
     const sent = await createAllianceEmailTransport().sendMail({
-      from: { name: config.fromName, address: config.from }, to: reply.email,
+      from: { name: config.fromName, address: reply.inbox_email }, to: reply.email,
       replyTo: config.replyTo, subject, text: body,
       html: `<div style="font-family:Arial,sans-serif;line-height:1.6">${html}</div>`,
       inReplyTo: originalId ? `<${originalId}>` : undefined,
@@ -891,6 +920,7 @@ router.post('/replies/:id/send', async (req, res) => {
       [reply.campaign_id, reply.prospect_id, sent.messageId || null,
         JSON.stringify({ recipient: reply.email, accepted: sent.accepted, rejected: sent.rejected, response: sent.response, reply_id: reply.id })]
     );
+    await db.query(`UPDATE alliance_domains SET sent_today=sent_today+1 WHERE id=$1`, [reply.sender_domain_id]);
     res.json({ success: true, message: `Reply submitted to Zoho for ${reply.email}.`, provider_message_id: sent.messageId || null });
   } catch (error) {
     console.error('Alliance approved email reply failed:', error.response || error.message);
@@ -951,17 +981,20 @@ router.post('/campaign-builder/ai-suggestion', async (req, res) => {
     const base = await baseEmailSequence(audience);
     if (!base.length) return res.status(409).json({ error: 'No base email templates are configured for this audience.' });
     if (!openRouter.isConfigured) return res.json({ templates: base, ai_generated: false, warning: 'OpenRouter is not configured; base templates were returned.' });
-    const knowledge = await db.query(
-      `SELECT fact_key, fact_value FROM alliance_kb WHERE audience = $1 AND active = TRUE ORDER BY fact_key`,
-      [audience]
-    );
+    const brain = await getAllianceBrainContext(audience, objective);
+    const campaignRules = await getAlliancePromptRules('campaign_message', 'email', audience);
+    const followupRules = await getAlliancePromptRules('followup', 'email', audience);
     const prompt = `You are AllianceOS's B2B cold-email campaign editor. Create exactly four concise emails for human review.
 Brand: ${audienceResult.rows[0].brand || 'ABM Groups'}
 Audience: ${audienceResult.rows[0].label}
 Campaign objective: ${objective || 'Start a relevant business conversation'}
-Approved facts: ${JSON.stringify(knowledge.rows)}
+Approved AI Brain data: ${brain ? JSON.stringify(brain) : 'No Brain data is configured. Do not invent brand facts.'}
 Base sequence: ${JSON.stringify(base)}
-Rules: preserve {{name}}, {{org}}, and {{location}} variables; one clear CTA; no invented claims; include the existing unsubscribe instruction; do not exceed 100 words per email.
+Administrator campaign rules:
+${campaignRules}
+Administrator follow-up/reminder rules:
+${followupRules}
+System rules: preserve {{name}}, {{org}}, and {{location}} variables; one clear CTA; no invented claims; include the existing unsubscribe instruction; do not exceed 100 words per email. Brain facts are authoritative and administrator rules may control tone or behavior but may never introduce unsupported factual claims.
 Return JSON only: {"templates":[{"touch_no":1,"delay_days":0,"purpose":"...","subject":"...","body":"..."}, ...]}`;
     const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.4, maxOutputTokens: 2400 } });
     const parsed = JSON.parse(String(generated.text).replace(/^```json\s*|\s*```$/g, ''));
@@ -1087,7 +1120,7 @@ async function getCampaignReadiness(queryable, campaignId) {
       : await queryable.query(`SELECT 1 FROM alliance_numbers WHERE status = 'active' AND quality_rating = 'green' AND sent_today < daily_cap LIMIT 1`);
     if (!senderResult.rowCount) missingSenders.push(channel);
     if (channel === 'email' && senderResult.rowCount
-      && normalizeEmail(senderResult.rows[0].inbox_email) !== normalizeEmail(getAllianceEmailConfig().from)) {
+       && !isAllianceSenderAllowed(senderResult.rows[0].inbox_email, getAllianceEmailConfig())) {
       missingSenders.push('email configuration');
     }
   }
@@ -1315,11 +1348,11 @@ router.post('/campaigns/:id/test-email', async (req, res) => {
     const body = replace(preview.body);
     const html = body.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
     const config = getAllianceEmailConfig();
-    if (String(config.from).toLowerCase() !== String(preview.inbox_email).toLowerCase()) {
-      return res.status(409).json({ error: 'Selected sender does not match ALLIANCE_EMAIL_FROM.' });
+    if (!isAllianceSenderAllowed(preview.inbox_email, config)) {
+      return res.status(409).json({ error: `Selected sender is not allowed by the Zoho SMTP configuration. Configured senders: ${[...allowedAllianceFromAddresses(config)].join(', ') || 'none'}.` });
     }
     const sent = await createAllianceEmailTransport().sendMail({
-      from: { name: config.fromName, address: config.from }, to: recipient,
+      from: { name: config.fromName, address: preview.inbox_email }, to: recipient,
       replyTo: config.replyTo, subject, text: body,
       html: `<div style="font-family:Arial,sans-serif;line-height:1.6">${html}</div>`,
       headers: { 'X-Alliance-Test': 'true' },
@@ -1342,9 +1375,11 @@ router.get('/whatsapp-campaigns/prospects', async (req, res) => {
     const values=[]; const where=[`p.phone IS NOT NULL`,`p.consent=TRUE`,`p.consent_source IS NOT NULL`,`p.suppressed=FALSE`,`p.status NOT IN ('converted','closed','not_interested','unsubscribed')`];
     if(text(req.query.audience)){values.push(text(req.query.audience));where.push(`p.audience=$${values.length}`);}
     if(text(req.query.search)){values.push(`%${text(req.query.search).toLowerCase()}%`);where.push(`(LOWER(COALESCE(p.name,'')) LIKE $${values.length} OR LOWER(p.business_name) LIKE $${values.length} OR p.phone LIKE $${values.length})`);}
+    if(text(req.query.dateFrom)){values.push(text(req.query.dateFrom));where.push(`p.created_at >= $${values.length}::date`);}
+    if(text(req.query.dateTo)){values.push(text(req.query.dateTo));where.push(`p.created_at < ($${values.length}::date + INTERVAL '1 day')`);}
     const limit=Math.min(Math.max(Number(req.query.limit)||20,1),5000);const offset=Math.max(Number(req.query.offset)||0,0);
     const count=await db.query(`SELECT COUNT(*)::int AS total FROM alliance_prospects p WHERE ${where.join(' AND ')}`,values);
-    const rows=await db.query(`SELECT p.id,p.name,p.business_name,p.phone,p.audience,p.industry,p.location,p.status,p.consent_source FROM alliance_prospects p WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT $${values.length+1} OFFSET $${values.length+2}`,[...values,limit,offset]);
+    const rows=await db.query(`SELECT p.id,p.name,p.business_name,p.phone,p.audience,p.industry,p.location,p.status,p.consent_source,p.created_at FROM alliance_prospects p WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT $${values.length+1} OFFSET $${values.length+2}`,[...values,limit,offset]);
     res.json({prospects:rows.rows,total:count.rows[0]?.total||0});
   }catch(error){console.error('Alliance WhatsApp prospects failed:',error);res.status(500).json({error:'Failed to load WhatsApp-eligible prospects.'});}
 });
@@ -1360,6 +1395,41 @@ router.get('/whatsapp-campaigns', async (_req,res)=>{
     (SELECT MIN(j.scheduled_at) FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status IN ('pending','claimed')) AS next_followup_at
     FROM alliance_whatsapp_campaigns c LEFT JOIN alliance_whatsapp_campaign_recipients r ON r.campaign_id=c.id GROUP BY c.id ORDER BY c.created_at DESC`);res.json({campaigns:result.rows});}
   catch(error){res.status(500).json({error:'Failed to load WhatsApp campaigns.'});}
+});
+
+router.get('/whatsapp-campaigns/:id',async(req,res)=>{
+  try{
+    const campaignResult=await db.query(`SELECT c.*,
+      COUNT(r.id)::int AS recipients,
+      COUNT(r.id) FILTER(WHERE r.status IN ('sent','delivered','read'))::int AS sent,
+      COUNT(r.id) FILTER(WHERE r.status='delivered')::int AS delivered,
+      COUNT(r.id) FILTER(WHERE r.status='read')::int AS read,
+      COUNT(r.id) FILTER(WHERE r.status='failed')::int AS failed,
+      COUNT(r.id) FILTER(WHERE r.status='skipped')::int AS skipped,
+      COUNT(r.id) FILTER(WHERE r.status IN ('queued','sending'))::int AS pending,
+      COUNT(r.id) FILTER(WHERE r.status='cancelled')::int AS cancelled,
+      (SELECT MIN(j.scheduled_at) FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status IN ('pending','claimed')) AS next_followup_at,
+      (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status='sent') AS reminders_sent_total,
+      (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status='failed') AS reminders_failed_total
+      FROM alliance_whatsapp_campaigns c LEFT JOIN alliance_whatsapp_campaign_recipients r ON r.campaign_id=c.id
+      WHERE c.id=$1 GROUP BY c.id`,[req.params.id]);
+    if(!campaignResult.rowCount)return res.status(404).json({error:'WhatsApp campaign not found.'});
+
+    const values=[req.params.id];const where=['r.campaign_id=$1'];
+    if(text(req.query.status)){values.push(text(req.query.status));where.push(`r.status=$${values.length}`);}
+    if(text(req.query.search)){values.push(`%${text(req.query.search).toLowerCase()}%`);where.push(`(LOWER(COALESCE(p.name,'')) LIKE $${values.length} OR LOWER(p.business_name) LIKE $${values.length} OR p.phone LIKE $${values.length})`);}
+    const limit=Math.min(Math.max(Number(req.query.limit)||25,1),500);
+    const offset=Math.max(Number(req.query.offset)||0,0);
+    const countResult=await db.query(`SELECT COUNT(*)::int AS total FROM alliance_whatsapp_campaign_recipients r JOIN alliance_prospects p ON p.id=r.prospect_id WHERE ${where.join(' AND ')}`,values);
+    values.push(limit);const limitParam=`$${values.length}`;values.push(offset);const offsetParam=`$${values.length}`;
+    const recipients=await db.query(`SELECT r.id,r.prospect_id,r.status,r.wa_msg_id,r.sent_at,r.scheduled_at,r.error_message,
+        p.name,p.business_name,p.phone,p.audience,p.location,
+        (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id AND j.status='sent') AS reminders_sent,
+        (SELECT MIN(j.scheduled_at) FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id AND j.status IN ('pending','claimed')) AS next_reminder_at
+      FROM alliance_whatsapp_campaign_recipients r JOIN alliance_prospects p ON p.id=r.prospect_id
+      WHERE ${where.join(' AND ')} ORDER BY r.id LIMIT ${limitParam} OFFSET ${offsetParam}`,values);
+    res.json({campaign:campaignResult.rows[0],recipients:recipients.rows,total:countResult.rows[0].total,limit,offset});
+  }catch(error){console.error('Alliance WhatsApp campaign detail failed:',error);res.status(500).json({error:'Failed to load campaign detail.'});}
 });
 
 const getAllianceWhatsAppSettings = async (queryable = db) => {
@@ -1408,6 +1478,23 @@ router.post('/whatsapp-campaigns/test',async(req,res)=>{
   }catch(error){res.status(502).json({error:error.response?.data?.error?.message||error.message||'Test send failed.'});}
 });
 
+router.post('/whatsapp-campaigns/:id/pause',async(req,res)=>{
+  try{
+    const result=await db.query(`UPDATE alliance_whatsapp_campaigns SET status='paused',updated_at=NOW() WHERE id=$1 AND status IN ('scheduled','running') RETURNING id`,[req.params.id]);
+    if(!result.rowCount)return res.status(409).json({error:'Only a scheduled or running campaign can be paused.'});
+    res.json({success:true,message:'WhatsApp campaign paused. Queued messages will not send until resumed.'});
+  }catch(error){console.error('Alliance WhatsApp campaign pause failed:',error);res.status(500).json({error:'Failed to pause campaign.'});}
+});
+
+router.post('/whatsapp-campaigns/:id/resume',async(req,res)=>{
+  try{
+    const result=await db.query(`UPDATE alliance_whatsapp_campaigns SET status='running',updated_at=NOW() WHERE id=$1 AND status='paused' RETURNING id`,[req.params.id]);
+    if(!result.rowCount)return res.status(409).json({error:'Only a paused campaign can be resumed.'});
+    setImmediate(()=>processAllianceWhatsAppCampaigns(req.app.get('io')).catch(error=>console.error('[Alliance WhatsApp bulk]',error)));
+    res.json({success:true,message:'WhatsApp campaign resumed.'});
+  }catch(error){console.error('Alliance WhatsApp campaign resume failed:',error);res.status(500).json({error:'Failed to resume campaign.'});}
+});
+
 router.post('/whatsapp-campaigns/:id/stop',async(req,res)=>{try{await db.query(`UPDATE alliance_whatsapp_campaigns SET status='stopped',completed_at=NOW(),updated_at=NOW() WHERE id=$1 AND status IN ('scheduled','running','paused','completed')`,[req.params.id]);await db.query(`UPDATE alliance_whatsapp_campaign_recipients SET status='cancelled',error_message='Campaign stopped by user.' WHERE campaign_id=$1 AND status='queued'`,[req.params.id]);await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='cancelled',error_message='Campaign stopped by user.' WHERE campaign_id=$1 AND status IN ('pending','claimed')`,[req.params.id]);res.json({success:true,message:'WhatsApp campaign and reminders stopped.'});}catch(error){res.status(500).json({error:'Failed to stop campaign.'});}});
 
 router.delete('/whatsapp-campaigns/:id',async(req,res)=>{
@@ -1418,6 +1505,517 @@ router.delete('/whatsapp-campaigns/:id',async(req,res)=>{
     await db.query(`DELETE FROM alliance_whatsapp_campaigns WHERE id=$1`,[req.params.id]);
     res.json({success:true,message:'WhatsApp campaign deleted. Existing Alliance Inbox messages were preserved.'});
   }catch(error){console.error('Alliance WhatsApp campaign delete failed:',error);res.status(500).json({error:'Failed to delete WhatsApp campaign.'});}
+});
+
+// ── AI Brain: brands, offerings (courses/services), and FAQs the AI reply
+// suggestions (email + WhatsApp) read from. See alliance-brain-context.js.
+
+router.get('/prompt-rules', async (_req, res) => {
+  try {
+    const result = await db.query(`SELECT r.*,a.label AS audience_label FROM alliance_prompt_rules r LEFT JOIN alliance_audiences a ON a.code=r.audience ORDER BY r.priority,r.id`);
+    res.json({ rules: result.rows });
+  } catch (error) { res.status(500).json({ error: 'Failed to load AI prompt rules.' }); }
+});
+
+router.post('/campaigns/:id/retry-failed', async (req, res) => {
+  try {
+    const campaign = await db.query(`SELECT c.id,c.status,d.inbox_email FROM alliance_campaigns c JOIN alliance_domains d ON d.id=c.sender_domain_id WHERE c.id=$1`, [req.params.id]);
+    if (!campaign.rowCount) return res.status(404).json({ error: 'Campaign not found.' });
+    if (campaign.rows[0].status !== 'running') return res.status(409).json({ error: 'Resume or start the campaign before retrying failed emails.' });
+    const config = getAllianceEmailConfig();
+    if (!isAllianceSenderAllowed(campaign.rows[0].inbox_email, config)) return res.status(409).json({ error: `Selected sender is not allowed by the Zoho SMTP configuration. Configured senders: ${[...allowedAllianceFromAddresses(config)].join(', ') || 'none'}.` });
+    const result = await db.query(`UPDATE alliance_touches SET status='scheduled',scheduled_at=NOW(),error_message=NULL,processing_started_at=NULL WHERE campaign_id=$1 AND channel='email' AND status='failed' AND sent_at IS NULL RETURNING id`, [req.params.id]);
+    res.json({ success:true, retried:result.rowCount, message:result.rowCount ? `${result.rowCount} failed email${result.rowCount===1?'':'s'} queued for retry.` : 'No failed emails need retrying.' });
+  } catch (error) {
+    console.error('Alliance campaign retry failed:', error);
+    res.status(500).json({ error: 'Failed to retry campaign emails.' });
+  }
+});
+
+router.get('/number-health', async (_req, res) => {
+  try {
+    await db.query(`UPDATE alliance_domains SET sent_today=0,last_reset=NOW() WHERE last_reset::date<CURRENT_DATE`);
+    const [numbers, domains] = await Promise.all([
+      db.query(`WITH sender_ids AS (
+          SELECT phone_number_id FROM alliance_inbox_settings
+          UNION SELECT phone_number_id FROM alliance_numbers WHERE phone_number_id IS NOT NULL
+          UNION SELECT phone_number_id FROM alliance_whatsapp_campaigns
+          UNION SELECT NULLIF($1,'')
+        ) SELECT
+          ids.phone_number_id AS id,
+          COALESCE(n.label,m.verified_name,s.verified_name,'WhatsApp sender') AS label,
+          COALESCE(n.phone_number,m.display_phone_number,s.display_phone_number) AS phone_number,
+          ids.phone_number_id,
+          LOWER(COALESCE(NULLIF(m.quality_rating,''),n.quality_rating)) AS quality_rating,
+          n.warmup_stage,n.daily_cap,
+          COALESCE(n.status,CASE WHEN COALESCE(s.active,TRUE) THEN 'active' ELSE 'inactive' END) AS status,
+          n.paused_until,n.last_reset,m.connection_status,m.last_synced_at,
+          COALESCE(today.sent_count,0)::int AS sent_today,
+          (NULLIF(m.quality_rating,'') IS NOT NULL OR n.quality_rating IS NOT NULL) AS quality_monitored,
+          (n.id IS NOT NULL) AS cap_configured
+        FROM sender_ids ids
+        LEFT JOIN alliance_inbox_settings s ON s.phone_number_id=ids.phone_number_id
+        LEFT JOIN alliance_numbers n ON n.phone_number_id=ids.phone_number_id
+        LEFT JOIN meta_whatsapp_phone_numbers m ON m.phone_number_id=ids.phone_number_id
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS sent_count FROM (SELECT DISTINCT message_key FROM (
+            SELECT COALESCE(r.wa_msg_id,'recipient:'||r.id) AS message_key FROM alliance_whatsapp_campaign_recipients r
+            JOIN alliance_whatsapp_campaigns c ON c.id=r.campaign_id
+            WHERE c.phone_number_id=ids.phone_number_id AND r.sent_at>=CURRENT_DATE
+              AND r.status IN ('sent','delivered','read')
+            UNION ALL
+            SELECT COALESCE(j.wa_msg_id,'followup:'||j.id) FROM alliance_whatsapp_followup_jobs j
+            JOIN alliance_whatsapp_campaigns c ON c.id=j.campaign_id
+            WHERE c.phone_number_id=ids.phone_number_id AND j.sent_at>=CURRENT_DATE AND j.status='sent'
+            UNION ALL
+            SELECT COALESCE(msg.wa_msg_id,'inbox:'||msg.id) FROM alliance_inbox_messages msg
+            JOIN alliance_inbox_conversations conversation ON conversation.id=msg.conversation_id
+            WHERE conversation.phone_number_id=ids.phone_number_id AND msg.direction='outbound'
+              AND msg.sent_at>=CURRENT_DATE AND msg.status IN ('sent','delivered','read')
+          ) all_sends) sends
+        ) today ON TRUE
+        WHERE ids.phone_number_id IS NOT NULL
+        ORDER BY COALESCE(s.active,TRUE) DESC,COALESCE(s.created_at,n.created_at,m.last_synced_at)`,
+        [process.env.ALLIANCE_WA_PHONE_NUMBER_ID || '']),
+      db.query(`SELECT d.id,d.inbox_email,d.provider,d.warmup_stage,d.daily_cap,d.sent_today,d.reputation,d.status,d.last_reset,d.created_at,
+          COALESCE(metrics.failed_today,0)::int AS failed_today,
+          COALESCE(metrics.replies_today,0)::int AS replies_today,
+          COALESCE(metrics.bounce_notices_today,0)::int AS bounce_notices_today,
+          sync.last_checked_at AS imap_last_checked_at,sync.last_success_at AS imap_last_success_at,sync.last_error AS imap_last_error
+        FROM alliance_domains d
+        LEFT JOIN LATERAL (
+          SELECT
+            (SELECT COUNT(*) FROM alliance_touches t JOIN alliance_campaigns c ON c.id=t.campaign_id
+             WHERE c.sender_domain_id=d.id AND t.channel='email' AND t.status='failed' AND t.scheduled_at>=CURRENT_DATE) AS failed_today,
+            (SELECT COUNT(*) FROM alliance_email_inbound inbound JOIN alliance_campaigns c ON c.id=inbound.campaign_id
+             WHERE c.sender_domain_id=d.id AND inbound.received_at>=CURRENT_DATE
+               AND NOT (COALESCE(inbound.subject,'') ~* '(delivery status notification|undeliver|mail delivery failed|returned mail|failure notice|delivery failure)'
+                 OR COALESCE(inbound.from_email,'') ~* '(mailer-daemon|postmaster)')) AS replies_today,
+            (SELECT COUNT(*) FROM alliance_email_inbound inbound
+             WHERE LOWER(COALESCE(inbound.to_email,''))=LOWER(d.inbox_email) AND inbound.received_at>=CURRENT_DATE
+               AND (COALESCE(inbound.subject,'') ~* '(delivery status notification|undeliver|mail delivery failed|returned mail|failure notice|delivery failure)'
+                 OR COALESCE(inbound.from_email,'') ~* '(mailer-daemon|postmaster)')) AS bounce_notices_today
+        ) metrics ON TRUE
+        LEFT JOIN alliance_email_sync_state sync ON LOWER(sync.mailbox)=LOWER(d.inbox_email)
+        ORDER BY d.status='active' DESC,d.created_at`),
+    ]);
+    const issues = [];
+    for (const number of numbers.rows) {
+      if (number.quality_rating === 'red') issues.push({ severity:'red', message:`${number.label} has red Meta quality and must remain stopped.` });
+      else if (number.quality_rating === 'yellow') issues.push({ severity:'yellow', message:`${number.label} has yellow Meta quality. Reduce volume and review recent failures.` });
+      else if (number.status === 'paused') issues.push({ severity:'yellow', message:`${number.label} is paused${number.paused_until ? ` until ${number.paused_until.toISOString()}` : ''}.` });
+      if (!number.quality_monitored) issues.push({ severity:'unknown', message:`${number.label} is connected, but Meta quality monitoring is not configured.` });
+      if (!number.cap_configured) issues.push({ severity:'unknown', message:`${number.label} does not have an AllianceOS daily cap and warm-up stage configured.` });
+      if (number.last_synced_at && Date.now()-new Date(number.last_synced_at).getTime()>24*60*60*1000) issues.push({ severity:'unknown', message:`${number.label} Meta health data is more than 24 hours old. Sync Meta inventory.` });
+    }
+    for (const domain of domains.rows) {
+      const reputation=String(domain.reputation||'unknown').toLowerCase();
+      if (domain.status === 'paused' || ['bad','poor'].includes(reputation)) issues.push({ severity:'red', message:`${domain.inbox_email} is ${domain.status === 'paused' ? 'paused' : `reporting ${domain.reputation} reputation`}.` });
+      else if (!['good','high','healthy'].includes(reputation)) issues.push({ severity:'unknown', message:`${domain.inbox_email} mailbox activity is monitored, but Zoho provider reputation, confirmed delivery, and complaint events are unavailable.` });
+      if (domain.imap_last_error) issues.push({ severity:'yellow', message:`${domain.inbox_email} IMAP monitoring error: ${domain.imap_last_error}` });
+      else if (!domain.imap_last_success_at) issues.push({ severity:'unknown', message:`${domain.inbox_email} has no successful IMAP monitoring check yet.` });
+      if (Number(domain.bounce_notices_today)>0) issues.push({ severity:'yellow', message:`${domain.inbox_email} received ${domain.bounce_notices_today} possible bounce notice${Number(domain.bounce_notices_today)===1?'':'s'} today. Review the mailbox and suppress hard-bounced recipients.` });
+    }
+    res.json({ numbers:numbers.rows, domains:domains.rows, issues, generated_at:new Date().toISOString() });
+  } catch (error) {
+    console.error('Alliance number health failed:', error);
+    res.status(500).json({ error: 'Failed to load sender health.' });
+  }
+});
+
+router.post('/prompt-rules/extract', async (req, res) => {
+  try {
+    if (!openRouter.isConfigured) return res.status(503).json({ error: 'OpenRouter is not configured on the API server.' });
+    const rawText = text(req.body.text);
+    if (!rawText) return res.status(400).json({ error: 'Paste some rule text first.' });
+    const audiences = await db.query(`SELECT code,label,brand FROM alliance_audiences WHERE active=TRUE ORDER BY label`);
+    const prompt = `Convert this administrator's plain-language AI behavior rule into one structured AllianceOS rule.
+Available jobs:
+- all: applies to every AI task
+- campaign_message: initial campaign content
+- followup: campaign reminders and follow-up content
+- reply_suggestion: suggested responses to inbound email or WhatsApp messages
+- classify: classifying reply intent
+Available channels: all, email, whatsapp.
+Available audiences: ${JSON.stringify(audiences.rows)}
+Rules:
+- Pick an audience code only when a specific listed audience or brand is clearly named. Otherwise use an empty string.
+- condition_text describes WHEN the instruction applies. Keep it empty if the pasted rule is unconditional.
+- instruction_text describes WHAT the AI must do. Preserve important constraints and do not invent new policy.
+- priority is 1-999; use 100 when none is stated. Lower numbers run first.
+- active defaults to true.
+- Create a short descriptive name when the text has no title.
+Plain text:
+${rawText}
+Return JSON only: {"name":"","job":"all|campaign_message|followup|reply_suggestion|classify","channel":"all|email|whatsapp","audience":"","condition_text":"","instruction_text":"","priority":100,"active":true}`;
+    const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1, maxOutputTokens: 1000 } });
+    const parsed = JSON.parse(String(generated.text).replace(/^```json\s*|\s*```$/g, ''));
+    const extracted = {
+      name: text(parsed.name),
+      job: ['all','campaign_message','followup','reply_suggestion','classify'].includes(parsed.job) ? parsed.job : 'all',
+      channel: ['all','email','whatsapp'].includes(parsed.channel) ? parsed.channel : 'all',
+      audience: audiences.rows.some((item) => item.code === parsed.audience) ? parsed.audience : '',
+      condition_text: text(parsed.condition_text), instruction_text: text(parsed.instruction_text),
+      priority: Math.min(Math.max(Number(parsed.priority) || 100, 1), 999), active: parsed.active !== false,
+    };
+    if (!extracted.name || !extracted.instruction_text) return res.status(502).json({ error: 'AI could not identify a complete rule from that text.' });
+    res.json({ extracted });
+  } catch (error) {
+    console.error('Alliance prompt rule extraction failed:', error);
+    res.status(502).json({ error: error.message || 'Failed to extract the AI rule.' });
+  }
+});
+
+function validatePromptRule(body) {
+  const rule = { name:text(body.name), job:text(body.job||'all'), channel:text(body.channel||'all'), audience:text(body.audience)||null, condition_text:text(body.condition_text), instruction_text:text(body.instruction_text), priority:Math.min(Math.max(Number(body.priority)||100,1),999), active:body.active!==false };
+  if (!rule.name || !rule.instruction_text) return { error: 'Rule name and instruction are required.' };
+  if (!['all','campaign_message','followup','reply_suggestion','classify'].includes(rule.job)) return { error: 'Invalid AI job.' };
+  if (!['all','email','whatsapp'].includes(rule.channel)) return { error: 'Invalid channel.' };
+  return { rule };
+}
+
+router.post('/prompt-rules', async (req, res) => {
+  const { rule, error } = validatePromptRule(req.body); if (error) return res.status(400).json({ error });
+  try {
+    const result = await db.query(`INSERT INTO alliance_prompt_rules(name,job,channel,audience,condition_text,instruction_text,priority,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[rule.name,rule.job,rule.channel,rule.audience,rule.condition_text,rule.instruction_text,rule.priority,rule.active]);
+    res.status(201).json({ rule: result.rows[0] });
+  } catch (dbError) { if(dbError.code==='23503')return res.status(400).json({error:'Select a valid audience.'}); res.status(500).json({error:'Failed to create AI prompt rule.'}); }
+});
+
+router.patch('/prompt-rules/:id', async (req, res) => {
+  const { rule, error } = validatePromptRule(req.body); if (error) return res.status(400).json({ error });
+  try {
+    const result = await db.query(`UPDATE alliance_prompt_rules SET name=$1,job=$2,channel=$3,audience=$4,condition_text=$5,instruction_text=$6,priority=$7,active=$8,updated_at=NOW() WHERE id=$9 RETURNING *`,[rule.name,rule.job,rule.channel,rule.audience,rule.condition_text,rule.instruction_text,rule.priority,rule.active,req.params.id]);
+    if(!result.rowCount)return res.status(404).json({error:'AI prompt rule not found.'}); res.json({rule:result.rows[0]});
+  } catch (dbError) { if(dbError.code==='23503')return res.status(400).json({error:'Select a valid audience.'}); res.status(500).json({error:'Failed to update AI prompt rule.'}); }
+});
+
+router.delete('/prompt-rules/:id', async (req, res) => {
+  try { const result=await db.query(`DELETE FROM alliance_prompt_rules WHERE id=$1 RETURNING id`,[req.params.id]); if(!result.rowCount)return res.status(404).json({error:'AI prompt rule not found.'}); res.json({success:true}); }
+  catch(error){res.status(500).json({error:'Failed to delete AI prompt rule.'});}
+});
+
+const BRAIN_BRAND_FIELDS = ['code', 'name', 'description', 'phone', 'whatsapp', 'email', 'website', 'address',
+  'business_hours', 'languages', 'target_customers', 'primary_contact', 'escalation_contact', 'escalation_phone',
+  'verified_by', 'last_verified_date'];
+
+router.post('/brain/brands/extract', async (req, res) => {
+  try {
+    if (!openRouter.isConfigured) return res.status(503).json({ error: 'OpenRouter is not configured on the API server.' });
+    const rawText = text(req.body.text);
+    if (!rawText) return res.status(400).json({ error: 'Paste some brand info text first.' });
+    const prompt = `Extract structured brand information from this raw data-collection form text.
+Map onto these exact JSON keys when the text supports it: ${JSON.stringify(BRAIN_BRAND_FIELDS)}.
+Rules:
+- "code" is a short lowercase slug for the brand (letters, numbers, underscores only, e.g. "bmacademy"), derived from the brand name if no explicit code is given.
+- "last_verified_date" must be YYYY-MM-DD, or an empty string if unknown or a placeholder like "YYYY-MM-DD".
+- Never invent a value. If a field is blank, marked "needs_confirmation", or not present in the text, return an empty string for it.
+- Ignore instructional/template lines (e.g. "Rules:", "Write needs_confirmation if information is unknown", section dividers like "====").
+- Any other label: value pairs found in the text that do NOT match one of the known keys above (for example general policy lines, or any other custom field) go into an "extra" object, keyed by the original field label exactly as written in the text.
+Raw text:
+${rawText}
+Return JSON only: {${BRAIN_BRAND_FIELDS.map((field) => `"${field}":""`).join(',')},"extra":{}}`;
+    const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1, maxOutputTokens: 1800 } });
+    const parsed = JSON.parse(String(generated.text).replace(/^```json\s*|\s*```$/g, ''));
+    res.json({ success: true, extracted: parsed });
+  } catch (error) {
+    console.error('Alliance brain brand extract failed:', error);
+    res.status(502).json({ error: error.message || 'Failed to extract brand info from text.' });
+  }
+});
+
+// Splits a pasted multi-record document into one text block per course/service,
+// using the doc's own section markers as delimiters (falls back to treating
+// the whole paste as a single record if no markers are found).
+function splitOfferingBlocks(rawText) {
+  const serviceMarker = /={10,}\s*\r?\n\s*SERVICE DETAILS\s*\r?\n\s*={10,}/gi;
+  const serviceParts = rawText.split(serviceMarker).map((part) => part.trim()).filter(Boolean);
+  if (serviceParts.length > 1) return serviceParts.slice(1); // drop preamble before the first marker
+
+  const courseSplit = /\r?\n(?=\s*(?:\d+[.)]\s*)?Course ID\s*:)/gi;
+  const courseParts = rawText.split(courseSplit).map((part) => part.trim()).filter(Boolean);
+  if (courseParts.length > 1) return courseParts.slice(1);
+  if (courseParts.length === 1 && /Course ID\s*:/i.test(courseParts[0])) return courseParts;
+
+  return [rawText.trim()];
+}
+
+const OFFERING_CORE_FIELDS = ['offering_code', 'offering_type', 'name', 'category', 'tier', 'status', 'short_description', 'fee', 'duration'];
+
+async function extractOfferingFromText(block) {
+  const prompt = `Extract one structured course/service record from this raw text block (one section of a data-collection form).
+Map onto these exact JSON keys when the text supports it: ${JSON.stringify(OFFERING_CORE_FIELDS)}.
+Rules:
+- "offering_type" must be exactly "course" or "service" (infer from context — e.g. a "Course ID" field implies course, a "Service ID" field implies service).
+- "offering_code" is the ID field (e.g. "BMTECHX001" or "BMA-BC-001").
+- "status" must be exactly "active" or "inactive" (default "active" if not stated).
+- "fee" is a plain number as a string (strip currency symbols and "/month"); if several fees exist (setup, monthly, one-time), put the main recurring or headline one here and record the rest inside "details".
+- Never invent a value. If a field is blank, "Not Specified", "Not Applicable", or "needs_confirmation", return an empty string for it.
+- Every other label: value pair in the text (Overview, extra pricing fields, Service Features, Client Requirements, Ownership, Results & Disclaimers, Policies, Links, Sales, etc.) goes into a "details" object keyed by the exact label from the text. For bulleted list fields, join the items into one string separated by " | ".
+- Extract any FAQ / Frequently Asked Questions section as a "faqs" array of {"question":"...","answer":"..."} objects, one per pair. Ignore section headers and "===" divider lines.
+Raw text block:
+${block}
+Return JSON only: {${OFFERING_CORE_FIELDS.map((field) => `"${field}":""`).join(',')},"details":{},"faqs":[]}`;
+  const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1, maxOutputTokens: 3000 } });
+  const parsed = JSON.parse(String(generated.text).replace(/^```json\s*|\s*```$/g, ''));
+  if (!text(parsed.name)) throw new Error('Could not identify an offering name in this block.');
+  return parsed;
+}
+
+router.post('/brain/offerings/import-bulk', async (req, res) => {
+  try {
+    if (!openRouter.isConfigured) return res.status(503).json({ error: 'OpenRouter is not configured on the API server.' });
+    const brandId = Number(req.body.brand_id);
+    const rawText = text(req.body.text);
+    if (!brandId) return res.status(400).json({ error: 'Select a brand first.' });
+    if (!rawText) return res.status(400).json({ error: 'Paste some course/service text first.' });
+    const brand = await db.query(`SELECT id FROM alliance_brands WHERE id = $1`, [brandId]);
+    if (!brand.rowCount) return res.status(404).json({ error: 'Brand not found.' });
+
+    const blocks = splitOfferingBlocks(rawText);
+    if (blocks.length > 60) return res.status(400).json({ error: `Detected ${blocks.length} records — paste in smaller batches (max 60 at a time).` });
+
+    const created = [];
+    const failed = [];
+    for (const block of blocks) {
+      try {
+        const extracted = await extractOfferingFromText(block);
+        const offering = await db.query(
+          `INSERT INTO alliance_offerings (brand_id, offering_code, offering_type, name, category, tier, status, short_description, fee, duration, details)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb) RETURNING *`,
+          [brandId, text(extracted.offering_code), ['course', 'service'].includes(extracted.offering_type) ? extracted.offering_type : 'course',
+            text(extracted.name), text(extracted.category), text(extracted.tier),
+            ['active', 'inactive'].includes(extracted.status) ? extracted.status : 'active',
+            text(extracted.short_description), text(extracted.fee), text(extracted.duration),
+            JSON.stringify(extracted.details && typeof extracted.details === 'object' ? extracted.details : {})]
+        );
+        let faqCount = 0;
+        if (Array.isArray(extracted.faqs)) {
+          for (const faq of extracted.faqs) {
+            if (text(faq?.question) && text(faq?.answer)) {
+              await db.query(`INSERT INTO alliance_offering_faqs (offering_id, question, answer) VALUES ($1,$2,$3)`, [offering.rows[0].id, text(faq.question), text(faq.answer)]);
+              faqCount += 1;
+            }
+          }
+        }
+        created.push({ id: offering.rows[0].id, name: offering.rows[0].name, faq_count: faqCount });
+      } catch (error) {
+        failed.push({ preview: block.slice(0, 100).replace(/\s+/g, ' '), error: error.message || 'Extraction failed.' });
+      }
+    }
+    res.json({ success: true, created, failed, total_blocks: blocks.length });
+  } catch (error) {
+    console.error('Alliance brain bulk offering import failed:', error);
+    res.status(500).json({ error: error.message || 'Bulk import failed.' });
+  }
+});
+
+router.get('/brain/brands', async (_req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT b.*, COUNT(o.id)::int AS offering_count
+       FROM alliance_brands b LEFT JOIN alliance_offerings o ON o.brand_id = b.id
+       GROUP BY b.id ORDER BY b.name`
+    );
+    res.json({ brands: result.rows });
+  } catch (error) {
+    console.error('Alliance brain brands list failed:', error);
+    res.status(500).json({ error: 'Failed to load brands.' });
+  }
+});
+
+router.post('/brain/brands', async (req, res) => {
+  try {
+    const code = text(req.body.code).toLowerCase();
+    const name = text(req.body.name);
+    if (!code || !name) return res.status(400).json({ error: 'Brand code and name are required.' });
+    if (!/^[a-z][a-z0-9_]*$/.test(code)) return res.status(400).json({ error: 'Brand code must be lowercase letters, numbers, and underscores, starting with a letter.' });
+    if (text(req.body.email) && !isValidEmailAddress(req.body.email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    if (['phone', 'whatsapp', 'escalation_phone'].some((field) => !isValidOptionalTenDigitPhone(req.body[field]))) return res.status(400).json({ error: 'Phone numbers must contain exactly 10 digits.' });
+    if (!isValidBusinessHours(req.body.business_hours)) return res.status(400).json({ error: 'Business hours must use the format 10:00 AM - 8:00 PM.' });
+    const result = await db.query(
+      `INSERT INTO alliance_brands (code, audience, name, description, phone, whatsapp, email, website, address, business_hours, languages, target_customers, primary_contact, escalation_contact, escalation_phone, policies, verified_by, last_verified_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18) RETURNING *`,
+      [code, text(req.body.audience) || null, name, text(req.body.description), text(req.body.phone), text(req.body.whatsapp),
+        text(req.body.email), text(req.body.website), text(req.body.address), text(req.body.business_hours), text(req.body.languages),
+        text(req.body.target_customers), text(req.body.primary_contact), text(req.body.escalation_contact), text(req.body.escalation_phone),
+        JSON.stringify(req.body.policies && typeof req.body.policies === 'object' ? req.body.policies : {}),
+        text(req.body.verified_by), req.body.last_verified_date || null]
+    );
+    res.status(201).json({ success: true, brand: result.rows[0] });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'A brand with this code already exists.' });
+    console.error('Alliance brain brand create failed:', error);
+    res.status(500).json({ error: 'Failed to create brand.' });
+  }
+});
+
+router.patch('/brain/brands/:id', async (req, res) => {
+  try {
+    if ('email' in req.body && text(req.body.email) && !isValidEmailAddress(req.body.email)) {
+      return res.status(400).json({ error: 'Enter a valid email address.' });
+    }
+    if (['phone', 'whatsapp', 'escalation_phone'].some((field) => field in req.body && !isValidOptionalTenDigitPhone(req.body[field]))) {
+      return res.status(400).json({ error: 'Phone numbers must contain exactly 10 digits.' });
+    }
+    if ('business_hours' in req.body && !isValidBusinessHours(req.body.business_hours)) {
+      return res.status(400).json({ error: 'Business hours must use the format 10:00 AM - 8:00 PM.' });
+    }
+    const fields = ['audience', 'name', 'description', 'phone', 'whatsapp', 'email', 'website', 'address', 'business_hours',
+      'languages', 'target_customers', 'primary_contact', 'escalation_contact', 'escalation_phone', 'verified_by', 'last_verified_date', 'active'];
+    const nullIfEmpty = new Set(['audience', 'last_verified_date']); // FK / date columns reject '' — must be NULL instead
+    const sets = [];
+    const values = [];
+    for (const field of fields) {
+      if (field in req.body) { values.push(nullIfEmpty.has(field) ? (req.body[field] || null) : req.body[field]); sets.push(`${field} = $${values.length}`); }
+    }
+    if ('policies' in req.body) { values.push(JSON.stringify(req.body.policies && typeof req.body.policies === 'object' ? req.body.policies : {})); sets.push(`policies = $${values.length}::jsonb`); }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update.' });
+    sets.push('updated_at = NOW()');
+    values.push(req.params.id);
+    const result = await db.query(`UPDATE alliance_brands SET ${sets.join(', ')} WHERE id = $${values.length} RETURNING *`, values);
+    if (!result.rowCount) return res.status(404).json({ error: 'Brand not found.' });
+    res.json({ success: true, brand: result.rows[0] });
+  } catch (error) {
+    console.error('Alliance brain brand update failed:', error);
+    res.status(500).json({ error: 'Failed to update brand.' });
+  }
+});
+
+router.delete('/brain/brands/:id', async (req, res) => {
+  try {
+    const result = await db.query(`DELETE FROM alliance_brands WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!result.rowCount) return res.status(404).json({ error: 'Brand not found.' });
+    res.json({ success: true, message: 'Brand and its offerings/FAQs were removed.' });
+  } catch (error) {
+    console.error('Alliance brain brand delete failed:', error);
+    res.status(500).json({ error: 'Failed to delete brand.' });
+  }
+});
+
+router.get('/brain/brands/:id/offerings', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT o.*, (SELECT COUNT(*)::int FROM alliance_offering_faqs f WHERE f.offering_id = o.id) AS faq_count
+       FROM alliance_offerings o WHERE o.brand_id = $1 ORDER BY o.name`,
+      [req.params.id]
+    );
+    res.json({ offerings: result.rows });
+  } catch (error) {
+    console.error('Alliance brain offerings list failed:', error);
+    res.status(500).json({ error: 'Failed to load offerings.' });
+  }
+});
+
+router.post('/brain/offerings', async (req, res) => {
+  try {
+    const brandId = Number(req.body.brand_id);
+    const name = text(req.body.name);
+    if (!brandId || !name) return res.status(400).json({ error: 'Brand and offering name are required.' });
+    const offeringType = ['course', 'service'].includes(req.body.offering_type) ? req.body.offering_type : 'course';
+    const result = await db.query(
+      `INSERT INTO alliance_offerings (brand_id, offering_code, offering_type, name, category, tier, status, short_description, fee, duration, details, verified_by, last_verified_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13) RETURNING *`,
+      [brandId, text(req.body.offering_code), offeringType, name, text(req.body.category), text(req.body.tier),
+        ['active', 'inactive'].includes(req.body.status) ? req.body.status : 'active', text(req.body.short_description),
+        text(req.body.fee), text(req.body.duration), JSON.stringify(req.body.details && typeof req.body.details === 'object' ? req.body.details : {}),
+        text(req.body.verified_by), req.body.last_verified_date || null]
+    );
+    res.status(201).json({ success: true, offering: result.rows[0] });
+  } catch (error) {
+    if (error.code === '23503') return res.status(400).json({ error: 'Brand not found.' });
+    console.error('Alliance brain offering create failed:', error);
+    res.status(500).json({ error: 'Failed to create offering.' });
+  }
+});
+
+router.patch('/brain/offerings/:id', async (req, res) => {
+  try {
+    const fields = ['offering_code', 'offering_type', 'name', 'category', 'tier', 'status', 'short_description', 'fee', 'duration', 'verified_by', 'last_verified_date'];
+    const sets = [];
+    const values = [];
+    for (const field of fields) {
+      if (field in req.body) { values.push(field === 'last_verified_date' ? (req.body[field] || null) : req.body[field]); sets.push(`${field} = $${values.length}`); }
+    }
+    if ('details' in req.body) { values.push(JSON.stringify(req.body.details && typeof req.body.details === 'object' ? req.body.details : {})); sets.push(`details = $${values.length}::jsonb`); }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update.' });
+    sets.push('updated_at = NOW()');
+    values.push(req.params.id);
+    const result = await db.query(`UPDATE alliance_offerings SET ${sets.join(', ')} WHERE id = $${values.length} RETURNING *`, values);
+    if (!result.rowCount) return res.status(404).json({ error: 'Offering not found.' });
+    res.json({ success: true, offering: result.rows[0] });
+  } catch (error) {
+    console.error('Alliance brain offering update failed:', error);
+    res.status(500).json({ error: 'Failed to update offering.' });
+  }
+});
+
+router.delete('/brain/offerings/:id', async (req, res) => {
+  try {
+    const result = await db.query(`DELETE FROM alliance_offerings WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!result.rowCount) return res.status(404).json({ error: 'Offering not found.' });
+    res.json({ success: true, message: 'Offering and its FAQs were removed.' });
+  } catch (error) {
+    console.error('Alliance brain offering delete failed:', error);
+    res.status(500).json({ error: 'Failed to delete offering.' });
+  }
+});
+
+router.get('/brain/offerings/:id/faqs', async (req, res) => {
+  try {
+    const result = await db.query(`SELECT * FROM alliance_offering_faqs WHERE offering_id = $1 ORDER BY sort_order, id`, [req.params.id]);
+    res.json({ faqs: result.rows });
+  } catch (error) {
+    console.error('Alliance brain faqs list failed:', error);
+    res.status(500).json({ error: 'Failed to load FAQs.' });
+  }
+});
+
+router.post('/brain/offerings/:id/faqs', async (req, res) => {
+  try {
+    const question = text(req.body.question);
+    const answer = text(req.body.answer);
+    if (!question || !answer) return res.status(400).json({ error: 'Question and answer are required.' });
+    const result = await db.query(
+      `INSERT INTO alliance_offering_faqs (offering_id, question, answer, sort_order) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [req.params.id, question, answer, Number(req.body.sort_order) || 0]
+    );
+    res.status(201).json({ success: true, faq: result.rows[0] });
+  } catch (error) {
+    if (error.code === '23503') return res.status(400).json({ error: 'Offering not found.' });
+    console.error('Alliance brain faq create failed:', error);
+    res.status(500).json({ error: 'Failed to add FAQ.' });
+  }
+});
+
+router.patch('/brain/faqs/:id', async (req, res) => {
+  try {
+    const fields = ['question', 'answer', 'sort_order'];
+    const sets = [];
+    const values = [];
+    for (const field of fields) {
+      if (field in req.body) { values.push(req.body[field]); sets.push(`${field} = $${values.length}`); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update.' });
+    values.push(req.params.id);
+    const result = await db.query(`UPDATE alliance_offering_faqs SET ${sets.join(', ')} WHERE id = $${values.length} RETURNING *`, values);
+    if (!result.rowCount) return res.status(404).json({ error: 'FAQ not found.' });
+    res.json({ success: true, faq: result.rows[0] });
+  } catch (error) {
+    console.error('Alliance brain faq update failed:', error);
+    res.status(500).json({ error: 'Failed to update FAQ.' });
+  }
+});
+
+router.delete('/brain/faqs/:id', async (req, res) => {
+  try {
+    const result = await db.query(`DELETE FROM alliance_offering_faqs WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!result.rowCount) return res.status(404).json({ error: 'FAQ not found.' });
+    res.json({ success: true, message: 'FAQ deleted.' });
+  } catch (error) {
+    console.error('Alliance brain faq delete failed:', error);
+    res.status(500).json({ error: 'Failed to delete FAQ.' });
+  }
 });
 
 module.exports = router;

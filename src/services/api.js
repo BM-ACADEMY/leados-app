@@ -655,6 +655,10 @@ class LeadOSAPI {
     return this.request(`/api/alliance/campaigns/${id}/pause`, { method: 'POST' });
   }
 
+  async retryFailedAllianceCampaignEmails(id) {
+    return this.request(`/api/alliance/campaigns/${id}/retry-failed`, { method: 'POST' });
+  }
+
   async stopAllianceCampaign(id) {
     return this.request(`/api/alliance/campaigns/${id}/stop`, { method: 'POST' });
   }
@@ -684,6 +688,11 @@ class LeadOSAPI {
     return this.request('/api/alliance/whatsapp-campaigns');
   }
 
+  async getAllianceWhatsAppCampaignDetail(id, params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null));
+    return this.request(`/api/alliance/whatsapp-campaigns/${id}${query.toString() ? `?${query}` : ''}`);
+  }
+
   async createAllianceWhatsAppCampaign(payload) {
     return this.request('/api/alliance/whatsapp-campaigns', { method: 'POST', body: JSON.stringify(payload) });
   }
@@ -692,12 +701,96 @@ class LeadOSAPI {
     return this.request('/api/alliance/whatsapp-campaigns/test', { method: 'POST', body: JSON.stringify(payload) });
   }
 
+  async pauseAllianceWhatsAppCampaign(id) {
+    return this.request(`/api/alliance/whatsapp-campaigns/${id}/pause`, { method: 'POST' });
+  }
+
+  async resumeAllianceWhatsAppCampaign(id) {
+    return this.request(`/api/alliance/whatsapp-campaigns/${id}/resume`, { method: 'POST' });
+  }
+
   async stopAllianceWhatsAppCampaign(id) {
     return this.request(`/api/alliance/whatsapp-campaigns/${id}/stop`, { method: 'POST' });
   }
 
   async deleteAllianceWhatsAppCampaign(id) {
     return this.request(`/api/alliance/whatsapp-campaigns/${id}`, { method: 'DELETE' });
+  }
+
+  async getAllianceBrainBrands() {
+    return this.request('/api/alliance/brain/brands');
+  }
+
+  async extractAllianceBrainBrand(text) {
+    return this.request('/api/alliance/brain/brands/extract', { method: 'POST', body: JSON.stringify({ text }) });
+  }
+
+  async createAllianceBrainBrand(payload) {
+    return this.request('/api/alliance/brain/brands', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async updateAllianceBrainBrand(id, payload) {
+    return this.request(`/api/alliance/brain/brands/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
+  async deleteAllianceBrainBrand(id) {
+    return this.request(`/api/alliance/brain/brands/${id}`, { method: 'DELETE' });
+  }
+
+  async getAllianceBrainOfferings(brandId) {
+    return this.request(`/api/alliance/brain/brands/${brandId}/offerings`);
+  }
+
+  async createAllianceBrainOffering(payload) {
+    return this.request('/api/alliance/brain/offerings', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async importAllianceBrainOfferingsBulk(payload) {
+    return this.request('/api/alliance/brain/offerings/import-bulk', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async updateAllianceBrainOffering(id, payload) {
+    return this.request(`/api/alliance/brain/offerings/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
+  async deleteAllianceBrainOffering(id) {
+    return this.request(`/api/alliance/brain/offerings/${id}`, { method: 'DELETE' });
+  }
+
+  async getAllianceBrainFaqs(offeringId) {
+    return this.request(`/api/alliance/brain/offerings/${offeringId}/faqs`);
+  }
+
+  async createAllianceBrainFaq(offeringId, payload) {
+    return this.request(`/api/alliance/brain/offerings/${offeringId}/faqs`, { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async updateAllianceBrainFaq(id, payload) {
+    return this.request(`/api/alliance/brain/faqs/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
+  async deleteAllianceBrainFaq(id) {
+    return this.request(`/api/alliance/brain/faqs/${id}`, { method: 'DELETE' });
+  }
+
+  async getAlliancePromptRules() {
+    return this.request('/api/alliance/prompt-rules');
+  }
+
+  async extractAlliancePromptRule(text) {
+    return this.request('/api/alliance/prompt-rules/extract', { method: 'POST', body: JSON.stringify({ text }) });
+  }
+
+  async createAlliancePromptRule(payload) {
+    return this.request('/api/alliance/prompt-rules', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async updateAlliancePromptRule(id, payload) {
+    return this.request(`/api/alliance/prompt-rules/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
+  async deleteAlliancePromptRule(id) {
+    return this.request(`/api/alliance/prompt-rules/${id}`, { method: 'DELETE' });
   }
 
   async sendAllianceEmailReply(id, body) {
@@ -713,6 +806,10 @@ class LeadOSAPI {
 
   async getAllianceEmailSettings() {
     return this.request('/api/alliance/email-settings');
+  }
+
+  async getAllianceNumberHealth() {
+    return this.request('/api/alliance/number-health');
   }
 
   async saveAllianceEmailSettings(settings) {

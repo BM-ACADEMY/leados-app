@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const db = require('../db/connection');
 const ensureAllianceSchema = require('../db/alliance-schema');
 const openRouter = require('./openrouter');
+const { getAllianceBrainContext } = require('./alliance-brain-context');
+const { getAlliancePromptRules } = require('./alliance-prompt-rules');
 
 let interval;
 let polling = false;
@@ -108,11 +110,15 @@ async function enrichReply(reply, correlation, parsed, io) {
         [correlation.prospect_id]
       );
       const inboundReply = latestReplyText(parsed.text) || String(parsed.text || '');
+      const brain = await getAllianceBrainContext(context.rows[0]?.audience, `${parsed.subject || ''} ${inboundReply}`);
+      const promptRules = await getAlliancePromptRules('reply_suggestion', 'email', context.rows[0]?.audience);
       const prompt = `Analyze this inbound B2B email reply and write a personalized response for HUMAN REVIEW only.
 Context: ${JSON.stringify(context.rows[0] || {})}
+Brand knowledge (courses/services, pricing, FAQs): ${brain ? JSON.stringify(brain) : 'Not configured for this audience yet — do not invent brand facts.'}
+Administrator rules (apply only when their written condition matches): ${promptRules}
 Inbound subject: ${parsed.subject || ''}
 Inbound reply: ${inboundReply}
-The draft is mandatory and must directly answer the latest inbound message. Keep it concise, professional, conversational, and include one clear next step. Use only approved context; never invent facts.
+The draft is mandatory and must directly answer the latest inbound message. Keep it concise, professional, conversational, and include one clear next step. Use only approved context; never invent facts.${brain ? ` ${brain.instructions}` : ''}
 Return JSON only: {"intent":"interested|question|objection|not_interested|ooo|other","draft":"complete email reply body without subject"}.`;
       const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.3, maxOutputTokens: 900 } });
       const result = JSON.parse(String(generated.text).replace(/^```json\s*|\s*```$/g, ''));

@@ -10,6 +10,8 @@ const ensureAllianceSchema = require('../db/alliance-schema');
 const openRouter = require('../services/openrouter');
 const { processQueuedAllianceWelcomes } = require('../services/alliance-welcome');
 const { scheduleAllianceInactivityReminder } = require('../services/alliance-whatsapp-campaign-worker');
+const { getAllianceBrainContext } = require('../services/alliance-brain-context');
+const { getAlliancePromptRules } = require('../services/alliance-prompt-rules');
 
 function createAllianceInboxRouter({ auth, io }) {
   const router = express.Router();
@@ -372,11 +374,16 @@ function createAllianceInboxRouter({ auth, io }) {
         `SELECT fact_key,fact_value FROM alliance_kb WHERE audience=$1 AND active=TRUE ORDER BY id LIMIT 30`,
         [contact.rows[0].audience]
       ) : { rows: [] };
+      const latestInbound = history.rows.find((message) => message.direction === 'inbound');
+      const brain = await getAllianceBrainContext(contact.rows[0].audience, latestInbound?.content);
+      const promptRules = await getAlliancePromptRules('reply_suggestion', 'whatsapp', contact.rows[0].audience);
       const prompt = `Write one concise WhatsApp reply suggestion for HUMAN REVIEW. Never claim it was sent.
 Lead context: ${JSON.stringify(contact.rows[0])}
 Approved brand knowledge: ${JSON.stringify(facts.rows)}
+Brand knowledge (courses/services, pricing, FAQs): ${brain ? JSON.stringify(brain) : 'Not configured for this audience yet — do not invent brand facts.'}
+Administrator rules (apply only when their written condition matches): ${promptRules}
 Conversation oldest to newest: ${JSON.stringify(history.rows.reverse())}
-Directly answer the latest inbound message, stay professional and conversational, use only known facts, and end with at most one useful question. Return only the message text.`;
+Directly answer the latest inbound message, stay professional and conversational, use only known facts, and end with at most one useful question.${brain ? ` ${brain.instructions}` : ''} Return only the message text.`;
       const generated = await openRouter.generateContent({ contents: prompt, config: { temperature: 0.3, maxOutputTokens: 350 } });
       const suggestion = String(generated.text || '').trim();
       if (!suggestion) return res.status(502).json({ error: 'AI returned an empty suggestion.' });

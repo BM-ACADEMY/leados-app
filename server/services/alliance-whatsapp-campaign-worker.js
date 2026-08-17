@@ -3,7 +3,9 @@ const db = require('../db/connection');
 const ensureAllianceSchema = require('../db/alliance-schema');
 
 let interval;
+let followupInterval;
 let processing = false;
+let followupProcessing = false;
 
 const tokenFor = (settings) => process.env[settings?.access_token_env || 'ALLIANCE_WA_ACCESS_TOKEN'];
 const valueFor = (field, prospect) => String(prospect[field] || (field === 'name' ? prospect.business_name : '') || 'there');
@@ -144,7 +146,28 @@ async function processAllianceWhatsAppCampaigns(io) {
   finally { processing=false; }
 }
 
-async function startAllianceWhatsAppCampaignWorker(io){await ensureAllianceSchema();if(interval)return;setTimeout(()=>processAllianceWhatsAppCampaigns(io).catch(console.error),5000);interval=setInterval(()=>processAllianceWhatsAppCampaigns(io).catch(console.error),30000);interval.unref?.();}
+// Safety net for WhatsApp campaign follow-up reminders. The n8n workflow
+// (AllianceOS_WhatsApp_Followups_n8n.json) normally claims and sends these
+// every minute, but this local runner guarantees reminders still go out if
+// that workflow is inactive or n8n is unavailable. claimAllianceWhatsAppFollowups
+// uses FOR UPDATE SKIP LOCKED with a claimed-by marker, so it's safe to run
+// alongside n8n without double-sending.
+async function processAllianceWhatsAppFollowups(io) {
+  if (followupProcessing) return; followupProcessing = true;
+  try {
+    const jobs = await claimAllianceWhatsAppFollowups(20, 'internal-fallback');
+    for (const job of jobs) {
+      try { await sendAllianceWhatsAppFollowup(job.id, io); }
+      catch (error) { console.error('[Alliance WhatsApp followup fallback]', error.response?.data || error.message); }
+    }
+  } finally { followupProcessing = false; }
+}
+
+async function startAllianceWhatsAppCampaignWorker(io){
+  await ensureAllianceSchema();
+  if(!interval){setTimeout(()=>processAllianceWhatsAppCampaigns(io).catch(console.error),5000);interval=setInterval(()=>processAllianceWhatsAppCampaigns(io).catch(console.error),30000);interval.unref?.();}
+  if(!followupInterval){setTimeout(()=>processAllianceWhatsAppFollowups(io).catch(console.error),8000);followupInterval=setInterval(()=>processAllianceWhatsAppFollowups(io).catch(console.error),60000);followupInterval.unref?.();}
+}
 
 async function claimAllianceWhatsAppFollowups(limit=20,claimId='n8n'){
   const client=await db.connect();try{await client.query('BEGIN');await client.query(`UPDATE alliance_whatsapp_followup_jobs SET status='pending',claimed_at=NULL,claim_id=NULL WHERE status='claimed' AND claimed_at<NOW()-INTERVAL '15 minutes'`);
@@ -217,4 +240,4 @@ async function sendAllianceWhatsAppFollowup(jobId,io){
   const repeatDays=Math.min(Math.max(Number(job.followup_repeat_days)||4,1),30);const nextNo=Number(job.followup_no)+1;const withinLimit=Number(job.max_followups)===0||nextNo<=Number(job.max_followups);if(withinLimit){await db.query(`INSERT INTO alliance_whatsapp_followup_jobs(campaign_id,prospect_id,followup_no,scheduled_at,activity_cutoff_at,trigger_source) VALUES($1,$2,$3,NOW()+($4*INTERVAL '1 day'),NOW(),'recurring_inactivity') ON CONFLICT DO NOTHING`,[job.campaign_id,job.prospect_id,nextNo,repeatDays]);}
   io?.emit('alliance_campaign_updated',{campaign_id:job.campaign_id,prospect_id:job.prospect_id,channel:'whatsapp_followup',status:'sent'});io?.emit('alliance_contacts_changed',{contact_id:String(inbox.contactId)});if(inbox.message)io?.emit('alliance_outgoing_message',{lead_id:String(inbox.contactId),message:{...inbox.message,type:inbox.message.msg_type,timestamp:inbox.message.sent_at,sender_type:'automation'}});return{sent:true,wa_msg_id:waMessageId,next_followup_scheduled:withinLimit};}catch(error){const reason=error.response?.data?.error?.message||error.message;await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='failed',error_message=$1 WHERE id=$2`,[String(reason).slice(0,2000),job.id]);throw error;}
 }
-module.exports={startAllianceWhatsAppCampaignWorker,processAllianceWhatsAppCampaigns,claimAllianceWhatsAppFollowups,sendAllianceWhatsAppFollowup,scheduleAllianceInactivityReminder};
+module.exports={startAllianceWhatsAppCampaignWorker,processAllianceWhatsAppCampaigns,processAllianceWhatsAppFollowups,claimAllianceWhatsAppFollowups,sendAllianceWhatsAppFollowup,scheduleAllianceInactivityReminder};

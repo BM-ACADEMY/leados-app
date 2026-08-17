@@ -86,6 +86,18 @@ export const CampaignPlanner = () => {
     }
   };
 
+  const retryFailed = async () => {
+    if (!selected?.campaign?.id) return;
+    setBusy(`retry-${selected.campaign.id}`);
+    try {
+      const result = await api.retryFailedAllianceCampaignEmails(selected.campaign.id);
+      toast.success(result.message);
+      await openCampaign(selected.campaign.id);
+      await loadCampaigns();
+    } catch (error) { toast.error(error.message || 'Failed to retry emails'); }
+    finally { setBusy(null); }
+  };
+
   useEffect(() => {
     loadCampaigns();
     const interval = window.setInterval(loadCampaigns, 10000);
@@ -141,6 +153,7 @@ export const CampaignPlanner = () => {
             <div style={{ marginTop: 5 }}>{selected.stats?.eligible || 0} eligible prospects · {selected.stats?.email || 0} email · {selected.stats?.whatsapp || 0} WhatsApp</div>
             {selected.blockers?.map((blocker) => <div key={blocker} style={{ marginTop: 4 }}>• {blocker}</div>)}
             {selected.failures?.map((failure) => <div key={failure.id} style={{ marginTop: 6, color: '#ff9b9b' }}>Email failed for {failure.email}: {failure.error_message}</div>)}
+            {selected.failures?.length > 0 && <button className="al-btn sm" style={{ marginTop: 10 }} disabled={busy === `retry-${selected.campaign.id}`} onClick={retryFailed}>{busy === `retry-${selected.campaign.id}` ? 'Retrying...' : `Retry ${selected.failures.length} failed email${selected.failures.length === 1 ? '' : 's'}`}</button>}
             {selected.deliveries?.map((delivery) => (
               <div key={delivery.id} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,.12)', fontSize: 12 }}>
                 <b>Submitted to Zoho:</b> {delivery.email} · touch {delivery.touch_no}

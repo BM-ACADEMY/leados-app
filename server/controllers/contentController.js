@@ -5,6 +5,7 @@
 const pool = require("../db/connection"); // reuse your existing LeadOS pool if you have one
 const Groq = require("groq-sdk");
 const groq = new Groq({ apiKey: process.env.OPENAI_API_KEY || "dummy_key" });
+const openRouter = require("../services/openrouter");
 const axios = require("axios");
 const fs = require("fs");
 const os = require("os");
@@ -29,10 +30,27 @@ const genAIv1 = process.env.GEMINI_API_KEY
   : null;
 
 // Helper: multi-model fallback for text generation
-// gemini-2.0-flash works for TEXT in v1alpha (just not image output).
-// Groq is the final safety net.
+// OpenRouter is Primary (uses user's paid OpenRouter balance).
+// Direct Gemini & Groq are safety nets.
 async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
-  // v1alpha text-capable models (confirmed to exist)
+  // Strategy 1: Try OpenRouter first (Primary - uses active paid credits)
+  if (openRouter && openRouter.isConfigured) {
+    try {
+      console.log('[geminiChat] Primary: Trying OpenRouter (gemini-2.5-flash-lite)...');
+      const response = await openRouter.generateContent({
+        contents: prompt,
+        config: { maxOutputTokens: maxTokens, temperature, responseMimeType: 'application/json' }
+      });
+      if (response && response.text && response.text.trim()) {
+        console.log('[geminiChat] Success with OpenRouter');
+        return response.text.trim();
+      }
+    } catch (openRouterErr) {
+      console.warn('[geminiChat] OpenRouter failed:', openRouterErr.message?.substring(0, 80));
+    }
+  }
+
+  // Strategy 2: Fall back to direct Gemini v1alpha models
   const v1alphaModels = ['gemini-2.0-flash', 'gemini-2.0-flash-001'];
   if (genAIImage) {
     for (const model of v1alphaModels) {
@@ -53,10 +71,8 @@ async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
     }
   }
 
-  // v1 stable models to try
+  // Strategy 3: Try v1 stable Gemini models
   const geminiModels = ['gemini-2.0-flash', 'gemini-2.0-flash-001', 'gemini-1.5-flash', 'gemini-1.5-flash-001'];
-
-  // Strategy 2: Try v1 stable Gemini models
   if (genAIv1) {
     for (const model of geminiModels) {
       try {
@@ -81,9 +97,9 @@ async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
     }
   }
 
-  // Strategy 2: Fall back to Groq llama
+  // Strategy 4: Fall back to Groq llama
   try {
-    console.log('[geminiChat] All Gemini models exhausted, falling back to Groq...');
+    console.log('[geminiChat] All primary AI models exhausted, falling back to Groq...');
     const response = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       max_tokens: maxTokens,

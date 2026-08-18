@@ -4,12 +4,12 @@ export function PublishLogs({
   isSameBrand,
   formatTime
 }) {
-  // Filter history logs (published, failed)
+  // Filter history logs (published, partial, failed)
   const getLogs = () => {
     return items
       .filter(item => {
         const s = (item.status || '').toUpperCase();
-        const isLog = s === 'PUBLISHED' || s === 'published' || s === 'FAILED' || s === 'failed';
+        const isLog = s === 'PUBLISHED' || s === 'PARTIAL' || s === 'FAILED';
         if (!isLog) return false;
 
         if (selectedBrand !== 'all') {
@@ -53,8 +53,9 @@ export function PublishLogs({
                 {logs.map((log, index) => {
                   const s = (log.status || '').toUpperCase();
                   const isSuccess = s === 'PUBLISHED';
-                  const pillClass = isSuccess ? 'grn' : 'red';
-                  const pillText = isSuccess ? 'Published' : 'Failed';
+                  const isPartial = s === 'PARTIAL';
+                  const pillClass = isSuccess ? 'grn' : isPartial ? 'ylw' : 'red';
+                  const pillText = isSuccess ? 'Published' : isPartial ? 'Partial' : 'Failed';
 
                   return (
                     <tr key={log.id || index}>

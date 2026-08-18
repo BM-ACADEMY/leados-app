@@ -12,15 +12,24 @@ const getCampaignTemplateError = (template) => {
   if (!template) return '';
   const bodyVariables = getTemplateVariables(template.body);
   const headerVariables = getTemplateVariables(template.header);
-  if (headerVariables.length) return 'Header variables are not supported for bulk campaigns yet.';
   if (bodyVariables.some((value, index) => value !== index + 1)) {
     return 'Body variables must be consecutive and start at {{1}}.';
   }
-  if (bodyVariables.length > 1) {
-    return `This template requires ${bodyVariables.length} values. Bulk campaigns currently support only {{1}} as the recipient name.`;
-  }
+  if (headerVariables.some((value, index) => value !== index + 1)) return 'Header variables must be consecutive and start at {{1}}.';
   return '';
 };
+
+const createDefaultParameterMappings = (template) => ({
+  body: Object.fromEntries(getTemplateVariables(template?.body).map((number, index) => [
+    String(number), {
+      source: template?.parameter_definitions?.body?.[String(number)]?.default_source || (index === 0 ? 'recipient_name' : 'custom'),
+      value: '', section: 'body', number
+    }
+  ])),
+  header: Object.fromEntries(getTemplateVariables(template?.header).map((number) => [
+    String(number), { source: 'custom', value: '', section: 'header', number }
+  ]))
+});
 
 const formatCampaignDateTime = (value) => {
   if (!value) return 'Not available';
@@ -45,6 +54,7 @@ export const CampaignsView = () => {
   const [scheduledAt, setScheduledAt] = useState('');
   const [clients, setClients] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [templateParameters, setTemplateParameters] = useState({ body: {}, header: {} });
   const [submitting, setSubmitting] = useState(false);
 
   // Custom CSV Upload state
@@ -136,8 +146,10 @@ export const CampaignsView = () => {
 
   const handleDownloadTemplate = () => {
     const link = document.createElement('a');
-    link.href = `${api.baseUrl}/api/leads/template`;
-    link.download = 'leados_campaign_template.xlsx';
+    link.href = templateId
+      ? `${api.baseUrl}/api/templates/${encodeURIComponent(templateId)}/campaign-sheet`
+      : `${api.baseUrl}/api/leads/template`;
+    link.download = templateId ? 'template_campaign_recipients.xlsx' : 'leados_campaign_template.xlsx';
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -149,6 +161,14 @@ export const CampaignsView = () => {
     const selectedTemplate = templates.find((template) => String(template.id) === String(templateId));
     const templateError = getCampaignTemplateError(selectedTemplate);
     if (templateError) return toast.error(templateError);
+    for (const section of ['header', 'body']) {
+      for (const number of getTemplateVariables(selectedTemplate?.[section])) {
+        const mapping = templateParameters[section]?.[String(number)];
+        if (!mapping || (mapping.source === 'custom' && !mapping.value?.trim())) {
+          return toast.error(`Please configure ${section} parameter {{${number}}}`);
+        }
+      }
+    }
     
     setSubmitting(true);
     try {
@@ -163,6 +183,7 @@ export const CampaignsView = () => {
         const batchId = `csv_${Date.now()}`;
         const formData = new FormData();
         formData.append('client_id', clientId);
+        formData.append('template_id', templateId);
         formData.append('file', importFile);
         formData.append('force_source', batchId);
         
@@ -184,7 +205,7 @@ export const CampaignsView = () => {
       const res = await api.createCampaign({
         name, client_id: clientId, template_id: templateId,
         target_status: finalTargetStatus, scheduled_at: finalScheduledAt || null,
-        send_immediately: sendType === 'now'
+        send_immediately: sendType === 'now', template_parameters: templateParameters
       });
 
       toast.success('Campaign created! ' + res.campaign.name);
@@ -332,7 +353,19 @@ export const CampaignsView = () => {
             </div>
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Target Audience Status</label>
-              <select value={targetStatus} onChange={(e) => setTargetStatus(e.target.value)} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
+              <select value={targetStatus} onChange={(e) => {
+                const nextStatus = e.target.value;
+                setTargetStatus(nextStatus);
+                if (nextStatus === 'custom_csv') {
+                  setTemplateParameters((current) => Object.fromEntries(
+                    ['header', 'body'].map((section) => [section, Object.fromEntries(
+                      Object.entries(current[section] || {}).map(([number, mapping]) => [number, {
+                        ...mapping, source: 'excel_parameter', value: '', section, number: Number(number)
+                      }])
+                    )])
+                  ));
+                }
+              }} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
                 <option value="new">New leads</option>
                 <option value="warm">Warm leads</option>
                 <option value="cold">Cold leads</option>
@@ -346,7 +379,7 @@ export const CampaignsView = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
                   <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Upload Target List</label>
                   <button type="button" onClick={handleDownloadTemplate} style={{ background: 'transparent', border: 'none', color: C.accent, fontSize: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Download size={12} /> Download Template
+                    <Download size={12} /> {templateId ? 'Download Sheet for Selected Template' : 'Download Basic Template'}
                   </button>
                 </div>
                 <div style={{ position: 'relative', border: `1.5px dashed ${importFile ? C.green : C.border}`, background: C.card, borderRadius: 10, padding: '24px 20px', textAlign: 'center', transition: 'all 0.2s', marginTop: 8 }}>
@@ -366,10 +399,24 @@ export const CampaignsView = () => {
             <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 18 }}>Message & Schedule</h3>
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Select Approved Template</label>
-              <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
+              <select value={templateId} onChange={(e) => {
+                const nextId = e.target.value;
+                const template = templates.find((item) => String(item.id) === String(nextId));
+                setTemplateId(nextId);
+                const defaults = createDefaultParameterMappings(template);
+                if (targetStatus === 'custom_csv') {
+                  for (const section of ['header', 'body']) {
+                    for (const [number, mapping] of Object.entries(defaults[section])) {
+                      defaults[section][number] = { ...mapping, source: 'excel_parameter', section, number: Number(number) };
+                    }
+                  }
+                }
+                setTemplateParameters(defaults);
+              }} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
                 <option value="">Select Template</option>
                 {templates
                   .filter((t) => t.status === 'approved' || t.status === 'active')
+                  .filter((t) => !t.template_scope || t.template_scope === 'leados' || t.template_scope === 'shared')
                   .filter((t) => !clientId || t.client_id === parseInt(clientId) || t.client_id === null)
                   .map((t) => {
                     const templateError = getCampaignTemplateError(t);
@@ -382,6 +429,50 @@ export const CampaignsView = () => {
                 </p>
               )}
             </div>
+            {templateId && ['header', 'body'].map((section) => {
+              const selectedTemplate = templates.find((template) => String(template.id) === String(templateId));
+              const variables = getTemplateVariables(selectedTemplate?.[section]);
+              if (!variables.length) return null;
+              return (
+                <div key={section} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, marginBottom: 14 }}>
+                  <p style={{ fontSize: 10, color: C.text, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>{section} parameters</p>
+                  <p style={{ fontSize: 10, color: C.muted, marginBottom: 10 }}>Map every variable to recipient or campaign data.</p>
+                  {variables.map((number) => {
+                    const mapping = templateParameters[section]?.[String(number)] || { source: 'custom', value: '', section, number };
+                    const updateMapping = (next) => setTemplateParameters((current) => ({
+                      ...current,
+                      [section]: { ...current[section], [String(number)]: { ...mapping, ...next } }
+                    }));
+                    return (
+                      <div key={number} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, .9fr) minmax(130px, 1fr) minmax(140px, 1.4fr)', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ color: C.accent, fontSize: 11, fontWeight: 700 }}>
+                          {`{{${number}}}`}
+                          <small style={{ display: 'block', color: C.muted, fontSize: 9, fontWeight: 500, marginTop: 2 }}>{selectedTemplate?.parameter_definitions?.[section]?.[String(number)]?.label || `Parameter ${number}`}</small>
+                        </span>
+                        <select value={mapping.source} onChange={(e) => updateMapping({ source: e.target.value, value: e.target.value === 'custom' ? mapping.value : '' })} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: '7px 8px', fontSize: 11 }}>
+                          <option value="recipient_name">Recipient name</option>
+                          <option value="recipient_phone">Recipient phone</option>
+                          <option value="recipient_email">Recipient email</option>
+                          <option value="lead_status">Lead status</option>
+                          <option value="lead_source">Lead source</option>
+                          <option value="lead_interest">Lead interest</option>
+                          <option value="lead_score">Lead score</option>
+                          <option value="campaign_name">Campaign name</option>
+                          <option value="brand_name">Brand name</option>
+                          <option value="excel_parameter" disabled={targetStatus !== 'custom_csv'}>Excel: this parameter column</option>
+                          <option value="custom">Custom value</option>
+                        </select>
+                        {mapping.source === 'custom' ? (
+                          <input value={mapping.value || ''} onChange={(e) => updateMapping({ value: e.target.value })} placeholder={`Value for {{${number}}}`} style={{ background: C.card, border: `1px solid ${mapping.value?.trim() ? C.border : C.red}`, borderRadius: 6, color: C.text, padding: '7px 8px', fontSize: 11, outline: 'none' }} />
+                        ) : (
+                          <span style={{ color: C.muted, fontSize: 10 }}>Filled automatically</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
             <div style={{ background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, padding: 13, marginBottom: 14 }}>
               <p style={{ fontSize: 9, color: C.muted, marginBottom: 7, letterSpacing: 0.8 }}>PREVIEW</p>
               <div style={{ background: C.accent + '15', border: '1px solid ' + C.accentDim, borderRadius: 9, padding: 11 }}>

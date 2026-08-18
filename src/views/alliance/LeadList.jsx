@@ -42,6 +42,8 @@ export const LeadList = () => {
   const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreate);
+  const [confirmingRepair, setConfirmingRepair] = useState(false);
+  const [repairing, setRepairing] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -147,12 +149,26 @@ export const LeadList = () => {
     finally { setDeleting(null); }
   };
 
+  const repairImportedNames = async () => {
+    setRepairing(true);
+    try {
+      const result = await api.repairAllianceProspectNames();
+      toast.success(result.message);
+      setConfirmingRepair(false);
+      await loadProspects();
+    } catch (err) {
+      toast.error(err.message || 'Failed to repair imported names');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   return (
     <div className="al-wrap">
       <div className="al-eyebrow">AllianceOS · Imported Leads</div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
         <div className="al-page-title">Prospects</div>
-        <button className="al-btn" type="button" onClick={() => { setCreateForm(emptyCreate); setCreating(true); }}>+ Add prospect</button>
+        <div style={{ display: 'flex', gap: 8 }}><button className="al-btn ghost" type="button" onClick={() => setConfirmingRepair(true)}>Repair imported names</button><button className="al-btn" type="button" onClick={() => { setCreateForm(emptyCreate); setCreating(true); }}>+ Add prospect</button></div>
       </div>
       <p className="al-page-desc">Review, edit, and remove imported prospect records. Showing 10 records per page.</p>
 
@@ -250,6 +266,19 @@ export const LeadList = () => {
               <button className="al-btn" type="button" disabled={Boolean(deleting)} onClick={() => deleteProspect(deleteCandidate)} style={{ background: '#C62828', color: '#fff' }}>
                 {deleting ? 'Deleting…' : 'Delete prospect'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmingRepair && (
+        <div role="dialog" aria-modal="true" aria-labelledby="repair-names-title" style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => !repairing && setConfirmingRepair(false)}>
+          <div onClick={(event) => event.stopPropagation()} style={{ width: 'min(510px, 100%)', background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 14, padding: 24, boxShadow: '0 24px 70px rgba(0,0,0,.45)' }}>
+            <div id="repair-names-title" className="al-page-title" style={{ fontSize: 21, marginBottom: 8 }}>Repair imported names?</div>
+            <p style={{ color: 'var(--al-muted)', fontSize: 13, lineHeight: 1.65, margin: 0 }}>This scans all prospects and updates only confidently detected character-encoding corruption. Contact names and business names are preserved as separate fields, even when their values are identical. Email addresses, phone numbers, campaign membership, and correctly encoded names are not changed.</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 22 }}>
+              <button className="al-btn ghost" type="button" disabled={repairing} onClick={() => setConfirmingRepair(false)}>Cancel</button>
+              <button className="al-btn" type="button" disabled={repairing} onClick={repairImportedNames}>{repairing ? 'Repairing…' : 'Repair names'}</button>
             </div>
           </div>
         </div>

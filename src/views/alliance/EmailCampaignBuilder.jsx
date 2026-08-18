@@ -1,12 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { ArrowLeft, ArrowRight, Bot, CalendarClock, Check, ChevronLeft, ChevronRight, FileText, Filter, Info, Mail, Search, Send, Sparkles, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bot, CalendarClock, Check, ChevronLeft, ChevronRight, FileText, Filter, Info, Mail, Plus, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
 import { api } from '../../services/api.js';
+import { DatePicker } from './DatePicker.jsx';
 import './alliance.css';
 
-const EMPTY_FILTERS = { search: '', audience: '', industry: '', status: '', source: '', location: '' };
+const EMPTY_FILTERS = { search: '', audience: '', industry: '', status: '', source: '', location: '', dateFrom: '', dateTo: '' };
 const normalizeLineBreaks = (value = '') => String(value).replace(/\\r\\n|\\n|\\r/g, '\n');
+const formatImportedDateTime = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('en-IN', { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
 const STEPS = [
   { id: 1, label: 'Campaign details', icon: FileText },
   { id: 2, label: 'Audience', icon: Users },
@@ -14,12 +21,15 @@ const STEPS = [
   { id: 4, label: 'Schedule', icon: CalendarClock },
   { id: 5, label: 'Review', icon: Check },
 ];
+const EMAIL_CAMPAIGN_DRAFT_KEY = 'alliance_email_campaign_builder_draft_v1';
 
 export const EmailCampaignBuilder = () => {
   const navigate = useNavigate();
   const editorRef = useRef(null);
   const [step, setStep] = useState(1);
   const [options, setOptions] = useState({ audiences: [], industries: [], statuses: [], sources: [], locations: [], senders: [] });
+  const [audienceConfigs, setAudienceConfigs] = useState([]);
+  const [personalizationField, setPersonalizationField] = useState('name');
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [prospects, setProspects] = useState([]);
   const [selectedLeads, setSelectedLeads] = useState({});
@@ -33,11 +43,76 @@ export const EmailCampaignBuilder = () => {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState('');
   const [activeCampaigns, setActiveCampaigns] = useState([]);
+  const [deleteTouchModal, setDeleteTouchModal] = useState(null);
+  const [draftStatus, setDraftStatus] = useState('');
+  const draftReadyRef = useRef(false);
+  const restoredAudienceRef = useRef('');
+  const latestDraftRef = useRef(null);
+  const draftDiscardedRef = useRef(false);
   const limit = 10;
 
   useEffect(() => {
-    api.getAllianceCampaignBuilderOptions().then((data) => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(EMAIL_CAMPAIGN_DRAFT_KEY) || 'null');
+      if (saved && saved.version === 1) {
+        if (saved.step) setStep(Math.min(Math.max(Number(saved.step), 1), 5));
+        if (saved.form) setForm(saved.form);
+        if (saved.filters) { setFilters({ ...EMPTY_FILTERS, ...saved.filters }); restoredAudienceRef.current = saved.filters.audience || ''; }
+        if (Array.isArray(saved.templates)) setTemplates(saved.templates.map((template) => ({ ...template, body: normalizeLineBreaks(template.body) })));
+        if (saved.selectedLeads && typeof saved.selectedLeads === 'object') setSelectedLeads(saved.selectedLeads);
+        if (Number.isInteger(saved.activeTouch)) setActiveTouch(Math.max(0, saved.activeTouch));
+        if (saved.brand) setBrand(saved.brand);
+        if (saved.aiGenerated) setAiGenerated(true);
+        setDraftStatus('Draft restored');
+      }
+    } catch {
+      localStorage.removeItem(EMAIL_CAMPAIGN_DRAFT_KEY);
+    } finally {
+      draftReadyRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftReadyRef.current) return undefined;
+    const hasContent = Boolean(form.name?.trim() || filters.audience || Object.keys(selectedLeads).length || step > 1);
+    if (!hasContent) {
+      latestDraftRef.current = null;
+      localStorage.removeItem(EMAIL_CAMPAIGN_DRAFT_KEY);
+      return undefined;
+    }
+    draftDiscardedRef.current = false;
+    const compactSelected = Object.fromEntries(Object.entries(selectedLeads).map(([id, lead]) => [id, {
+      id: lead.id, name: lead.name, business_name: lead.business_name, email: lead.email,
+      phone: lead.phone, location: lead.location, industry: lead.industry, audience: lead.audience,
+      status: lead.status, source: lead.source, consent_source: lead.consent_source,
+      custom_fields: lead.custom_fields, created_at: lead.created_at
+    }]));
+    const snapshot = {
+      version: 1, savedAt: new Date().toISOString(), step, form, filters, templates,
+      selectedLeads: compactSelected, activeTouch, brand, aiGenerated
+    };
+    latestDraftRef.current = snapshot;
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(EMAIL_CAMPAIGN_DRAFT_KEY, JSON.stringify(snapshot));
+        setDraftStatus('Draft saved');
+      } catch {
+        setDraftStatus('Draft could not be saved');
+      }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [step, form, filters, templates, selectedLeads, activeTouch, brand, aiGenerated]);
+
+  useEffect(() => () => {
+    if (!draftDiscardedRef.current && latestDraftRef.current) {
+      try { localStorage.setItem(EMAIL_CAMPAIGN_DRAFT_KEY, JSON.stringify(latestDraftRef.current)); } catch { /* Keep navigation available if browser storage is full. */ }
+    }
+  }, []);
+
+  useEffect(() => {
+    Promise.all([api.getAllianceCampaignBuilderOptions(), api.getAllianceAudiences()]).then(([data, audienceData]) => {
       setOptions(data);
+      setAudienceConfigs(audienceData.audiences || []);
       if (data.senders?.length === 1) setForm((current) => ({ ...current, sender_domain_id: String(data.senders[0].id) }));
     }).catch((error) => toast.error(error.message));
   }, []);
@@ -70,7 +145,14 @@ export const EmailCampaignBuilder = () => {
 
   useEffect(() => { loadProspects(); }, [loadProspects]);
   useEffect(() => {
-    if (!filters.audience) { setTemplates([]); setBrand(''); return; }
+    if (!filters.audience) {
+      if (restoredAudienceRef.current) return;
+      setTemplates([]); setBrand(''); return;
+    }
+    if (restoredAudienceRef.current === filters.audience) {
+      restoredAudienceRef.current = '';
+      return;
+    }
     api.getAllianceCampaignTemplates(filters.audience).then((data) => {
       setTemplates((data.templates || []).map((template) => ({ ...template, body: normalizeLineBreaks(template.body) })));
       setBrand(data.audience?.brand || '');
@@ -82,6 +164,15 @@ export const EmailCampaignBuilder = () => {
   const selected = useMemo(() => new Set(Object.keys(selectedLeads)), [selectedLeads]);
   const sender = options.senders?.find((item) => String(item.id) === String(form.sender_domain_id));
   const audience = options.audiences?.find((item) => item.code === filters.audience);
+  const audienceConfig = audienceConfigs.find((item) => item.code === filters.audience);
+  const personalizationFields = [
+    { key: 'name', label: 'Contact name' }, { key: 'org', label: 'Business / organisation name' },
+    { key: 'location', label: 'Location' }, { key: 'email', label: 'Email' },
+    { key: 'phone', label: 'Phone' }, { key: 'industry', label: 'Industry' },
+    { key: 'audience', label: 'Audience' }, { key: 'source', label: 'Lead source' },
+    { key: 'status', label: 'Lead status' }, { key: 'consent_source', label: 'Consent source' },
+    ...(audienceConfig?.fields || []).map((field) => ({ key: field.field_key, label: field.label || field.field_key }))
+  ].filter((field, index, fields) => fields.findIndex((item) => item.key === field.key) === index);
   const previewLead = Object.values(selectedLeads)[0] || prospects[0] || { name: 'Dr. Charles', business_name: 'Example Organisation', location: 'Pondicherry' };
   const pages = Math.max(1, Math.ceil(total / limit));
   const allPageSelected = prospects.length > 0 && prospects.every((lead) => selected.has(String(lead.id)));
@@ -119,20 +210,59 @@ export const EmailCampaignBuilder = () => {
   };
   const suggestWithAI = async () => {
     const requestedTouchIndex = activeTouch;
+    const requestedTemplate = templates[requestedTouchIndex];
+    if (!requestedTemplate) return toast.error('Select an email touch first.');
     setBusy('ai');
     try {
-      const data = await api.suggestAllianceCampaignTemplates({ audience: filters.audience, objective: form.objective });
-      const generatedTemplates = data.templates || [];
-      const currentTouchNo = templates[requestedTouchIndex]?.touch_no;
-      const generatedTouch = generatedTemplates.find((template) => String(template.touch_no) === String(currentTouchNo))
-        || generatedTemplates[requestedTouchIndex];
+      const data = await api.suggestAllianceCampaignTemplates({ audience: filters.audience, objective: form.objective, touch_no: requestedTemplate.touch_no || requestedTouchIndex + 1, current_template: requestedTemplate });
+      const generatedTouch = data.template;
       if (!generatedTouch) throw new Error(`AI did not return content for Touch ${requestedTouchIndex + 1}.`);
       setTemplates((current) => current.map((template, index) => index === requestedTouchIndex
-        ? { ...template, ...generatedTouch, body: normalizeLineBreaks(generatedTouch.body) }
+        ? { ...template, ...generatedTouch, subject: generatedTouch.subject || template.subject, body: normalizeLineBreaks(generatedTouch.body || template.body) }
         : template));
       setAiGenerated(Boolean(data.ai_generated));
       data.warning ? toast(data.warning) : toast.success(`AI content applied to Touch ${requestedTouchIndex + 1}`);
     } catch (error) { toast.error(error.message || 'AI suggestion failed'); }
+    finally { setBusy(''); }
+  };
+  const saveActiveTemplate = async () => {
+    const template = templates[activeTouch];
+    if (!template?.subject?.trim() || !template?.body?.trim()) return toast.error('Subject and body are required.');
+    setBusy('save-template');
+    try {
+      const result = await api.saveAllianceCampaignTemplate(template.touch_no || activeTouch + 1, { audience: filters.audience, subject: template.subject, body: template.body, purpose: template.purpose, delay_days: template.delay_days });
+      toast.success(result.message);
+    } catch (error) { toast.error(error.message || 'Failed to save template'); }
+    finally { setBusy(''); }
+  };
+  const addEmailTouch = async () => {
+    if (!filters.audience) return toast.error('Select a target audience first.');
+    setBusy('add-template');
+    try {
+      const result = await api.createAllianceCampaignTemplate(filters.audience);
+      setTemplates((result.templates || []).map((template) => ({ ...template, body: normalizeLineBreaks(template.body) })));
+      setActiveTouch(Math.max(0, (result.templates || []).length - 1));
+      toast.success(result.message);
+    } catch (error) { toast.error(error.message || 'Failed to add touch'); }
+    finally { setBusy(''); }
+  };
+  const deleteActiveTemplate = async () => {
+    const template = templates[activeTouch];
+    if (!template) return;
+    setDeleteTouchModal({ template, index: activeTouch });
+  };
+  const confirmDeleteActiveTemplate = async () => {
+    const template = deleteTouchModal?.template;
+    const templateIndex = deleteTouchModal?.index ?? activeTouch;
+    if (!template) return;
+    setBusy('delete-template');
+    try {
+      const result = await api.deleteAllianceCampaignTemplate(template.touch_no || templateIndex + 1, filters.audience);
+      setTemplates((result.templates || []).map((item) => ({ ...item, body: normalizeLineBreaks(item.body) })));
+      setActiveTouch(Math.max(0, templateIndex - 1));
+      setDeleteTouchModal(null);
+      toast.success(result.message);
+    } catch (error) { toast.error(error.message || 'Failed to delete touch'); }
     finally { setBusy(''); }
   };
   const updateTemplate = (index, key, value) => setTemplates((current) => current.map((item, i) => i === index ? { ...item, [key]: value } : item));
@@ -144,17 +274,17 @@ export const EmailCampaignBuilder = () => {
     updateTemplate(activeTouch, 'body', `${body.slice(0, start)}${variable}${body.slice(end)}`);
     requestAnimationFrame(() => { textarea?.focus(); textarea?.setSelectionRange(start + variable.length, start + variable.length); });
   };
-  const personalize = (value = '') => value
-    .replaceAll('{{name}}', previewLead.name || 'there')
-    .replaceAll('{{org}}', previewLead.business_name || 'your organisation')
-    .replaceAll('{{location}}', previewLead.location || 'your city');
+  const personalize = (value = '') => String(value).replace(/\{\{([a-z][a-z0-9_]*)\}\}/gi, (_match, key) => {
+    const aliases = { org: 'business_name' };
+    return String(previewLead[aliases[key] || key] ?? previewLead.custom_fields?.[key] ?? `{{${key}}}`);
+  });
 
   const validateStep = (targetStep) => {
     if (targetStep > 1 && !form.name.trim()) return 'Enter a campaign name.';
     if (targetStep > 1 && !form.sender_domain_id) return 'Select an active Zoho sender.';
     if (targetStep > 2 && !filters.audience) return 'Select an audience.';
     if (targetStep > 2 && !selected.size) return 'Select at least one recipient.';
-    if (targetStep > 3 && (templates.length !== 4 || templates.some((item) => !item.subject?.trim() || !item.body?.trim()))) return 'Complete all four email touches.';
+    if (targetStep > 3 && (!templates.length || templates.some((item) => !item.subject?.trim() || !item.body?.trim()))) return 'Complete every active email touch.';
     if (targetStep > 4 && Number(templates[0]?.delay_days || 0) !== 0) return 'The first email must be scheduled for day 0.';
     if (targetStep > 4 && templates.some((item, index) => index > 0 && Number(item.delay_days) <= Number(templates[index - 1].delay_days))) return 'Each follow-up must be scheduled after the previous email.';
     return '';
@@ -168,6 +298,9 @@ export const EmailCampaignBuilder = () => {
     setBusy('create');
     try {
       const result = await api.createAllianceEmailCampaign({ ...form, audience: filters.audience, sender_domain_id: Number(form.sender_domain_id), prospect_ids: Object.values(selectedLeads).map((lead) => lead.id), templates, ai_generated: aiGenerated });
+      draftDiscardedRef.current = true;
+      latestDraftRef.current = null;
+      localStorage.removeItem(EMAIL_CAMPAIGN_DRAFT_KEY);
       toast.success(result.message);
       navigate('/alliance/planner');
     } catch (requestError) { toast.error(requestError.message || 'Failed to create campaign'); }
@@ -175,11 +308,19 @@ export const EmailCampaignBuilder = () => {
   };
 
   const activeTemplate = templates[activeTouch] || {};
+  const discardDraft = () => {
+    draftDiscardedRef.current = true;
+    latestDraftRef.current = null;
+    localStorage.removeItem(EMAIL_CAMPAIGN_DRAFT_KEY);
+    setStep(1); setForm({ name: '', objective: '', sender_domain_id: options.senders?.length === 1 ? String(options.senders[0].id) : '' });
+    setFilters(EMPTY_FILTERS); setTemplates([]); setSelectedLeads({}); setActiveTouch(0); setBrand(''); setAiGenerated(false);
+    setDraftStatus('Draft discarded');
+  };
   return (
     <div className="al-wrap al-campaign-builder">
       <div className="al-cb-header">
         <div><div className="al-eyebrow">AllianceOS · Campaign studio</div><div className="al-page-title">Create email campaign</div><p className="al-page-desc">Build a targeted, personalized sequence and review every detail before launch.</p></div>
-        <button className="al-btn ghost" onClick={() => navigate('/alliance/planner')}><ArrowLeft size={16} /> View Campaign Planner</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}><small style={{ color: 'var(--al-faint)' }}>{draftStatus}</small><button className="al-btn ghost" onClick={discardDraft}>Discard draft</button><button className="al-btn ghost" onClick={() => navigate('/alliance/planner')}><ArrowLeft size={16} /> View Campaign Planner</button></div>
       </div>
 
       <section className="al-cb-active-campaigns" aria-label="Active campaigns">
@@ -211,15 +352,20 @@ export const EmailCampaignBuilder = () => {
             <div className="al-cb-section-head"><span className="al-cb-icon"><Users size={20} /></span><div><h2>Select your audience</h2><p>Filter existing Alliance leads, then choose exactly who should receive this campaign.</p></div></div>
             <div className="al-cb-grid three"><div className="al-field"><label>Audience <b>*</b></label><select value={filters.audience} onChange={(e) => updateFilter('audience', e.target.value)}><option value="">Select audience</option>{options.audiences?.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select></div><div className="al-field"><label>Brand</label><input value={brand} readOnly placeholder="Assigned automatically" /></div><div className="al-field"><label>Search leads</label><div className="al-input-icon"><Search size={15} /><input value={filters.search} onChange={(e) => updateFilter('search', e.target.value)} placeholder="Name, company, or email" /></div></div></div>
             <div className="al-cb-filterbar"><Filter size={16} /><select value={filters.industry} onChange={(e) => updateFilter('industry', e.target.value)}><option value="">All industries</option>{options.industries?.map((v) => <option key={v}>{v}</option>)}</select><select value={filters.status} onChange={(e) => updateFilter('status', e.target.value)}><option value="">All statuses</option>{options.statuses?.map((v) => <option key={v}>{v}</option>)}</select><select value={filters.source} onChange={(e) => updateFilter('source', e.target.value)}><option value="">All sources</option>{options.sources?.map((v) => <option key={v}>{v}</option>)}</select><select value={filters.location} onChange={(e) => updateFilter('location', e.target.value)}><option value="">All locations</option>{options.locations?.map((v) => <option key={v}>{v}</option>)}</select></div>
+            <div className="al-cb-grid three" style={{ marginTop: 12 }}>
+              <div className="al-field"><label>From date</label><DatePicker value={filters.dateFrom} max={filters.dateTo} onChange={(value) => { updateFilter('dateFrom', value); setSelectedLeads({}); }} /></div>
+              <div className="al-field"><label>To date</label><DatePicker value={filters.dateTo} min={filters.dateFrom} onChange={(value) => { updateFilter('dateTo', value); setSelectedLeads({}); }} /></div>
+              {(filters.dateFrom || filters.dateTo) && <div className="al-field" style={{ display: 'flex', alignItems: 'flex-end' }}><button type="button" className="al-btn ghost sm" onClick={() => { setFilters((current) => ({ ...current, dateFrom: '', dateTo: '' })); setPage(1); setSelectedLeads({}); }}>Clear dates</button></div>}
+            </div>
             <div className="al-cb-selection"><b>{selected.size} selected</b><span>{total} matching eligible leads</span><button className="al-btn ghost sm" disabled={!filters.audience || busy === 'select'} onClick={selectAllMatching}>Select all matching</button><button className="al-link" disabled={!selected.size} onClick={() => setSelectedLeads({})}>Clear selection</button></div>
-            <div className="al-cb-table"><table className="al-table"><thead><tr><th><input type="checkbox" checked={allPageSelected} onChange={togglePage} /></th><th>Contact</th><th>Email</th><th>Industry / location</th><th>Status</th></tr></thead><tbody>{loading ? <tr><td colSpan="5" className="al-empty">Loading leads…</td></tr> : prospects.map((lead) => <tr key={lead.id} className={selected.has(String(lead.id)) ? 'selected' : ''}><td><input type="checkbox" checked={selected.has(String(lead.id))} onChange={() => toggleOne(lead)} /></td><td><b>{lead.business_name}</b><small>{lead.name || 'No contact name'}</small></td><td>{lead.email}</td><td>{lead.industry || '—'}<small>{lead.location || '—'}</small></td><td><span className="al-cb-status">{lead.status}</span></td></tr>)}{!loading && !prospects.length && <tr><td colSpan="5" className="al-empty">{filters.audience ? 'No eligible leads match these filters.' : 'Select an audience to load leads.'}</td></tr>}</tbody></table></div>
+            <div className="al-cb-table"><table className="al-table"><thead><tr><th><input type="checkbox" checked={allPageSelected} onChange={togglePage} /></th><th>Contact</th><th>Email</th><th>Industry / location</th><th>Status</th><th>Imported date & time</th></tr></thead><tbody>{loading ? <tr><td colSpan="6" className="al-empty">Loading leads…</td></tr> : prospects.map((lead) => <tr key={lead.id} className={selected.has(String(lead.id)) ? 'selected' : ''}><td><input type="checkbox" checked={selected.has(String(lead.id))} onChange={() => toggleOne(lead)} /></td><td><b>{lead.business_name}</b><small>{lead.name || 'No contact name'}</small></td><td>{lead.email}</td><td>{lead.industry || '—'}<small>{lead.location || '—'}</small></td><td><span className="al-cb-status">{lead.status}</span></td><td>{formatImportedDateTime(lead.created_at)}</td></tr>)}{!loading && !prospects.length && <tr><td colSpan="6" className="al-empty">{filters.audience ? 'No eligible leads match these filters.' : 'Select an audience to load leads.'}</td></tr>}</tbody></table></div>
             <div className="al-cb-pagination"><span>Page {page} of {pages}</span><div><button disabled={page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={16} /></button><button disabled={page >= pages} onClick={() => setPage(page + 1)}><ChevronRight size={16} /></button></div></div>
           </section>}
 
           {step === 3 && <section className="al-cb-card">
-            <div className="al-cb-section-head"><span className="al-cb-icon"><Mail size={20} /></span><div><h2>Email content</h2><p>Review each touch and see exactly how it will look for a selected recipient.</p></div><button className="al-btn ai" disabled={!filters.audience || busy === 'ai'} onClick={suggestWithAI}><Sparkles size={16} />{busy === 'ai' ? 'Generating…' : 'Suggest with AI'}</button></div>
-            <div className="al-cb-touch-tabs">{templates.map((item, index) => <button key={item.touch_no || index} className={activeTouch === index ? 'active' : ''} onClick={() => setActiveTouch(index)}><span>{index + 1}</span><div><b>Touch {index + 1}</b><small>Day {item.delay_days || 0}</small></div>{item.subject?.trim() && item.body?.trim() && <Check size={14} />}</button>)}</div>
-            {!templates.length ? <div className="al-empty">Select an audience to load its approved email sequence.</div> : <div className="al-cb-editor-grid"><div className="al-cb-editor"><div className="al-field"><label>Subject <b>*</b></label><input value={activeTemplate.subject || ''} onChange={(e) => updateTemplate(activeTouch, 'subject', e.target.value)} /><small className="al-help">{(activeTemplate.subject || '').length}/120 characters</small></div><div className="al-field"><label>Email body <b>*</b></label><div className="al-editor-toolbar"><span>Personalize:</span>{['{{name}}', '{{org}}', '{{location}}'].map((token) => <button key={token} title={`Insert ${token}`} onClick={() => insertVariable(token)}>{token.replace(/[{}]/g, '')}</button>)}</div><textarea ref={editorRef} className="al-cb-editor-area" value={activeTemplate.body || ''} onChange={(e) => updateTemplate(activeTouch, 'body', e.target.value)} /><div className="al-editor-foot"><span>{(activeTemplate.body || '').trim().split(/\s+/).filter(Boolean).length} words</span><span>{aiGenerated && <><Bot size={13} /> AI generated—review required</>}</span></div></div></div><div className="al-email-preview"><div className="al-preview-top"><div><span>AB</span><div><b>{brand || 'Alliance OS'}</b><small>{sender?.inbox_email || 'sender@example.com'}</small></div></div><span>Live preview</span></div><div className="al-preview-subject">{personalize(activeTemplate.subject) || 'Your email subject'}</div><div className="al-preview-to">To: {previewLead.name || previewLead.business_name} &lt;{previewLead.email || 'recipient@example.com'}&gt;</div><div className="al-preview-body">{personalize(activeTemplate.body) || 'Start writing to preview your email here.'}</div></div></div>}
+            <div className="al-cb-section-head"><span className="al-cb-icon"><Mail size={20} /></span><div><h2>Email content</h2><p>Templates for <b>{audience?.label || 'the selected audience'}</b>. Create, edit, save, or delete sequence touches.</p></div><button className="al-btn ghost" disabled={!filters.audience || busy === 'add-template' || templates.length >= 10} onClick={addEmailTouch}><Plus size={16} />{busy === 'add-template' ? 'Adding…' : 'Add touch'}</button><button className="al-btn ghost" disabled={templates.length <= 1 || activeTouch !== templates.length - 1 || busy === 'delete-template'} onClick={deleteActiveTemplate}><Trash2 size={15} />{busy === 'delete-template' ? 'Deleting…' : 'Delete touch'}</button><button className="al-btn ghost" disabled={!filters.audience || busy === 'save-template'} onClick={saveActiveTemplate}><Check size={16} />{busy === 'save-template' ? 'Saving…' : 'Save as default'}</button><button className="al-btn ai" disabled={!filters.audience || busy === 'ai'} onClick={suggestWithAI}><Sparkles size={16} />{busy === 'ai' ? 'Generating…' : 'Suggest with AI'}</button></div>
+            <div className="al-cb-touch-tabs" style={{ gridTemplateColumns: `repeat(${Math.min(Math.max(templates.length, 1), 5)}, minmax(130px, 1fr))` }}>{templates.map((item, index) => <button key={item.touch_no || index} className={activeTouch === index ? 'active' : ''} onClick={() => setActiveTouch(index)}><span>{item.touch_no || index + 1}</span><div><b>Touch {item.touch_no || index + 1}</b><small>Day {item.delay_days || 0}</small></div>{item.subject?.trim() && item.body?.trim() && <Check size={14} />}</button>)}</div>
+            {!templates.length ? <div className="al-empty">Select an audience to load its approved email sequence.</div> : <div className="al-cb-editor-grid"><div className="al-cb-editor"><div className="al-field"><label>Subject <b>*</b></label><input value={activeTemplate.subject || ''} onChange={(e) => updateTemplate(activeTouch, 'subject', e.target.value)} /><small className="al-help">{(activeTemplate.subject || '').length}/120 characters</small></div><div className="al-field"><label>Email body <b>*</b></label><div className="al-editor-toolbar"><span>Personalize:</span><select value={personalizationField} onChange={(e) => setPersonalizationField(e.target.value)}>{personalizationFields.map((field) => <option key={field.key} value={field.key}>{field.label} — {`{{${field.key}}}`}</option>)}</select><button type="button" onClick={() => insertVariable(`{{${personalizationField}}}`)}>Insert field</button></div><textarea ref={editorRef} className="al-cb-editor-area" value={activeTemplate.body || ''} onChange={(e) => updateTemplate(activeTouch, 'body', e.target.value)} /><div className="al-editor-foot"><span>{(activeTemplate.body || '').trim().split(/\s+/).filter(Boolean).length} words</span><span>{aiGenerated && <><Bot size={13} /> AI generated—review required</>}</span></div></div></div><div className="al-email-preview"><div className="al-preview-top"><div><span>AB</span><div><b>{brand || 'Alliance OS'}</b><small>{sender?.inbox_email || 'sender@example.com'}</small></div></div><span>Live preview</span></div><div className="al-preview-subject">{personalize(activeTemplate.subject) || 'Your email subject'}</div><div className="al-preview-to">To: {previewLead.name || previewLead.business_name} &lt;{previewLead.email || 'recipient@example.com'}&gt;</div><div className="al-preview-body">{personalize(activeTemplate.body) || 'Start writing to preview your email here.'}</div></div></div>}
           </section>}
 
           {step === 4 && <section className="al-cb-card">
@@ -241,9 +387,27 @@ export const EmailCampaignBuilder = () => {
           <div className="al-cb-summary-head"><Sparkles size={17} /><b>Campaign summary</b></div>
           <div className="al-cb-metric"><span>Recipients</span><b>{selected.size.toLocaleString()}</b></div><div className="al-cb-metric"><span>Audience</span><b>{audience?.label || 'Not selected'}</b></div><div className="al-cb-metric"><span>Sender</span><b>{sender?.inbox_email || 'Not selected'}</b></div><div className="al-cb-metric"><span>Sequence</span><b>{templates.length || 0} emails · {lastTouchDay} days</b></div>
           <div className="al-cb-estimate"><CalendarClock size={18} /><div><small>Estimated first-touch delivery</small><b>{selected.size ? `${deliveryDays} day${deliveryDays === 1 ? '' : 's'}` : '—'}</b><p>Based on {dailyCapacity} remaining sends/day.</p></div></div>
-          <div className="al-cb-checks"><b>Readiness</b><p className={form.name ? 'ok' : ''}><span>{form.name ? '✓' : '·'}</span> Campaign details</p><p className={selected.size ? 'ok' : ''}><span>{selected.size ? '✓' : '·'}</span> Recipients selected</p><p className={templates.length === 4 && templates.every((t) => t.subject && t.body) ? 'ok' : ''}><span>{templates.length === 4 && templates.every((t) => t.subject && t.body) ? '✓' : '·'}</span> Email content reviewed</p><p className={form.sender_domain_id ? 'ok' : ''}><span>{form.sender_domain_id ? '✓' : '·'}</span> Active sender</p></div>
+          <div className="al-cb-checks"><b>Readiness</b><p className={form.name ? 'ok' : ''}><span>{form.name ? '✓' : '·'}</span> Campaign details</p><p className={selected.size ? 'ok' : ''}><span>{selected.size ? '✓' : '·'}</span> Recipients selected</p><p className={templates.length > 0 && templates.every((t) => t.subject && t.body) ? 'ok' : ''}><span>{templates.length > 0 && templates.every((t) => t.subject && t.body) ? '✓' : '·'}</span> Email content reviewed</p><p className={form.sender_domain_id ? 'ok' : ''}><span>{form.sender_domain_id ? '✓' : '·'}</span> Active sender</p></div>
         </aside>
       </div>
+      {deleteTouchModal && (
+        <div role="dialog" aria-modal="true" aria-labelledby="delete-touch-title" style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(2, 8, 23, 0.76)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onMouseDown={(event) => { if (event.target === event.currentTarget && busy !== 'delete-template') setDeleteTouchModal(null); }}>
+          <div style={{ width: '100%', maxWidth: 440, background: '#111f35', border: '1px solid #334766', borderRadius: 16, boxShadow: '0 24px 80px rgba(0,0,0,.5)', overflow: 'hidden' }}>
+            <div style={{ padding: '18px 22px', borderBottom: '1px solid #263a58', display: 'flex', alignItems: 'center', gap: 11 }}>
+              <span style={{ width: 36, height: 36, borderRadius: 9, display: 'grid', placeItems: 'center', background: 'rgba(239,68,68,.12)', color: '#f87171' }}><Trash2 size={18} /></span>
+              <div><h3 id="delete-touch-title" style={{ margin: 0, color: '#f8fafc', fontSize: 16 }}>Delete email touch?</h3><small style={{ color: '#8fa7c7' }}>This changes the default sequence for future campaigns.</small></div>
+            </div>
+            <div style={{ padding: 22 }}>
+              <p style={{ margin: 0, color: '#cbd5e1', lineHeight: 1.6, fontSize: 13 }}>Delete <b style={{ color: '#fff' }}>Touch {deleteTouchModal.template.touch_no || deleteTouchModal.index + 1}</b> from <b style={{ color: '#fff' }}>{audience?.label || filters.audience}</b>?</p>
+              <p style={{ margin: '9px 0 0', color: '#8fa7c7', fontSize: 11 }}>Existing campaign drafts keep their saved copy. Only the default template sequence is changed.</p>
+            </div>
+            <div style={{ padding: '14px 22px 20px', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button type="button" className="al-btn ghost" disabled={busy === 'delete-template'} onClick={() => setDeleteTouchModal(null)}>Cancel</button>
+              <button type="button" className="al-btn" disabled={busy === 'delete-template'} onClick={confirmDeleteActiveTemplate} style={{ background: '#dc2626', borderColor: '#dc2626' }}>{busy === 'delete-template' ? 'Deleting…' : 'Delete touch'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

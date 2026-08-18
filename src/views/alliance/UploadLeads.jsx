@@ -21,6 +21,9 @@ export const UploadLeads = () => {
   const [result, setResult] = useState(null);
   const [audiences, setAudiences] = useState(DEFAULT_AUDIENCES);
   const [showAudienceForm, setShowAudienceForm] = useState(false);
+  const [editingAudienceCode, setEditingAudienceCode] = useState('');
+  const [deletingAudience, setDeletingAudience] = useState(null);
+  const [editingFieldKey, setEditingFieldKey] = useState('');
   const [newAudience, setNewAudience] = useState({ code: '', label: '', brand: '', default_channel: 'email', fields: [] });
   const [newField, setNewField] = useState({ field_key: '', data_type: 'auto', required: false, sample_value: '' });
   const [savingAudience, setSavingAudience] = useState(false);
@@ -83,12 +86,15 @@ export const UploadLeads = () => {
   const addAudience = async () => {
     setSavingAudience(true);
     try {
-      const data = await api.createAllianceAudience(newAudience);
+      const wasEditing = Boolean(editingAudienceCode);
+      const data = wasEditing ? await api.updateAllianceAudience(editingAudienceCode, newAudience) : await api.createAllianceAudience(newAudience);
       await loadAudiences();
       setAudience(data.audience.code);
       setNewAudience({ code: '', label: '', brand: '', default_channel: 'email', fields: [] });
+      setEditingAudienceCode('');
+      setEditingFieldKey('');
       setShowAudienceForm(false);
-      toast.success('Audience and custom columns added');
+      toast.success(wasEditing ? 'Audience and custom fields updated' : 'Audience and custom columns added');
     } catch (error) {
       toast.error(error.message || 'Failed to add audience');
     } finally {
@@ -100,16 +106,48 @@ export const UploadLeads = () => {
     const fieldKey = newField.field_key.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '');
     if (!fieldKey) return toast.error('Enter a field name');
     if (!newField.sample_value.trim()) return toast.error('Enter a sample value for this field');
-    if (newAudience.fields.some((field) => field.field_key === fieldKey)) return toast.error('That field already exists');
+    if (newAudience.fields.some((field) => field.field_key === fieldKey && field.field_key !== editingFieldKey)) return toast.error('That field already exists');
+    const nextField = { ...newField, field_key: fieldKey, label: fieldKey.replace(/_/g, ' ') };
     setNewAudience({
       ...newAudience,
-      fields: [...newAudience.fields, { ...newField, field_key: fieldKey, label: fieldKey.replace(/_/g, ' ') }],
+      fields: editingFieldKey ? newAudience.fields.map((field) => field.field_key === editingFieldKey ? nextField : field) : [...newAudience.fields, nextField],
     });
     setNewField({ field_key: '', data_type: 'auto', required: false, sample_value: '' });
+    setEditingFieldKey('');
   };
 
   const removeCustomField = (fieldKey) => {
     setNewAudience({ ...newAudience, fields: newAudience.fields.filter((field) => field.field_key !== fieldKey) });
+    if (editingFieldKey === fieldKey) { setEditingFieldKey(''); setNewField({ field_key: '', data_type: 'auto', required: false, sample_value: '' }); }
+  };
+
+  const openAddAudience = () => {
+    setEditingAudienceCode(''); setEditingFieldKey('');
+    setNewAudience({ code: '', label: '', brand: '', default_channel: 'email', fields: [] });
+    setNewField({ field_key: '', data_type: 'auto', required: false, sample_value: '' });
+    setShowAudienceForm(true);
+  };
+  const openEditAudience = () => {
+    if (!selectedAudience) return;
+    setEditingAudienceCode(selectedAudience.code); setEditingFieldKey('');
+    setNewAudience({ code: selectedAudience.code, label: selectedAudience.label, brand: selectedAudience.brand || '', default_channel: selectedAudience.default_channel, fields: (selectedAudience.fields || []).map((field) => ({ ...field })) });
+    setNewField({ field_key: '', data_type: 'auto', required: false, sample_value: '' });
+    setShowAudienceForm(true);
+  };
+  const editCustomField = (field) => {
+    setEditingFieldKey(field.field_key);
+    setNewField({ field_key: field.field_key, data_type: field.data_type, required: Boolean(field.required), sample_value: field.sample_value || '' });
+  };
+  const confirmDeleteAudience = async () => {
+    if (!deletingAudience) return;
+    setSavingAudience(true);
+    try {
+      const result = await api.deleteAllianceAudience(deletingAudience.code);
+      toast.success(result.message);
+      const remaining = audiences.filter((item) => item.code !== deletingAudience.code);
+      setAudiences(remaining); setAudience(remaining[0]?.code || ''); setDeletingAudience(null);
+    } catch (error) { toast.error(error.message || 'Failed to delete audience'); }
+    finally { setSavingAudience(false); }
   };
 
   const handleDrop = (e) => {
@@ -215,9 +253,7 @@ export const UploadLeads = () => {
           <select value={audience} onChange={(e) => setAudience(e.target.value)}>
             {audiences.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}
           </select>
-          <button className="al-btn ghost sm" type="button" onClick={() => setShowAudienceForm((value) => !value)} style={{ marginTop: 8 }}>
-            + Add audience
-          </button>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}><button className="al-btn ghost sm" type="button" onClick={openAddAudience}>+ Add</button><button className="al-btn ghost sm" type="button" disabled={!selectedAudience} onClick={openEditAudience}>Edit</button><button className="al-btn ghost sm" type="button" disabled={!selectedAudience} style={{ color: '#EF9A9A' }} onClick={() => setDeletingAudience(selectedAudience)}>Delete</button></div>
         </div>
         <div className="al-field">
           <label>Campaign</label>
@@ -266,7 +302,7 @@ export const UploadLeads = () => {
       {showAudienceForm && (
         <div style={{ background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 12, padding: 16, marginBottom: 18 }}>
           <div className="al-fields">
-            <div className="al-field"><label>Audience code</label><input value={newAudience.code} placeholder="hospital" onChange={(e) => setNewAudience({ ...newAudience, code: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })} /></div>
+            <div className="al-field"><label>Audience code</label><input disabled={Boolean(editingAudienceCode)} value={newAudience.code} placeholder="hospital" onChange={(e) => setNewAudience({ ...newAudience, code: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })} />{editingAudienceCode && <small style={{ color: 'var(--al-muted)' }}>Code cannot change because existing records use it.</small>}</div>
             <div className="al-field"><label>Display label</label><input value={newAudience.label} placeholder="Hospitals / administrators" onChange={(e) => setNewAudience({ ...newAudience, label: e.target.value })} /></div>
             <div className="al-field"><label>Brand</label><input value={newAudience.brand} placeholder="BM TechX" onChange={(e) => setNewAudience({ ...newAudience, brand: e.target.value })} /></div>
             <div className="al-field"><label>Default channel</label><select value={newAudience.default_channel} onChange={(e) => setNewAudience({ ...newAudience, default_channel: e.target.value })}><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select></div>
@@ -280,16 +316,19 @@ export const UploadLeads = () => {
                 <option value="auto">Detect automatically</option><option value="text">Text</option><option value="integer">Whole number</option><option value="number">Number / decimal</option><option value="boolean">Yes / No</option><option value="date">Date</option>
               </select>
               <label style={{ display: 'flex', gap: 6, alignItems: 'center', margin: 0, textTransform: 'none', letterSpacing: 0 }}><input type="checkbox" checked={newField.required} onChange={(e) => setNewField({ ...newField, required: e.target.checked })} style={{ width: 'auto' }} /> Required</label>
-              <button className="al-btn ghost sm" type="button" onClick={addCustomField}>Add field</button>
+              <button className="al-btn ghost sm" type="button" onClick={addCustomField}>{editingFieldKey ? 'Update field' : 'Add field'}</button>
             </div>
-            {!!newAudience.fields.length && <div className="al-fmt" style={{ justifyContent: 'flex-start', marginTop: 10 }}>{newAudience.fields.map((field) => <code key={field.field_key} style={{ cursor: 'pointer' }} onClick={() => removeCustomField(field.field_key)} title="Click to remove">{field.label}{field.required ? ' *' : ''} · {field.data_type === 'auto' ? 'automatic' : field.data_type} ×</code>)}</div>}
+            {!!newAudience.fields.length && <div style={{ display: 'grid', gap: 7, marginTop: 10 }}>{newAudience.fields.map((field) => <div key={field.field_key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', border: '1px solid var(--al-line)', borderRadius: 7 }}><code>{field.label}{field.required ? ' *' : ''} · {field.data_type === 'auto' ? 'automatic' : field.data_type}</code><span style={{ display: 'flex', gap: 6 }}><button className="al-btn ghost sm" type="button" onClick={() => editCustomField(field)}>Edit</button><button className="al-btn ghost sm" type="button" style={{ color: '#EF9A9A' }} onClick={() => removeCustomField(field.field_key)}>Remove</button></span></div>)}</div>}
             <div style={{ color: 'var(--al-muted)', fontSize: 11.5, marginTop: 8 }}>Add a sample value so the downloaded Excel file shows users the expected format. Automatic detection recognizes numbers, dates, yes/no values, and text.</div>
           </div>
           <button className="al-btn" type="button" disabled={savingAudience || !newAudience.code || !newAudience.label} onClick={addAudience} style={{ marginTop: 12 }}>
-            {savingAudience ? 'Saving…' : 'Save audience'}
+            {savingAudience ? 'Saving…' : editingAudienceCode ? 'Save changes' : 'Save audience'}
           </button>
+          <button className="al-btn ghost" type="button" disabled={savingAudience} onClick={() => { setShowAudienceForm(false); setEditingAudienceCode(''); }} style={{ marginTop: 12, marginLeft: 8 }}>Cancel</button>
         </div>
       )}
+
+      {deletingAudience && <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,.72)', display: 'grid', placeItems: 'center', padding: 20 }} onClick={() => !savingAudience && setDeletingAudience(null)}><div onClick={(event) => event.stopPropagation()} style={{ width: 'min(480px,100%)', background: 'var(--al-panel2)', border: '1px solid rgba(239,154,154,.35)', borderRadius: 14, padding: 22 }}><div className="al-page-title" style={{ fontSize: 21 }}>Delete target audience?</div><p style={{ color: 'var(--al-muted)', lineHeight: 1.6 }}><b style={{ color: 'var(--al-ink)' }}>{deletingAudience.label}</b> and its custom-field/template configuration will be removed. Deletion is blocked while prospects or campaigns still use this audience.</p><div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="al-btn ghost" disabled={savingAudience} onClick={() => setDeletingAudience(null)}>Cancel</button><button className="al-btn" disabled={savingAudience} style={{ background: '#C62828', color: '#fff' }} onClick={confirmDeleteAudience}>{savingAudience ? 'Deleting…' : 'Delete audience'}</button></div></div></div>}
 
       {/* Steps */}
       <div className="al-steps">

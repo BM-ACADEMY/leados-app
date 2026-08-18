@@ -10,11 +10,21 @@ function normalizeEmail(value) {
 }
 
 function renderTemplate(value, prospect) {
+  const customFields = typeof prospect.custom_fields === 'string'
+    ? JSON.parse(prospect.custom_fields || '{}')
+    : (prospect.custom_fields || {});
+  const aliases = { org: 'business_name', status: 'prospect_status' };
   return String(value || '')
     .replace(/\\r\\n|\\n|\\r/g, '\n')
-    .replace(/\{\{name\}\}/gi, prospect.name || 'there')
-    .replace(/\{\{org\}\}/gi, prospect.business_name || 'your organisation')
-    .replace(/\{\{location\}\}/gi, prospect.location || 'your area');
+    .replace(/\{\{([a-z][a-z0-9_]*)\}\}/gi, (token, key) => {
+      const resolved = prospect[aliases[key] || key] ?? customFields[key];
+      if (resolved === undefined || resolved === null || resolved === '') {
+        if (key === 'name') return prospect.business_name || 'there';
+        if (key === 'org') return prospect.business_name || 'your organisation';
+        return token;
+      }
+      return String(resolved);
+    });
 }
 
 function textToHtml(value) {
@@ -38,7 +48,8 @@ async function claimDueTouch() {
     );
     const result = await client.query(
       `SELECT t.id, t.campaign_id, t.prospect_id, t.touch_no, t.subject, t.message_body,
-              p.name, p.business_name, p.email, p.location, p.status AS prospect_status,
+              p.name, p.business_name, p.email, p.phone, p.audience, p.industry, p.location,
+              p.source, p.consent_source, p.custom_fields, p.status AS prospect_status,
               p.suppressed, c.status AS campaign_status, c.started_at, c.sender_domain_id,
               cp.enrollment_status, d.inbox_email, d.status AS sender_status,
               d.daily_cap, d.sent_today

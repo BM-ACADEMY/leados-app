@@ -223,6 +223,13 @@ class LeadOSAPI {
     });
   }
 
+  async updateTemplateScopes(templateIds, templateScope) {
+    return this.request('/api/templates/bulk-scope', {
+      method: 'POST',
+      body: JSON.stringify({ template_ids: templateIds, template_scope: templateScope })
+    });
+  }
+
   async updateTemplate(id, templateData) {
     return this.request(`/api/templates/${id}`, {
       method: 'PUT',
@@ -612,6 +619,10 @@ class LeadOSAPI {
     return this.request(`/api/alliance/prospects/${id}`, { method: 'DELETE' });
   }
 
+  async repairAllianceProspectNames() {
+    return this.request('/api/alliance/prospects/repair-imported-names', { method: 'POST' });
+  }
+
   async getAllianceAudiences() {
     return this.request('/api/alliance/audiences');
   }
@@ -639,8 +650,20 @@ class LeadOSAPI {
     });
   }
 
-  async getAllianceCampaigns() {
-    return this.request('/api/alliance/campaigns');
+  async getAllianceCampaigns(params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null));
+    return this.request(`/api/alliance/campaigns${query.toString() ? `?${query}` : ''}`);
+  }
+
+  async updateAllianceAudience(code, payload) {
+    return this.request(`/api/alliance/audiences/${encodeURIComponent(code)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteAllianceAudience(code) {
+    return this.request(`/api/alliance/audiences/${encodeURIComponent(code)}`, { method: 'DELETE' });
   }
 
   async getAllianceCampaign(id) {
@@ -661,6 +684,10 @@ class LeadOSAPI {
 
   async stopAllianceCampaign(id) {
     return this.request(`/api/alliance/campaigns/${id}/stop`, { method: 'POST' });
+  }
+
+  async deleteAllianceCampaign(id) {
+    return this.request(`/api/alliance/campaigns/${id}`, { method: 'DELETE' });
   }
 
   async sendAllianceCampaignTest(id, payload) {
@@ -834,6 +861,22 @@ class LeadOSAPI {
 
   async getAllianceCampaignTemplates(audience) {
     return this.request(`/api/alliance/campaign-builder/templates?audience=${encodeURIComponent(audience)}`);
+  }
+
+  async saveAllianceCampaignTemplate(touchNo, payload) {
+    return this.request(`/api/alliance/campaign-builder/templates/${touchNo}`, {
+      method: 'PUT', body: JSON.stringify(payload)
+    });
+  }
+
+  async createAllianceCampaignTemplate(audience) {
+    return this.request('/api/alliance/campaign-builder/templates', {
+      method: 'POST', body: JSON.stringify({ audience })
+    });
+  }
+
+  async deleteAllianceCampaignTemplate(touchNo, audience) {
+    return this.request(`/api/alliance/campaign-builder/templates/${touchNo}?audience=${encodeURIComponent(audience)}`, { method: 'DELETE' });
   }
 
   async suggestAllianceCampaignTemplates(payload) {

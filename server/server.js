@@ -53,6 +53,10 @@ io.on('connection', (socket) => {
 
 // ── DB CONNECTION ─────────────────────────────────────────
 const pool = require('./db/connection');
+const templateParameterDefinitionsReady = pool.query(`
+  ALTER TABLE templates ADD COLUMN IF NOT EXISTS parameter_definitions JSONB NOT NULL DEFAULT '{}'::jsonb;
+  ALTER TABLE templates ADD COLUMN IF NOT EXISTS template_scope VARCHAR(20) NOT NULL DEFAULT 'shared';
+`).catch(err => console.error('[Templates] Parameter definitions migration failed:', err.message));
 const clientsWhatsAppStatusReady = pool.query(`
   ALTER TABLE clients ADD COLUMN IF NOT EXISTS whatsapp_status VARCHAR(30) NOT NULL DEFAULT 'not_configured';
   ALTER TABLE clients ADD COLUMN IF NOT EXISTS whatsapp_verified_at TIMESTAMP;
@@ -466,7 +470,14 @@ async function initCampaignQueue() {
       phone VARCHAR(20) NOT NULL,
       name VARCHAR(255),
       template_name VARCHAR(255) NOT NULL,
+      template_language VARCHAR(20) DEFAULT 'en',
       template_body TEXT,
+      template_header TEXT,
+      template_parameters JSONB NOT NULL DEFAULT '{}'::jsonb,
+      recipient_parameters JSONB NOT NULL DEFAULT '{}'::jsonb,
+      recipient_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      campaign_name TEXT,
+      brand_name TEXT,
       wa_token VARCHAR(500),
       phone_number_id VARCHAR(100),
       status VARCHAR(20) DEFAULT 'pending',
@@ -476,6 +487,17 @@ async function initCampaignQueue() {
       created_at TIMESTAMP DEFAULT NOW(),
       processed_at TIMESTAMP
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE campaign_message_queue ADD COLUMN IF NOT EXISTS template_language VARCHAR(20) DEFAULT 'en';
+    ALTER TABLE campaign_message_queue ADD COLUMN IF NOT EXISTS template_header TEXT;
+    ALTER TABLE campaign_message_queue ADD COLUMN IF NOT EXISTS template_parameters JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE campaign_message_queue ADD COLUMN IF NOT EXISTS recipient_parameters JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE campaign_message_queue ADD COLUMN IF NOT EXISTS recipient_data JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE campaign_message_queue ADD COLUMN IF NOT EXISTS campaign_name TEXT;
+    ALTER TABLE campaign_message_queue ADD COLUMN IF NOT EXISTS brand_name TEXT;
+    ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS template_parameters JSONB NOT NULL DEFAULT '{}'::jsonb;
   `);
 
   // Create indexes separately for PostgreSQL
@@ -503,11 +525,12 @@ async function addToCampaignQueue(campaign_id, leads, campaign) {
   if (leads.length > 0) {
     await pool.query(`
       INSERT INTO campaign_message_queue
-      (campaign_id, lead_id, phone, name, template_name, template_body, wa_token, phone_number_id)
+      (campaign_id, lead_id, phone, name, template_name, template_language, template_body,
+       template_header, template_parameters, recipient_parameters, recipient_data, campaign_name, brand_name, wa_token, phone_number_id)
       SELECT $1, audience.lead_id, audience.phone, audience.name,
-             $2, $3, $4, $5
-      FROM UNNEST($6::bigint[], $7::text[], $8::text[])
-        AS audience(lead_id, phone, name)
+             $2, $3, $4, $5, $6::jsonb, audience.parameters, audience.data, $7, $8, $9, $10
+      FROM UNNEST($11::bigint[], $12::text[], $13::text[], $14::jsonb[], $15::jsonb[])
+        AS audience(lead_id, phone, name, parameters, data)
       WHERE NOT EXISTS (
         SELECT 1
         FROM campaign_message_queue queued
@@ -517,12 +540,22 @@ async function addToCampaignQueue(campaign_id, leads, campaign) {
     `, [
       campaign_id,
       campaign.template_name,
+      campaign.template_language || 'en',
       campaign.template_body || '',
+      campaign.template_header || '',
+      JSON.stringify(campaign.template_parameters || {}),
+      campaign.campaign_name || '',
+      campaign.brand_name || '',
       campaign.wa_access_token || '',
       campaign.phone_number_id || '',
       leads.map((lead) => lead.id),
       leads.map((lead) => lead.phone),
       leads.map((lead) => lead.name || ''),
+      leads.map((lead) => JSON.stringify(lead.template_parameters || {})),
+      leads.map((lead) => JSON.stringify({
+        recipient_email: lead.email || '', lead_status: lead.status || '',
+        lead_source: lead.source || '', lead_interest: lead.interest || '', lead_score: lead.score ?? ''
+      })),
     ]);
   }
 }
@@ -630,8 +663,16 @@ async function processCampaignQueue() {
           // persistence error must never cause the recipient to receive it
           // again.
           try {
-            const renderedBody = String(msg.template_body || '')
-              .replace(/\{\{1\}\}/g, msg.name || 'Friend');
+            const parameterMappings = typeof msg.template_parameters === 'string'
+              ? JSON.parse(msg.template_parameters)
+              : (msg.template_parameters || {});
+            const renderedBody = getTemplateVariableNumbers(msg.template_body).reduce(
+              (body, number) => body.replace(
+                new RegExp(`\\{\\{\\s*${number}\\s*\\}\\}`, 'g'),
+                resolveCampaignParameter(parameterMappings.body?.[String(number)], msg)
+              ),
+              String(msg.template_body || '')
+            );
             const conversationResult = await pool.query(`
               INSERT INTO conversations
                 (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
@@ -763,14 +804,46 @@ function validateCampaignTemplate(template) {
     ? Array.from({ length: bodyVariables.at(-1) }, (_, index) => index + 1)
     : [];
 
-  if (headerVariables.length) {
-    return 'Campaign templates with header variables are not supported yet. Use a fixed header or configure the header value first.';
-  }
   if (bodyVariables.some((value, index) => value !== expectedBodyVariables[index])) {
     return 'Template body variables must be consecutive and start at {{1}}.';
   }
-  if (bodyVariables.length > 1) {
-    return `This template needs ${bodyVariables.length} body parameters, but Bulk Campaigns currently supports only {{1}} (recipient name). Configure all template parameters before sending.`;
+  if (headerVariables.some((value, index) => value !== index + 1)) {
+    return 'Template header variables must be consecutive and start at {{1}}.';
+  }
+  return null;
+}
+
+function resolveCampaignParameter(mapping, msg) {
+  const source = mapping?.source;
+  if (source === 'recipient_name') return String(msg.name || 'Friend');
+  if (source === 'recipient_phone') return String(msg.phone || '');
+  if (source === 'campaign_name') return String(msg.campaign_name || '');
+  if (source === 'brand_name') return String(msg.brand_name || '');
+  if (source === 'custom') return String(mapping?.value || '');
+  if (['recipient_email', 'lead_status', 'lead_source', 'lead_interest', 'lead_score'].includes(source)) {
+    const data = typeof msg.recipient_data === 'string' ? JSON.parse(msg.recipient_data) : (msg.recipient_data || {});
+    return String(data[source] ?? '');
+  }
+  if (source === 'excel_parameter') {
+    const values = typeof msg.recipient_parameters === 'string'
+      ? JSON.parse(msg.recipient_parameters)
+      : (msg.recipient_parameters || {});
+    return String(values?.[mapping.section || 'body']?.[String(mapping.number)] || '');
+  }
+  return '';
+}
+
+function validateCampaignParameterMappings(template, mappings) {
+  for (const [section, content] of [['body', template.body], ['header', template.header]]) {
+    for (const number of getTemplateVariableNumbers(content)) {
+      const mapping = mappings?.[section]?.[String(number)];
+      if (!mapping || !['recipient_name', 'recipient_phone', 'recipient_email', 'lead_status', 'lead_source', 'lead_interest', 'lead_score', 'campaign_name', 'brand_name', 'custom', 'excel_parameter'].includes(mapping.source)) {
+        return `Choose a value for ${section} parameter {{${number}}}.`;
+      }
+      if (mapping.source === 'custom' && !String(mapping.value || '').trim()) {
+        return `Enter a custom value for ${section} parameter {{${number}}}.`;
+      }
+    }
   }
   return null;
 }
@@ -793,15 +866,29 @@ async function sendWhatsAppMessage(msg) {
     // Build template payload
     const templatePayload = {
       name: msg.template_name,
-      language: { code: 'en' }
+      language: { code: msg.template_language || 'en' }
     };
 
     const bodyVariables = getTemplateVariableNumbers(msg.template_body);
+    const headerVariables = getTemplateVariableNumbers(msg.template_header);
+    const mappings = typeof msg.template_parameters === 'string'
+      ? JSON.parse(msg.template_parameters)
+      : (msg.template_parameters || {});
     const components = [];
-    if (bodyVariables.length === 1 && bodyVariables[0] === 1) {
+    if (headerVariables.length) {
+      components.push({
+        type: 'header',
+        parameters: headerVariables.map((number) => ({
+          type: 'text', text: resolveCampaignParameter(mappings.header?.[String(number)], msg)
+        }))
+      });
+    }
+    if (bodyVariables.length) {
       components.push({
         type: 'body',
-        parameters: [{ type: 'text', text: msg.name || 'Friend' }]
+        parameters: bodyVariables.map((number) => ({
+          type: 'text', text: resolveCampaignParameter(mappings.body?.[String(number)], msg)
+        }))
       });
     }
     if (components.length > 0) {
@@ -1465,6 +1552,48 @@ app.get('/api/leads/template', (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="leados_campaign_template.xlsx"');
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.send(buffer);
+});
+
+// Template-specific recipient sheet. Variable columns are positional because
+// Meta matches values to {{1}}, {{2}}, etc., not to CRM field names.
+app.get('/api/templates/:id/campaign-sheet', async (req, res) => {
+  try {
+    await templateParameterDefinitionsReady;
+    const result = await pool.query('SELECT name, body, header, parameter_definitions FROM templates WHERE id = $1', [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Template not found' });
+    const template = result.rows[0];
+    const headers = ['Name', 'Phone'];
+    for (const number of getTemplateVariableNumbers(template.header)) {
+      const label = template.parameter_definitions?.header?.[String(number)]?.label;
+      headers.push(`Header {{${number}}}${label ? ` - ${label}` : ''}`);
+    }
+    for (const number of getTemplateVariableNumbers(template.body)) {
+      const label = template.parameter_definitions?.body?.[String(number)]?.label;
+      headers.push(`Body {{${number}}}${label ? ` - ${label}` : ''}`);
+    }
+    const example = Object.fromEntries(headers.map((header) => [header, '']));
+    example.Name = 'John Doe';
+    example.Phone = '919876543210';
+    const sheet = xlsx.utils.json_to_sheet([example], { header: headers });
+    sheet['!cols'] = headers.map((header) => ({ wch: Math.max(18, header.length + 3) }));
+    const instructions = xlsx.utils.aoa_to_sheet([
+      ['Template', template.name],
+      ['Instructions'],
+      ['Keep the column names unchanged. Enter phone numbers with country code.'],
+      ['Fill every Header {{n}} and Body {{n}} cell for every recipient.'],
+      ['The values are sent to Meta in numeric order.']
+    ]);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, sheet, 'Recipients');
+    xlsx.utils.book_append_sheet(workbook, instructions, 'Instructions');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    const safeName = String(template.name || 'template').replace(/[^a-z0-9_-]+/gi, '_');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}_campaign_recipients.xlsx"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to generate template recipient sheet.' });
+  }
 });
 
 // DEBUG: Check campaign import recipients
@@ -3211,6 +3340,7 @@ app.get('/api/payments', auth, async (req, res) => {
 // ══════════════════════════════════════════════════════════
 app.get('/api/templates', auth, async (req, res) => {
   try {
+    await templateParameterDefinitionsReady;
     const { rows } = await pool.query(`
       SELECT t.*, c.name as brand_name
       FROM templates t
@@ -3220,6 +3350,26 @@ app.get('/api/templates', auth, async (req, res) => {
     res.json({ templates: rows });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/templates/bulk-scope', auth, async (req, res) => {
+  try {
+    await templateParameterDefinitionsReady;
+    const ids = [...new Set((req.body.template_ids || []).map(Number).filter(Number.isInteger))];
+    const scope = String(req.body.template_scope || '').toLowerCase();
+    if (!ids.length) return res.status(400).json({ error: 'Select at least one template.' });
+    if (!['leados', 'alliance', 'shared'].includes(scope)) {
+      return res.status(400).json({ error: 'Workspace must be LeadOS, AllianceOS, or Shared.' });
+    }
+    const result = await pool.query(
+      `UPDATE templates SET template_scope = $1, updated_at = NOW() WHERE id = ANY($2::int[]) RETURNING id`,
+      [scope, ids]
+    );
+    res.json({ success: true, updated: result.rowCount, template_scope: scope });
+  } catch (error) {
+    console.error('Bulk template workspace update error:', error);
+    res.status(500).json({ error: 'Unable to update selected templates.' });
   }
 });
 
@@ -3300,12 +3450,13 @@ app.post('/api/templates/sync-all', auth, async (req, res) => {
 
 app.post('/api/templates', auth, async (req, res) => {
   try {
-    const { name, category, language, header_format, header, body, footer, buttons, client_id, samples } = req.body;
+    await templateParameterDefinitionsReady;
+    const { name, category, language, header_format, header, body, footer, buttons, client_id, samples, parameter_definitions = {}, template_scope = 'leados' } = req.body;
     const { rows } = await pool.query(`
-      INSERT INTO templates (name, category, language, header_format, header, body, footer, buttons, client_id, status, created_at, samples)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', NOW(), $10)
+      INSERT INTO templates (name, category, language, header_format, header, body, footer, buttons, client_id, status, created_at, samples, parameter_definitions, template_scope)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', NOW(), $10, $11::jsonb, $12)
       RETURNING *
-    `, [name, category, language || 'en', header_format || 'TEXT', header || null, body, footer || null, JSON.stringify(buttons || []), client_id || null, samples ? JSON.stringify(samples) : '[]']);
+    `, [name, category, language || 'en', header_format || 'TEXT', header || null, body, footer || null, JSON.stringify(buttons || []), client_id || null, samples ? JSON.stringify(samples) : '[]', JSON.stringify(parameter_definitions), ['leados', 'alliance', 'shared'].includes(template_scope) ? template_scope : 'leados']);
     res.status(201).json({ template: rows[0] });
   } catch (err) {
     console.error('Create template err:', err);
@@ -3475,7 +3626,8 @@ app.get('/api/templates/:id/sync', auth, async (req, res) => {
 // PUT /api/templates/:id
 app.put('/api/templates/:id', auth, async (req, res) => {
   try {
-    const { name, category, language, header_format, header, body, footer, buttons, client_id, samples } = req.body;
+    await templateParameterDefinitionsReady;
+    const { name, category, language, header_format, header, body, footer, buttons, client_id, samples, parameter_definitions, template_scope } = req.body;
     const { id } = req.params;
 
     const { rows: currentRows } = await pool.query('SELECT * FROM templates WHERE id = $1', [id]);
@@ -3531,9 +3683,11 @@ app.put('/api/templates/:id', auth, async (req, res) => {
           buttons = COALESCE($8, buttons),
           client_id = COALESCE($9, client_id),
           samples = COALESCE($10, samples),
+          parameter_definitions = COALESCE($11::jsonb, parameter_definitions),
+          template_scope = COALESCE($12, template_scope),
           status = CASE WHEN status != 'draft' THEN 'pending' ELSE status END,
           updated_at = NOW()
-      WHERE id = $11
+      WHERE id = $13
       RETURNING *
     `, [
       name, category, language,
@@ -3544,6 +3698,8 @@ app.put('/api/templates/:id', auth, async (req, res) => {
       buttons ? JSON.stringify(buttons) : null,
       client_id || null,
       samples ? JSON.stringify(samples) : null,
+      parameter_definitions ? JSON.stringify(parameter_definitions) : null,
+      ['leados', 'alliance', 'shared'].includes(template_scope) ? template_scope : null,
       id
     ]);
 
@@ -4077,8 +4233,34 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
 
     const workbook = xlsx.readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
-    const results = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    const results = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '', raw: false });
     const isCampaignBatch = String(req.body.force_source || '').startsWith('csv_');
+
+    if (isCampaignBatch && req.body.template_id) {
+      const templateResult = await pool.query('SELECT body, header FROM templates WHERE id = $1', [req.body.template_id]);
+      if (!templateResult.rows.length) return res.status(400).json({ error: 'Selected template was not found.' });
+      const requiredColumns = [
+        ...getTemplateVariableNumbers(templateResult.rows[0].header).map((number) => `Header {{${number}}}`),
+        ...getTemplateVariableNumbers(templateResult.rows[0].body).map((number) => `Body {{${number}}}`),
+      ];
+      const headerRow = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, blankrows: false })[0] || [];
+      const availableColumns = new Set(headerRow.map((value) => String(value).trim().toLowerCase()));
+      const hasParameterColumn = (column) => {
+        const prefix = column.toLowerCase();
+        return [...availableColumns].some((available) => available === prefix || available.startsWith(`${prefix} - `));
+      };
+      const missingColumns = requiredColumns.filter((column) => !hasParameterColumn(column));
+      if (missingColumns.length) {
+        return res.status(400).json({ error: `Excel sheet is missing required columns: ${missingColumns.join(', ')}. Download the sheet for the selected template and keep its headings unchanged.` });
+      }
+      const incompleteRow = results.findIndex((row) => requiredColumns.some((column) => {
+        const actualKey = Object.keys(row).find((key) => key.toLowerCase() === column.toLowerCase() || key.toLowerCase().startsWith(`${column.toLowerCase()} - `));
+        return !actualKey || !String(row[actualKey] ?? '').trim();
+      }));
+      if (incompleteRow !== -1) {
+        return res.status(400).json({ error: `Excel row ${incompleteRow + 2} has an empty template parameter. Fill every ${requiredColumns.join(', ')} value.` });
+      }
+    }
 
     if (isCampaignBatch) {
       await pool.query(`
@@ -4086,9 +4268,11 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
           batch_id VARCHAR(30) NOT NULL,
           lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
           created_at TIMESTAMP DEFAULT NOW(),
+          template_parameters JSONB NOT NULL DEFAULT '{}'::jsonb,
           PRIMARY KEY (batch_id, lead_id)
         )
       `);
+      await pool.query(`ALTER TABLE campaign_import_recipients ADD COLUMN IF NOT EXISTS template_parameters JSONB NOT NULL DEFAULT '{}'::jsonb`);
     }
 
     const [clientsRes, usersRes] = await Promise.all([
@@ -4278,12 +4462,17 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         }
 
         if (isCampaignImport) {
+          const rowTemplateParameters = { header: {}, body: {} };
+          for (const [column, value] of Object.entries(row)) {
+            const match = String(column).match(/^(Header|Body)\s*\{\{\s*(\d+)\s*\}\}(?:\s*-.*)?$/i);
+            if (match) rowTemplateParameters[match[1].toLowerCase()][match[2]] = String(value ?? '').trim();
+          }
           console.log(`[Campaign Import] Linking lead ${importedLeadId} to batch ${req.body.force_source}`);
           await pool.query(`
-            INSERT INTO campaign_import_recipients (batch_id, lead_id)
-            VALUES ($1, $2)
-            ON CONFLICT (batch_id, lead_id) DO NOTHING
-          `, [req.body.force_source, importedLeadId]);
+            INSERT INTO campaign_import_recipients (batch_id, lead_id, template_parameters)
+            VALUES ($1, $2, $3::jsonb)
+            ON CONFLICT (batch_id, lead_id) DO UPDATE SET template_parameters = EXCLUDED.template_parameters
+          `, [req.body.force_source, importedLeadId, JSON.stringify(rowTemplateParameters)]);
         }
 
         imported++;
@@ -4431,14 +4620,14 @@ app.get('/api/campaigns', auth, async (req, res) => {
 });
 app.post('/api/campaigns', auth, async (req, res) => {
   try {
-    const { name, client_id, template_id, target_status, scheduled_at, send_immediately } = req.body;
+    const { name, client_id, template_id, target_status, scheduled_at, send_immediately, template_parameters = {} } = req.body;
 
     if (!name || !client_id || !template_id || !target_status) {
       return res.status(400).json({ error: 'Campaign name, brand, template, and target audience are required.' });
     }
 
     const templateResult = await pool.query(
-      'SELECT id, name, status, body, header, client_id FROM templates WHERE id = $1',
+      'SELECT id, name, status, body, header, client_id, parameter_definitions FROM templates WHERE id = $1',
       [template_id]
     );
     if (!templateResult.rows.length) {
@@ -4455,15 +4644,23 @@ app.post('/api/campaigns', auth, async (req, res) => {
     if (templateError) {
       return res.status(400).json({ error: templateError });
     }
+    const parameterError = validateCampaignParameterMappings(selectedTemplate, template_parameters);
+    if (parameterError) return res.status(400).json({ error: parameterError });
+    const usesExcelParameters = ['header', 'body'].some((section) =>
+      Object.values(template_parameters?.[section] || {}).some((mapping) => mapping?.source === 'excel_parameter')
+    );
+    if (usesExcelParameters && !String(target_status).startsWith('csv_')) {
+      return res.status(400).json({ error: 'Excel parameter columns can only be used with an uploaded custom list.' });
+    }
 
     // Determine initial status
     const initialStatus = scheduled_at && new Date(scheduled_at) > new Date() ? 'scheduled' : 'scheduled';
 
     const { rows } = await pool.query(`
-      INSERT INTO campaigns (name, client_id, template_id, target_status, scheduled_at, status, created_by, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      INSERT INTO campaigns (name, client_id, template_id, target_status, scheduled_at, status, created_by, created_at, template_parameters)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
       RETURNING *
-    `, [name, client_id, template_id, target_status, scheduled_at, initialStatus, req.user.id]);
+    `, [name, client_id, template_id, target_status, scheduled_at, initialStatus, req.user.id, JSON.stringify(template_parameters)]);
 
     const campaign = rows[0];
 
@@ -4507,7 +4704,9 @@ async function executeCampaign(campaign_id) {
     `).catch(() => {}); // Ignore if already exists
 
     const campRes = await pool.query(`
-      SELECT c.*, t.body as template_body, t.header as template_header, t.name as template_name, cl.wa_access_token, cl.phone_number_id, cl.whatsapp_status
+      SELECT c.*, t.body as template_body, t.header as template_header, t.name as template_name,
+             t.language as template_language, cl.name as brand_name,
+             cl.wa_access_token, cl.phone_number_id, cl.whatsapp_status
       FROM campaigns c
       JOIN templates t ON c.template_id = t.id
       LEFT JOIN clients cl ON c.client_id = cl.id
@@ -4527,6 +4726,15 @@ async function executeCampaign(campaign_id) {
     if (templateError) {
       await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
       console.error(`Campaign ${campaign_id}: ${templateError}`);
+      return;
+    }
+    const parameterError = validateCampaignParameterMappings(
+      { body: campaign.template_body, header: campaign.template_header },
+      campaign.template_parameters || {}
+    );
+    if (parameterError) {
+      await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
+      console.error(`Campaign ${campaign_id}: ${parameterError}`);
       return;
     }
 
@@ -4558,7 +4766,7 @@ async function executeCampaign(campaign_id) {
       // A custom upload is an exact audience. Existing leads may belong to a
       // different CRM brand, but the selected campaign brand supplies the
       // WhatsApp credentials used for this send.
-      leadsQuery = `SELECT l.id, l.phone, l.name
+      leadsQuery = `SELECT l.id, l.phone, l.name, l.email, l.status, l.source, l.interest, l.score, cir.template_parameters
         FROM leads l
         JOIN campaign_import_recipients cir ON cir.lead_id = l.id
         WHERE cir.batch_id = $1
@@ -4568,7 +4776,7 @@ async function executeCampaign(campaign_id) {
       queryParams.push(campaign.target_status);
     } else {
       // Regular target status (new, warm, cold, etc.) or all leads
-      leadsQuery = `SELECT id, phone, name FROM leads WHERE client_id = $1`;
+      leadsQuery = `SELECT id, phone, name, email, status, source, interest, score FROM leads WHERE client_id = $1`;
       queryParams.push(campaign.client_id);
 
       if (campaign.target_status && campaign.target_status !== 'all') {
@@ -4579,6 +4787,27 @@ async function executeCampaign(campaign_id) {
 
     let leadsRes = await pool.query(leadsQuery, queryParams);
     let leads = leadsRes.rows;
+
+    const excelMappings = ['header', 'body'].flatMap((section) =>
+      Object.entries(campaign.template_parameters?.[section] || {})
+        .filter(([, mapping]) => mapping?.source === 'excel_parameter')
+        .map(([number]) => ({ section, number }))
+    );
+    if (excelMappings.length) {
+      if (!campaign.target_status?.startsWith('csv_')) {
+        await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
+        console.error(`Campaign ${campaign_id}: Excel parameter mappings require a custom Excel audience.`);
+        return;
+      }
+      const incomplete = leads.find((lead) => excelMappings.some(({ section, number }) =>
+        !String(lead.template_parameters?.[section]?.[number] || '').trim()
+      ));
+      if (incomplete) {
+        await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
+        console.error(`Campaign ${campaign_id}: recipient ${incomplete.id} has missing Excel parameter values.`);
+        return;
+      }
+    }
 
     console.log(`[Campaign ${campaign_id}] Query: ${leadsQuery}`);
     console.log(`[Campaign ${campaign_id}] Params: ${JSON.stringify(queryParams)}`);
@@ -4613,7 +4842,12 @@ async function executeCampaign(campaign_id) {
     // Add all messages to the queue - the queue processor will send them with rate limiting
     await addToCampaignQueue(campaign_id, leads, {
       template_name: campaign.template_name,
+      template_language: campaign.template_language,
       template_body: campaign.template_body,
+      template_header: campaign.template_header,
+      template_parameters: campaign.template_parameters,
+      campaign_name: campaign.name,
+      brand_name: campaign.brand_name,
       wa_access_token: waToken,
       phone_number_id: phoneId
     });

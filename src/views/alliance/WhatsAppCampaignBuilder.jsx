@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   Trash2,
   Users,
+  Download,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { api } from "../../services/api.js";
@@ -77,7 +78,7 @@ export const WhatsAppCampaignBuilder = () => {
       .then(([templateData, options, campaignData]) => {
         setTemplates(
           (templateData.templates || []).filter(
-            (item) => String(item.status).toLowerCase() === "approved",
+            (item) => String(item.status).toLowerCase() === "approved" && (!item.template_scope || ["alliance", "shared"].includes(item.template_scope)),
           ),
         );
         setAudiences(options.audiences || []);
@@ -136,21 +137,31 @@ export const WhatsAppCampaignBuilder = () => {
     [followupTemplate],
   );
   useEffect(() => {
+    const defaultField = (index) => {
+      const source = template?.parameter_definitions?.body?.[String(index + 1)]?.default_source;
+      if (source === 'recipient_name') return 'name';
+      if (source === 'brand_name') return 'business_name';
+      return ["name", "business_name", "location"][index] || "name";
+    };
     setMapping(
       Array.from(
         { length: variableCount },
-        (_, index) => ["name", "business_name", "location"][index] || "name",
+        (_, index) => defaultField(index),
       ),
     );
-  }, [variableCount]);
+  }, [variableCount, template]);
   useEffect(() => {
     setFollowupMapping(
       Array.from(
         { length: followupVariableCount },
-        (_, index) => ["name", "business_name", "location"][index] || "name",
+        (_, index) => {
+          const source = followupTemplate?.parameter_definitions?.body?.[String(index + 1)]?.default_source;
+          return ['name','business_name','location','phone','email','audience','industry','status','consent_source'].includes(source)
+            ? source : (["name", "business_name", "location"][index] || "name");
+        },
       ),
     );
-  }, [followupVariableCount]);
+  }, [followupVariableCount, followupTemplate]);
   const selectedIds = Object.keys(selected).map(Number);
   const previewLead = Object.values(selected)[0] ||
     prospects[0] || {
@@ -384,6 +395,9 @@ export const WhatsAppCampaignBuilder = () => {
                 </header>
                 <div>{template.body}</div>
                 {template.footer && <small>{template.footer}</small>}
+                <a href={`${api.baseUrl}/api/templates/${template.id}/campaign-sheet`} download className="al-button secondary" style={{ marginTop: 10, width: 'fit-content', textDecoration: 'none' }}>
+                  <Download size={14} /> Download parameter Excel
+                </a>
               </div>
             )}
             {variableCount > 0 && (
@@ -391,7 +405,7 @@ export const WhatsAppCampaignBuilder = () => {
                 <b>Template variable mapping</b>
                 {mapping.map((field, index) => (
                   <label key={index}>
-                    <span>{`{{${index + 1}}}`}</span>
+                    <span>{`{{${index + 1}}}`}<small style={{ display: 'block' }}>{template?.parameter_definitions?.body?.[String(index + 1)]?.label || `Parameter ${index + 1}`}</small></span>
                     <select
                       value={field}
                       onChange={(e) =>
@@ -405,6 +419,12 @@ export const WhatsAppCampaignBuilder = () => {
                       <option value="name">Lead name</option>
                       <option value="business_name">Business name</option>
                       <option value="location">Location</option>
+                      <option value="phone">Prospect phone</option>
+                      <option value="email">Prospect email</option>
+                      <option value="audience">Audience</option>
+                      <option value="industry">Industry</option>
+                      <option value="status">Prospect status</option>
+                      <option value="consent_source">Consent source</option>
                     </select>
                     <em>{valueFor(field)}</em>
                   </label>
@@ -450,7 +470,7 @@ export const WhatsAppCampaignBuilder = () => {
               </div>
               {followupTemplate && <>
                 <div className="al-wa-template"><header><b>{followupTemplate.name}</b><span>n8n reminder · approved</span></header><div>{followupTemplate.body}</div></div>
-                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field, index) => <label key={index}><span>{`{{${index + 1}}}`}</span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value, i) => i === index ? e.target.value : value))}><option value="name">Lead name</option><option value="business_name">Business name</option><option value="location">Location</option></select><em>{valueFor(field)}</em></label>)}</div>}
+                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field, index) => <label key={index}><span>{`{{${index + 1}}}`}<small style={{ display: 'block' }}>{followupTemplate?.parameter_definitions?.body?.[String(index + 1)]?.label || `Parameter ${index + 1}`}</small></span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value, i) => i === index ? e.target.value : value))}><option value="name">Prospect contact name</option><option value="business_name">Business name</option><option value="location">Location</option><option value="phone">Phone</option><option value="email">Email</option><option value="audience">Audience</option><option value="industry">Industry</option><option value="status">Status</option><option value="consent_source">Consent source</option></select><em>{valueFor(field)}</em></label>)}</div>}
                 <small className="al-help">The approved reminder repeats only while the lead is inactive. It stops automatically for Not Interested, Closed, Converted, Completed, Unsubscribed, or suppressed leads. A recipient reply pauses reminders; a later admin/AI reply starts a fresh inactivity timer.</small>
               </>}
             </div>

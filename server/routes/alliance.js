@@ -70,8 +70,74 @@ function valueFrom(row, names) {
   return '';
 }
 
-function parseRows(buffer) {
-  const workbook = xlsx.read(buffer, { type: 'buffer' });
+function repairImportedEncoding(value) {
+  if (typeof value !== 'string') return value;
+  let repaired = value.replace(/^\uFEFF/, '').normalize('NFC');
+  // Typical UTF-8 decoded as Latin-1/Windows-1252. Only attempt repair when
+  // suspicious byte-pair markers exist, so legitimate multilingual text stays intact.
+  for (let pass = 0; pass < 2 && /(?:Ã|Â|â|ð|à)[\x80-\xBF]/.test(repaired); pass += 1) {
+    const candidate = Buffer.from(repaired, 'latin1').toString('utf8');
+    if (candidate.includes('\uFFFD')) break;
+    const beforeMarkers = (repaired.match(/(?:Ã|Â|â|ð|à)[\x80-\xBF]/g) || []).length;
+    const afterMarkers = (candidate.match(/(?:Ã|Â|â|ð|à)[\x80-\xBF]/g) || []).length;
+    if (afterMarkers >= beforeMarkers) break;
+    repaired = candidate.normalize('NFC');
+  }
+  // Strip unsafe controls while preserving tabs/newlines used inside valid cells.
+  return repaired.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
+}
+
+function decodeCsvBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('CSV file is empty.');
+  let decoded;
+  if (buffer.length >= 4 && buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0xfe && buffer[3] === 0xff) {
+    throw new Error('UTF-32 CSV files are not supported. Save the file as UTF-8 CSV or XLSX.');
+  }
+  if (buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xfe && buffer[2] === 0x00 && buffer[3] === 0x00) {
+    throw new Error('UTF-32 CSV files are not supported. Save the file as UTF-8 CSV or XLSX.');
+  }
+  if (buffer[0] === 0xff && buffer[1] === 0xfe) {
+    decoded = new TextDecoder('utf-16le', { fatal: true }).decode(buffer.subarray(2));
+  } else if (buffer[0] === 0xfe && buffer[1] === 0xff) {
+    decoded = new TextDecoder('utf-16be', { fatal: true }).decode(buffer.subarray(2));
+  } else {
+    const sampleLength = Math.min(buffer.length, 2000);
+    let evenNulls = 0;
+    let oddNulls = 0;
+    for (let index = 0; index < sampleLength; index += 1) {
+      if (buffer[index] === 0) {
+        if (index % 2 === 0) evenNulls += 1;
+        else oddNulls += 1;
+      }
+    }
+    if (oddNulls > sampleLength * 0.2 && evenNulls < sampleLength * 0.02) {
+      decoded = new TextDecoder('utf-16le', { fatal: true }).decode(buffer);
+    } else if (evenNulls > sampleLength * 0.2 && oddNulls < sampleLength * 0.02) {
+      decoded = new TextDecoder('utf-16be', { fatal: true }).decode(buffer);
+    }
+  }
+  if (decoded === undefined) {
+    try {
+      decoded = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch {
+      // Legacy exports from older Windows tools are commonly Windows-1252.
+      decoded = new TextDecoder('windows-1252', { fatal: true }).decode(buffer);
+    }
+  }
+  decoded = decoded.replace(/^\uFEFF/, '');
+  if (decoded.includes('\u0000') || /\uFFFD/.test(decoded)) {
+    throw new Error('CSV encoding could not be detected safely. Save the file as UTF-8 CSV or XLSX.');
+  }
+  return decoded;
+}
+
+function parseRows(buffer, originalName = '') {
+  const isCsv = /\.csv$/i.test(originalName);
+  // SheetJS may apply a legacy code page when a CSV is supplied as a Buffer.
+  // Decoding explicitly guarantees that UTF-8 Tamil, emoji, and styled Unicode survive.
+  const workbook = isCsv
+    ? xlsx.read(decodeCsvBuffer(buffer), { type: 'string' })
+    : xlsx.read(buffer, { type: 'buffer' });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const formattedRows = xlsx.utils.sheet_to_json(sheet, { defval: '', raw: false });
   const rawRows = xlsx.utils.sheet_to_json(sheet, { defval: '', raw: true });
@@ -91,7 +157,10 @@ function parseRows(buffer) {
         merged[key] = String(rawValue).trim();
       }
     }
-    return merged;
+    return Object.fromEntries(Object.entries(merged).map(([key, value]) => [
+      repairImportedEncoding(key),
+      typeof value === 'string' ? repairImportedEncoding(value) : value,
+    ]));
   });
 }
 
@@ -354,9 +423,10 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
 
   let rows;
   try {
-    rows = parseRows(req.file.buffer);
+    rows = parseRows(req.file.buffer, req.file.originalname);
   } catch (error) {
-    return res.status(400).json({ error: 'The uploaded spreadsheet could not be read.' });
+    const safeEncodingError = /(?:CSV|UTF-|encoding)/i.test(error.message || '') ? error.message : null;
+    return res.status(400).json({ error: safeEncodingError || 'The uploaded spreadsheet could not be read.' });
   }
   if (!rows.length) return res.status(400).json({ error: 'The uploaded file has no prospect rows.' });
   if (rows.length > 5000) return res.status(400).json({ error: 'A maximum of 5,000 rows is allowed per upload.' });
@@ -387,6 +457,8 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       const row = rows[index];
       const rowNo = index + 2;
       const businessName = text(valueFrom(row, ['business_name', 'business name', 'organisation name', 'organization name']));
+      // Preserve the contact name exactly as supplied. A contact and business may
+      // legitimately share the same display name, so never infer that one is redundant.
       const name = text(valueFrom(row, ['name', 'contact name', 'principal name']));
       const audience = text(valueFrom(row, ['audience'])).toLowerCase() || defaultAudience;
       const emailRaw = text(valueFrom(row, ['email']));
@@ -606,6 +678,155 @@ router.get('/prospects', async (req, res) => {
   }
 });
 
+router.put('/audiences/:code', async (req, res) => {
+  const code = text(req.params.code).toLowerCase();
+  const label = text(req.body.label);
+  const brand = text(req.body.brand);
+  const defaultChannel = text(req.body.default_channel).toLowerCase();
+  const fields = Array.isArray(req.body.fields) ? req.body.fields : [];
+  if (!label) return res.status(400).json({ error: 'Audience label is required.' });
+  if (!['email', 'whatsapp'].includes(defaultChannel)) return res.status(400).json({ error: 'Default channel must be email or whatsapp.' });
+  if (fields.length > 50) return res.status(400).json({ error: 'A maximum of 50 custom fields is allowed.' });
+  const normalizedFields = [];
+  const seen = new Set();
+  for (const [index, field] of fields.entries()) {
+    const fieldKey = text(field.field_key).toLowerCase();
+    const dataType = text(field.data_type || 'text').toLowerCase();
+    if (!/^[a-z][a-z0-9_]*$/.test(fieldKey) || COMMON_FIELDS.has(fieldKey) || seen.has(fieldKey)) return res.status(400).json({ error: `Invalid or duplicate custom field: ${fieldKey || index + 1}` });
+    if (!['auto', 'text', 'integer', 'number', 'boolean', 'date'].includes(dataType)) return res.status(400).json({ error: `Invalid data type for ${fieldKey}.` });
+    if (!text(field.sample_value)) return res.status(400).json({ error: `Add a sample value for ${fieldKey}.` });
+    seen.add(fieldKey);
+    normalizedFields.push({ fieldKey, label: text(field.label) || fieldKey.replace(/_/g, ' '), dataType, required: Boolean(field.required), sampleValue: text(field.sample_value), sortOrder: index });
+  }
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const audienceResult = await client.query(
+      `UPDATE alliance_audiences SET label=$1, brand=$2, default_channel=$3, updated_at=NOW()
+       WHERE code=$4 AND active=TRUE RETURNING *`,
+      [label, brand || null, defaultChannel, code]
+    );
+    if (!audienceResult.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Audience not found.' }); }
+    const audienceId = audienceResult.rows[0].id;
+    await client.query(`UPDATE alliance_audience_fields SET active=FALSE WHERE audience_id=$1`, [audienceId]);
+    for (const field of normalizedFields) {
+      await client.query(
+        `INSERT INTO alliance_audience_fields (audience_id,field_key,label,data_type,required,sample_value,sort_order,active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE)
+         ON CONFLICT (audience_id,field_key) DO UPDATE SET label=EXCLUDED.label,data_type=EXCLUDED.data_type,
+           required=EXCLUDED.required,sample_value=EXCLUDED.sample_value,sort_order=EXCLUDED.sort_order,active=TRUE`,
+        [audienceId, field.fieldKey, field.label, field.dataType, field.required, field.sampleValue, field.sortOrder]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ success: true, audience: { ...audienceResult.rows[0], fields: normalizedFields }, message: 'Audience configuration updated.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Alliance audience update failed:', error);
+    res.status(500).json({ error: 'Failed to update audience configuration.' });
+  } finally { client.release(); }
+});
+
+router.delete('/audiences/:code', async (req, res) => {
+  const code = text(req.params.code).toLowerCase();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const audienceResult = await client.query(`SELECT id,label FROM alliance_audiences WHERE code=$1 AND active=TRUE FOR UPDATE`, [code]);
+    if (!audienceResult.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Audience not found.' }); }
+    const usage = await client.query(
+      `SELECT (SELECT COUNT(*) FROM alliance_prospects WHERE audience=$1)::int AS prospects,
+              (SELECT COUNT(*) FROM alliance_campaigns WHERE audience=$1)::int AS campaigns`, [code]
+    );
+    if (usage.rows[0].prospects || usage.rows[0].campaigns) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `This audience is used by ${usage.rows[0].prospects} prospect(s) and ${usage.rows[0].campaigns} campaign(s). Remove those records before deleting the audience.` });
+    }
+    await client.query(`DELETE FROM alliance_sequences WHERE audience=$1`, [code]);
+    await client.query(`DELETE FROM alliance_templates WHERE audience=$1`, [code]);
+    await client.query(`DELETE FROM alliance_audiences WHERE id=$1`, [audienceResult.rows[0].id]);
+    await client.query('COMMIT');
+    res.json({ success: true, message: `Audience "${audienceResult.rows[0].label}" deleted.` });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Alliance audience delete failed:', error);
+    res.status(500).json({ error: 'Failed to delete audience.' });
+  } finally { client.release(); }
+});
+
+router.post('/prospects/repair-imported-names', async (req, res) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT id, name, business_name, industry, location, source
+       FROM alliance_prospects
+       ORDER BY id
+       FOR UPDATE`
+    );
+    let repaired = 0;
+    let encodingRepairs = 0;
+    const repairedIds = [];
+
+    for (const prospect of result.rows) {
+      const businessName = repairImportedEncoding(prospect.business_name);
+      const importedName = repairImportedEncoding(prospect.name || '');
+      const name = importedName || null;
+      const industry = prospect.industry == null ? null : repairImportedEncoding(prospect.industry);
+      const location = prospect.location == null ? null : repairImportedEncoding(prospect.location);
+      const source = prospect.source == null ? null : repairImportedEncoding(prospect.source);
+      const encodingChanged = businessName !== prospect.business_name
+        || importedName !== (prospect.name || '')
+        || industry !== prospect.industry || location !== prospect.location || source !== prospect.source;
+      if (!encodingChanged) continue;
+
+      await client.query(
+        `UPDATE alliance_prospects
+         SET business_name = $1, name = $2, industry = $3, location = $4, source = $5, updated_at = NOW()
+         WHERE id = $6`,
+        [businessName, name, industry, location, source, prospect.id]
+      );
+      repairedIds.push(prospect.id);
+      repaired += 1;
+      if (encodingChanged) encodingRepairs += 1;
+    }
+
+    if (repairedIds.length) {
+      await client.query(
+        `UPDATE alliance_inbox_contacts c
+         SET name = COALESCE(p.name, p.business_name),
+             profile_name = COALESCE(p.name, p.business_name),
+             custom_fields = COALESCE(c.custom_fields, '{}'::jsonb)
+               || jsonb_build_object('business_name', p.business_name),
+             updated_at = NOW()
+         FROM alliance_prospects p
+         WHERE c.prospect_id = p.id
+           AND p.id = ANY($1::bigint[])
+           AND c.source = 'file_upload'`,
+        [repairedIds]
+      );
+    }
+
+    await client.query('COMMIT');
+    req.app.get('io')?.emit('alliance_contacts_changed', { repaired });
+    res.json({
+      success: true,
+      scanned: result.rowCount,
+      repaired,
+      encoding_repairs: encodingRepairs,
+      message: repaired
+        ? `Repaired ${repaired} prospect record${repaired === 1 ? '' : 's'}.`
+        : 'No damaged or duplicated prospect names were found.',
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Alliance prospect name repair failed:', error);
+    res.status(500).json({ error: 'Failed to repair imported prospect names.' });
+  } finally {
+    client.release();
+  }
+});
+
 router.post('/prospects', async (req, res) => {
   try {
     const audience = text(req.body.audience).toLowerCase();
@@ -737,6 +958,8 @@ function campaignProspectFilters(query) {
   if (query.status) add('p.status = ?', text(query.status));
   if (query.source) add('p.source = ?', text(query.source));
   if (query.location) add('p.location = ?', text(query.location));
+  if (query.dateFrom) add('p.created_at >= ?::date', text(query.dateFrom));
+  if (query.dateTo) add(`p.created_at < (?::date + INTERVAL '1 day')`, text(query.dateTo));
   if (query.tag) add('? = ANY(p.tags)', text(query.tag));
   if (query.search) {
     values.push(text(query.search));
@@ -936,8 +1159,8 @@ router.get('/campaign-builder/prospects', async (req, res) => {
     const count = await db.query(`SELECT COUNT(*)::int AS total FROM alliance_prospects p WHERE ${where.join(' AND ')}`, values);
     values.push(limit, offset);
     const result = await db.query(
-      `SELECT p.id, p.name, p.business_name, p.email, p.audience, p.industry, p.location,
-              p.status, p.source, p.tags, p.ai_score, p.created_at
+      `SELECT p.id, p.name, p.business_name, p.email, p.phone, p.audience, p.industry, p.location,
+              p.status, p.source, p.consent_source, p.custom_fields, p.tags, p.ai_score, p.created_at
        FROM alliance_prospects p WHERE ${where.join(' AND ')}
        ORDER BY p.created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
       values
@@ -976,34 +1199,128 @@ router.post('/campaign-builder/ai-suggestion', async (req, res) => {
   try {
     const audience = text(req.body.audience).toLowerCase();
     const objective = text(req.body.objective);
+    const requestedTouchNo = Math.max(1, Number(req.body.touch_no) || 1);
     const audienceResult = await db.query(`SELECT code, label, brand FROM alliance_audiences WHERE code = $1 AND active = TRUE`, [audience]);
     if (!audienceResult.rowCount) return res.status(400).json({ error: 'Select a valid audience.' });
     const base = await baseEmailSequence(audience);
     if (!base.length) return res.status(409).json({ error: 'No base email templates are configured for this audience.' });
-    if (!openRouter.isConfigured) return res.json({ templates: base, ai_generated: false, warning: 'OpenRouter is not configured; base templates were returned.' });
+    const selectedBase = base.find((item) => Number(item.touch_no) === requestedTouchNo);
+    if (!selectedBase) return res.status(400).json({ error: `Touch ${requestedTouchNo} is not configured for this audience.` });
+    const currentTemplate = req.body.current_template && typeof req.body.current_template === 'object'
+      ? { ...selectedBase, ...req.body.current_template, touch_no: requestedTouchNo }
+      : selectedBase;
+    if (!openRouter.isConfigured) return res.json({ template: currentTemplate, ai_generated: false, warning: 'OpenRouter is not configured; the current template was returned.' });
     const brain = await getAllianceBrainContext(audience, objective);
     const campaignRules = await getAlliancePromptRules('campaign_message', 'email', audience);
     const followupRules = await getAlliancePromptRules('followup', 'email', audience);
-    const prompt = `You are AllianceOS's B2B cold-email campaign editor. Create exactly four concise emails for human review.
+    const prompt = `You are AllianceOS's B2B cold-email campaign editor. Rewrite one selected email touch for human review.
 Brand: ${audienceResult.rows[0].brand || 'ABM Groups'}
 Audience: ${audienceResult.rows[0].label}
 Campaign objective: ${objective || 'Start a relevant business conversation'}
 Approved AI Brain data: ${brain ? JSON.stringify(brain) : 'No Brain data is configured. Do not invent brand facts.'}
-Base sequence: ${JSON.stringify(base)}
+Selected touch: ${JSON.stringify(currentTemplate)}
 Administrator campaign rules:
 ${campaignRules}
 Administrator follow-up/reminder rules:
 ${followupRules}
-System rules: preserve {{name}}, {{org}}, and {{location}} variables; one clear CTA; no invented claims; include the existing unsubscribe instruction; do not exceed 100 words per email. Brain facts are authoritative and administrator rules may control tone or behavior but may never introduce unsupported factual claims.
-Return JSON only: {"templates":[{"touch_no":1,"delay_days":0,"purpose":"...","subject":"...","body":"..."}, ...]}`;
+System rules: preserve every {{field_name}} variable present in the selected touch exactly; one clear CTA; no invented claims; include the existing unsubscribe instruction; do not exceed 100 words per email. Brain facts are authoritative and administrator rules may control tone or behavior but may never introduce unsupported factual claims.
+Return JSON only: {"template":{"touch_no":${requestedTouchNo},"delay_days":${Number(currentTemplate.delay_days) || 0},"purpose":"...","subject":"...","body":"..."}}`;
     const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.4, maxOutputTokens: 2400 } });
     const parsed = JSON.parse(String(generated.text).replace(/^```json\s*|\s*```$/g, ''));
-    if (!Array.isArray(parsed.templates) || parsed.templates.length !== 4) throw new Error('AI returned an invalid sequence.');
-    res.json({ templates: parsed.templates, ai_generated: true });
+    if (!parsed.template?.subject || !parsed.template?.body) throw new Error('AI returned an invalid email touch.');
+    res.json({ template: { ...currentTemplate, ...parsed.template, touch_no: requestedTouchNo }, ai_generated: true });
   } catch (error) {
     console.error('Alliance AI campaign suggestion failed:', error);
     res.status(502).json({ error: error.message || 'AI suggestion failed.' });
   }
+});
+
+router.put('/campaign-builder/templates/:touchNo', async (req, res) => {
+  const audience = text(req.body.audience).toLowerCase();
+  const touchNo = Math.max(1, Number(req.params.touchNo) || 1);
+  const subject = text(req.body.subject);
+  const body = text(req.body.body);
+  const purpose = text(req.body.purpose);
+  const delayDays = Math.min(Math.max(Number(req.body.delay_days) || 0, 0), 30);
+  if (!audience || !subject || !body) return res.status(400).json({ error: 'Audience, subject, and body are required.' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const template = await client.query(
+      `UPDATE alliance_templates SET subject=$1,body=$2,updated_at=NOW()
+       WHERE audience=$3 AND channel='email' AND touch_no=$4 AND active=TRUE RETURNING *`,
+      [subject, body, audience, touchNo]
+    );
+    if (!template.rowCount) throw Object.assign(new Error(`Touch ${touchNo} is not configured for this audience.`), { status: 404 });
+    await client.query(
+      `UPDATE alliance_sequences SET delay_days=$1,purpose=COALESCE(NULLIF($2,''),purpose)
+       WHERE audience=$3 AND channel='email' AND touch_no=$4 AND active=TRUE`,
+      [delayDays, purpose, audience, touchNo]
+    );
+    await client.query('COMMIT');
+    res.json({ success: true, template: template.rows[0], message: `Touch ${touchNo} saved as the default template.` });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(error.status || 500).json({ error: error.message || 'Unable to save email template.' });
+  } finally { client.release(); }
+});
+
+router.post('/campaign-builder/templates', async (req, res) => {
+  const audience = text(req.body.audience).toLowerCase();
+  if (!audience) return res.status(400).json({ error: 'Select a target audience first.' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const audienceRow = await client.query(`SELECT code FROM alliance_audiences WHERE code=$1 AND active=TRUE`, [audience]);
+    if (!audienceRow.rowCount) throw Object.assign(new Error('Select a valid target audience.'), { status: 400 });
+    const next = await client.query(
+      `SELECT COALESCE(MAX(touch_no),0)+1 AS touch_no FROM alliance_sequences WHERE audience=$1 AND channel='email'`,
+      [audience]
+    );
+    const touchNo = Number(next.rows[0].touch_no);
+    if (touchNo > 10) throw Object.assign(new Error('A maximum of 10 email touches is supported.'), { status: 400 });
+    const previous = await client.query(
+      `SELECT COALESCE(MAX(delay_days),-2) AS delay_days FROM alliance_sequences WHERE audience=$1 AND channel='email' AND active=TRUE`,
+      [audience]
+    );
+    const delayDays = Math.min(Number(previous.rows[0].delay_days) + 2, 30);
+    await client.query(
+      `INSERT INTO alliance_sequences(audience,channel,touch_no,delay_days,purpose,active)
+       VALUES($1,'email',$2,$3,$4,TRUE)`,
+      [audience, touchNo, delayDays, `Follow-up touch ${touchNo}`]
+    );
+    await client.query(
+      `INSERT INTO alliance_templates(audience,channel,touch_no,subject,body,provider_status,active)
+       VALUES($1,'email',$2,$3,$4,'draft',TRUE)`,
+      [audience, touchNo, `Follow-up for {{org}}`, `Hi {{name}},\n\nAdd your message for {{org}} here.\n\nTo stop receiving these, reply "unsubscribe".`]
+    );
+    await client.query('COMMIT');
+    const templates = await baseEmailSequence(audience);
+    res.status(201).json({ success: true, templates, touch_no: touchNo, message: `Touch ${touchNo} created for ${audience}.` });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(error.status || 500).json({ error: error.message || 'Unable to create email touch.' });
+  } finally { client.release(); }
+});
+
+router.delete('/campaign-builder/templates/:touchNo', async (req, res) => {
+  const audience = text(req.query.audience).toLowerCase();
+  const touchNo = Math.max(1, Number(req.params.touchNo) || 1);
+  if (!audience) return res.status(400).json({ error: 'Target audience is required.' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const max = await client.query(`SELECT MAX(touch_no)::int AS touch_no FROM alliance_sequences WHERE audience=$1 AND channel='email' AND active=TRUE`, [audience]);
+    if (Number(max.rows[0].touch_no) !== touchNo) throw Object.assign(new Error('Delete the last touch first to keep the sequence order valid.'), { status: 409 });
+    if (touchNo === 1) throw Object.assign(new Error('An email sequence must keep at least one touch.'), { status: 409 });
+    await client.query(`DELETE FROM alliance_templates WHERE audience=$1 AND channel='email' AND touch_no=$2`, [audience, touchNo]);
+    await client.query(`DELETE FROM alliance_sequences WHERE audience=$1 AND channel='email' AND touch_no=$2`, [audience, touchNo]);
+    await client.query('COMMIT');
+    res.json({ success: true, templates: await baseEmailSequence(audience), message: `Touch ${touchNo} deleted.` });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(error.status || 500).json({ error: error.message || 'Unable to delete email touch.' });
+  } finally { client.release(); }
 });
 
 router.post('/campaigns', async (req, res) => {
@@ -1014,7 +1331,9 @@ router.post('/campaigns', async (req, res) => {
   if (!name) return res.status(400).json({ error: 'Campaign name is required.' });
   if (!audience) return res.status(400).json({ error: 'Audience is required.' });
   if (!prospectIds.length) return res.status(400).json({ error: 'Select at least one lead.' });
-  if (templates.length !== 4) return res.status(400).json({ error: 'Review all four email touches before creating the campaign.' });
+  if (!templates.length || templates.some((template) => !text(template.subject) || !text(template.body))) {
+    return res.status(400).json({ error: 'Review every active email touch before creating the campaign.' });
+  }
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -1046,7 +1365,7 @@ router.post('/campaigns', async (req, res) => {
       [campaign.id, prospectIds]
     );
     for (const [index, template] of templates.entries()) {
-      const touchNo = index + 1;
+      const touchNo = Math.max(1, Number(template.touch_no) || index + 1);
       const subject = text(template.subject);
       const body = text(template.body);
       if (!subject || !body) throw new Error(`Touch ${touchNo} subject and body are required.`);
@@ -1135,6 +1454,9 @@ async function getCampaignReadiness(queryable, campaignId) {
 
 router.get('/campaigns', async (req, res) => {
   try {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 1), 100);
+    const offset = Math.max(Number.parseInt(req.query.offset, 10) || 0, 0);
+    const totalResult = await db.query(`SELECT COUNT(*)::int AS total FROM alliance_campaigns`);
     const result = await db.query(
       `SELECT c.id, c.name, c.audience, c.channel, c.status, c.created_at, c.started_at, c.completed_at,
               COUNT(DISTINCT p.id)::int AS prospects,
@@ -1148,9 +1470,10 @@ router.get('/campaigns', async (req, res) => {
        LEFT JOIN alliance_touches t ON t.campaign_id = c.id
        GROUP BY c.id
        ORDER BY c.created_at DESC
-       LIMIT 100`
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
-    res.json({ campaigns: result.rows });
+    res.json({ campaigns: result.rows, total: totalResult.rows[0]?.total || 0, limit, offset });
   } catch (error) {
     console.error('Alliance campaign list failed:', error);
     res.status(500).json({ error: 'Failed to load AllianceOS campaigns.' });
@@ -1314,10 +1637,44 @@ router.post('/campaigns/:id/stop', async (req, res) => {
   }
 });
 
+router.delete('/campaigns/:id', async (req, res) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const campaignResult = await client.query(
+      `SELECT id, name, status FROM alliance_campaigns WHERE id = $1 FOR UPDATE`,
+      [req.params.id]
+    );
+    if (!campaignResult.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Campaign not found.' });
+    }
+    const campaign = campaignResult.rows[0];
+    if (['running', 'paused'].includes(campaign.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Stop this campaign before deleting it permanently.' });
+    }
+
+    // These tables use SET NULL for audit/history safety, so explicitly remove
+    // campaign-owned records before deleting the campaign itself.
+    await client.query(`DELETE FROM alliance_email_inbound WHERE campaign_id = $1`, [campaign.id]);
+    await client.query(`DELETE FROM alliance_touches WHERE campaign_id = $1`, [campaign.id]);
+    await client.query(`DELETE FROM alliance_campaigns WHERE id = $1`, [campaign.id]);
+    await client.query('COMMIT');
+    res.json({ success: true, message: `Campaign "${campaign.name}" was permanently deleted.` });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Alliance campaign delete failed:', error);
+    res.status(500).json({ error: 'Failed to delete campaign.' });
+  } finally {
+    client.release();
+  }
+});
+
 router.post('/campaigns/:id/test-email', async (req, res) => {
   try {
     const recipient = normalizeEmail(req.body.email);
-    const touchNo = Math.min(Math.max(Number(req.body.touch_no) || 1, 1), 4);
+    const touchNo = Math.min(Math.max(Number(req.body.touch_no) || 1, 1), 10);
     if (!recipient) return res.status(400).json({ error: 'Enter a valid test email address.' });
     const result = await db.query(
       `SELECT c.id AS campaign_id, c.name AS campaign_name, c.audience, c.sender_domain_id,
@@ -1455,8 +1812,8 @@ router.post('/whatsapp-campaigns', async (req,res)=>{
     const template=await client.query(`SELECT id,name,language,body,status,category,header_format FROM templates WHERE id=$1`,[templateId]);
     if(!template.rowCount||String(template.rows[0].status).toLowerCase()!=='approved')throw Object.assign(new Error('Select a Meta-approved registered template.'),{status:409});
     const variableCount=Math.max(0,...[...String(template.rows[0].body).matchAll(/\{\{(\d+)\}\}/g)].map(match=>Number(match[1])));
-    if(mapping.length!==variableCount||mapping.some(field=>!['name','business_name','location'].includes(field)))throw Object.assign(new Error(`Map all ${variableCount} template variables before scheduling.`),{status:400});
-    let followup=null;if(followupTemplateId){const followupResult=await client.query(`SELECT id,name,language,body,status FROM templates WHERE id=$1`,[followupTemplateId]);followup=followupResult.rows[0];if(!followup||String(followup.status).toLowerCase()!=='approved')throw Object.assign(new Error('Select a Meta-approved follow-up template.'),{status:409});const count=Math.max(0,...[...String(followup.body).matchAll(/\{\{(\d+)\}\}/g)].map(match=>Number(match[1])));if(followupMapping.length!==count||followupMapping.some(field=>!['name','business_name','location'].includes(field)))throw Object.assign(new Error(`Map all ${count} follow-up variables.`),{status:400});}
+    if(mapping.length!==variableCount||mapping.some(field=>!['name','business_name','location','phone','email','audience','industry','status','consent_source'].includes(field)))throw Object.assign(new Error(`Map all ${variableCount} template variables before scheduling.`),{status:400});
+    let followup=null;if(followupTemplateId){const followupResult=await client.query(`SELECT id,name,language,body,status FROM templates WHERE id=$1`,[followupTemplateId]);followup=followupResult.rows[0];if(!followup||String(followup.status).toLowerCase()!=='approved')throw Object.assign(new Error('Select a Meta-approved follow-up template.'),{status:409});const count=Math.max(0,...[...String(followup.body).matchAll(/\{\{(\d+)\}\}/g)].map(match=>Number(match[1])));if(followupMapping.length!==count||followupMapping.some(field=>!['name','business_name','location','phone','email','audience','industry','status','consent_source'].includes(field)))throw Object.assign(new Error(`Map all ${count} follow-up variables.`),{status:400});}
     const settings=await getAllianceWhatsAppSettings(client);
     if(!settings)throw Object.assign(new Error('Configure ALLIANCE_WA_PHONE_NUMBER_ID or an active Alliance WhatsApp number.'),{status:409});
     if(!process.env[settings.access_token_env||'ALLIANCE_WA_ACCESS_TOKEN'])throw Object.assign(new Error('Alliance WhatsApp access token is missing.'),{status:409});

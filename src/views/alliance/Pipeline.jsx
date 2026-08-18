@@ -1,82 +1,47 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { RefreshCw, AlertTriangle, ShieldCheck } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { api } from '../../services/api.js';
 import './alliance.css';
 
-const NUMBERS = [
-  { id: 'WA-1', sub: '+91 90xxx · WhatsApp', quality: 'g', label: 'Green', sent: 34, cap: 50, warmup: 'Week 3 · cap 50', warmLabel: 'Warm-up', barClass: 'g' },
-  { id: 'WA-2', sub: '+91 91xxx · WhatsApp', quality: 'y', label: 'Yellow', sent: 9, cap: 15, warmup: 'cap cut 50%', warmLabel: 'Throttled · paused 41h', barClass: 'y' },
-  { id: 'WA-3', sub: '+91 63xxx · WhatsApp', quality: 'g', label: 'Green', sent: 12, cap: 30, warmup: 'Week 2 · cap 30', warmLabel: 'Warm-up', barClass: 'g' },
-  { id: 'getabm.in', sub: 'Email · 3 inboxes', quality: 'g', label: 'Good', sent: 88, cap: 150, warmup: '0.8% · healthy', warmLabel: 'Bounce rate', barClass: 'gold' },
-];
+const maskPhone = (value) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return 'Phone number unavailable';
+  return `${digits.slice(0, 2)} ${digits.slice(2, 4)}${'x'.repeat(Math.max(digits.length - 6, 3))}${digits.slice(-2)}`;
+};
+const statusForNumber = (item) => {
+  if (!item.quality_monitored || !item.quality_rating) return { key:'unknown', label:'Not monitored' };
+  if (item.quality_rating === 'red') return { key:'r', label:'Red' };
+  if (item.quality_rating === 'yellow') return { key:'y', label:'Yellow' };
+  if (item.status !== 'active') return { key:'y', label:item.status };
+  return { key:'g', label:'Green' };
+};
+const statusForDomain = (item) => {
+  const reputation = String(item.reputation || 'unknown').toLowerCase();
+  if (item.status === 'paused' || ['bad','poor'].includes(reputation)) return { key:'r', label:item.status === 'paused' ? 'Paused' : item.reputation };
+  if (item.status !== 'active') return { key:'unknown', label:item.status };
+  if (['good','high','healthy'].includes(reputation)) return { key:'g', label:item.reputation };
+  if (item.imap_last_success_at) return { key:'partial', label:'Partially monitored' };
+  return { key:'unknown', label:'Monitoring unavailable' };
+};
+
+const HealthCard = ({ title, subtitle, status, sent, cap, footerLabel, footerValue, metrics }) => {
+  const percent = cap > 0 ? Math.min(Math.round((sent / cap) * 100), 100) : 0;
+  return <div className="al-ncard"><div className="al-ncard-top"><div className="al-ncard-name">{title}<span>{subtitle}</span></div><span className={`al-lamp ${status.key}`}><span className="d" />{status.label}</span></div><div className="al-meter"><div className="al-meter-lab">Today's sends <b>{sent} / {cap > 0 ? cap : 'Not set'}</b></div><div className="al-bar"><i className={status.key === 'r' ? 'r' : status.key === 'y' ? 'y' : 'g'} style={{width:`${percent}%`}} /></div></div>{metrics?.length > 0 && <div className="al-health-card-metrics">{metrics.map((metric) => <div key={metric.label}><span>{metric.label}</span><b className={metric.tone || ''}>{metric.value}</b></div>)}</div>}<div className="al-warm"><span>{footerLabel}</span><b>{footerValue}</b></div></div>;
+};
 
 export const Pipeline = () => {
-  return (
-    <div className="al-wrap">
-      <div className="al-eyebrow">AllianceOS · Screen 3 · Safety Panel</div>
-      <div className="al-page-title">Number &amp; domain health</div>
-      <p className="al-page-desc">
-        The most important screen. The email domain carries cold outreach; WhatsApp numbers handle campaigns &amp; opted-in chats.
-        Numbers share one daily limit — the pool is for failover, not extra volume.
-        <strong style={{ color: 'var(--al-yellow)' }}> Yellow auto-throttles, red auto-stops.</strong>
-      </p>
-
-      <div className="al-pool">
-        {NUMBERS.map(n => {
-          const pct = Math.round((n.sent / n.cap) * 100);
-          return (
-            <div className="al-ncard" key={n.id}>
-              <div className="al-ncard-top">
-                <div className="al-ncard-name">
-                  {n.id}
-                  <span>{n.sub}</span>
-                </div>
-                <span className={`al-lamp ${n.quality}`}>
-                  <span className="d" />
-                  {n.label}
-                </span>
-              </div>
-              <div className="al-meter">
-                <div className="al-meter-lab">
-                  Today's sends
-                  <b>{n.sent} / {n.cap}</b>
-                </div>
-                <div className="al-bar">
-                  <i className={n.barClass} style={{ width: `${pct}%` }} />
-                </div>
-              </div>
-              <div className="al-warm">
-                <span>{n.warmLabel}</span>
-                <b>{n.warmup}</b>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="al-note success" style={{ marginTop: 20 }}>
-        ✓
-        <div>
-          <b>Guard is active.</b> WA-2 dipped to yellow at 11:40 and was auto-throttled + paused for 48h.
-          Kamar was alerted on WhatsApp. No action needed.
-        </div>
-      </div>
-
-      {/* Safety rules reminder */}
-      <div style={{ marginTop: 24, background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 12, padding: 20 }}>
-        <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 15, fontWeight: 600, color: 'var(--al-ink)', marginBottom: 14 }}>Safety rules — non-negotiable</p>
-        {[
-          'LeadOS number 99445 09441 is sacred — inbound only. AllianceOS NEVER cold-sends from it.',
-          'AllianceOS WhatsApp uses its own number(s), separate from LeadOS.',
-          'Cold email NEVER sends from @abmgroups.org — use a separate domain (getabm.in).',
-          'Every number/inbox warms up slowly. No number sends 100/day.',
-          'Stop on reply. Stop on suppression. Never exceed 4 touches.',
-          'The quality monitor auto-pauses any number before it gets banned.',
-        ].map((rule, i) => (
-          <div key={i} style={{ display: 'flex', gap: 10, padding: '9px 0', borderTop: i > 0 ? '1px solid var(--al-line)' : 'none', fontSize: 12.5, color: 'var(--al-muted)' }}>
-            <span style={{ color: 'var(--al-gold)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, flexShrink: 0, marginTop: 1 }}>{String(i + 1).padStart(2, '0')}</span>
-            {rule}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  const [data, setData] = useState({ numbers:[], domains:[], issues:[] });
+  const [loading, setLoading] = useState(true);
+  const load = async () => { setLoading(true); try { setData(await api.getAllianceNumberHealth()); } catch(error) { toast.error(error.message || 'Failed to load sender health'); } finally { setLoading(false); } };
+  useEffect(() => { load(); const interval=setInterval(load,60000); return () => clearInterval(interval); }, []);
+  const senders = [
+    ...data.numbers.map((item) => ({ id:`wa-${item.id}`, title:item.label, subtitle:`${maskPhone(item.phone_number)} · WhatsApp`, status:statusForNumber(item), sent:Number(item.sent_today)||0, cap:Number(item.daily_cap)||0, footerLabel:item.paused_until ? 'Paused until' : item.cap_configured ? 'Warm-up' : 'Safety configuration', footerValue:item.paused_until ? new Date(item.paused_until).toLocaleString() : item.cap_configured ? `Week ${item.warmup_stage}` : 'Daily cap not set' })),
+    ...data.domains.map((item) => ({ id:`email-${item.id}`, title:item.inbox_email, subtitle:`Email · ${item.provider || 'Provider not set'}`, status:statusForDomain(item), sent:Number(item.sent_today)||0, cap:Number(item.daily_cap)||0, metrics:[{label:'SMTP failures',value:Number(item.failed_today)||0,tone:Number(item.failed_today)>0?'bad':''},{label:'Replies',value:Number(item.replies_today)||0},{label:'Bounce notices',value:Number(item.bounce_notices_today)||0,tone:Number(item.bounce_notices_today)>0?'bad':''},{label:'IMAP sync',value:item.imap_last_success_at?new Date(item.imap_last_success_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'Never',tone:item.imap_last_error?'bad':''}], footerLabel:item.imap_last_error?'IMAP error':'Mailbox monitoring', footerValue:item.imap_last_error || (item.imap_last_success_at ? `Last checked ${new Date(item.imap_last_success_at).toLocaleString()}` : 'No successful IMAP sync yet') })),
+  ];
+  return <div className="al-wrap"><div className="al-eyebrow">AllianceOS · Screen 3 · Safety Panel</div><div className="al-health-title"><div><div className="al-page-title">Number &amp; domain health</div><p className="al-page-desc">Live sending usage and configured safety state for AllianceOS WhatsApp numbers and email inboxes.</p></div><button className="al-btn ghost sm" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'al-spin' : ''} /> Refresh</button></div>
+    {loading && !senders.length ? <div className="al-brain-empty">Loading sender health...</div> : !senders.length ? <div className="al-brain-empty">No WhatsApp numbers or email senders are configured.</div> : <div className="al-pool">{senders.map((item) => <HealthCard key={item.id} {...item} />)}</div>}
+    <div className={`al-health-summary ${data.issues.length ? 'warning' : 'success'}`}>{data.issues.length ? <AlertTriangle size={19} /> : <ShieldCheck size={19} />}<div><b>{data.issues.length ? `${data.issues.length} sender issue${data.issues.length === 1 ? '' : 's'} need attention` : 'No configured sender issues detected'}</b>{data.issues.length ? data.issues.map((issue,index) => <span key={index}>{issue.message}</span>) : <span>Usage is within configured limits. Provider quality is shown only when monitoring data is available.</span>}</div></div>
+    <div className="al-health-rules"><h2>Safety rules</h2>{['LeadOS inbound numbers must never be used for cold outreach.','WhatsApp campaigns require recorded consent and Meta-approved templates.','Cold email must use a separate authenticated sending domain.','Daily caps are enforced by campaign workers.','Sending stops for replies, suppression, unsubscribe, and terminal lead statuses.','Unknown provider health is not treated as healthy; configure monitoring before scaling volume.'].map((rule,index) => <div key={rule}><span>{String(index+1).padStart(2,'0')}</span>{rule}</div>)}</div>
+  </div>;
 };

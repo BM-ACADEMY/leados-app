@@ -750,6 +750,31 @@ async function processCampaignQueue() {
   }
 }
 
+function getTemplateVariableNumbers(value) {
+  const numbers = [...String(value || '').matchAll(/\{\{\s*(\d+)\s*\}\}/g)]
+    .map((match) => Number(match[1]));
+  return [...new Set(numbers)].sort((a, b) => a - b);
+}
+
+function validateCampaignTemplate(template) {
+  const bodyVariables = getTemplateVariableNumbers(template.body);
+  const headerVariables = getTemplateVariableNumbers(template.header);
+  const expectedBodyVariables = bodyVariables.length
+    ? Array.from({ length: bodyVariables.at(-1) }, (_, index) => index + 1)
+    : [];
+
+  if (headerVariables.length) {
+    return 'Campaign templates with header variables are not supported yet. Use a fixed header or configure the header value first.';
+  }
+  if (bodyVariables.some((value, index) => value !== expectedBodyVariables[index])) {
+    return 'Template body variables must be consecutive and start at {{1}}.';
+  }
+  if (bodyVariables.length > 1) {
+    return `This template needs ${bodyVariables.length} body parameters, but Bulk Campaigns currently supports only {{1}} (recipient name). Configure all template parameters before sending.`;
+  }
+  return null;
+}
+
 // Send single WhatsApp message
 async function sendWhatsAppMessage(msg) {
   try {
@@ -771,8 +796,9 @@ async function sendWhatsAppMessage(msg) {
       language: { code: 'en' }
     };
 
+    const bodyVariables = getTemplateVariableNumbers(msg.template_body);
     const components = [];
-    if (msg.template_body && msg.template_body.includes('{{1}}')) {
+    if (bodyVariables.length === 1 && bodyVariables[0] === 1) {
       components.push({
         type: 'body',
         parameters: [{ type: 'text', text: msg.name || 'Friend' }]
@@ -4388,13 +4414,14 @@ app.post('/api/webhooks/meta', async (req, res) => {
 app.get('/api/campaigns', auth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT camp.*, c.name as brand_name,
+      SELECT camp.*, c.name as brand_name, t.name as template_name,
         (SELECT COUNT(*) FROM campaign_logs cl WHERE cl.campaign_id = camp.id AND cl.status = 'sent') as sent_count,
         (SELECT COUNT(*) FROM campaign_logs cl WHERE cl.campaign_id = camp.id AND cl.status = 'delivered') as delivered_count,
         (SELECT COUNT(*) FROM campaign_logs cl WHERE cl.campaign_id = camp.id AND cl.status = 'read') as read_count,
         (SELECT COUNT(*) FROM campaign_logs cl WHERE cl.campaign_id = camp.id AND cl.status = 'replied') as replied_count
       FROM campaigns camp
       LEFT JOIN clients c ON camp.client_id = c.id
+      LEFT JOIN templates t ON camp.template_id = t.id
       ORDER BY camp.created_at DESC
     `);
     res.json({ campaigns: rows });
@@ -4405,6 +4432,29 @@ app.get('/api/campaigns', auth, async (req, res) => {
 app.post('/api/campaigns', auth, async (req, res) => {
   try {
     const { name, client_id, template_id, target_status, scheduled_at, send_immediately } = req.body;
+
+    if (!name || !client_id || !template_id || !target_status) {
+      return res.status(400).json({ error: 'Campaign name, brand, template, and target audience are required.' });
+    }
+
+    const templateResult = await pool.query(
+      'SELECT id, name, status, body, header, client_id FROM templates WHERE id = $1',
+      [template_id]
+    );
+    if (!templateResult.rows.length) {
+      return res.status(404).json({ error: 'Template not found.' });
+    }
+    const selectedTemplate = templateResult.rows[0];
+    if (!['approved', 'active'].includes(String(selectedTemplate.status).toLowerCase())) {
+      return res.status(400).json({ error: 'Only Meta-approved templates can be used for live campaigns.' });
+    }
+    if (selectedTemplate.client_id && Number(selectedTemplate.client_id) !== Number(client_id)) {
+      return res.status(400).json({ error: 'The selected template does not belong to this brand.' });
+    }
+    const templateError = validateCampaignTemplate(selectedTemplate);
+    if (templateError) {
+      return res.status(400).json({ error: templateError });
+    }
 
     // Determine initial status
     const initialStatus = scheduled_at && new Date(scheduled_at) > new Date() ? 'scheduled' : 'scheduled';
@@ -4429,7 +4479,8 @@ app.post('/api/campaigns', auth, async (req, res) => {
 
     res.status(201).json({ campaign });
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+    console.error('Create campaign error:', err);
+    res.status(500).json({ error: 'Unable to create campaign.' });
   }
 });
 
@@ -4456,7 +4507,7 @@ async function executeCampaign(campaign_id) {
     `).catch(() => {}); // Ignore if already exists
 
     const campRes = await pool.query(`
-      SELECT c.*, t.body as template_body, t.name as template_name, cl.wa_access_token, cl.phone_number_id, cl.whatsapp_status
+      SELECT c.*, t.body as template_body, t.header as template_header, t.name as template_name, cl.wa_access_token, cl.phone_number_id, cl.whatsapp_status
       FROM campaigns c
       JOIN templates t ON c.template_id = t.id
       LEFT JOIN clients cl ON c.client_id = cl.id
@@ -4468,6 +4519,16 @@ async function executeCampaign(campaign_id) {
       return;
     }
     const campaign = campRes.rows[0];
+
+    const templateError = validateCampaignTemplate({
+      body: campaign.template_body,
+      header: campaign.template_header,
+    });
+    if (templateError) {
+      await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);
+      console.error(`Campaign ${campaign_id}: ${templateError}`);
+      return;
+    }
 
     if (campaign.client_id && campaign.whatsapp_status !== 'verified') {
       await pool.query("UPDATE campaigns SET status = 'failed' WHERE id = $1", [campaign_id]);

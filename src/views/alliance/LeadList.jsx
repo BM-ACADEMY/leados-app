@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../../services/api.js';
+import { DatePicker } from './DatePicker.jsx';
 import './alliance.css';
 
 const PAGE_SIZE = 10;
@@ -28,6 +29,8 @@ export const LeadList = () => {
   const [status, setStatus] = useState('all');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -45,7 +48,7 @@ export const LeadList = () => {
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [status, debouncedSearch]);
+  useEffect(() => { setPage(1); }, [status, debouncedSearch, dateFrom, dateTo]);
 
   const loadProspects = async () => {
     setLoading(true);
@@ -56,6 +59,8 @@ export const LeadList = () => {
         offset: (page - 1) * PAGE_SIZE,
         status: status === 'all' ? '' : status,
         search: debouncedSearch,
+        dateFrom,
+        dateTo,
       });
       setProspects(data.prospects || []);
       setTotal(data.total || 0);
@@ -64,10 +69,16 @@ export const LeadList = () => {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { loadProspects(); }, [page, status, debouncedSearch]);
+  useEffect(() => { loadProspects(); }, [page, status, debouncedSearch, dateFrom, dateTo]);
   useEffect(() => { api.getAllianceAudiences().then((data) => setAudiences(data.audiences || [])).catch(() => {}); }, []);
 
   const audienceLabel = (code) => audiences.find((item) => item.code === code)?.label || code;
+  const formatDate = (value) => {
+    if (!value) return '—';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: '2-digit' });
+  };
   const selectedAudience = audiences.find((item) => item.code === createForm.audience);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const usesEmail = (channel) => channel === 'email' || channel === 'both';
@@ -148,13 +159,16 @@ export const LeadList = () => {
       <div className="al-fields" style={{ alignItems: 'flex-end' }}>
         <div className="al-field" style={{ flex: 2 }}><label>Search</label><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search business, contact, or email" /></div>
         <div className="al-field"><label>Status</label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="new">New</option><option value="pending">Pending</option><option value="in_process">In Process</option><option value="interested">Interested</option><option value="not_interested">Not Interested</option><option value="converted">Converted</option></select></div>
+        <div className="al-field"><label>From date</label><DatePicker value={dateFrom} max={dateTo} onChange={setDateFrom} /></div>
+        <div className="al-field"><label>To date</label><DatePicker value={dateTo} min={dateFrom} onChange={setDateTo} /></div>
+        {(dateFrom || dateTo) && <button type="button" className="al-btn ghost sm" style={{ marginBottom: 1 }} onClick={() => { setDateFrom(''); setDateTo(''); }}>Clear dates</button>}
         <div style={{ color: 'var(--al-muted)', fontSize: 12, paddingBottom: 11 }}>{total.toLocaleString('en-IN')} records</div>
       </div>
 
       <div style={{ background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 12, overflowX: 'auto' }}>
         {error ? <p style={{ padding: 24, color: '#EF9A9A' }}>{error}</p> : loading ? <p style={{ padding: 24, color: 'var(--al-muted)' }}>Loading imported leads…</p> : (
           <table className="al-table" style={{ minWidth: 1700, whiteSpace: 'nowrap' }}>
-            <thead><tr><th>Business / Contact</th><th>Email</th><th>Phone</th><th>Audience</th><th>Industry / Location</th><th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Custom data</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Business / Contact</th><th>Email</th><th>Phone</th><th>Audience</th><th>Industry / Location</th><th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Custom data</th><th>Actions</th></tr></thead>
             <tbody>
               {prospects.map((prospect) => (
                 <tr key={prospect.id}>
@@ -166,11 +180,12 @@ export const LeadList = () => {
                   <td>{usesWhatsApp(prospect.channel) ? (prospect.consent ? `Yes · ${prospect.consent_source || 'recorded'}` : 'No') : 'Not required'}</td>
                   <td>{prospect.campaign_name || '—'}</td>
                   <td><span className={`al-st ${statusMap[prospect.status]?.cls || 'new'}`}><span className="d" />{statusMap[prospect.status]?.label || prospect.status}</span></td>
+                  <td>{formatDate(prospect.created_at)}</td>
                   <td style={{ maxWidth: 180, fontSize: 11.5, color: 'var(--al-muted)' }}>{Object.entries(prospect.custom_fields || {}).map(([key, value]) => `${key}: ${value}`).join(' · ') || '—'}</td>
                   <td><div style={{ display: 'flex', gap: 6 }}><button className="al-btn ghost sm" onClick={() => openEdit(prospect)}>Edit</button><button className="al-btn ghost sm" disabled={deleting === prospect.id} onClick={() => setDeleteCandidate(prospect)} style={{ color: '#EF9A9A' }}>{deleting === prospect.id ? 'Deleting…' : 'Delete'}</button></div></td>
                 </tr>
               ))}
-              {!prospects.length && <tr><td colSpan={11} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
+              {!prospects.length && <tr><td colSpan={12} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
             </tbody>
           </table>
         )}

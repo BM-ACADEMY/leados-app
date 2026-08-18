@@ -19,6 +19,19 @@ function getAllianceEmailConfig() {
   };
 }
 
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function allowedAllianceFromAddresses(config = getAllianceEmailConfig()) {
+  return new Set([config.from, config.user, ...String(process.env.ALLIANCE_EMAIL_ALLOWED_FROM || '').split(',')]
+    .map(normalizeEmail).filter(Boolean));
+}
+
+function isAllianceSenderAllowed(address, config = getAllianceEmailConfig()) {
+  return allowedAllianceFromAddresses(config).has(normalizeEmail(address));
+}
+
 function publicAllianceEmailConfig() {
   const config = getAllianceEmailConfig();
   return {
@@ -58,4 +71,6 @@ module.exports = {
   publicAllianceEmailConfig,
   createAllianceEmailTransport,
   verifyAllianceEmailTransport,
+  allowedAllianceFromAddresses,
+  isAllianceSenderAllowed,
 };

@@ -195,6 +195,8 @@ function transcodeVideo(inputPath, outputPath) {
       const cmd = ffmpeg(inputPath).outputOptions([
         '-map 0:v',
         '-c:v libx264',
+        '-profile:v high',
+        '-level 4.0',
         '-preset fast',
         '-crf 23',
         '-r 30',
@@ -203,7 +205,8 @@ function transcodeVideo(inputPath, outputPath) {
         '-c:a aac',
         '-b:a 128k',
         '-ac 2',
-        '-movflags +faststart'
+        '-movflags +faststart',
+        '-brand mp42'
       ]);
 
       if (hasAudio) {
@@ -1767,7 +1770,7 @@ function isTransientMetaError(err) {
     const code = err.errorCode;
     const status = err.metaResponse?.status || '';
     
-    const isTransientCode = [2207082, 2207026, 9007].includes(code);
+    const isTransientCode = [2207082, 2207052, 2207026, 9007].includes(code);
     if (isTransientCode) return true;
     
     const lowercaseStatus = status.toLowerCase();
@@ -1787,7 +1790,7 @@ function isTransientMetaError(err) {
     const subcode = metaError.error_subcode;
     const message = metaError.message || '';
     
-    const isTransientCode = [2207082, 2207026, 9007].includes(code) || [2207082, 2207026, 9007].includes(subcode);
+    const isTransientCode = [2207082, 2207052, 2207026, 9007].includes(code) || [2207082, 2207052, 2207026, 9007].includes(subcode);
     if (isTransientCode) return true;
     
     const lowercaseMsg = message.toLowerCase();
@@ -1801,7 +1804,7 @@ function isTransientMetaError(err) {
 
   // Case 3: Message-based check
   const errMsg = (err.message || '').toLowerCase();
-  if (errMsg.includes('2207082') || errMsg.includes('2207026') || errMsg.includes('9007') ||
+  if (errMsg.includes('2207082') || errMsg.includes('2207052') || errMsg.includes('2207026') || errMsg.includes('9007') ||
       errMsg.includes('transcode') || 
       errMsg.includes('transcoding') || 
       errMsg.includes('media upload has failed') ||
@@ -1857,8 +1860,8 @@ async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { v
         throw err;
       }
 
-      console.log(`[publishToInstagramWithRetry] Waiting 30 seconds before retry attempt ${attempt + 1}...`);
-      await new Promise(resolve => setTimeout(resolve, 30000));
+      console.log(`[publishToInstagramWithRetry] Waiting 60 seconds before retry attempt ${attempt + 1}...`);
+      await new Promise(resolve => setTimeout(resolve, 60000));
     }
   }
   throw lastErr;

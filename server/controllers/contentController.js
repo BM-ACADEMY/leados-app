@@ -540,7 +540,7 @@ async function approveContent(req, res) {
       `UPDATE content_queue
          SET status = $3, approved_by = $2, approved_at = NOW()
        WHERE id = $1 AND status IN ('PENDING', 'pending_approval', 'pending', 'PENDING_APPROVAL')
-       RETURNING id, brand_name, status, scheduled_at`,
+       RETURNING *`,
       [id, approvedBy, newStatus]
     );
 
@@ -548,7 +548,76 @@ async function approveContent(req, res) {
       return res.status(409).json({ success: false, error: "Item not found or not in pending state" });
     }
 
-    res.json({ success: true, item: rows[0] });
+    const post = rows[0];
+
+    // ── Auto-select social accounts if none were selected ──
+    let selectedAccounts = {};
+    try {
+      if (typeof post.selected_accounts === 'string' && post.selected_accounts.trim()) {
+        selectedAccounts = JSON.parse(post.selected_accounts);
+      } else if (post.selected_accounts && typeof post.selected_accounts === 'object' && !Array.isArray(post.selected_accounts)) {
+        selectedAccounts = post.selected_accounts;
+      }
+    } catch (e) {
+      selectedAccounts = {};
+    }
+
+    // Check if any accounts are actually selected (non-empty arrays)
+    const hasAnyAccountSelected = Object.values(selectedAccounts).some(arr => Array.isArray(arr) && arr.length > 0);
+
+    if (!hasAnyAccountSelected) {
+      // Fetch all active social accounts for this brand
+      const { rows: brandAccounts } = await pool.query(
+        `SELECT platform, account_id FROM brand_social_accounts 
+         WHERE (LOWER(REPLACE(REPLACE(brand_name, ' ', ''), '-', '_')) = LOWER(REPLACE(REPLACE($1, ' ', ''), '-', '_'))
+            OR LOWER(REPLACE(REPLACE(brand_name, ' ', ''), '-', '')) = LOWER(REPLACE(REPLACE($1, ' ', ''), '-', '')))
+           AND is_active = true`,
+        [post.brand_name]
+      );
+
+      if (brandAccounts.length > 0) {
+        // Build selected_accounts map: { instagram: [acc1], facebook: [acc2], youtube: [acc3], ... }
+        const autoSelected = {};
+        for (const acc of brandAccounts) {
+          const platform = acc.platform.toLowerCase();
+          if (!autoSelected[platform]) autoSelected[platform] = [];
+          autoSelected[platform].push(acc.account_id);
+        }
+
+        // Also auto-populate platforms array from the available accounts
+        let platforms = [];
+        try {
+          if (typeof post.platforms === 'string' && post.platforms.trim()) {
+            platforms = JSON.parse(post.platforms);
+          } else if (Array.isArray(post.platforms)) {
+            platforms = post.platforms;
+          }
+        } catch (e) {
+          platforms = [];
+        }
+
+        // If no platforms selected either, auto-select all platforms that have accounts
+        if (!Array.isArray(platforms) || platforms.length === 0) {
+          const platformMap = {
+            instagram: 'instagram_post',
+            facebook: 'facebook_post',
+            youtube: 'youtube',
+            linkedin: 'linkedin',
+            x_twitter: 'x_twitter'
+          };
+          platforms = Object.keys(autoSelected).map(p => platformMap[p] || p);
+        }
+
+        await pool.query(
+          `UPDATE content_queue SET selected_accounts = $1, platforms = $2, updated_at = NOW() WHERE id = $3`,
+          [JSON.stringify(autoSelected), JSON.stringify(platforms), id]
+        );
+
+        console.log(`[approveContent] Auto-selected accounts for post ${id} (brand: ${post.brand_name}):`, JSON.stringify(autoSelected));
+      }
+    }
+
+    res.json({ success: true, item: { id: post.id, brand_name: post.brand_name, status: post.status, scheduled_at: post.scheduled_at } });
   } catch (err) {
     console.error("approveContent error:", err);
     res.status(500).json({ success: false, error: "Failed to approve" });

@@ -4,6 +4,34 @@ import toast from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
 
+const getTemplateVariables = (value) => [...new Set(
+  [...String(value || '').matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((match) => Number(match[1]))
+)].sort((a, b) => a - b);
+
+const getCampaignTemplateError = (template) => {
+  if (!template) return '';
+  const bodyVariables = getTemplateVariables(template.body);
+  const headerVariables = getTemplateVariables(template.header);
+  if (headerVariables.length) return 'Header variables are not supported for bulk campaigns yet.';
+  if (bodyVariables.some((value, index) => value !== index + 1)) {
+    return 'Body variables must be consecutive and start at {{1}}.';
+  }
+  if (bodyVariables.length > 1) {
+    return `This template requires ${bodyVariables.length} values. Bulk campaigns currently support only {{1}} as the recipient name.`;
+  }
+  return '';
+};
+
+const formatCampaignDateTime = (value) => {
+  if (!value) return 'Not available';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not available';
+  return date.toLocaleString([], {
+    year: 'numeric', month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit'
+  });
+};
+
 export const CampaignsView = () => {
   const [tab, setTab] = useState('list');
   const [campaigns, setCampaigns] = useState([]);
@@ -118,6 +146,9 @@ export const CampaignsView = () => {
   const handleCreateCampaign = async (e) => {
     e.preventDefault();
     if (!name || !clientId || !templateId) return toast.error('Please fill required fields');
+    const selectedTemplate = templates.find((template) => String(template.id) === String(templateId));
+    const templateError = getCampaignTemplateError(selectedTemplate);
+    if (templateError) return toast.error(templateError);
     
     setSubmitting(true);
     try {
@@ -244,7 +275,7 @@ export const CampaignsView = () => {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid ' + C.border }}>
-                  {['Campaign', 'Brand', 'Sent', 'Delivered', 'Read', 'Replied', 'Status', 'Date', 'Actions'].map((h) => (
+                  {['Campaign', 'Brand', 'Template', 'Sent', 'Delivered', 'Read', 'Replied', 'Status', 'Date & Time', 'Actions'].map((h) => (
                     <th key={h} style={{ padding: '11px 14px', fontSize: 9, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'left' }}>{h}</th>
                   ))}
                 </tr>
@@ -256,12 +287,18 @@ export const CampaignsView = () => {
                     <tr key={c.id} style={{ borderBottom: '1px solid ' + C.border }}>
                       <td style={{ padding: '13px 14px', fontSize: 12, fontWeight: 600, color: C.text }}>{c.name}</td>
                       <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{c.brand_name || c.brand || 'All Brands'}</td>
+                      <td style={{ padding: '13px 14px', fontSize: 11, color: C.text }}>{c.template_name || 'Template unavailable'}</td>
                       <td style={{ padding: '13px 14px', fontSize: 12, color: C.text }}>{c.sent_count ?? c.sent ?? 0}</td>
                       <td style={{ padding: '13px 14px', fontSize: 12, color: C.green }}>{c.delivered_count ?? c.delivered ?? 0}</td>
                       <td style={{ padding: '13px 14px', fontSize: 12, color: C.blue }}>{c.read_count ?? c.read ?? 0}</td>
                       <td style={{ padding: '13px 14px', fontSize: 12, color: C.accent }}>{c.replied_count ?? c.replied ?? 0}</td>
                       <td style={{ padding: '13px 14px' }}><span style={{ background: s.bg, color: s.tc, padding: '3px 9px', borderRadius: 12, fontSize: 11, fontWeight: 600, textTransform: 'capitalize' }}>{c.status}</span></td>
-                      <td style={{ padding: '13px 14px', fontSize: 11, color: C.dim }}>{c.scheduled_at ? new Date(c.scheduled_at).toLocaleDateString() : c.date || 'Immediate'}</td>
+                      <td style={{ padding: '13px 14px', fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>
+                        <div style={{ color: C.text }}>{formatCampaignDateTime(c.scheduled_at || c.created_at || c.date)}</div>
+                        <div style={{ marginTop: 3, fontSize: 9, color: c.scheduled_at ? C.blue : C.green, fontWeight: 700, textTransform: 'uppercase' }}>
+                          {c.scheduled_at ? 'Scheduled' : 'Sent immediately'}
+                        </div>
+                      </td>
                       <td style={{ padding: '13px 14px' }}>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <button onClick={() => handleViewReport(c)} style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.text, padding: '5px 10px', fontSize: 11, cursor: 'pointer', transition: 'all 0.2s' }}>View Report</button>
@@ -332,10 +369,18 @@ export const CampaignsView = () => {
               <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
                 <option value="">Select Template</option>
                 {templates
-                  .filter((t) => t.status === 'approved' || t.status === 'active' || t.status === 'draft')
+                  .filter((t) => t.status === 'approved' || t.status === 'active')
                   .filter((t) => !clientId || t.client_id === parseInt(clientId) || t.client_id === null)
-                  .map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  .map((t) => {
+                    const templateError = getCampaignTemplateError(t);
+                    return <option key={t.id} value={t.id} disabled={Boolean(templateError)}>{t.name}{templateError ? ' — needs parameter setup' : ''}</option>;
+                  })}
               </select>
+              {templateId && getCampaignTemplateError(templates.find((template) => String(template.id) === String(templateId))) && (
+                <p style={{ color: C.red, fontSize: 11, marginTop: 6, lineHeight: 1.4 }}>
+                  {getCampaignTemplateError(templates.find((template) => String(template.id) === String(templateId)))}
+                </p>
+              )}
             </div>
             <div style={{ background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, padding: 13, marginBottom: 14 }}>
               <p style={{ fontSize: 9, color: C.muted, marginBottom: 7, letterSpacing: 0.8 }}>PREVIEW</p>
@@ -385,7 +430,21 @@ export const CampaignsView = () => {
               <button onClick={() => { setReportModal(null); setIsLiveTracking(false); }} style={{ background: 'transparent', border: 'none', color: C.muted, fontSize: 18, cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
-              <p style={{ color: C.muted, fontSize: 13, marginBottom: 16 }}>Live logs for campaign: <strong style={{ color: C.text }}>{reportModal.name}</strong></p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 10, marginBottom: 18 }}>
+                {[
+                  ['Campaign', reportModal.name],
+                  ['Brand', reportModal.brand_name || reportModal.brand || 'All Brands'],
+                  ['Template', reportModal.template_name || 'Template unavailable'],
+                  ['Audience', reportModal.target_status || 'All leads'],
+                  ['Created', formatCampaignDateTime(reportModal.created_at)],
+                  [reportModal.scheduled_at ? 'Scheduled for' : 'Delivery', reportModal.scheduled_at ? formatCampaignDateTime(reportModal.scheduled_at) : `Immediate · ${formatCampaignDateTime(reportModal.created_at)}`]
+                ].map(([label, value]) => (
+                  <div key={label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', minWidth: 0 }}>
+                    <div style={{ color: C.muted, fontSize: 9, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+                    <div style={{ color: C.text, fontSize: 11, fontWeight: 600, wordBreak: 'break-word' }}>{value}</div>
+                  </div>
+                ))}
+              </div>
 
               {!loadingLogs && reportModal.status !== 'scheduled' && reportModal.status !== 'running' && campaignLogs.length > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>

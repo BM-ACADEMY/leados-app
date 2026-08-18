@@ -21,9 +21,35 @@ const upload = multer({
 const CHANNELS = new Set(['auto', 'email', 'whatsapp']);
 const TRUTHY = new Set(['true', 'yes', 'y', '1', 'opted_in', 'opt-in']);
 const COMMON_FIELDS = new Set(['name', 'business_name', 'business name', 'organisation name', 'organization name', 'email', 'phone', 'mobile', 'audience', 'industry', 'location', 'source', 'channel_pref', 'channel preference', 'consent', 'whatsapp_consent', 'whatsapp consent', 'consent_source', 'consent source']);
+const SYSTEM_COLUMN_KEYS = ['name','business_name','email','phone','audience','industry','location','source','channel_pref','consent','consent_source'];
+const defaultSystemColumns = () => SYSTEM_COLUMN_KEYS.map((key) => ({ key, label: key, enabled: true, required: false }));
+function normalizeSystemColumns(value) {
+  const supplied = Array.isArray(value) ? value : [];
+  const byKey = new Map(supplied.map((column) => [text(column.key).toLowerCase(), column]));
+  const columns = defaultSystemColumns().map((column) => {
+    const configured = byKey.get(column.key);
+    const label = text(configured?.label || column.label).toLowerCase().replace(/[^a-z0-9_ ]/g, '_').replace(/\s+/g, '_').replace(/^_+|_+$/g, '');
+    const enabled = configured ? configured.enabled !== false : true;
+    return { key: column.key, label: label || column.key, enabled, required: enabled && Boolean(configured?.required) };
+  });
+  const labels = columns.filter((column) => column.enabled).map((column) => column.label);
+  if (new Set(labels).size !== labels.length) throw Object.assign(new Error('Enabled column names must be unique.'), { status: 400 });
+  return columns;
+}
 
 function text(value) {
   return value == null ? '' : String(value).trim();
+}
+
+async function getBulkSendLimit(channel, queryable = db) {
+  const result = await queryable.query(`SELECT channel,limit_mode,custom_limit,updated_at FROM alliance_bulk_send_limits WHERE channel=$1`, [channel]);
+  return result.rows[0] || { channel, limit_mode: 'unlimited', custom_limit: null };
+}
+
+function assertBulkSendLimit(policy, recipientCount) {
+  if (policy.limit_mode === 'custom' && recipientCount > Number(policy.custom_limit)) {
+    throw Object.assign(new Error(`Selected ${recipientCount} recipients, but the ${policy.channel} bulk-send limit is ${policy.custom_limit}. Reduce the selection or update the send limit.`), { status: 409 });
+  }
 }
 
 function isValidEmailAddress(value) {
@@ -198,8 +224,9 @@ async function buildAudienceTemplateData(code) {
   );
   if (!result.rowCount) return null;
   const audience = result.rows[0];
-  const commonHeaders = ['name', 'business_name', 'email', 'phone', 'audience', 'industry', 'location', 'source', 'channel_pref', 'consent', 'consent_source'];
-  const headers = [...commonHeaders, ...audience.fields.map((field) => field.field_key)];
+  const systemColumns = normalizeSystemColumns(audience.column_config?.length ? audience.column_config : defaultSystemColumns());
+  const enabledSystemColumns = systemColumns.filter((column) => column.enabled);
+  const headers = [...enabledSystemColumns.map((column) => column.label), ...audience.fields.map((field) => field.field_key)];
   const generic = {
     name: 'Contact Name', business_name: `Example ${audience.label}`, email: 'contact@example.com', phone: '919876543210',
     audience: audience.code, industry: 'Industry', location: 'Chennai', source: 'manual_research',
@@ -210,7 +237,10 @@ async function buildAudienceTemplateData(code) {
   const rows = samples.map((sample) => {
     const values = { ...generic, ...sample, audience: audience.code };
     audience.fields.forEach((field) => { values[field.field_key] = sample[field.field_key] ?? field.sample_value ?? ''; });
-    return headers.reduce((row, header) => ({ ...row, [header]: values[header] ?? '' }), {});
+    const row = {};
+    enabledSystemColumns.forEach((column) => { row[column.label] = values[column.key] ?? ''; });
+    audience.fields.forEach((field) => { row[field.field_key] = values[field.field_key] ?? ''; });
+    return row;
   });
   return { audience, headers, rows };
 }
@@ -225,10 +255,200 @@ router.use(async (req, res, next) => {
   }
 });
 
+router.get('/analytics', async (_req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    const periodSql = `SELECT date_trunc('week', NOW()) AS week_start,
+                              date_trunc('week', NOW()) - INTERVAL '7 days' AS previous_start,
+                              date_trunc('week', NOW()) + INTERVAL '7 days' AS week_end`;
+    const [periodResult, sentResult, replyResult, funnelResult, channelResult, audienceResult, operationsResult, dailyResult, campaignStatusResult, campaignPerformanceResult] = await Promise.all([
+      db.query(periodSql),
+      db.query(
+        `WITH bounds AS (${periodSql}), sent AS (
+           SELECT sent_at AS occurred_at FROM alliance_touches
+            WHERE status='sent' AND sent_at IS NOT NULL
+           UNION ALL
+           SELECT sent_at FROM alliance_whatsapp_campaign_recipients
+            WHERE status IN ('sent','delivered','read') AND sent_at IS NOT NULL
+         )
+         SELECT COUNT(*) FILTER (WHERE occurred_at >= previous_start AND occurred_at < week_start)::int AS previous,
+                COUNT(*) FILTER (WHERE occurred_at >= week_start AND occurred_at < week_end)::int AS current
+         FROM sent CROSS JOIN bounds`
+      ),
+      db.query(
+        `WITH bounds AS (${periodSql})
+         SELECT COUNT(*) FILTER (WHERE r.created_at >= week_start AND r.created_at < week_end)::int AS replies,
+                COUNT(*) FILTER (WHERE r.created_at >= date_trunc('day', NOW()) AND r.created_at < date_trunc('day', NOW()) + INTERVAL '1 day')::int AS replies_today
+         FROM alliance_replies r CROSS JOIN bounds`
+      ),
+      db.query(
+        `WITH bounds AS (${periodSql}), contacted AS (
+           SELECT prospect_id FROM alliance_touches, bounds
+            WHERE status='sent' AND sent_at >= week_start AND sent_at < week_end
+           UNION
+           SELECT prospect_id FROM alliance_whatsapp_campaign_recipients, bounds
+            WHERE status IN ('sent','delivered','read') AND sent_at >= week_start AND sent_at < week_end
+         ), delivered AS (
+           SELECT DISTINCT prospect_id FROM alliance_email_events, bounds
+            WHERE event_type IN ('delivered','opened','clicked') AND occurred_at >= week_start AND occurred_at < week_end
+           UNION
+           SELECT DISTINCT prospect_id FROM alliance_whatsapp_campaign_recipients, bounds
+            WHERE status IN ('delivered','read') AND sent_at >= week_start AND sent_at < week_end
+         )
+         SELECT (SELECT COUNT(*)::int FROM contacted) AS contacted,
+                (SELECT COUNT(*)::int FROM delivered) AS delivered,
+                COUNT(*) FILTER (WHERE p.status IN ('replied','interested','not_interested') AND p.updated_at >= week_start AND p.updated_at < week_end)::int AS replied,
+                COUNT(*) FILTER (WHERE p.status='interested' AND p.updated_at >= week_start AND p.updated_at < week_end)::int AS interested,
+                COUNT(*) FILTER (WHERE p.status IN ('converted','closed') AND p.updated_at >= week_start AND p.updated_at < week_end)::int AS closed,
+                COUNT(*) FILTER (WHERE p.status='interested' AND p.updated_at >= date_trunc('day', NOW()) AND p.updated_at < date_trunc('day', NOW()) + INTERVAL '1 day')::int AS interested_today
+         FROM alliance_prospects p CROSS JOIN bounds`
+      ),
+      db.query(
+        `WITH bounds AS (${periodSql}), sent AS (
+           SELECT channel, COUNT(*)::int AS sent FROM alliance_touches, bounds
+            WHERE status='sent' AND sent_at >= week_start AND sent_at < week_end GROUP BY channel
+           UNION ALL
+           SELECT 'whatsapp', COUNT(*)::int FROM alliance_whatsapp_campaign_recipients, bounds
+            WHERE status IN ('sent','delivered','read') AND sent_at >= week_start AND sent_at < week_end
+         ), replies AS (
+           SELECT channel, COUNT(*)::int AS replied FROM alliance_replies, bounds
+            WHERE created_at >= week_start AND created_at < week_end GROUP BY channel
+         )
+         SELECT channels.channel, COALESCE(SUM(sent.sent),0)::int AS sent,
+                COALESCE(MAX(replies.replied),0)::int AS replied
+         FROM (VALUES ('email'),('whatsapp')) AS channels(channel)
+         LEFT JOIN sent ON sent.channel=channels.channel
+         LEFT JOIN replies ON replies.channel=channels.channel
+         GROUP BY channels.channel ORDER BY channels.channel`
+      ),
+      db.query(
+        `WITH bounds AS (${periodSql})
+         SELECT a.code, a.label,
+                COUNT(p.id) FILTER (WHERE p.status='interested' AND p.updated_at >= week_start AND p.updated_at < week_end)::int AS interested
+         FROM alliance_audiences a CROSS JOIN bounds
+         LEFT JOIN alliance_prospects p ON p.audience=a.code
+         WHERE a.active=TRUE
+         GROUP BY a.id, a.code, a.label, a.created_at ORDER BY a.created_at, a.id`
+      ),
+      db.query(
+        `WITH bounds AS (${periodSql})
+         SELECT (SELECT COUNT(*)::int FROM alliance_prospects) AS total_prospects,
+                (SELECT COUNT(*)::int FROM alliance_prospects WHERE created_at >= week_start AND created_at < week_end) AS prospects_added,
+                (SELECT COUNT(*)::int FROM alliance_prospects WHERE suppressed=TRUE) AS suppressed,
+                ((SELECT COUNT(*) FROM alliance_campaigns WHERE status IN ('running','ready')) +
+                 (SELECT COUNT(*) FROM alliance_whatsapp_campaigns WHERE status IN ('running','scheduled')))::int AS active_campaigns,
+                ((SELECT COUNT(*) FROM alliance_touches WHERE status='failed' AND COALESCE(sent_at,scheduled_at) >= week_start AND COALESCE(sent_at,scheduled_at) < week_end) +
+                 (SELECT COUNT(*) FROM alliance_whatsapp_campaign_recipients WHERE status='failed' AND scheduled_at >= week_start AND scheduled_at < week_end))::int AS failed_messages
+         FROM bounds`
+      ),
+      db.query(
+        `WITH bounds AS (${periodSql}), days AS (
+           SELECT generate_series(week_start::date, (week_end - INTERVAL '1 day')::date, INTERVAL '1 day')::date AS day FROM bounds
+         ), sent AS (
+           SELECT sent_at::date AS day, COUNT(*)::int AS total FROM alliance_touches, bounds
+            WHERE status='sent' AND sent_at >= week_start AND sent_at < week_end GROUP BY sent_at::date
+           UNION ALL
+           SELECT sent_at::date, COUNT(*)::int FROM alliance_whatsapp_campaign_recipients, bounds
+            WHERE status IN ('sent','delivered','read') AND sent_at >= week_start AND sent_at < week_end GROUP BY sent_at::date
+         ), replies AS (
+           SELECT created_at::date AS day, COUNT(*)::int AS total FROM alliance_replies, bounds
+            WHERE created_at >= week_start AND created_at < week_end GROUP BY created_at::date
+         )
+         SELECT d.day, COALESCE(SUM(s.total),0)::int AS sent, COALESCE(MAX(r.total),0)::int AS replies
+         FROM days d LEFT JOIN sent s ON s.day=d.day LEFT JOIN replies r ON r.day=d.day
+         GROUP BY d.day ORDER BY d.day`
+      ),
+      db.query(
+        `WITH statuses AS (
+           SELECT status FROM alliance_campaigns
+           UNION ALL SELECT status FROM alliance_whatsapp_campaigns
+         ) SELECT status, COUNT(*)::int AS count FROM statuses GROUP BY status ORDER BY count DESC, status`
+      ),
+      db.query(
+        `SELECT * FROM (
+         SELECT 'email-'||c.id AS row_id, c.id, c.name, c.audience, c.channel, c.status, c.created_at,
+                (SELECT COUNT(DISTINCT cp.prospect_id) FROM alliance_campaign_prospects cp WHERE cp.campaign_id=c.id)::int AS prospects,
+                (SELECT COUNT(*) FROM alliance_touches t WHERE t.campaign_id=c.id AND t.status='sent')::int AS sent,
+                (SELECT COUNT(DISTINCT r.prospect_id) FROM alliance_replies r JOIN alliance_campaign_prospects cp ON cp.prospect_id=r.prospect_id WHERE cp.campaign_id=c.id)::int AS replies,
+                (SELECT COUNT(DISTINCT p.id) FROM alliance_prospects p JOIN alliance_campaign_prospects cp ON cp.prospect_id=p.id WHERE cp.campaign_id=c.id AND p.status='interested')::int AS interested
+         FROM alliance_campaigns c
+         UNION ALL
+         SELECT 'whatsapp-'||w.id, w.id, w.name, w.audience, 'whatsapp', w.status, w.created_at,
+                (SELECT COUNT(*) FROM alliance_whatsapp_campaign_recipients wr WHERE wr.campaign_id=w.id)::int,
+                (SELECT COUNT(*) FROM alliance_whatsapp_campaign_recipients wr WHERE wr.campaign_id=w.id AND wr.status IN ('sent','delivered','read'))::int,
+                (SELECT COUNT(DISTINCT r.prospect_id) FROM alliance_replies r JOIN alliance_whatsapp_campaign_recipients wr ON wr.prospect_id=r.prospect_id WHERE wr.campaign_id=w.id AND r.channel='whatsapp')::int,
+                (SELECT COUNT(DISTINCT p.id) FROM alliance_prospects p JOIN alliance_whatsapp_campaign_recipients wr ON wr.prospect_id=p.id WHERE wr.campaign_id=w.id AND p.status='interested')::int
+         FROM alliance_whatsapp_campaigns w
+         ) campaigns ORDER BY created_at DESC LIMIT 8`
+      ),
+    ]);
+    const sent = sentResult.rows[0] || { current: 0, previous: 0 };
+    const replies = replyResult.rows[0]?.replies || 0;
+    const currentSent = sent.current || 0;
+    const previousSent = sent.previous || 0;
+    const sentChangePct = previousSent ? Math.round(((currentSent - previousSent) / previousSent) * 1000) / 10 : null;
+    res.json({
+      period: periodResult.rows[0],
+      stats: {
+        messages_sent: currentSent,
+        messages_change_pct: sentChangePct,
+        replies,
+        reply_rate: currentSent ? Math.round((replies / currentSent) * 1000) / 10 : 0,
+        interested: funnelResult.rows[0]?.interested || 0,
+        interested_today: funnelResult.rows[0]?.interested_today || 0,
+        closed: funnelResult.rows[0]?.closed || 0,
+      },
+      funnel: funnelResult.rows[0],
+      channels: channelResult.rows.map((row) => ({
+        ...row,
+        reply_rate: row.sent ? Math.round((row.replied / row.sent) * 1000) / 10 : 0,
+      })),
+      audiences: audienceResult.rows,
+      operations: operationsResult.rows[0],
+      daily_activity: dailyResult.rows,
+      campaign_statuses: campaignStatusResult.rows,
+      recent_campaigns: campaignPerformanceResult.rows,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Alliance analytics failed:', error);
+    res.status(500).json({ error: 'Failed to load AllianceOS analytics.' });
+  }
+});
+
+router.get('/bulk-send-limits', async (_req, res) => {
+  try {
+    const result = await db.query(`SELECT channel,limit_mode,custom_limit,updated_at FROM alliance_bulk_send_limits ORDER BY channel`);
+    res.json({ limits: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to load bulk-send limits.' });
+  }
+});
+
+router.put('/bulk-send-limits/:channel', async (req, res) => {
+  const channel = text(req.params.channel).toLowerCase();
+  const mode = text(req.body.limit_mode).toLowerCase();
+  const customLimit = Number(req.body.custom_limit);
+  if (!['email','whatsapp'].includes(channel)) return res.status(400).json({ error: 'Channel must be email or whatsapp.' });
+  if (!['unlimited','custom'].includes(mode)) return res.status(400).json({ error: 'Choose Unlimited or Custom limit.' });
+  if (mode === 'custom' && (!Number.isInteger(customLimit) || customLimit < 1 || customLimit > 100000)) return res.status(400).json({ error: 'Custom limit must be between 1 and 100,000 recipients.' });
+  try {
+    const result = await db.query(
+      `INSERT INTO alliance_bulk_send_limits(channel,limit_mode,custom_limit,updated_by,updated_at)
+       VALUES($1,$2,$3,$4,NOW()) ON CONFLICT(channel) DO UPDATE SET limit_mode=EXCLUDED.limit_mode,custom_limit=EXCLUDED.custom_limit,updated_by=EXCLUDED.updated_by,updated_at=NOW()
+       RETURNING channel,limit_mode,custom_limit,updated_at`,
+      [channel, mode, mode === 'custom' ? customLimit : null, req.user?.id || null]
+    );
+    res.json({ success: true, limit: result.rows[0], message: `${channel === 'email' ? 'Email' : 'WhatsApp'} bulk-send limit updated.` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update bulk-send limit.' });
+  }
+});
+
 router.get('/audiences', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT a.id, a.code, a.label, a.brand, a.default_channel, a.active,
+      `SELECT a.id, a.code, a.label, a.brand, a.default_channel, a.column_config, a.active,
               COALESCE(json_agg(json_build_object(
                 'id', f.id, 'field_key', f.field_key, 'label', f.label,
                 'data_type', f.data_type, 'required', f.required, 'sample_value', f.sample_value, 'sort_order', f.sort_order
@@ -346,6 +566,8 @@ router.post('/audiences', async (req, res) => {
   const brand = text(req.body.brand);
   const defaultChannel = text(req.body.default_channel || 'email').toLowerCase();
   const fields = Array.isArray(req.body.fields) ? req.body.fields : [];
+  let systemColumns;
+  try { systemColumns = normalizeSystemColumns(req.body.system_columns); } catch (error) { return res.status(error.status || 400).json({ error: error.message }); }
   if (!/^[a-z][a-z0-9_]*$/.test(code)) return res.status(400).json({ error: 'Audience code must use lowercase letters, numbers, and underscores.' });
   if (!label) return res.status(400).json({ error: 'Audience label is required.' });
   if (!['email', 'whatsapp'].includes(defaultChannel)) return res.status(400).json({ error: 'Default channel must be email or whatsapp.' });
@@ -369,9 +591,9 @@ router.post('/audiences', async (req, res) => {
   try {
     await client.query('BEGIN');
     const audienceResult = await client.query(
-      `INSERT INTO alliance_audiences (code, label, brand, default_channel)
-       VALUES ($1,$2,$3,$4) RETURNING *`,
-      [code, label, brand || null, defaultChannel]
+      `INSERT INTO alliance_audiences (code, label, brand, default_channel, column_config)
+       VALUES ($1,$2,$3,$4,$5::jsonb) RETURNING *`,
+      [code, label, brand || null, defaultChannel, JSON.stringify(systemColumns)]
     );
     for (const field of normalizedFields) {
       await client.query(
@@ -420,10 +642,20 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
   );
   if (!audienceResult.rowCount) return res.status(400).json({ error: 'Select a valid audience.' });
   const audienceConfig = audienceResult.rows[0];
+  const configuredSystemColumns = normalizeSystemColumns(audienceConfig.column_config?.length ? audienceConfig.column_config : defaultSystemColumns());
 
   let rows;
   try {
     rows = parseRows(req.file.buffer, req.file.originalname);
+    rows = rows.map((row) => {
+      const mapped = { ...row };
+      configuredSystemColumns.forEach((column) => {
+        if (!column.enabled || column.label === column.key) return;
+        const value = valueFrom(row, [column.label]);
+        if (value !== '') mapped[column.key] = value;
+      });
+      return mapped;
+    });
   } catch (error) {
     const safeEncodingError = /(?:CSV|UTF-|encoding)/i.test(error.message || '') ? error.message : null;
     return res.status(400).json({ error: safeEncodingError || 'The uploaded spreadsheet could not be read.' });
@@ -456,13 +688,14 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const rowNo = index + 2;
-      const businessName = text(valueFrom(row, ['business_name', 'business name', 'organisation name', 'organization name']));
+      let businessName = text(valueFrom(row, ['business_name', 'business name', 'organisation name', 'organization name']));
       // Preserve the contact name exactly as supplied. A contact and business may
       // legitimately share the same display name, so never infer that one is redundant.
       const name = text(valueFrom(row, ['name', 'contact name', 'principal name']));
       const audience = text(valueFrom(row, ['audience'])).toLowerCase() || defaultAudience;
       const emailRaw = text(valueFrom(row, ['email']));
       const phoneRaw = text(valueFrom(row, ['phone', 'mobile']));
+      businessName = businessName || name || emailRaw.split('@')[0] || phoneRaw || `Prospect row ${rowNo}`;
       const email = normalizeEmail(emailRaw);
       const phone = normalizePhone(phoneRaw);
       const rowChannel = text(valueFrom(row, ['channel_pref', 'channel preference'])).toLowerCase();
@@ -474,7 +707,12 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       const channel = channelPref || (requestedChannel === 'auto' ? inferredChannel : audienceConfig.default_channel);
       const problems = [];
 
-      if (!businessName) problems.push('business_name is required');
+      for (const column of configuredSystemColumns) {
+        if (column.enabled && column.required && !text(valueFrom(row, [column.key]))) {
+          problems.push(`${column.label} is required`);
+        }
+      }
+
       if (audience !== defaultAudience) problems.push(`audience must be ${defaultAudience} for this campaign`);
       if (rowChannel && !['email', 'whatsapp', 'both'].includes(rowChannel)) problems.push('invalid channel_pref');
       if (emailRaw && !email) problems.push('invalid email');
@@ -684,6 +922,8 @@ router.put('/audiences/:code', async (req, res) => {
   const brand = text(req.body.brand);
   const defaultChannel = text(req.body.default_channel).toLowerCase();
   const fields = Array.isArray(req.body.fields) ? req.body.fields : [];
+  let systemColumns;
+  try { systemColumns = normalizeSystemColumns(req.body.system_columns); } catch (error) { return res.status(error.status || 400).json({ error: error.message }); }
   if (!label) return res.status(400).json({ error: 'Audience label is required.' });
   if (!['email', 'whatsapp'].includes(defaultChannel)) return res.status(400).json({ error: 'Default channel must be email or whatsapp.' });
   if (fields.length > 50) return res.status(400).json({ error: 'A maximum of 50 custom fields is allowed.' });
@@ -696,18 +936,28 @@ router.put('/audiences/:code', async (req, res) => {
     if (!['auto', 'text', 'integer', 'number', 'boolean', 'date'].includes(dataType)) return res.status(400).json({ error: `Invalid data type for ${fieldKey}.` });
     if (!text(field.sample_value)) return res.status(400).json({ error: `Add a sample value for ${fieldKey}.` });
     seen.add(fieldKey);
-    normalizedFields.push({ fieldKey, label: text(field.label) || fieldKey.replace(/_/g, ' '), dataType, required: Boolean(field.required), sampleValue: text(field.sample_value), sortOrder: index });
+    normalizedFields.push({ fieldKey, originalFieldKey: text(field.original_field_key).toLowerCase() || fieldKey, label: text(field.label) || fieldKey.replace(/_/g, ' '), dataType, required: Boolean(field.required), sampleValue: text(field.sample_value), sortOrder: index });
   }
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     const audienceResult = await client.query(
-      `UPDATE alliance_audiences SET label=$1, brand=$2, default_channel=$3, updated_at=NOW()
-       WHERE code=$4 AND active=TRUE RETURNING *`,
-      [label, brand || null, defaultChannel, code]
+      `UPDATE alliance_audiences SET label=$1, brand=$2, default_channel=$3, column_config=$4::jsonb, updated_at=NOW()
+       WHERE code=$5 AND active=TRUE RETURNING *`,
+      [label, brand || null, defaultChannel, JSON.stringify(systemColumns), code]
     );
     if (!audienceResult.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Audience not found.' }); }
     const audienceId = audienceResult.rows[0].id;
+    for (const field of normalizedFields) {
+      if (field.originalFieldKey === field.fieldKey) continue;
+      if (!/^[a-z][a-z0-9_]*$/.test(field.originalFieldKey)) throw Object.assign(new Error(`Invalid original field key: ${field.originalFieldKey}`), { status: 400 });
+      await client.query(
+        `UPDATE alliance_prospects
+         SET custom_fields = (custom_fields - $1) || jsonb_build_object($2, COALESCE(custom_fields -> $2, custom_fields -> $1)), updated_at=NOW()
+         WHERE audience=$3 AND custom_fields ? $1`,
+        [field.originalFieldKey, field.fieldKey, code]
+      );
+    }
     await client.query(`UPDATE alliance_audience_fields SET active=FALSE WHERE audience_id=$1`, [audienceId]);
     for (const field of normalizedFields) {
       await client.query(
@@ -723,7 +973,7 @@ router.put('/audiences/:code', async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Alliance audience update failed:', error);
-    res.status(500).json({ error: 'Failed to update audience configuration.' });
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to update audience configuration.' });
   } finally { client.release(); }
 });
 
@@ -1337,6 +1587,7 @@ router.post('/campaigns', async (req, res) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    assertBulkSendLimit(await getBulkSendLimit('email', client), prospectIds.length);
     const eligible = await client.query(
       `SELECT id FROM alliance_prospects
        WHERE id = ANY($1::bigint[]) AND audience = $2 AND email IS NOT NULL AND suppressed = FALSE
@@ -1380,7 +1631,7 @@ router.post('/campaigns', async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Alliance email campaign create failed:', error);
-    res.status(500).json({ error: error.message || 'Failed to create email campaign.' });
+    res.status(error.status || 500).json({ error: error.message || 'Failed to create email campaign.' });
   } finally {
     client.release();
   }
@@ -1531,6 +1782,7 @@ router.post('/campaigns/:id/start', async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Campaign is not ready to start.', readiness });
     }
+    assertBulkSendLimit(await getBulkSendLimit('email', client), Number(readiness.stats.eligible));
     if (!['draft', 'ready', 'paused'].includes(readiness.campaign.status)) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: `Campaign cannot start from ${readiness.campaign.status} status.` });
@@ -1572,7 +1824,7 @@ router.post('/campaigns/:id/start', async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Alliance campaign start failed:', error);
-    res.status(500).json({ error: 'Failed to start campaign.' });
+    res.status(error.status || 500).json({ error: error.message || 'Failed to start campaign.' });
   } finally {
     client.release();
   }
@@ -1819,6 +2071,7 @@ router.post('/whatsapp-campaigns', async (req,res)=>{
     if(!process.env[settings.access_token_env||'ALLIANCE_WA_ACCESS_TOKEN'])throw Object.assign(new Error('Alliance WhatsApp access token is missing.'),{status:409});
     const eligible=await client.query(`SELECT id FROM alliance_prospects WHERE id=ANY($1::bigint[]) AND phone IS NOT NULL AND consent=TRUE AND consent_source IS NOT NULL AND suppressed=FALSE AND status NOT IN ('converted','closed','complete','completed','not_interested','unsubscribed')`,[prospectIds]);
     if(!eligible.rowCount)throw Object.assign(new Error('No selected leads have valid WhatsApp consent.'),{status:409});
+    assertBulkSendLimit(await getBulkSendLimit('whatsapp',client),eligible.rowCount);
     const scheduledAt=req.body.scheduled_at?new Date(req.body.scheduled_at):new Date();if(Number.isNaN(scheduledAt.getTime()))throw Object.assign(new Error('Enter a valid schedule date and time.'),{status:400});
     const campaign=await client.query(`INSERT INTO alliance_whatsapp_campaigns(name,audience,template_id,template_name,template_language,template_body,parameter_mapping,phone_number_id,status,scheduled_at,created_by,followup_template_id,followup_template_name,followup_template_language,followup_template_body,followup_parameter_mapping,followup_delay_days,followup_delay_minutes,followup_repeat_days,max_followups) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,'scheduled',$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19) RETURNING *`,[name,text(req.body.audience)||null,templateId,template.rows[0].name,template.rows[0].language||'en',template.rows[0].body,JSON.stringify(mapping),settings.phone_number_id,scheduledAt,req.user?.id||null,followup?.id||null,followup?.name||null,followup?.language||null,followup?.body||null,JSON.stringify(followupMapping),followupDelay,followupDelayMinutes,followupRepeat,maxFollowups]);
     await client.query(`INSERT INTO alliance_whatsapp_campaign_recipients(campaign_id,prospect_id,scheduled_at) SELECT $1,id,$2 FROM alliance_prospects WHERE id=ANY($3::bigint[])`,[campaign.rows[0].id,scheduledAt,eligible.rows.map(row=>row.id)]);

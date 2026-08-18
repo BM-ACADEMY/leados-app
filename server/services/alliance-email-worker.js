@@ -52,12 +52,18 @@ async function claimDueTouch() {
               p.source, p.consent_source, p.custom_fields, p.status AS prospect_status,
               p.suppressed, c.status AS campaign_status, c.started_at, c.sender_domain_id,
               cp.enrollment_status, d.inbox_email, d.status AS sender_status,
-              d.daily_cap, d.sent_today
+              d.daily_cap, d.sent_today, policy.limit_mode AS bulk_limit_mode, policy.custom_limit AS bulk_custom_limit,
+              sent_count.contacted_count
        FROM alliance_touches t
        JOIN alliance_campaigns c ON c.id = t.campaign_id
        JOIN alliance_campaign_prospects cp ON cp.campaign_id = t.campaign_id AND cp.prospect_id = t.prospect_id
        JOIN alliance_prospects p ON p.id = t.prospect_id
        JOIN alliance_domains d ON d.id = c.sender_domain_id
+       LEFT JOIN alliance_bulk_send_limits policy ON policy.channel='email'
+       LEFT JOIN LATERAL (
+         SELECT COUNT(DISTINCT already.prospect_id)::int AS contacted_count
+         FROM alliance_touches already WHERE already.campaign_id=t.campaign_id AND already.channel='email' AND already.status='sent'
+       ) sent_count ON TRUE
        WHERE t.channel = 'email' AND t.status = 'scheduled' AND t.scheduled_at <= NOW()
        ORDER BY t.scheduled_at, t.id
        FOR UPDATE OF t SKIP LOCKED LIMIT 1`
@@ -73,7 +79,8 @@ async function claimDueTouch() {
           : ['stopped', 'completed'].includes(touch.enrollment_status) ? `enrollment_${touch.enrollment_status}`
             : touch.sender_status !== 'active' ? 'sender_not_active'
               : Number(touch.sent_today) >= Number(touch.daily_cap) ? 'sender_daily_cap_reached'
-                : !touch.email ? 'missing_email' : null;
+                : Number(touch.touch_no) === 1 && touch.bulk_limit_mode === 'custom' && Number(touch.contacted_count) >= Number(touch.bulk_custom_limit) ? 'bulk_send_limit_reached'
+                  : !touch.email ? 'missing_email' : null;
     if (stopReason) {
       const retryable = ['campaign_not_running', 'sender_not_active', 'sender_daily_cap_reached'].includes(stopReason);
       await client.query(

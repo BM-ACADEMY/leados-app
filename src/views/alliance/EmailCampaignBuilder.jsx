@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { ArrowLeft, ArrowRight, Bot, CalendarClock, Check, ChevronLeft, ChevronRight, FileText, Filter, Info, Mail, Plus, Search, Send, Sparkles, Trash2, Users } from 'lucide-react';
 import { api } from '../../services/api.js';
 import { DatePicker } from './DatePicker.jsx';
+import { BulkSendLimitControl } from './BulkSendLimitControl.jsx';
 import './alliance.css';
 
 const EMPTY_FILTERS = { search: '', audience: '', industry: '', status: '', source: '', location: '', dateFrom: '', dateTo: '' };
@@ -22,6 +23,23 @@ const STEPS = [
   { id: 5, label: 'Review', icon: Check },
 ];
 const EMAIL_CAMPAIGN_DRAFT_KEY = 'alliance_email_campaign_builder_draft_v1';
+
+const EmailClientPreview = ({ brand, senderEmail, recipientName, recipientEmail, subject, body }) => (
+  <div className="al-email-preview">
+    <div className="al-email-windowbar"><span className="al-window-dots"><i /><i /><i /></span><b>Message preview</b><span>Inbox</span></div>
+    <div className="al-email-toolbar"><button type="button" aria-label="Back">←</button><span /><button type="button" aria-label="Archive">▣</button><button type="button" aria-label="More">•••</button></div>
+    <div className="al-email-message-head">
+      <h3>{subject || 'Your email subject'}</h3>
+      <div className="al-email-sender-row">
+        <span className="al-email-avatar">{String(brand || 'Alliance OS').split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span>
+        <div className="al-email-addresses"><b>{brand || 'Alliance OS'}</b><span>&lt;{senderEmail || 'sender@example.com'}&gt;</span><small>to {recipientName || 'recipient'} &lt;{recipientEmail || 'recipient@example.com'}&gt; <i>⌄</i></small></div>
+        <div className="al-email-meta"><span>Just now</span><button type="button" aria-label="Star">☆</button><button type="button" aria-label="Reply">↩</button></div>
+      </div>
+    </div>
+    <div className="al-preview-body">{body || 'Start writing to preview your email here.'}</div>
+    <div className="al-email-preview-foot"><button type="button">↩ Reply</button><button type="button">↪ Forward</button></div>
+  </div>
+);
 
 export const EmailCampaignBuilder = () => {
   const navigate = useNavigate();
@@ -363,15 +381,24 @@ export const EmailCampaignBuilder = () => {
           </section>}
 
           {step === 3 && <section className="al-cb-card">
-            <div className="al-cb-section-head"><span className="al-cb-icon"><Mail size={20} /></span><div><h2>Email content</h2><p>Templates for <b>{audience?.label || 'the selected audience'}</b>. Create, edit, save, or delete sequence touches.</p></div><button className="al-btn ghost" disabled={!filters.audience || busy === 'add-template' || templates.length >= 10} onClick={addEmailTouch}><Plus size={16} />{busy === 'add-template' ? 'Adding…' : 'Add touch'}</button><button className="al-btn ghost" disabled={templates.length <= 1 || activeTouch !== templates.length - 1 || busy === 'delete-template'} onClick={deleteActiveTemplate}><Trash2 size={15} />{busy === 'delete-template' ? 'Deleting…' : 'Delete touch'}</button><button className="al-btn ghost" disabled={!filters.audience || busy === 'save-template'} onClick={saveActiveTemplate}><Check size={16} />{busy === 'save-template' ? 'Saving…' : 'Save as default'}</button><button className="al-btn ai" disabled={!filters.audience || busy === 'ai'} onClick={suggestWithAI}><Sparkles size={16} />{busy === 'ai' ? 'Generating…' : 'Suggest with AI'}</button></div>
+            <div className="al-email-content-head">
+              <div className="al-email-content-intro"><span className="al-cb-icon"><Mail size={20} /></span><div><h2>Email content</h2><p>Templates for <b>{audience?.label || 'the selected audience'}</b>. Create, edit, save, or delete sequence touches.</p></div></div>
+              <div className="al-email-content-actions">
+                <button className="al-btn ghost" disabled={!filters.audience || busy === 'add-template' || templates.length >= 10} onClick={addEmailTouch}><Plus size={16} />{busy === 'add-template' ? 'Adding…' : 'Add touch'}</button>
+                <button className="al-btn ghost" disabled={templates.length <= 1 || activeTouch !== templates.length - 1 || busy === 'delete-template'} onClick={deleteActiveTemplate}><Trash2 size={15} />{busy === 'delete-template' ? 'Deleting…' : 'Delete touch'}</button>
+                <button className="al-btn ghost" disabled={!filters.audience || busy === 'save-template'} onClick={saveActiveTemplate}><Check size={16} />{busy === 'save-template' ? 'Saving…' : 'Save as default'}</button>
+                <button className="al-btn ai" disabled={!filters.audience || busy === 'ai'} onClick={suggestWithAI}><Sparkles size={16} />{busy === 'ai' ? 'Generating…' : 'Suggest with AI'}</button>
+              </div>
+            </div>
             <div className="al-cb-touch-tabs" style={{ gridTemplateColumns: `repeat(${Math.min(Math.max(templates.length, 1), 5)}, minmax(130px, 1fr))` }}>{templates.map((item, index) => <button key={item.touch_no || index} className={activeTouch === index ? 'active' : ''} onClick={() => setActiveTouch(index)}><span>{item.touch_no || index + 1}</span><div><b>Touch {item.touch_no || index + 1}</b><small>Day {item.delay_days || 0}</small></div>{item.subject?.trim() && item.body?.trim() && <Check size={14} />}</button>)}</div>
-            {!templates.length ? <div className="al-empty">Select an audience to load its approved email sequence.</div> : <div className="al-cb-editor-grid"><div className="al-cb-editor"><div className="al-field"><label>Subject <b>*</b></label><input value={activeTemplate.subject || ''} onChange={(e) => updateTemplate(activeTouch, 'subject', e.target.value)} /><small className="al-help">{(activeTemplate.subject || '').length}/120 characters</small></div><div className="al-field"><label>Email body <b>*</b></label><div className="al-editor-toolbar"><span>Personalize:</span><select value={personalizationField} onChange={(e) => setPersonalizationField(e.target.value)}>{personalizationFields.map((field) => <option key={field.key} value={field.key}>{field.label} — {`{{${field.key}}}`}</option>)}</select><button type="button" onClick={() => insertVariable(`{{${personalizationField}}}`)}>Insert field</button></div><textarea ref={editorRef} className="al-cb-editor-area" value={activeTemplate.body || ''} onChange={(e) => updateTemplate(activeTouch, 'body', e.target.value)} /><div className="al-editor-foot"><span>{(activeTemplate.body || '').trim().split(/\s+/).filter(Boolean).length} words</span><span>{aiGenerated && <><Bot size={13} /> AI generated—review required</>}</span></div></div></div><div className="al-email-preview"><div className="al-preview-top"><div><span>AB</span><div><b>{brand || 'Alliance OS'}</b><small>{sender?.inbox_email || 'sender@example.com'}</small></div></div><span>Live preview</span></div><div className="al-preview-subject">{personalize(activeTemplate.subject) || 'Your email subject'}</div><div className="al-preview-to">To: {previewLead.name || previewLead.business_name} &lt;{previewLead.email || 'recipient@example.com'}&gt;</div><div className="al-preview-body">{personalize(activeTemplate.body) || 'Start writing to preview your email here.'}</div></div></div>}
+            {!templates.length ? <div className="al-empty">Select an audience to load its approved email sequence.</div> : <div className="al-cb-editor-grid"><div className="al-cb-editor"><div className="al-field"><label>Subject <b>*</b></label><input value={activeTemplate.subject || ''} onChange={(e) => updateTemplate(activeTouch, 'subject', e.target.value)} /><small className="al-help">{(activeTemplate.subject || '').length}/120 characters</small></div><div className="al-field"><label>Email body <b>*</b></label><div className="al-editor-toolbar"><span>Personalize:</span><select value={personalizationField} onChange={(e) => setPersonalizationField(e.target.value)}>{personalizationFields.map((field) => <option key={field.key} value={field.key}>{field.label} — {`{{${field.key}}}`}</option>)}</select><button type="button" onClick={() => insertVariable(`{{${personalizationField}}}`)}>Insert field</button></div><textarea ref={editorRef} className="al-cb-editor-area" value={activeTemplate.body || ''} onChange={(e) => updateTemplate(activeTouch, 'body', e.target.value)} /><div className="al-editor-foot"><span>{(activeTemplate.body || '').trim().split(/\s+/).filter(Boolean).length} words</span><span>{aiGenerated && <><Bot size={13} /> AI generated—review required</>}</span></div></div></div><EmailClientPreview brand={brand} senderEmail={sender?.inbox_email} recipientName={previewLead.name || previewLead.business_name} recipientEmail={previewLead.email} subject={personalize(activeTemplate.subject)} body={personalize(activeTemplate.body)} /></div>}
           </section>}
 
           {step === 4 && <section className="al-cb-card">
             <div className="al-cb-section-head"><span className="al-cb-icon"><CalendarClock size={20} /></span><div><h2>Sequence schedule</h2><p>Control when each follow-up becomes eligible to send after campaign launch.</p></div></div>
             <div className="al-cb-timeline">{templates.map((item, index) => <div className="al-cb-time" key={item.touch_no || index}><div className="al-time-line"><span>{index + 1}</span>{index < templates.length - 1 && <i />}</div><div><b>Touch {index + 1}</b><p>{item.purpose || item.subject}</p></div><div className="al-field"><label>Send on day</label><input type="number" min="0" max="30" value={item.delay_days ?? 0} onChange={(e) => updateTemplate(index, 'delay_days', Number(e.target.value))} /></div></div>)}</div>
             <div className="al-note success"><Info size={18} /><div><b>Safe scheduling:</b> Campaign creation produces a draft only. Use Campaign Planner to send a test email, run readiness checks, and start delivery. Replies, unsubscribe requests, and closed lead statuses stop future touches automatically.</div></div>
+            <BulkSendLimitControl channel="email" recipientCount={selected.size} />
           </section>}
 
           {step === 5 && <section className="al-cb-card">

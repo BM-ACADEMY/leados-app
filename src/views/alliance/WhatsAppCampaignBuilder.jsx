@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClock,
   Check,
@@ -16,6 +16,7 @@ import toast from "react-hot-toast";
 import { api } from "../../services/api.js";
 import { DatePicker } from "./DatePicker.jsx";
 import { WhatsAppCampaignDetail } from "./WhatsAppCampaignDetail.jsx";
+import { BulkSendLimitControl } from "./BulkSendLimitControl.jsx";
 import "./alliance.css";
 
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -23,6 +24,7 @@ const todayLocalISO = (() => {
   const now = new Date();
   return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
 })();
+const WHATSAPP_CAMPAIGN_DRAFT_KEY = "alliance_whatsapp_campaign_builder_draft_v1";
 
 const formatDate = (value) => {
   if (!value) return "—";
@@ -60,7 +62,56 @@ export const WhatsAppCampaignBuilder = () => {
   const [deletingCampaign, setDeletingCampaign] = useState(null);
   const [stoppingCampaign, setStoppingCampaign] = useState(null);
   const [viewingCampaignId, setViewingCampaignId] = useState(null);
+  const [draftStatus, setDraftStatus] = useState("");
+  const draftReadyRef = useRef(false);
+  const latestDraftRef = useRef(null);
+  const discardDraftRef = useRef(false);
+  const restoredMappingRef = useRef(null);
+  const restoredFollowupMappingRef = useRef(null);
   const limit = 10;
+
+  useEffect(() => {
+    try {
+      const draft = JSON.parse(localStorage.getItem(WHATSAPP_CAMPAIGN_DRAFT_KEY) || "null");
+      if (draft?.version === 1) {
+        if (draft.form) setForm((current) => ({ ...current, ...draft.form }));
+        if (draft.selected && typeof draft.selected === "object") setSelected(draft.selected);
+        if (Number.isInteger(draft.page)) setPage(Math.max(1, draft.page));
+        restoredMappingRef.current = Array.isArray(draft.mapping) ? draft.mapping : [];
+        restoredFollowupMappingRef.current = Array.isArray(draft.followupMapping) ? draft.followupMapping : [];
+        setMapping(restoredMappingRef.current);
+        setFollowupMapping(restoredFollowupMappingRef.current);
+        setDraftStatus("Draft restored");
+      }
+    } catch {
+      localStorage.removeItem(WHATSAPP_CAMPAIGN_DRAFT_KEY);
+    } finally { draftReadyRef.current = true; }
+  }, []);
+
+  useEffect(() => {
+    if (!draftReadyRef.current) return undefined;
+    const hasContent = Boolean(form.name.trim() || form.template_id || form.audience || Object.keys(selected).length);
+    if (!hasContent) { latestDraftRef.current = null; localStorage.removeItem(WHATSAPP_CAMPAIGN_DRAFT_KEY); return undefined; }
+    discardDraftRef.current = false;
+    const compactSelected = Object.fromEntries(Object.entries(selected).map(([id, lead]) => [id, {
+      id: lead.id, name: lead.name, business_name: lead.business_name, phone: lead.phone,
+      email: lead.email, audience: lead.audience, industry: lead.industry, location: lead.location,
+      status: lead.status, consent_source: lead.consent_source, created_at: lead.created_at,
+    }]));
+    const snapshot = { version: 1, savedAt: new Date().toISOString(), form, mapping, followupMapping, selected: compactSelected, page };
+    latestDraftRef.current = snapshot;
+    const timer = window.setTimeout(() => {
+      try { localStorage.setItem(WHATSAPP_CAMPAIGN_DRAFT_KEY, JSON.stringify(snapshot)); setDraftStatus("Draft saved"); }
+      catch { setDraftStatus("Draft could not be saved"); }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [form, mapping, followupMapping, selected, page]);
+
+  useEffect(() => () => {
+    if (!discardDraftRef.current && latestDraftRef.current) {
+      try { localStorage.setItem(WHATSAPP_CAMPAIGN_DRAFT_KEY, JSON.stringify(latestDraftRef.current)); } catch { /* Navigation must remain available. */ }
+    }
+  }, []);
   const refreshCampaigns = useCallback(async () => {
     try {
       const data = await api.getAllianceWhatsAppCampaigns();
@@ -113,6 +164,10 @@ export const WhatsAppCampaignBuilder = () => {
   const template = templates.find(
     (item) => String(item.id) === String(form.template_id),
   );
+  const templateButtons = useMemo(() => {
+    try { return Array.isArray(template?.buttons) ? template.buttons : JSON.parse(template?.buttons || '[]'); }
+    catch { return []; }
+  }, [template]);
   const variableCount = useMemo(
     () =>
       Math.max(
@@ -137,6 +192,12 @@ export const WhatsAppCampaignBuilder = () => {
     [followupTemplate],
   );
   useEffect(() => {
+    if (!template && restoredMappingRef.current) return;
+    if (template && restoredMappingRef.current) {
+      const restored = restoredMappingRef.current;
+      restoredMappingRef.current = null;
+      if (restored.length === variableCount) { setMapping(restored); return; }
+    }
     const defaultField = (index) => {
       const source = template?.parameter_definitions?.body?.[String(index + 1)]?.default_source;
       if (source === 'recipient_name') return 'name';
@@ -151,6 +212,12 @@ export const WhatsAppCampaignBuilder = () => {
     );
   }, [variableCount, template]);
   useEffect(() => {
+    if (!followupTemplate && restoredFollowupMappingRef.current) return;
+    if (followupTemplate && restoredFollowupMappingRef.current) {
+      const restored = restoredFollowupMappingRef.current;
+      restoredFollowupMappingRef.current = null;
+      if (restored.length === followupVariableCount) { setFollowupMapping(restored); return; }
+    }
     setFollowupMapping(
       Array.from(
         { length: followupVariableCount },
@@ -249,10 +316,15 @@ export const WhatsAppCampaignBuilder = () => {
           ? new Date(form.scheduled_at).toISOString()
           : null,
       });
+      discardDraftRef.current = true;
+      latestDraftRef.current = null;
+      localStorage.removeItem(WHATSAPP_CAMPAIGN_DRAFT_KEY);
+      setDraftStatus("");
       toast.success(result.message);
       const data = await api.getAllianceWhatsAppCampaigns();
       setCampaigns(data.campaigns || []);
-      setSelected({});
+      setForm({ name: "", template_id: "", audience: "", search: "", dateFrom: "", dateTo: "", delivery_mode: "now", scheduled_at: "", test_phone: "", followup_template_id: "", followup_delay_minutes: 5760, followup_repeat_days: 4, max_followups: 0 });
+      setMapping([]); setFollowupMapping([]); setSelected({}); setPage(1);
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -312,10 +384,17 @@ export const WhatsAppCampaignBuilder = () => {
       setBusy("");
     }
   };
+  const discardDraft = () => {
+    discardDraftRef.current = true;
+    latestDraftRef.current = null;
+    localStorage.removeItem(WHATSAPP_CAMPAIGN_DRAFT_KEY);
+    setForm({ name: "", template_id: "", audience: "", search: "", dateFrom: "", dateTo: "", delivery_mode: "now", scheduled_at: "", test_phone: "", followup_template_id: "", followup_delay_minutes: 5760, followup_repeat_days: 4, max_followups: 0 });
+    setMapping([]); setFollowupMapping([]); setSelected({}); setPage(1); setDraftStatus("Draft discarded");
+  };
   return (
     <div className="al-wrap al-wa-builder">
       <div className="al-eyebrow">AllianceOS · WhatsApp bulk messaging</div>
-      <div className="al-page-title">WhatsApp campaign builder</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}><div className="al-page-title">WhatsApp campaign builder</div><div style={{ display: "flex", alignItems: "center", gap: 8 }}><small style={{ color: "var(--al-faint)" }}>{draftStatus}</small><button type="button" className="al-btn ghost sm" onClick={discardDraft}>Discard draft</button></div></div>
       <p className="al-page-desc">
         Send Meta-approved templates only to Alliance prospects with recorded
         WhatsApp consent.
@@ -395,6 +474,7 @@ export const WhatsAppCampaignBuilder = () => {
                 </header>
                 <div>{template.body}</div>
                 {template.footer && <small>{template.footer}</small>}
+                {!!templateButtons.length && <div className="al-wa-template-buttons">{templateButtons.map((button, index) => <span key={`${button.type}-${index}`}>{button.type === 'URL' ? '↗' : button.type === 'PHONE_NUMBER' ? '☎' : '↩'} {button.text}</span>)}</div>}
                 <a href={`${api.baseUrl}/api/templates/${template.id}/campaign-sheet`} download className="al-button secondary" style={{ marginTop: 10, width: 'fit-content', textDecoration: 'none' }}>
                   <Download size={14} /> Download parameter Excel
                 </a>
@@ -654,6 +734,7 @@ export const WhatsAppCampaignBuilder = () => {
                   ✓
                 </small>
               </div>
+              {!!templateButtons.length && <div className="al-wa-preview-buttons">{templateButtons.map((button, index) => button.type === 'URL' ? <a key={index} href={button.url || '#'} target="_blank" rel="noreferrer">↗ {button.text}</a> : button.type === 'PHONE_NUMBER' ? <a key={index} href={`tel:${button.phone_number || ''}`}>☎ {button.text}</a> : <button type="button" key={index}>↩ {button.text}</button>)}</div>}
             </div>
           </section>
           <section className="al-cb-summary">
@@ -693,6 +774,7 @@ export const WhatsAppCampaignBuilder = () => {
                   : "Messages remain queued until the selected date and time."}
               </small>
             </div>
+            <BulkSendLimitControl channel="whatsapp" recipientCount={selectedIds.length} />
             <div className="al-cb-metric">
               <span>Recipients</span>
               <b>{selectedIds.length}</b>

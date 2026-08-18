@@ -14,6 +14,16 @@ async function claimRecipient() {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query(
+      `WITH policy AS (SELECT custom_limit FROM alliance_bulk_send_limits WHERE channel='whatsapp' AND limit_mode='custom'),
+       sent AS (SELECT campaign_id,COUNT(*)::int AS total FROM alliance_whatsapp_campaign_recipients WHERE status IN ('sent','delivered','read') GROUP BY campaign_id),
+       ranked AS (SELECT r.id,r.campaign_id,ROW_NUMBER() OVER (PARTITION BY r.campaign_id ORDER BY r.scheduled_at,r.id) AS position
+                  FROM alliance_whatsapp_campaign_recipients r WHERE r.status='queued'),
+       limits AS (SELECT q.id,q.position,p.custom_limit,COALESCE(s.total,0) AS sent_total
+                  FROM ranked q CROSS JOIN policy p LEFT JOIN sent s ON s.campaign_id=q.campaign_id)
+       UPDATE alliance_whatsapp_campaign_recipients r SET status='cancelled',error_message='bulk_send_limit_reached'
+       FROM limits allowed WHERE r.id=allowed.id AND allowed.position>GREATEST(allowed.custom_limit-allowed.sent_total,0)`
+    );
     const result = await client.query(
       `SELECT r.id,r.campaign_id,r.prospect_id,c.template_name,c.template_language,c.template_body,c.parameter_mapping,
               c.phone_number_id,c.created_at AS campaign_created_at,c.followup_template_id,c.followup_delay_days,c.followup_delay_minutes,p.name,p.business_name,p.location,p.phone,p.status AS prospect_status,

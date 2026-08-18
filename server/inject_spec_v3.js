@@ -10,9 +10,9 @@ if (fs.existsSync(envPath)) {
 const envVars = `
 # Routing Numbers
 SHARED_WABA_NUMBER=919944509441
-OUTBOUND_CONTACT_NUMBER=94038 92971
+OUTBOUND_CONTACT_NUMBER=9944940051
 GENERAL_PARTNERSHIPS_NUMBER=99442 88271
-BM_ACADEMY_ADMISSIONS_NUMBER=94038 92971
+BM_ACADEMY_ADMISSIONS_NUMBER=9944940051
 `;
 if (!envContent.includes('SHARED_WABA_NUMBER')) {
     fs.appendFileSync(envPath, envVars);
@@ -33,7 +33,7 @@ const insertStr = `
       3. Conversation memory: Never ask for something already provided (e.g., don't ask the time slot again after the user gave "4pm", or name if already given).
       4. Fallbacks: If it's a voice note (audio), reply: "Got your voice note 🎧 — could you type it quickly so I can help right away?". If unclear, ask ONE short clarifying question.
       5. Tone: Write a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.
-      6. Routing Numbers: Use these exact numbers if the user asks for contact info: Shared WABA (inbound) is \${process.env.SHARED_WABA_NUMBER || '919944509441'}, Outbound contact for ALL brands is \${process.env.OUTBOUND_CONTACT_NUMBER || '94038 92971'}, General / partnerships is \${process.env.GENERAL_PARTNERSHIPS_NUMBER || '99442 88271'}, BM Academy admissions is \${process.env.BM_ACADEMY_ADMISSIONS_NUMBER || '94038 92971'}.
+      6. Routing Numbers: The only public contact number the assistant may send is \${process.env.OUTBOUND_CONTACT_NUMBER || '9944940051'}. Never disclose the internal WABA identifier and never substitute another number.
       
       JSON OUTPUT REQUIREMENT:
       You MUST return your response as a raw JSON object with the following keys exactly:

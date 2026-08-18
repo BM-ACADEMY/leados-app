@@ -601,6 +601,18 @@ class LeadOSAPI {
     return this.request(`/api/alliance/prospects${query ? `?${query}` : ''}`);
   }
 
+  async getAllianceAnalytics() {
+    return this.request(`/api/alliance/analytics?_=${Date.now()}`);
+  }
+
+  async getAllianceBulkSendLimits() {
+    return this.request('/api/alliance/bulk-send-limits');
+  }
+
+  async updateAllianceBulkSendLimit(channel, payload) {
+    return this.request(`/api/alliance/bulk-send-limits/${encodeURIComponent(channel)}`, { method: 'PUT', body: JSON.stringify(payload) });
+  }
+
   async createAllianceProspect(prospect) {
     return this.request('/api/alliance/prospects', {
       method: 'POST',

@@ -3421,13 +3421,12 @@ app.post('/api/templates/sync-all', auth, async (req, res) => {
         const localTpl = existing.rows[0];
         const approvedAt = (status === 'approved' && !localTpl.approved_at) ? new Date() : localTpl.approved_at;
         await pool.query(
-          `UPDATE templates 
-           SET status = $1, 
-               meta_template_id = $2, 
-               approved_at = $3,
-               updated_at = NOW() 
-           WHERE id = $4`,
-          [status, metaId, approvedAt, localTpl.id]
+          `UPDATE templates
+           SET status=$1, meta_template_id=$2, approved_at=$3, category=$4,
+               header_format=$5, header=$6, body=$7, footer=$8, buttons=$9::jsonb,
+               updated_at=NOW()
+           WHERE id=$10`,
+          [status, metaId, approvedAt, t.category, headerFormat, headerText, bodyText, footerText, buttonsVal, localTpl.id]
         );
         updated++;
       } else {
@@ -3603,16 +3602,17 @@ app.get('/api/templates/:id/sync', auth, async (req, res) => {
 
     if (metaTpl) {
       const status = metaTpl.status.toLowerCase();
-      let updateQuery = 'UPDATE templates SET status = $1, meta_template_id = $2';
-      const params = [status, metaTpl.id];
-
-      if (status === 'approved' && !tpl.approved_at) {
-        updateQuery += ', approved_at = NOW()';
-      }
-      updateQuery += ' WHERE id = $3 RETURNING *';
-      params.push(tpl.id);
-
-      const { rows: updatedRows } = await pool.query(updateQuery, params);
+      const bodyComp = metaTpl.components?.find((component) => component.type === 'BODY') || {};
+      const headerComp = metaTpl.components?.find((component) => component.type === 'HEADER');
+      const footerComp = metaTpl.components?.find((component) => component.type === 'FOOTER');
+      const buttonsComp = metaTpl.components?.find((component) => component.type === 'BUTTONS');
+      const { rows: updatedRows } = await pool.query(
+        `UPDATE templates SET status=$1,meta_template_id=$2,approved_at=CASE WHEN $1='approved' THEN COALESCE(approved_at,NOW()) ELSE approved_at END,
+          category=$3,header_format=$4,header=$5,body=$6,footer=$7,buttons=$8::jsonb,updated_at=NOW()
+         WHERE id=$9 RETURNING *`,
+        [status, metaTpl.id, metaTpl.category, headerComp?.format || 'NONE', headerComp?.text || headerComp?.example?.header_handle?.[0] || null,
+          bodyComp.text || '', footerComp?.text || null, JSON.stringify(buttonsComp?.buttons || []), tpl.id]
+      );
       return res.json({ template: updatedRows[0] });
     }
 

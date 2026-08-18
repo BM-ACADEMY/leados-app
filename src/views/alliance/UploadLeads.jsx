@@ -4,6 +4,7 @@ import { api } from '../../services/api.js';
 import './alliance.css';
 
 const COLUMNS = ['name', 'business_name', 'email', 'phone', 'audience', 'industry', 'location', 'source', 'channel_pref', 'consent', 'consent_source'];
+const defaultSystemColumns = () => COLUMNS.map((key) => ({ key, label: key, enabled: true, required: false }));
 
 const DEFAULT_AUDIENCES = [
   { code: 'college', label: 'College principals / TPOs', default_channel: 'email', fields: [] },
@@ -24,8 +25,8 @@ export const UploadLeads = () => {
   const [editingAudienceCode, setEditingAudienceCode] = useState('');
   const [deletingAudience, setDeletingAudience] = useState(null);
   const [editingFieldKey, setEditingFieldKey] = useState('');
-  const [newAudience, setNewAudience] = useState({ code: '', label: '', brand: '', default_channel: 'email', fields: [] });
-  const [newField, setNewField] = useState({ field_key: '', data_type: 'auto', required: false, sample_value: '' });
+  const [newAudience, setNewAudience] = useState({ code: '', label: '', brand: '', default_channel: 'email', fields: [], system_columns: defaultSystemColumns() });
+  const [newField, setNewField] = useState({ field_key: '', label: '', data_type: 'auto', required: false, sample_value: '' });
   const [savingAudience, setSavingAudience] = useState(false);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [templatePreview, setTemplatePreview] = useState(null);
@@ -90,7 +91,7 @@ export const UploadLeads = () => {
       const data = wasEditing ? await api.updateAllianceAudience(editingAudienceCode, newAudience) : await api.createAllianceAudience(newAudience);
       await loadAudiences();
       setAudience(data.audience.code);
-      setNewAudience({ code: '', label: '', brand: '', default_channel: 'email', fields: [] });
+      setNewAudience({ code: '', label: '', brand: '', default_channel: 'email', fields: [], system_columns: defaultSystemColumns() });
       setEditingAudienceCode('');
       setEditingFieldKey('');
       setShowAudienceForm(false);
@@ -107,36 +108,36 @@ export const UploadLeads = () => {
     if (!fieldKey) return toast.error('Enter a field name');
     if (!newField.sample_value.trim()) return toast.error('Enter a sample value for this field');
     if (newAudience.fields.some((field) => field.field_key === fieldKey && field.field_key !== editingFieldKey)) return toast.error('That field already exists');
-    const nextField = { ...newField, field_key: fieldKey, label: fieldKey.replace(/_/g, ' ') };
+    const nextField = { ...newField, field_key: fieldKey, label: newField.label.trim() || fieldKey.replace(/_/g, ' '), original_field_key: editingFieldKey || undefined };
     setNewAudience({
       ...newAudience,
       fields: editingFieldKey ? newAudience.fields.map((field) => field.field_key === editingFieldKey ? nextField : field) : [...newAudience.fields, nextField],
     });
-    setNewField({ field_key: '', data_type: 'auto', required: false, sample_value: '' });
+    setNewField({ field_key: '', label: '', data_type: 'auto', required: false, sample_value: '' });
     setEditingFieldKey('');
   };
 
   const removeCustomField = (fieldKey) => {
     setNewAudience({ ...newAudience, fields: newAudience.fields.filter((field) => field.field_key !== fieldKey) });
-    if (editingFieldKey === fieldKey) { setEditingFieldKey(''); setNewField({ field_key: '', data_type: 'auto', required: false, sample_value: '' }); }
+    if (editingFieldKey === fieldKey) { setEditingFieldKey(''); setNewField({ field_key: '', label: '', data_type: 'auto', required: false, sample_value: '' }); }
   };
 
   const openAddAudience = () => {
     setEditingAudienceCode(''); setEditingFieldKey('');
-    setNewAudience({ code: '', label: '', brand: '', default_channel: 'email', fields: [] });
-    setNewField({ field_key: '', data_type: 'auto', required: false, sample_value: '' });
+    setNewAudience({ code: '', label: '', brand: '', default_channel: 'email', fields: [], system_columns: defaultSystemColumns() });
+    setNewField({ field_key: '', label: '', data_type: 'auto', required: false, sample_value: '' });
     setShowAudienceForm(true);
   };
   const openEditAudience = () => {
     if (!selectedAudience) return;
     setEditingAudienceCode(selectedAudience.code); setEditingFieldKey('');
-    setNewAudience({ code: selectedAudience.code, label: selectedAudience.label, brand: selectedAudience.brand || '', default_channel: selectedAudience.default_channel, fields: (selectedAudience.fields || []).map((field) => ({ ...field })) });
-    setNewField({ field_key: '', data_type: 'auto', required: false, sample_value: '' });
+    setNewAudience({ code: selectedAudience.code, label: selectedAudience.label, brand: selectedAudience.brand || '', default_channel: selectedAudience.default_channel, fields: (selectedAudience.fields || []).map((field) => ({ ...field })), system_columns: selectedAudience.column_config?.length ? selectedAudience.column_config.map((column) => ({ ...column })) : defaultSystemColumns() });
+    setNewField({ field_key: '', label: '', data_type: 'auto', required: false, sample_value: '' });
     setShowAudienceForm(true);
   };
   const editCustomField = (field) => {
     setEditingFieldKey(field.field_key);
-    setNewField({ field_key: field.field_key, data_type: field.data_type, required: Boolean(field.required), sample_value: field.sample_value || '' });
+    setNewField({ field_key: field.field_key, original_field_key: field.field_key, label: field.label || '', data_type: field.data_type, required: Boolean(field.required), sample_value: field.sample_value || '' });
   };
   const confirmDeleteAudience = async () => {
     if (!deletingAudience) return;
@@ -183,7 +184,8 @@ export const UploadLeads = () => {
   };
 
   const selectedAudience = audiences.find((item) => item.code === audience);
-  const displayedColumns = [...COLUMNS, ...(selectedAudience?.fields || []).map((field) => field.field_key)];
+  const selectedSystemColumns = selectedAudience?.column_config?.length ? selectedAudience.column_config : defaultSystemColumns();
+  const displayedColumns = [...selectedSystemColumns.filter((column) => column.enabled !== false).map((column) => column.label || column.key), ...(selectedAudience?.fields || []).map((field) => field.field_key)];
 
   return (
     <div className="al-wrap">
@@ -308,9 +310,10 @@ export const UploadLeads = () => {
             <div className="al-field"><label>Default channel</label><select value={newAudience.default_channel} onChange={(e) => setNewAudience({ ...newAudience, default_channel: e.target.value })}><option value="email">Email</option><option value="whatsapp">WhatsApp</option></select></div>
           </div>
           <div className="al-field">
-            <label>Additional information to collect</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.2fr 1.1fr auto auto', gap: 8, alignItems: 'center' }}>
-              <input value={newField.field_key} placeholder="Example: Number of beds" onChange={(e) => setNewField({ ...newField, field_key: e.target.value })} />
+            <label>Add or edit custom columns</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1.25fr 1.1fr 1fr auto auto', gap: 8, alignItems: 'center' }}>
+              <input value={newField.label} placeholder="Column name: Number of beds" onChange={(e) => { const label = e.target.value; const generatedKey = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''); setNewField({ ...newField, label, field_key: generatedKey }); }} />
+              <input value={newField.field_key} readOnly title="Generated automatically from the column name. Existing prospect data is migrated when this key changes." placeholder="Key generated automatically" style={{ color: 'var(--al-muted)', cursor: 'default' }} />
               <input value={newField.sample_value} placeholder="Sample: 150" onChange={(e) => setNewField({ ...newField, sample_value: e.target.value })} />
               <select value={newField.data_type} onChange={(e) => setNewField({ ...newField, data_type: e.target.value })}>
                 <option value="auto">Detect automatically</option><option value="text">Text</option><option value="integer">Whole number</option><option value="number">Number / decimal</option><option value="boolean">Yes / No</option><option value="date">Date</option>
@@ -318,8 +321,9 @@ export const UploadLeads = () => {
               <label style={{ display: 'flex', gap: 6, alignItems: 'center', margin: 0, textTransform: 'none', letterSpacing: 0 }}><input type="checkbox" checked={newField.required} onChange={(e) => setNewField({ ...newField, required: e.target.checked })} style={{ width: 'auto' }} /> Required</label>
               <button className="al-btn ghost sm" type="button" onClick={addCustomField}>{editingFieldKey ? 'Update field' : 'Add field'}</button>
             </div>
-            {!!newAudience.fields.length && <div style={{ display: 'grid', gap: 7, marginTop: 10 }}>{newAudience.fields.map((field) => <div key={field.field_key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', border: '1px solid var(--al-line)', borderRadius: 7 }}><code>{field.label}{field.required ? ' *' : ''} · {field.data_type === 'auto' ? 'automatic' : field.data_type}</code><span style={{ display: 'flex', gap: 6 }}><button className="al-btn ghost sm" type="button" onClick={() => editCustomField(field)}>Edit</button><button className="al-btn ghost sm" type="button" style={{ color: '#EF9A9A' }} onClick={() => removeCustomField(field.field_key)}>Remove</button></span></div>)}</div>}
-            <div style={{ color: 'var(--al-muted)', fontSize: 11.5, marginTop: 8 }}>Add a sample value so the downloaded Excel file shows users the expected format. Automatic detection recognizes numbers, dates, yes/no values, and text.</div>
+            <div style={{ marginTop: 14 }}><div style={{ color: 'var(--al-muted)', fontSize: 10.5, marginBottom: 7, textTransform: 'uppercase', letterSpacing: 1 }}>System columns</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(430px,1fr))', gap: 7 }}>{newAudience.system_columns.filter((column) => column.enabled).map((column) => <div key={column.key} style={{ display: 'grid', gridTemplateColumns: '115px minmax(120px,1fr) auto auto', gap: 8, alignItems: 'center', padding: '8px 10px', border: '1px solid var(--al-line)', borderRadius: 7 }}><code>{column.key}</code><input aria-label={`${column.key} Excel header`} value={column.label} onChange={(event) => setNewAudience({ ...newAudience, system_columns: newAudience.system_columns.map((item) => item.key === column.key ? { ...item, label: event.target.value } : item) })} /><label style={{ display: 'flex', gap: 6, alignItems: 'center', margin: 0, textTransform: 'none', letterSpacing: 0, whiteSpace: 'nowrap' }}><input type="checkbox" aria-label={`${column.key} required`} checked={Boolean(column.required)} onChange={(event) => setNewAudience({ ...newAudience, system_columns: newAudience.system_columns.map((item) => item.key === column.key ? { ...item, required: event.target.checked } : item) })} style={{ width: 'auto' }} /> Required</label><button type="button" className="al-btn ghost sm" style={{ color: '#EF9A9A' }} onClick={() => setNewAudience({ ...newAudience, system_columns: newAudience.system_columns.map((item) => item.key === column.key ? { ...item, enabled: false, required: false } : item) })}>Delete</button></div>)}</div>{newAudience.system_columns.some((column) => !column.enabled) && <div style={{ marginTop: 12, padding: 10, border: '1px dashed var(--al-line)', borderRadius: 8 }}><div style={{ color: 'var(--al-faint)', fontSize: 10, marginBottom: 7, textTransform: 'uppercase', letterSpacing: 1 }}>Deleted system columns</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>{newAudience.system_columns.filter((column) => !column.enabled).map((column) => <button key={column.key} type="button" className="al-btn ghost sm" onClick={() => setNewAudience({ ...newAudience, system_columns: newAudience.system_columns.map((item) => item.key === column.key ? { ...item, enabled: true } : item) })}>Restore {column.key}</button>)}</div></div>}</div>
+            <div style={{ marginTop: 14 }}><div style={{ color: 'var(--al-muted)', fontSize: 10.5, marginBottom: 7, textTransform: 'uppercase', letterSpacing: 1 }}>Custom columns</div>{newAudience.fields.length ? <div style={{ display: 'grid', gap: 7 }}>{newAudience.fields.map((field) => <div key={field.field_key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', border: `1px solid ${editingFieldKey === field.field_key ? 'var(--al-gold)' : 'var(--al-line)'}`, borderRadius: 7 }}><code>{field.label || field.field_key} <span style={{ color: 'var(--al-faint)' }}>({field.field_key})</span>{field.required ? ' *' : ''} · {field.data_type === 'auto' ? 'automatic' : field.data_type}</code><span style={{ display: 'flex', gap: 6 }}><button className="al-btn ghost sm" type="button" onClick={() => editCustomField(field)}>Edit</button><button className="al-btn ghost sm" type="button" style={{ color: '#EF9A9A' }} onClick={() => removeCustomField(field.field_key)}>Remove</button></span></div>)}</div> : <div style={{ color: 'var(--al-faint)', fontSize: 12, padding: '10px 0' }}>No custom columns yet. Enter a column key, display name, sample value, and click Add field.</div>}</div>
+            <div style={{ color: 'var(--al-muted)', fontSize: 11.5, marginTop: 8 }}>Every system column can be renamed or deleted. Deleted columns are removed from future Excel templates and can be restored before saving. Historical data is never erased. When business_name is omitted, import creates a display identity from name, email, phone, or the spreadsheet row number.</div>
           </div>
           <button className="al-btn" type="button" disabled={savingAudience || !newAudience.code || !newAudience.label} onClick={addAudience} style={{ marginTop: 12 }}>
             {savingAudience ? 'Saving…' : editingAudienceCode ? 'Save changes' : 'Save audience'}

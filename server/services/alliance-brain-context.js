@@ -24,7 +24,26 @@ const BRAIN_INSTRUCTIONS = 'Only use facts provided in this brand knowledge cont
 // reply-suggestion prompt. Returns null if no brand is configured yet.
 async function getAllianceBrainContext(audience, messageText) {
   if (!audience) return null;
-  const brandResult = await db.query(`SELECT * FROM alliance_brands WHERE audience = $1 AND active = TRUE LIMIT 1`, [audience]);
+  // Prefer an explicit brand-to-audience link. Older Brain records were created
+  // before that selector existed, so fall back to the brand configured on the
+  // audience itself. This keeps every AI entry point on the same source of truth
+  // without silently ignoring otherwise valid brand knowledge.
+  const brandResult = await db.query(
+    `SELECT b.*
+     FROM alliance_brands b
+     LEFT JOIN alliance_audiences a ON a.code=$1
+     WHERE b.active=TRUE
+       AND (
+         b.audience=$1
+         OR (b.audience IS NULL AND (
+           REGEXP_REPLACE(LOWER(b.code),'[^a-z0-9]','','g')=REGEXP_REPLACE(LOWER(COALESCE(a.brand,'')),'[^a-z0-9]','','g')
+           OR REGEXP_REPLACE(LOWER(b.name),'[^a-z0-9]','','g')=REGEXP_REPLACE(LOWER(COALESCE(a.brand,'')),'[^a-z0-9]','','g')
+         ))
+       )
+     ORDER BY (b.audience=$1) DESC,b.id
+     LIMIT 1`,
+    [audience]
+  );
   if (!brandResult.rowCount) return null;
   const brand = brandResult.rows[0];
 

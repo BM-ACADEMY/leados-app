@@ -1461,18 +1461,16 @@ router.post('/campaign-builder/ai-suggestion', async (req, res) => {
       : selectedBase;
     if (!openRouter.isConfigured) return res.json({ template: currentTemplate, ai_generated: false, warning: 'OpenRouter is not configured; the current template was returned.' });
     const brain = await getAllianceBrainContext(audience, objective);
-    const campaignRules = await getAlliancePromptRules('campaign_message', 'email', audience);
-    const followupRules = await getAlliancePromptRules('followup', 'email', audience);
+    const promptJob = requestedTouchNo === 1 ? 'campaign_message' : 'followup';
+    const contentRules = await getAlliancePromptRules(promptJob, 'email', audience);
     const prompt = `You are AllianceOS's B2B cold-email campaign editor. Rewrite one selected email touch for human review.
 Brand: ${audienceResult.rows[0].brand || 'ABM Groups'}
 Audience: ${audienceResult.rows[0].label}
 Campaign objective: ${objective || 'Start a relevant business conversation'}
 Approved AI Brain data: ${brain ? JSON.stringify(brain) : 'No Brain data is configured. Do not invent brand facts.'}
 Selected touch: ${JSON.stringify(currentTemplate)}
-Administrator campaign rules:
-${campaignRules}
-Administrator follow-up/reminder rules:
-${followupRules}
+Administrator ${promptJob === 'campaign_message' ? 'campaign-message' : 'follow-up/reminder'} rules:
+${contentRules}
 System rules: preserve every {{field_name}} variable present in the selected touch exactly; one clear CTA; no invented claims; include the existing unsubscribe instruction; do not exceed 100 words per email. Brain facts are authoritative and administrator rules may control tone or behavior but may never introduce unsupported factual claims.
 Return JSON only: {"template":{"touch_no":${requestedTouchNo},"delay_days":${Number(currentTemplate.delay_days) || 0},"purpose":"...","subject":"...","body":"..."}}`;
     const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.4, maxOutputTokens: 2400 } });

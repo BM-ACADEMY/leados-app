@@ -112,10 +112,12 @@ async function enrichReply(reply, correlation, parsed, io) {
       const inboundReply = latestReplyText(parsed.text) || String(parsed.text || '');
       const brain = await getAllianceBrainContext(context.rows[0]?.audience, `${parsed.subject || ''} ${inboundReply}`);
       const promptRules = await getAlliancePromptRules('reply_suggestion', 'email', context.rows[0]?.audience);
+      const classifyRules = await getAlliancePromptRules('classify', 'email', context.rows[0]?.audience);
       const prompt = `Analyze this inbound B2B email reply and write a personalized response for HUMAN REVIEW only.
 Context: ${JSON.stringify(context.rows[0] || {})}
 Brand knowledge (courses/services, pricing, FAQs): ${brain ? JSON.stringify(brain) : 'Not configured for this audience yet — do not invent brand facts.'}
 Administrator rules (apply only when their written condition matches): ${promptRules}
+Reply-classification rules (apply only when their written condition matches): ${classifyRules}
 Inbound subject: ${parsed.subject || ''}
 Inbound reply: ${inboundReply}
 The draft is mandatory and must directly answer the latest inbound message. Keep it concise, professional, conversational, and include one clear next step. Use only approved context; never invent facts.${brain ? ` ${brain.instructions}` : ''}

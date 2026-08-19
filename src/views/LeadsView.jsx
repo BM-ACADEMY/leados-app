@@ -22,11 +22,11 @@ const SOURCE_FILTERS = [
 ];
 
 function AddLeadModal({ open, onClose, onSaved, clients, users }) {
-  const [form, setForm] = useState({ name: '', phone: '', source: '', interest: '', client_id: '', assigned_to: '' });
+  const [form, setForm] = useState({ name: '', phone: '', source: '', interest: '', assigned_to: '' });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (open) setForm({ name: '', phone: '', source: '', interest: '', client_id: '', assigned_to: '' });
+    if (open) setForm({ name: '', phone: '', source: '', interest: '', assigned_to: '' });
   }, [open]);
 
   if (!open) return null;
@@ -44,7 +44,6 @@ function AddLeadModal({ open, onClose, onSaved, clients, users }) {
         phone: form.phone.trim(),
         source: form.source || 'Manual',
         interest: form.interest.trim() || null,
-        client_id: form.client_id || null,
         assigned_to: form.assigned_to || null,
       });
       toast.success('Lead added successfully!');
@@ -149,11 +148,11 @@ function AddLeadModal({ open, onClose, onSaved, clients, users }) {
               </select>
             </div>
             <div>
-              <label style={labelStyle}>Brand</label>
+              <label style={labelStyle}>LeadOS Brand (locked)</label>
               <select
                 style={{ ...inp, cursor: 'pointer' }}
-                value={form.client_id}
-                onChange={e => set('client_id', e.target.value)}
+                value={clients.find(c => c.name?.replace(/[^a-z0-9]/gi, '').toLowerCase() === 'abmgroups')?.id || ''}
+                disabled
                 onFocus={e => e.target.style.borderColor = C.accent}
                 onBlur={e => e.target.style.borderColor = '#2a2a3a'}
               >

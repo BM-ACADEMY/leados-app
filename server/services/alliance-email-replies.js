@@ -2,6 +2,7 @@ const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const crypto = require('crypto');
 const db = require('../db/connection');
+const { scoreAllianceProspect } = require('./alliance-lead-scoring');
 const ensureAllianceSchema = require('../db/alliance-schema');
 const openRouter = require('./openrouter');
 const { getAllianceBrainContext } = require('./alliance-brain-context');
@@ -149,6 +150,9 @@ Update memory by merging prior durable memory with the latest exchange. Preserve
       intent = ['interested', 'question', 'objection', 'not_interested', 'ooo', 'other'].includes(result.intent) ? result.intent : 'other';
       draft = String(result.draft || '');
       if (!draft.trim()) throw new Error('OpenRouter returned an empty reply draft.');
+      if (brain?.internal?.escalation_phone && brain.internal.public_contact_phone) {
+        draft = draft.replaceAll(brain.internal.escalation_phone, brain.internal.public_contact_phone);
+      }
       if (brain?.question_scope === 'broad_catalog' && brain.exact_catalog?.length) {
         const normalizedDraft = normalizeCatalogText(draft);
         const missingOfferings = brain.exact_catalog.filter((offering) => !normalizedDraft.includes(normalizeCatalogText(offering.name)));
@@ -161,6 +165,9 @@ Update memory by merging prior durable memory with the latest exchange. Preserve
           const nextQuestion = brain.suggested_questions?.[0] || 'Which course would you like to explore in detail?';
           draft = `Dear ${recipientName},\n\nThank you for your interest in ${brain.brand.name}. Here is our complete current course and service catalog:\n\n${catalogLines.join('\n')}\n\n${nextQuestion}`;
         }
+      }
+      if (brain?.internal?.escalation_phone && brain.internal.public_contact_phone) {
+        draft = draft.replaceAll(brain.internal.escalation_phone, brain.internal.public_contact_phone);
       }
       const memoryUpdate = result.memory || {
         ...durableLeadMemory,
@@ -179,6 +186,12 @@ Update memory by merging prior durable memory with the latest exchange. Preserve
       `UPDATE alliance_prospects SET status=$1, updated_at=NOW() WHERE id=$2`,
       [prospectStatus, correlation.prospect_id]
     );
+    await scoreAllianceProspect(correlation.prospect_id, {
+      message: latestReplyText(parsed.text) || String(parsed.text || ''),
+      intent,
+      channel: 'email',
+      eventKey: `inbound:${reply.email_inbound_id || reply.id}`,
+    });
     if (intent === 'not_interested') {
       await db.query(
         `UPDATE alliance_touches SET status='cancelled', error_message='Recipient is not interested.'

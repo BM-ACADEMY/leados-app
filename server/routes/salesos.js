@@ -7,6 +7,7 @@ const axios = require('axios');
 const { buildBmAcademyCatalog, findBmAcademyCourseFamily, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
 const googleCalendar = require('../services/googleCalendar');
 const { sendBookingNotification } = require('../services/bookingNotifications');
+const { getLeadOSBrand } = require('../services/leadosBrand');
 
 const APPROVED_BRAIN_DATA_PATH = path.join(__dirname, '..', '..', 'documentation', 'updated-brain-data.md');
 let approvedBrainDataCache = { mtimeMs: -1, content: '' };
@@ -619,9 +620,10 @@ router.post('/brand/detect', async (req, res) => {
       }
     }
 
-    let brandId = null;
-    let brandName = 'ABM Groups';
-    const explicitBrand = detectExplicitBrand(message);
+    const leadOSBrand = await getLeadOSBrand(pool);
+    let brandId = leadOSBrand.id;
+    let brandName = leadOSBrand.name;
+    const explicitBrand = null;
 
     // An explicit keyword is the only reason to switch an existing session.
     if (explicitBrand) {
@@ -703,11 +705,7 @@ router.post('/leads/createOrUpdate', async (req, res) => {
       return res.json({ ...req.body, success: true, lead_id: null, ignored: true });
     }
 
-    let brand_id = req.body.brand_id || null;
-    if (!brand_id && req.body.brand) {
-      const brandRes = await pool.query(`SELECT id FROM clients WHERE name = $1 LIMIT 1`, [req.body.brand]);
-      brand_id = brandRes.rows[0]?.id || null;
-    }
+    const brand_id = (await getLeadOSBrand(pool)).id;
     // This runs on every inbound webhook. A plain SELECT-then-INSERT here lets
     // two near-simultaneous events for the same new phone number (a fast
     // follow-up message, or Meta retrying a slow webhook — most likely on the
@@ -766,7 +764,7 @@ router.post('/ai/intent', async (req, res) => {
   const { message, brand, lead_id } = req.body;
   try {
     let effectiveBrand = brand || 'ABM Groups';
-    const explicitBrand = detectExplicitBrand(message);
+    const explicitBrand = null;
 
     if (lead_id) {
       const currentBrandRes = await pool.query(
@@ -1109,7 +1107,9 @@ router.post('/ai/response', async (req, res) => {
 
       // Re-evaluate the current turn here as well as in /ai/intent. This keeps
       // brand switching correct even when n8n skips/retries an earlier node.
-      const explicitBrand = detectExplicitBrand(effectiveMessage);
+      // LeadOS conversations remain owned by ABM Groups. Mentions of another
+      // business can guide response content, but never mutate lead ownership.
+      const explicitBrand = null;
       if (explicitBrand && explicitBrand !== persistedBrand) {
         const targetBrand = await pool.query(
           `SELECT id,name FROM clients WHERE LOWER(name)=LOWER($1) LIMIT 1`,

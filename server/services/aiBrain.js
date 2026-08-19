@@ -1,5 +1,6 @@
 const openRouter = require('./openrouter');
 const db = require('../db/connection');
+const { getLeadOSBrand } = require('./leadosBrand');
 require('dotenv').config();
 
 
@@ -8,80 +9,14 @@ require('dotenv').config();
  * and set the initial next_follow_up date.
  */
 async function evaluateLeadBrandAndSchedule(leadId) {
-  if (!openRouter.isConfigured) {
-    console.warn('[AI Brain] OpenRouter API key not set. Skipping AI evaluation.');
-    return;
-  }
-
   try {
-    // Fetch lead details
-    const leadRes = await db.query('SELECT * FROM leads WHERE id = $1', [leadId]);
-    if (leadRes.rows.length === 0) return;
-    const lead = leadRes.rows[0];
-
-    // Fetch all active brands/clients context
-    const clientsRes = await db.query('SELECT id, name, type, wa_category, wa_description FROM clients WHERE status = \'active\'');
-    const brands = clientsRes.rows;
-    
-    if (brands.length === 0) return;
-
-    const brandContext = brands.map(b => 
-      `ID: ${b.id} | Name: ${b.name} | Category: ${b.wa_category || b.type || 'N/A'} | Description: ${b.wa_description || 'N/A'}`
-    ).join('\n');
-
-    const prompt = `
-You are the AI Routing Brain for ABM Groups. You have a list of available brands (companies) under ABM Groups, and a new lead has just come in.
-Your job is to determine which Brand this lead should be assigned to, and how soon we should follow up with them.
-
-AVAILABLE BRANDS:
-${brandContext}
-
-NEW LEAD INFO:
-Name: ${lead.name || 'Unknown'}
-Email: ${lead.email || 'N/A'}
-Phone: ${lead.phone || 'N/A'}
-Source: ${lead.source || 'N/A'}
-Interest/Context: ${lead.interest || 'N/A'}
-
-INSTRUCTIONS:
-1. Choose the single best matching brand ID for this lead based on their source or interest.
-2. Decide how many minutes from now the first automated follow-up should be sent (e.g., 5, 15, 60). Usually, a fast follow-up (15 mins) is best for new leads.
-3. Respond ONLY in valid JSON format. Do not include markdown code blocks.
-
-FORMAT:
-{
-  "client_id": 1,
-  "delay_minutes": 15
-}
-`;
-
-    const response = await openRouter.models.generateContent({
-      model: openRouter.DEFAULT_MODEL,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      }
-    });
-
-    let aiText = response.text.trim();
-    const match = aiText.match(/\{[\s\S]*\}/);
-    if (match) aiText = match[0];
-    const result = JSON.parse(aiText);
-
-    if (result.client_id) {
-      const delay = parseInt(result.delay_minutes) || 15;
-      
-      await db.query(`
-        UPDATE leads 
-        SET 
-          client_id = $1, 
-          next_follow_up = NOW() + INTERVAL '${delay} minutes',
-          updated_at = NOW()
-        WHERE id = $2
-      `, [result.client_id, leadId]);
-      
-      console.log(`[AI Brain] Assigned lead ${leadId} to client ${result.client_id}, follow-up in ${delay} mins.`);
-    }
+    const brand = await getLeadOSBrand();
+    await db.query(`UPDATE leads
+      SET client_id=$1,
+          next_follow_up=COALESCE(next_follow_up, NOW() + INTERVAL '15 minutes'),
+          updated_at=NOW()
+      WHERE id=$2`, [brand.id, leadId]);
+    console.log(`[AI Brain] Locked LeadOS lead ${leadId} to ${brand.name}.`);
 
   } catch (err) {
     console.error(`[AI Brain] Error evaluating new lead ${leadId}:`, err);

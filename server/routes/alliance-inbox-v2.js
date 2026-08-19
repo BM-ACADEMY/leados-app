@@ -13,6 +13,7 @@ const { scheduleAllianceInactivityReminder } = require('../services/alliance-wha
 const { getAllianceBrainContext } = require('../services/alliance-brain-context');
 const { getAlliancePromptRules } = require('../services/alliance-prompt-rules');
 const { getAllianceLeadMemory, saveAllianceLeadMemory } = require('../services/alliance-lead-memory');
+const { scoreAllianceProspect } = require('../services/alliance-lead-scoring');
 
 function createAllianceInboxRouter({ auth, io }) {
   const router = express.Router();
@@ -155,7 +156,10 @@ function createAllianceInboxRouter({ auth, io }) {
     }
   };
   const messageSelect = `
-    SELECT m.id, m.wa_msg_id, m.direction, m.msg_type, m.msg_type AS type, m.content,
+    SELECT m.id, m.wa_msg_id, m.direction, m.msg_type, m.msg_type AS type,
+           CASE WHEN m.msg_type='unsupported' AND m.content='[unsupported]'
+             THEN 'This WhatsApp message type is not available through Meta. Ask the sender to resend it as text, image, audio, or document.'
+             ELSE m.content END AS content,
            m.media_id, m.media_url, m.mime_type, m.filename, m.status, m.reactions,
            m.is_starred, m.is_deleted, m.pinned_until, m.sent_at, m.sent_at AS timestamp,
            COALESCE(m.raw_payload->'buttons',template.buttons,'[]'::jsonb) AS template_buttons,
@@ -228,7 +232,28 @@ function createAllianceInboxRouter({ auth, io }) {
               const conversation = conversationResult.rows[0];
               const type = incoming.type || 'text';
               const typedPayload = incoming[type] || {};
-              const content = type === 'text' ? incoming.text?.body : (typedPayload.caption || typedPayload.filename || `[${type}]`);
+              const interactiveReply = incoming.interactive?.button_reply || incoming.interactive?.list_reply;
+              const contactText = (incoming.contacts || []).map((item) => {
+                const name = item.name?.formatted_name || [item.name?.first_name, item.name?.last_name].filter(Boolean).join(' ') || 'Shared contact';
+                const phones = (item.phones || []).map((phoneItem) => phoneItem.phone || phoneItem.wa_id).filter(Boolean).join(', ');
+                return phones ? `${name}: ${phones}` : name;
+              }).join('\n');
+              const locationText = incoming.location
+                ? [incoming.location.name, incoming.location.address, incoming.location.latitude != null && incoming.location.longitude != null ? `${incoming.location.latitude}, ${incoming.location.longitude}` : ''].filter(Boolean).join(' — ')
+                : '';
+              const unsupportedDetail = incoming.errors?.[0]?.error_data?.details || incoming.errors?.[0]?.message;
+              const contentByType = {
+                text: incoming.text?.body,
+                button: incoming.button?.text || incoming.button?.payload,
+                interactive: interactiveReply?.title || interactiveReply?.description || interactiveReply?.id || incoming.interactive?.nfm_reply?.body,
+                contacts: contactText,
+                location: locationText,
+                reaction: incoming.reaction?.emoji ? `Reacted ${incoming.reaction.emoji}` : 'Reaction removed',
+                system: incoming.system?.body || incoming.system?.identity,
+                order: incoming.order?.product_items?.length ? `Order shared with ${incoming.order.product_items.length} item(s)` : 'Order shared',
+                unsupported: unsupportedDetail ? `This WhatsApp message type is unavailable: ${unsupportedDetail}` : 'This WhatsApp message type is not available through Meta. Ask the sender to resend it as text, image, audio, or document.',
+              };
+              const content = contentByType[type] || typedPayload.caption || typedPayload.filename || `[${type}]`;
               const mediaId = ['image', 'video', 'audio', 'document', 'sticker'].includes(type) ? typedPayload.id : null;
               const mediaUrl = mediaId ? `/api/alliance-inbox/media/${mediaId}` : null;
               const replyToId = incoming.context?.id || null;
@@ -258,6 +283,11 @@ function createAllianceInboxRouter({ auth, io }) {
                      WHERE prospect_id=$1 AND status IN ('pending','claimed')`,
                     [contact.prospect_id]
                   );
+                  await scoreAllianceProspect(contact.prospect_id, {
+                    message: content,
+                    channel: 'whatsapp',
+                    eventKey: incoming.id,
+                  }, client);
                 }
               }
               await client.query('COMMIT');
@@ -299,11 +329,13 @@ function createAllianceInboxRouter({ auth, io }) {
     const search = String(req.query.search || '').trim();
     const result = await db.query(
       `SELECT c.id, c.name, c.profile_name, c.phone, c.status, c.interest, c.source, c.prospect_id,
+              COALESCE(p.ai_score,10) AS score,
               cv.last_message AS last, cv.last_message AS last_msg, cv.last_message_at AS time,
               cv.unread_count AS unread, cv.last_inbound_at, cv.welcome_status,
               cv.welcome_template_name, cv.welcome_wa_msg_id, cv.welcome_sent_at, cv.welcome_error
        FROM alliance_inbox_contacts c
        JOIN alliance_inbox_conversations cv ON cv.contact_id = c.id
+       LEFT JOIN alliance_prospects p ON p.id = c.prospect_id
        WHERE ($1 = '' OR c.name ILIKE '%' || $1 || '%' OR c.phone ILIKE '%' || $1 || '%')
        ORDER BY cv.last_message_at DESC NULLS LAST LIMIT $2 OFFSET $3`,
       [search, limit, offset]
@@ -314,10 +346,11 @@ function createAllianceInboxRouter({ auth, io }) {
 
   router.get('/contacts/:id', async (req, res) => {
     const result = await db.query(
-      `SELECT c.*, cv.last_inbound_at, cv.welcome_status, cv.welcome_template_name,
+      `SELECT c.*, COALESCE(p.ai_score,10) AS score, cv.last_inbound_at, cv.welcome_status, cv.welcome_template_name,
               cv.welcome_wa_msg_id, cv.welcome_sent_at, cv.welcome_error
        FROM alliance_inbox_contacts c
        JOIN alliance_inbox_conversations cv ON cv.contact_id = c.id
+       LEFT JOIN alliance_prospects p ON p.id = c.prospect_id
        WHERE c.id = $1`,
       [req.params.id]
     );
@@ -391,6 +424,9 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
       catch { parsed = { suggestion: String(generated.text || '').trim(), memory: durableLeadMemory }; }
       let suggestion = String(parsed.suggestion || '').trim();
       if (!suggestion) return res.status(502).json({ error: 'AI returned an empty suggestion.' });
+      if (brain?.internal?.escalation_phone && brain.internal.public_contact_phone) {
+        suggestion = suggestion.replaceAll(brain.internal.escalation_phone, brain.internal.public_contact_phone);
+      }
       if (brain?.question_scope === 'broad_catalog' && brain.exact_catalog?.length) {
         const normalizeCatalogText = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
         const normalizedSuggestion = normalizeCatalogText(suggestion);
@@ -402,6 +438,9 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
           });
           suggestion = `Thank you for your interest in ${brain.brand.name}. Here is our complete current catalog:\n\n${catalogLines.join('\n')}\n\n${brain.suggested_questions?.[0] || 'Which course would you like to explore in detail?'}`;
         }
+      }
+      if (brain?.internal?.escalation_phone && brain.internal.public_contact_phone) {
+        suggestion = suggestion.replaceAll(brain.internal.escalation_phone, brain.internal.public_contact_phone);
       }
       if (contact.rows[0].prospect_id) {
         const memoryUpdate = parsed.memory || { ...durableLeadMemory, summary: `${durableLeadMemory?.summary ? `${durableLeadMemory.summary}\n` : ''}Latest inbound message: ${latestInbound?.content || ''}` };

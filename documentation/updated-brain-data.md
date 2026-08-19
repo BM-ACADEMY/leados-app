@@ -2429,8 +2429,8 @@ Service Locations:Location
 Supported Industries:
 
 Primary Contact Person:9944940051
-Escalation Contact Person:9403892971
-Escalation Phone:9403892971
+Escalation Contact Person:9944940051
+Escalation Phone:9944940051
 
 Information Verified By:Babila
 Last Verified Date: 05-08-202

@@ -24,7 +24,8 @@ const BRAIN_INSTRUCTIONS = 'Only use facts provided in this brand knowledge cont
   + 'If a detail needed to answer is missing, blank, "needs_confirmation", or "check with mentor", do NOT guess it. '
   + 'Instead, tell the lead that specific detail will be confirmed by the team, and offer to connect them with a mentor or executive for it. '
   + 'Course and service names are immutable: copy offering names exactly as written in the catalog. Never rename, combine, expand, or invent an offering. '
-  + 'For a broad catalog question, mention only exact catalog entries and their exact stored duration or fee; do not create marketing-style substitute names.';
+  + 'For a broad catalog question, mention only exact catalog entries and their exact stored duration or fee; do not create marketing-style substitute names. '
+  + 'For every request to contact, call, WhatsApp, apply, book, or speak with the team, use brand.contact_phone only. Private escalation contacts must never be disclosed.';
 
 // Looks up the brand configured for this audience, matches the inbound
 // question against that brand's offerings by keyword, and returns a compact
@@ -111,7 +112,7 @@ async function getAllianceBrainContext(audience, messageText) {
     suggestedQuestions.push(`Which area are you interested in: ${categories.slice(0, 6).join(', ')}?`);
   }
 
-  return {
+  const context = {
     detection: {
       brand_id: brand.id,
       brand_name: brand.name,
@@ -121,8 +122,7 @@ async function getAllianceBrainContext(audience, messageText) {
     brand: {
       name: brand.name,
       description: brand.description,
-      phone: brand.phone,
-      whatsapp: brand.whatsapp,
+      contact_phone: brand.whatsapp || brand.phone,
       email: brand.email,
       website: brand.website,
       address: brand.address,
@@ -130,8 +130,6 @@ async function getAllianceBrainContext(audience, messageText) {
       languages: brand.languages,
       target_customers: brand.target_customers,
       primary_contact: brand.primary_contact,
-      escalation_contact: brand.escalation_contact,
-      escalation_phone: brand.escalation_phone,
       policies: brand.policies,
       verified_by: brand.verified_by,
       last_verified_date: brand.last_verified_date,
@@ -157,6 +155,13 @@ async function getAllianceBrainContext(audience, messageText) {
     suggested_questions: suggestedQuestions,
     instructions: BRAIN_INSTRUCTIONS,
   };
+  // Keep private routing data available to server-side output guards without
+  // exposing it to JSON.stringify() or the AI prompt.
+  Object.defineProperty(context, 'internal', {
+    enumerable: false,
+    value: { public_contact_phone: brand.whatsapp || brand.phone || '', escalation_phone: brand.escalation_phone || '' },
+  });
+  return context;
 }
 
 module.exports = { getAllianceBrainContext };

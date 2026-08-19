@@ -67,7 +67,7 @@ Target Customers: Students, job seekers, business owners
 
 Primary Contact Person: Kamar
 Escalation Contact Person: Babila
-Escalation Phone: 9403892971
+Escalation Phone: 9944940051
 
 General EMI Policy: 40% upfront, 30% second payment, 30% final payment
 General Placement Policy: 100% placement support with resume and interview prep
@@ -234,7 +234,7 @@ export const KnowledgeBase = () => {
     finally { setLoadingOfferings(false); }
   };
 
-  useEffect(() => { loadBrands(); api.getAllianceAudiences().then((data) => setAudiences(data.audiences || [])).catch(() => {}); }, []);
+  useEffect(() => { loadBrands(); api.getAllianceAudiences().then((data) => setAudiences(data.audiences || [])).catch(() => { }); }, []);
   useEffect(() => { loadOfferings(activeBrandId); }, [activeBrandId]);
 
   const activeBrand = brands.find((b) => b.id === activeBrandId);

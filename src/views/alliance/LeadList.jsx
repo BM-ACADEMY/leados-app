@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../../services/api.js';
 import { DatePicker } from './DatePicker.jsx';
+import { ScoreBar } from '../../components/ui.jsx';
 import './alliance.css';
 
 const PAGE_SIZE = 10;
@@ -184,12 +185,13 @@ export const LeadList = () => {
       <div style={{ background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 12, overflowX: 'auto' }}>
         {error ? <p style={{ padding: 24, color: '#EF9A9A' }}>{error}</p> : loading ? <p style={{ padding: 24, color: 'var(--al-muted)' }}>Loading imported leads…</p> : (
           <table className="al-table" style={{ minWidth: 1700, whiteSpace: 'nowrap' }}>
-            <thead><tr><th>Business / Contact</th><th>Email</th><th>Phone</th><th>Audience</th><th>Industry / Location</th><th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Custom data</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Business / Contact</th><th>Email</th><th>Phone</th><th>AI Score</th><th>Audience</th><th>Industry / Location</th><th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Custom data</th><th>Actions</th></tr></thead>
             <tbody>
               {prospects.map((prospect) => (
                 <tr key={prospect.id}>
                   <td>{prospect.business_name} <span style={{ color: 'var(--al-muted)' }}>· {prospect.name || 'No contact name'}</span></td>
                   <td>{prospect.email || '—'}</td><td>{prospect.phone || '—'}</td>
+                  <td><ScoreBar score={Number(prospect.ai_score) || 10} /></td>
                   <td><span className={`al-tag ${prospect.audience}`}>{audienceLabel(prospect.audience)}</span></td>
                   <td>{prospect.industry || '—'} <span style={{ color: 'var(--al-muted)' }}>· {prospect.location || '—'}</span></td>
                   <td><div style={{ display: 'flex', gap: 5 }}>{usesEmail(prospect.channel) && <span className="al-tag email">email</span>}{usesWhatsApp(prospect.channel) && <span className="al-tag wa">whatsapp</span>}</div></td>
@@ -201,7 +203,7 @@ export const LeadList = () => {
                   <td><div style={{ display: 'flex', gap: 6 }}><button className="al-btn ghost sm" onClick={() => openEdit(prospect)}>Edit</button><button className="al-btn ghost sm" disabled={deleting === prospect.id} onClick={() => setDeleteCandidate(prospect)} style={{ color: '#EF9A9A' }}>{deleting === prospect.id ? 'Deleting…' : 'Delete'}</button></div></td>
                 </tr>
               ))}
-              {!prospects.length && <tr><td colSpan={12} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
+              {!prospects.length && <tr><td colSpan={13} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
             </tbody>
           </table>
         )}

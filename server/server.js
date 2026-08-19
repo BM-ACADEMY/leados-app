@@ -362,6 +362,7 @@ async function syncMetaWhatsAppInventory() {
 cron.schedule('*/15 * * * *', () => syncMetaWhatsAppInventory().catch(err =>
   console.error('[Meta Inventory Sync]', err.message)));
 const { evaluateLeadBrandAndSchedule, evaluateStuckLeads } = require('./services/aiBrain');
+const { getLeadOSBrand } = require('./services/leadosBrand');
 const { checkNewDriveVideos, publishPost } = require("./controllers/contentController");
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1265,12 +1266,12 @@ app.get('/api/inbox', auth, async (req, res) => {
         l.name, 
         c.name as brand, 
         l.status,
-        (SELECT last_message FROM conversations WHERE lead_id = l.id OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) ORDER BY last_message_at DESC NULLS LAST LIMIT 1) as last,
-        (SELECT last_message_at FROM conversations WHERE lead_id = l.id OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) ORDER BY last_message_at DESC NULLS LAST LIMIT 1) as time,
-        COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10)), 0) as unread
+        (SELECT last_message FROM conversations WHERE lead_id = l.id OR (lead_id IS NULL AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10)) ORDER BY last_message_at DESC NULLS LAST LIMIT 1) as last,
+        (SELECT last_message_at FROM conversations WHERE lead_id = l.id OR (lead_id IS NULL AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10)) ORDER BY last_message_at DESC NULLS LAST LIMIT 1) as time,
+        COALESCE((SELECT SUM(unread_count) FROM conversations WHERE lead_id = l.id OR (lead_id IS NULL AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10))), 0) as unread
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
-      WHERE EXISTS (SELECT 1 FROM conversations WHERE lead_id = l.id OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10))
+      WHERE EXISTS (SELECT 1 FROM conversations WHERE lead_id = l.id OR (lead_id IS NULL AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10)))
       ORDER BY time DESC NULLS LAST
     `;
     const { rows } = await pool.query(q);
@@ -2359,9 +2360,9 @@ app.get('/api/leads/:id/messages', auth, async (req, res) => {
       FROM messages m
       JOIN conversations cv ON m.conversation_id = cv.id
       WHERE cv.lead_id = $1
-         OR RIGHT(REGEXP_REPLACE(cv.phone, '[^0-9]', '', 'g'), 10) = (
+         OR (cv.lead_id IS NULL AND RIGHT(REGEXP_REPLACE(cv.phone, '[^0-9]', '', 'g'), 10) = (
               SELECT RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) FROM leads WHERE id = $1 LIMIT 1
-            )
+            ))
       ORDER BY m.sent_at DESC
       LIMIT $2 OFFSET $3
     `, [req.params.id, parseInt(limit), parseInt(offset)]);
@@ -2376,14 +2377,15 @@ app.get('/api/leads/:id/messages', auth, async (req, res) => {
 // POST /api/leads
 app.post('/api/leads', auth, async (req, res) => {
   try {
-    const { name, phone, source, client_id, interest, assigned_to } = req.body;
+    const { name, phone, source, interest, assigned_to } = req.body;
+    const leadOSBrand = await getLeadOSBrand(pool);
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone required' });
 
     const { rows } = await pool.query(`
       INSERT INTO leads (name, phone, source, client_id, interest, assigned_to, status, score, created_at)
       VALUES ($1, $2, $3, $4, $5, $6, 'new', 0, NOW())
       RETURNING *
-    `, [name, phone, source || 'Manual', client_id || null, interest || '', assigned_to || null]);
+    `, [name, phone, source || 'Manual', leadOSBrand.id, interest || '', assigned_to || null]);
 
     // Trigger n8n webhook for new leads to send welcome template
     if (process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
@@ -2874,7 +2876,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
               value.contacts?.[0]?.profile?.name || phone,
               phone,
               referralAdId ? 'facebook' : 'WhatsApp',
-              referralCampaign?.client_id || client?.id || null,
+              (await getLeadOSBrand(pool)).id,
               referralCampaign?.campaign_id || null,
               referralCampaign?.campaign_name || null,
               referralAdId,
@@ -2902,7 +2904,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
                 WHERE id = $6
                 RETURNING *
               `, [
-                referralCampaign?.client_id || client?.id || null,
+                (await getLeadOSBrand(pool)).id,
                 referralCampaign?.campaign_id || null,
                 referralCampaign?.campaign_name || null,
                 referralAdId,
@@ -3135,7 +3137,7 @@ app.post('/webhook/meta-leads', async (req, res) => {
             INSERT INTO leads (name, phone, email, source, status, score, client_id, leadgen_id, created_at)
             VALUES ($1, $2, $3, 'Meta Ads', 'new', 20, $4, $5, NOW())
             RETURNING *
-          `, [name, phone, email, client_id, leadgenId]);
+          `, [name, phone, email, (await getLeadOSBrand(pool)).id, leadgenId]);
           newLead = newLeadRes.rows[0];
         } catch (insertErr) {
           console.error(`[Meta Leads] Error inserting lead: ${insertErr.message}. Attempting update on conflict.`);
@@ -3148,7 +3150,7 @@ app.post('/webhook/meta-leads', async (req, res) => {
               source = 'Meta Ads'
             WHERE phone = $4 AND client_id = $5
             RETURNING *
-          `, [leadgenId, name, email, phone, client_id]);
+          `, [leadgenId, name, email, phone, (await getLeadOSBrand(pool)).id]);
           newLead = fallbackRes.rows[0];
           if (!newLead) continue;
         }
@@ -4227,6 +4229,7 @@ const upload = multer({ dest: 'uploads/' });
 app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
   try {
     const { client_id } = req.body;
+    const leadOSBrand = await getLeadOSBrand(pool);
     if (!req.file) {
       return res.status(400).json({ error: 'File is required' });
     }
@@ -4333,13 +4336,7 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
         const interest = row.interest || row.Interest || null;
 
         // Brand
-        let rowClientId = client_id || null;
-        if (!rowClientId) {
-          const brandName = row.brand || row.Brand;
-          if (brandName && clientsMap[brandName.toLowerCase()]) {
-            rowClientId = clientsMap[brandName.toLowerCase()];
-          }
-        }
+        const rowClientId = leadOSBrand.id;
 
         // Assigned To
         let assignedTo = null;
@@ -5489,6 +5486,16 @@ cron.schedule('0 2 * * 0', async () => {
 // ── START ─────────────────────────────────────────────────
 httpServer.listen(PORT, () => {
   console.log(`LeadOS API running on port ${PORT} (Socket.io enabled)`);
+
+  // Repair historical routing drift once at startup. New writes are also
+  // forced through the same owner, so AI/source metadata cannot move them.
+  getLeadOSBrand(pool)
+    .then((brand) => pool.query(
+      `UPDATE leads SET client_id=$1, updated_at=NOW()
+       WHERE client_id IS DISTINCT FROM $1`,
+      [brand.id]
+    ).then((result) => console.log(`[LeadOS Brand Lock] ${result.rowCount} existing lead(s) assigned to ${brand.name}.`)))
+    .catch((error) => console.error('[LeadOS Brand Lock]', error.message));
 
   startAllianceEmailWorker(io).catch((error) => {
     console.error('[Startup] Alliance email worker failed:', error.message);

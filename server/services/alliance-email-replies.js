@@ -6,6 +6,7 @@ const ensureAllianceSchema = require('../db/alliance-schema');
 const openRouter = require('./openrouter');
 const { getAllianceBrainContext } = require('./alliance-brain-context');
 const { getAlliancePromptRules } = require('./alliance-prompt-rules');
+const { getAllianceLeadMemory, saveAllianceLeadMemory } = require('./alliance-lead-memory');
 
 let interval;
 let polling = false;
@@ -19,6 +20,7 @@ const latestReplyText = (value) => String(value || '')
   .split(/\r?\nOn .+?wrote:\s*\r?\n/i)[0]
   .split(/\r?\n-{2,}\s*Original Message\s*-{2,}/i)[0]
   .trim();
+const normalizeCatalogText = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 function imapConfig() {
   return {
@@ -99,34 +101,72 @@ async function enrichReply(reply, correlation, parsed, io) {
   try {
     if (openRouter.isConfigured) {
       const context = await db.query(
-        `SELECT p.name, p.business_name, p.audience, p.status, a.brand,
-                COALESCE(json_agg(json_build_object('subject',t.subject,'body',t.message_body,'sent_at',t.sent_at)
-                  ORDER BY t.sent_at) FILTER (WHERE t.status='sent'),'[]'::json) AS sent_emails,
-                COALESCE((SELECT json_agg(json_build_object('key',k.fact_key,'value',k.fact_value))
-                  FROM alliance_kb k WHERE k.audience=p.audience AND k.active=TRUE),'[]'::json) AS knowledge
+        `SELECT p.name,p.business_name,p.audience,p.status,a.brand
          FROM alliance_prospects p LEFT JOIN alliance_audiences a ON a.code=p.audience
-         LEFT JOIN alliance_touches t ON t.prospect_id=p.id AND t.channel='email'
-         WHERE p.id=$1 GROUP BY p.id,a.brand`,
+         WHERE p.id=$1`,
         [correlation.prospect_id]
       );
       const inboundReply = latestReplyText(parsed.text) || String(parsed.text || '');
+      const memoryResult = await db.query(
+        `SELECT direction,message_type,subject,body,occurred_at FROM (
+           SELECT 'outbound'::text AS direction,'campaign'::text AS message_type,t.subject,
+                  t.message_body AS body,t.sent_at AS occurred_at
+           FROM alliance_touches t
+           WHERE t.prospect_id=$1 AND t.channel='email' AND t.status='sent'
+           UNION ALL
+           SELECT 'inbound','recipient_reply',ei.subject,COALESCE(r.body,ei.text_body),ei.received_at
+           FROM alliance_email_inbound ei
+           LEFT JOIN alliance_replies r ON r.email_inbound_id=ei.id
+           WHERE ei.prospect_id=$1
+           UNION ALL
+           SELECT 'outbound','approved_reply',ei.subject,r.ai_draft,r.approved_at
+           FROM alliance_replies r
+           JOIN alliance_email_inbound ei ON ei.id=r.email_inbound_id
+           WHERE r.prospect_id=$1 AND r.channel='email' AND r.status='sent' AND r.approved_at IS NOT NULL
+         ) memory
+         WHERE body IS NOT NULL AND occurred_at IS NOT NULL
+         ORDER BY occurred_at DESC LIMIT 30`,
+        [correlation.prospect_id]
+      );
+      const prospectMemory = memoryResult.rows.reverse();
+      const durableLeadMemory = await getAllianceLeadMemory(correlation.prospect_id);
       const brain = await getAllianceBrainContext(context.rows[0]?.audience, `${parsed.subject || ''} ${inboundReply}`);
-      const promptRules = await getAlliancePromptRules('reply_suggestion', 'email', context.rows[0]?.audience);
-      const classifyRules = await getAlliancePromptRules('classify', 'email', context.rows[0]?.audience);
+      const promptRules = await getAlliancePromptRules('reply_suggestion', 'email', context.rows[0]?.audience, inboundReply);
+      const classifyRules = await getAlliancePromptRules('classify', 'email', context.rows[0]?.audience, inboundReply);
       const prompt = `Analyze this inbound B2B email reply and write a personalized response for HUMAN REVIEW only.
-Context: ${JSON.stringify(context.rows[0] || {})}
-Brand knowledge (courses/services, pricing, FAQs): ${brain ? JSON.stringify(brain) : 'Not configured for this audience yet — do not invent brand facts.'}
-Administrator rules (apply only when their written condition matches): ${promptRules}
-Reply-classification rules (apply only when their written condition matches): ${classifyRules}
+Recipient and conversation context (not a source of course facts): ${JSON.stringify(context.rows[0] || {})}
+Prospect-specific conversation memory, oldest to newest (belongs only to this prospect; use it for continuity, never as a source of brand facts): ${JSON.stringify(prospectMemory)}
+Durable lead memory keyed by ${durableLeadMemory.lead_key}: ${JSON.stringify(durableLeadMemory)}
+AUTHORITATIVE AI BRAIN (the only source for brand, course, service, price, duration, policy, and contact facts): ${brain ? JSON.stringify(brain) : 'Not configured for this audience yet — do not state any brand facts.'}
+Pre-matched administrator rules (mandatory; lower priority number wins if instructions conflict): ${promptRules}
+Pre-matched reply-classification rules (mandatory; lower priority number wins if instructions conflict): ${classifyRules}
 Inbound subject: ${parsed.subject || ''}
 Inbound reply: ${inboundReply}
-The draft is mandatory and must directly answer the latest inbound message. Keep it concise, professional, conversational, and include one clear next step. Use only approved context; never invent facts.${brain ? ` ${brain.instructions}` : ''}
-Return JSON only: {"intent":"interested|question|objection|not_interested|ooo|other","draft":"complete email reply body without subject"}.`;
-      const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.3, maxOutputTokens: 900 } });
+The draft is mandatory and must directly answer the latest inbound message and continue naturally from this prospect's own raw history and durable memory. Never greet or introduce the brand as if this were a first conversation when memory shows an ongoing discussion. Keep it professional and conversational with one clear next step. Use the detected brand only. If question_scope is "broad_catalog", list EVERY active entry in exact_catalog exactly once; do not select only popular courses, do not omit entries, and do not rename them. Grouping by exact category is allowed. Include duration and fee only when present in that catalog entry. If suggested_questions is non-empty, use at most one of those questions as the next step and do not replace it with an unrelated generic question. For a specific-offering match, answer only with relevant_offerings. Use only the AUTHORITATIVE AI BRAIN for factual claims.${brain ? ` ${brain.instructions}` : ''}
+Update memory by merging prior durable memory with the latest exchange. Preserve still-relevant facts and never copy facts from another lead. Return JSON only: {"intent":"interested|question|objection|not_interested|ooo|other","draft":"complete email reply body without subject","memory":{"summary":"concise cumulative conversation summary","requirements":[],"interests":[],"objections":[],"commitments":[],"next_step":"","relationship_stage":"new|engaged|evaluating|ready|closed"}}.`;
+      const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1, maxOutputTokens: 2600 } });
       const result = JSON.parse(String(generated.text).replace(/^```json\s*|\s*```$/g, ''));
       intent = ['interested', 'question', 'objection', 'not_interested', 'ooo', 'other'].includes(result.intent) ? result.intent : 'other';
       draft = String(result.draft || '');
       if (!draft.trim()) throw new Error('OpenRouter returned an empty reply draft.');
+      if (brain?.question_scope === 'broad_catalog' && brain.exact_catalog?.length) {
+        const normalizedDraft = normalizeCatalogText(draft);
+        const missingOfferings = brain.exact_catalog.filter((offering) => !normalizedDraft.includes(normalizeCatalogText(offering.name)));
+        if (missingOfferings.length) {
+          const recipientName = context.rows[0]?.name || context.rows[0]?.business_name || 'there';
+          const catalogLines = brain.exact_catalog.map((offering) => {
+            const facts = [offering.duration, offering.fee ? `₹${offering.fee}` : ''].filter(Boolean).join(', ');
+            return `* **${offering.name}**${facts ? ` — ${facts}` : ''}`;
+          });
+          const nextQuestion = brain.suggested_questions?.[0] || 'Which course would you like to explore in detail?';
+          draft = `Dear ${recipientName},\n\nThank you for your interest in ${brain.brand.name}. Here is our complete current course and service catalog:\n\n${catalogLines.join('\n')}\n\n${nextQuestion}`;
+        }
+      }
+      const memoryUpdate = result.memory || {
+        ...durableLeadMemory,
+        summary: `${durableLeadMemory.summary ? `${durableLeadMemory.summary}\n` : ''}Latest inbound message: ${inboundReply}`,
+      };
+      await saveAllianceLeadMemory(correlation.prospect_id, memoryUpdate, 'email', new Date());
     }
     await db.query(
       `UPDATE alliance_replies SET ai_intent=$1, ai_draft=$2, status='drafted' WHERE id=$3`,

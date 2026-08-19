@@ -37,6 +37,15 @@ function normalizeSystemColumns(value) {
   return columns;
 }
 
+function validateChannelSystemColumns(columns, channel) {
+  const required = [
+    ...(['email','both'].includes(channel) ? ['email'] : []),
+    ...(['whatsapp','both'].includes(channel) ? ['phone','consent','consent_source'] : []),
+  ];
+  const missing = required.filter((key) => !columns.some((column) => column.key === key && column.enabled));
+  if (missing.length) throw Object.assign(new Error(`${channel === 'both' ? 'Email + WhatsApp' : channel} requires these system columns: ${missing.join(', ')}. Restore them before saving.`), { status: 400 });
+}
+
 function text(value) {
   return value == null ? '' : String(value).trim();
 }
@@ -71,9 +80,34 @@ function isValidOptionalTenDigitPhone(value) {
   return !phone || /^\d{10}$/.test(phone);
 }
 
-function isValidBusinessHours(value) {
+function normalizeBusinessHours(value) {
   const hours = text(value);
-  return !hours || /^(?:0?[1-9]|1[0-2]):[0-5]\d\s(?:AM|PM)\s-\s(?:0?[1-9]|1[0-2]):[0-5]\d\s(?:AM|PM)$/i.test(hours);
+  if (!hours) return '';
+  const match = hours
+    .replace(/[–—]/g, '-')
+    .replace(/\b(?:to|until|till)\b/gi, '-')
+    .match(/^\s*(\d{1,2})(?:[:.]?(\d{2}))?\s*(am|pm)?\s*-\s*(\d{1,2})(?:[:.]?(\d{2}))?\s*(am|pm)?\s*$/i);
+  if (!match) return null;
+  const start = { hour: Number(match[1]), minute: Number(match[2] || 0), period: match[3]?.toUpperCase() || '' };
+  const end = { hour: Number(match[4]), minute: Number(match[5] || 0), period: match[6]?.toUpperCase() || '' };
+  if (start.minute > 59 || end.minute > 59) return null;
+  const normalizePart = (part, fallbackPeriod) => {
+    if (!part.period && (part.hour > 12 || part.hour === 0)) {
+      if (part.hour > 23) return null;
+      return { hour: ((part.hour + 11) % 12) + 1, minute: part.minute, period: part.hour >= 12 ? 'PM' : 'AM' };
+    }
+    if (part.hour < 1 || part.hour > 12) return null;
+    return { ...part, period: part.period || fallbackPeriod };
+  };
+  const normalizedStart = normalizePart(start, 'AM');
+  const normalizedEnd = normalizePart(end, 'PM');
+  if (!normalizedStart || !normalizedEnd) return null;
+  const format = (part) => `${part.hour}:${String(part.minute).padStart(2, '0')} ${part.period}`;
+  return `${format(normalizedStart)} - ${format(normalizedEnd)}`;
+}
+
+function isValidBusinessHours(value) {
+  return normalizeBusinessHours(value) !== null;
 }
 
 function normalizeEmail(value) {
@@ -85,6 +119,18 @@ function normalizePhone(value) {
   let phone = text(value).replace(/[^0-9]/g, '');
   if (phone.length === 10) phone = `91${phone}`;
   return phone.length >= 11 && phone.length <= 15 ? phone : null;
+}
+
+function normalizeChannelPreference(value) {
+  const raw = text(value).replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toLowerCase();
+  const aliases = {
+    'e-mail': 'email',
+    'whats app': 'whatsapp',
+    'email + whatsapp': 'both',
+    'email+whatsapp': 'both',
+    'email & whatsapp': 'both',
+  };
+  return aliases[raw] || raw;
 }
 
 function valueFrom(row, names) {
@@ -230,8 +276,8 @@ async function buildAudienceTemplateData(code) {
   const generic = {
     name: 'Contact Name', business_name: `Example ${audience.label}`, email: 'contact@example.com', phone: '919876543210',
     audience: audience.code, industry: 'Industry', location: 'Chennai', source: 'manual_research',
-    channel_pref: audience.default_channel, consent: audience.default_channel === 'whatsapp' ? 'true' : 'false',
-    consent_source: audience.default_channel === 'whatsapp' ? 'click_to_whatsapp' : '',
+    channel_pref: audience.default_channel, consent: ['whatsapp','both'].includes(audience.default_channel) ? 'true' : 'false',
+    consent_source: ['whatsapp','both'].includes(audience.default_channel) ? 'click_to_whatsapp' : '',
   };
   const samples = (Array.isArray(audience.template_samples) && audience.template_samples.length ? audience.template_samples : [generic]).slice(0, 2);
   const rows = samples.map((sample) => {
@@ -570,7 +616,8 @@ router.post('/audiences', async (req, res) => {
   try { systemColumns = normalizeSystemColumns(req.body.system_columns); } catch (error) { return res.status(error.status || 400).json({ error: error.message }); }
   if (!/^[a-z][a-z0-9_]*$/.test(code)) return res.status(400).json({ error: 'Audience code must use lowercase letters, numbers, and underscores.' });
   if (!label) return res.status(400).json({ error: 'Audience label is required.' });
-  if (!['email', 'whatsapp'].includes(defaultChannel)) return res.status(400).json({ error: 'Default channel must be email or whatsapp.' });
+  if (!['email', 'whatsapp', 'both'].includes(defaultChannel)) return res.status(400).json({ error: 'Default channel must be email, whatsapp, or both.' });
+  try { validateChannelSystemColumns(systemColumns, defaultChannel); } catch (error) { return res.status(error.status || 400).json({ error: error.message }); }
   if (fields.length > 50) return res.status(400).json({ error: 'A maximum of 50 custom fields is allowed.' });
 
   const normalizedFields = [];
@@ -602,15 +649,18 @@ router.post('/audiences', async (req, res) => {
         [audienceResult.rows[0].id, field.fieldKey, field.label, field.dataType, field.required, field.sampleValue || null, field.sortOrder]
       );
     }
-    const cadence = defaultChannel === 'email'
-      ? [[1, 0, 'Introduction and one clear ask'], [2, 2, 'Short friendly reminder'], [3, 5, 'New angle and proof'], [4, 9, 'Polite break-up message']]
-      : [[1, 0, 'Approved introduction template'], [2, 4, 'One gentle follow-up']];
-    for (const [touchNo, delayDays, purpose] of cadence) {
-      await client.query(
-        `INSERT INTO alliance_sequences (audience, channel, touch_no, delay_days, purpose)
-         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (audience, channel, touch_no) DO NOTHING`,
-        [code, defaultChannel, touchNo, delayDays, purpose]
-      );
+    const channelCadences = [
+      ...(['email','both'].includes(defaultChannel) ? [{ channel:'email', cadence:[[1,0,'Introduction and one clear ask'],[2,2,'Short friendly reminder'],[3,5,'New angle and proof'],[4,9,'Polite break-up message']] }] : []),
+      ...(['whatsapp','both'].includes(defaultChannel) ? [{ channel:'whatsapp', cadence:[[1,0,'Approved introduction template'],[2,4,'One gentle follow-up']] }] : []),
+    ];
+    for (const { channel, cadence } of channelCadences) {
+      for (const [touchNo, delayDays, purpose] of cadence) {
+        await client.query(
+          `INSERT INTO alliance_sequences (audience, channel, touch_no, delay_days, purpose)
+           VALUES ($1,$2,$3,$4,$5) ON CONFLICT (audience, channel, touch_no) DO NOTHING`,
+          [code, channel, touchNo, delayDays, purpose]
+        );
+      }
     }
     await client.query('COMMIT');
     res.status(201).json({ audience: { ...audienceResult.rows[0], fields: normalizedFields } });
@@ -698,7 +748,8 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       businessName = businessName || name || emailRaw.split('@')[0] || phoneRaw || `Prospect row ${rowNo}`;
       const email = normalizeEmail(emailRaw);
       const phone = normalizePhone(phoneRaw);
-      const rowChannel = text(valueFrom(row, ['channel_pref', 'channel preference'])).toLowerCase();
+      const rowChannelRaw = text(valueFrom(row, ['channel_pref', 'channel preference']));
+      const rowChannel = normalizeChannelPreference(rowChannelRaw);
       const consent = TRUTHY.has(text(valueFrom(row, ['consent', 'whatsapp_consent', 'whatsapp consent'])).toLowerCase());
       const consentSource = text(valueFrom(row, ['consent_source', 'consent source']));
       const channelPref = rowChannel || (requestedChannel === 'auto' ? '' : requestedChannel);
@@ -714,7 +765,7 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       }
 
       if (audience !== defaultAudience) problems.push(`audience must be ${defaultAudience} for this campaign`);
-      if (rowChannel && !['email', 'whatsapp', 'both'].includes(rowChannel)) problems.push('invalid channel_pref');
+      if (rowChannel && !['email', 'whatsapp', 'both'].includes(rowChannel)) problems.push(`invalid channel_pref "${rowChannelRaw}"; use email, whatsapp, both, or leave it blank`);
       if (emailRaw && !email) problems.push('invalid email');
       if (phoneRaw && !phone) problems.push('invalid mobile number');
       if (['email', 'both'].includes(channel) && !email) problems.push('email is required for email outreach');
@@ -925,7 +976,8 @@ router.put('/audiences/:code', async (req, res) => {
   let systemColumns;
   try { systemColumns = normalizeSystemColumns(req.body.system_columns); } catch (error) { return res.status(error.status || 400).json({ error: error.message }); }
   if (!label) return res.status(400).json({ error: 'Audience label is required.' });
-  if (!['email', 'whatsapp'].includes(defaultChannel)) return res.status(400).json({ error: 'Default channel must be email or whatsapp.' });
+  if (!['email', 'whatsapp', 'both'].includes(defaultChannel)) return res.status(400).json({ error: 'Default channel must be email, whatsapp, or both.' });
+  try { validateChannelSystemColumns(systemColumns, defaultChannel); } catch (error) { return res.status(error.status || 400).json({ error: error.message }); }
   if (fields.length > 50) return res.status(400).json({ error: 'A maximum of 50 custom fields is allowed.' });
   const normalizedFields = [];
   const seen = new Set();
@@ -1462,14 +1514,14 @@ router.post('/campaign-builder/ai-suggestion', async (req, res) => {
     if (!openRouter.isConfigured) return res.json({ template: currentTemplate, ai_generated: false, warning: 'OpenRouter is not configured; the current template was returned.' });
     const brain = await getAllianceBrainContext(audience, objective);
     const promptJob = requestedTouchNo === 1 ? 'campaign_message' : 'followup';
-    const contentRules = await getAlliancePromptRules(promptJob, 'email', audience);
+    const contentRules = await getAlliancePromptRules(promptJob, 'email', audience, `${objective} ${currentTemplate.subject || ''} ${currentTemplate.body || ''}`);
     const prompt = `You are AllianceOS's B2B cold-email campaign editor. Rewrite one selected email touch for human review.
 Brand: ${audienceResult.rows[0].brand || 'ABM Groups'}
 Audience: ${audienceResult.rows[0].label}
 Campaign objective: ${objective || 'Start a relevant business conversation'}
 Approved AI Brain data: ${brain ? JSON.stringify(brain) : 'No Brain data is configured. Do not invent brand facts.'}
 Selected touch: ${JSON.stringify(currentTemplate)}
-Administrator ${promptJob === 'campaign_message' ? 'campaign-message' : 'follow-up/reminder'} rules:
+Pre-matched mandatory ${promptJob === 'campaign_message' ? 'campaign-message' : 'follow-up/reminder'} rules (lower priority number wins if instructions conflict):
 ${contentRules}
 System rules: preserve every {{field_name}} variable present in the selected touch exactly; one clear CTA; no invented claims; include the existing unsubscribe instruction; do not exceed 100 words per email. Brain facts are authoritative and administrator rules may control tone or behavior but may never introduce unsupported factual claims.
 Return JSON only: {"template":{"touch_no":${requestedTouchNo},"delay_days":${Number(currentTemplate.delay_days) || 0},"purpose":"...","subject":"...","body":"..."}}`;
@@ -1769,6 +1821,14 @@ router.get('/campaigns/:id', async (req, res) => {
 router.post('/campaigns/:id/start', async (req, res) => {
   const client = await db.connect();
   try {
+    const requestedStart = req.body?.scheduled_at ? new Date(req.body.scheduled_at) : null;
+    if (requestedStart && Number.isNaN(requestedStart.getTime())) {
+      return res.status(400).json({ error: 'scheduled_at must be a valid date and time.' });
+    }
+    const scheduling = requestedStart && requestedStart.getTime() > Date.now();
+    if (req.body?.scheduled_at && !scheduling) {
+      return res.status(400).json({ error: 'Scheduled campaign time must be in the future.' });
+    }
     await client.query('BEGIN');
     await client.query(`SELECT id FROM alliance_campaigns WHERE id = $1 FOR UPDATE`, [req.params.id]);
     const readiness = await getCampaignReadiness(client, req.params.id);
@@ -1781,23 +1841,31 @@ router.post('/campaigns/:id/start', async (req, res) => {
       return res.status(409).json({ error: 'Campaign is not ready to start.', readiness });
     }
     assertBulkSendLimit(await getBulkSendLimit('email', client), Number(readiness.stats.eligible));
-    if (!['draft', 'ready', 'paused'].includes(readiness.campaign.status)) {
+    if (!['draft', 'ready', 'paused', 'scheduled'].includes(readiness.campaign.status)) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: `Campaign cannot start from ${readiness.campaign.status} status.` });
     }
 
     const resuming = readiness.campaign.status === 'paused';
+    const rescheduling = readiness.campaign.status === 'scheduled';
     if (resuming) {
       await client.query(
-        `UPDATE alliance_touches SET status = 'scheduled', error_message = NULL
+        `UPDATE alliance_touches SET status = 'scheduled', error_message = NULL,
+                scheduled_at = COALESCE($2::timestamptz, NOW())
          WHERE campaign_id = $1 AND status IN ('paused', 'failed') AND sent_at IS NULL`,
-        [req.params.id]
+        [req.params.id, scheduling ? requestedStart.toISOString() : null]
+      );
+    } else if (rescheduling) {
+      await client.query(
+        `UPDATE alliance_touches SET scheduled_at = COALESCE($2::timestamptz, NOW()), error_message = NULL
+         WHERE campaign_id = $1 AND status = 'scheduled' AND sent_at IS NULL`,
+        [req.params.id, scheduling ? requestedStart.toISOString() : null]
       );
     } else {
       await client.query(
         `INSERT INTO alliance_touches (prospect_id, campaign_id, touch_no, channel, subject, message_body, status, scheduled_at)
          SELECT p.id, cp.campaign_id, 1, CASE WHEN c.channel = 'auto' THEN p.channel ELSE c.channel END,
-                COALESCE(ct.subject, template.subject), COALESCE(ct.body, template.body), 'scheduled', NOW()
+                COALESCE(ct.subject, template.subject), COALESCE(ct.body, template.body), 'scheduled', COALESCE($2::timestamptz, NOW())
          FROM alliance_campaign_prospects cp
          JOIN alliance_prospects p ON p.id = cp.prospect_id
          JOIN alliance_campaigns c ON c.id = cp.campaign_id
@@ -1806,7 +1874,7 @@ router.post('/campaigns/:id/start', async (req, res) => {
            ON template.audience = p.audience AND template.channel = (CASE WHEN c.channel = 'auto' THEN p.channel ELSE c.channel END) AND template.touch_no = 1 AND template.active = TRUE
          WHERE cp.campaign_id = $1 AND p.suppressed = FALSE
          ON CONFLICT (campaign_id, prospect_id, touch_no) DO NOTHING`,
-        [req.params.id]
+        [req.params.id, scheduling ? requestedStart.toISOString() : null]
       );
     }
     await client.query(
@@ -1816,9 +1884,21 @@ router.post('/campaigns/:id/start', async (req, res) => {
       [req.params.id]
     );
     await client.query(`UPDATE alliance_campaign_prospects SET enrollment_status = 'in_sequence' WHERE campaign_id = $1 AND enrollment_status <> 'stopped'`, [req.params.id]);
-    await client.query(`UPDATE alliance_campaigns SET status = 'running', started_at = COALESCE(started_at, NOW()) WHERE id = $1`, [req.params.id]);
+    await client.query(
+      `UPDATE alliance_campaigns
+       SET status = $2::varchar, scheduled_start_at = $3::timestamptz,
+           started_at = CASE WHEN $2::varchar = 'running' THEN COALESCE(started_at, NOW()) ELSE NULL END
+       WHERE id = $1`,
+      [req.params.id, scheduling ? 'scheduled' : 'running', scheduling ? requestedStart.toISOString() : null]
+    );
     await client.query('COMMIT');
-    res.json({ success: true, resumed: resuming, message: resuming ? 'Campaign resumed. Unsent paused or failed touches were restored.' : 'Campaign started and first touches scheduled.' });
+    res.json({
+      success: true,
+      resumed: resuming,
+      scheduled: Boolean(scheduling),
+      scheduled_at: scheduling ? requestedStart.toISOString() : null,
+      message: scheduling ? `Campaign scheduled for ${requestedStart.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}.` : resuming ? 'Campaign resumed. Unsent paused or failed touches were restored.' : 'Campaign started and first touches scheduled.'
+    });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Alliance campaign start failed:', error);
@@ -1833,12 +1913,12 @@ router.post('/campaigns/:id/pause', async (req, res) => {
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `UPDATE alliance_campaigns SET status = 'paused' WHERE id = $1 AND status = 'running' RETURNING id`,
+      `UPDATE alliance_campaigns SET status = 'paused' WHERE id = $1 AND status IN ('running', 'scheduled') RETURNING id`,
       [req.params.id]
     );
     if (!result.rowCount) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Only a running campaign can be paused.' });
+      return res.status(409).json({ error: 'Only a running or scheduled campaign can be paused.' });
     }
     await client.query(`UPDATE alliance_touches SET status = 'paused' WHERE campaign_id = $1 AND status = 'scheduled'`, [req.params.id]);
     await client.query('COMMIT');
@@ -1858,7 +1938,7 @@ router.post('/campaigns/:id/stop', async (req, res) => {
     await client.query('BEGIN');
     const result = await client.query(
       `UPDATE alliance_campaigns SET status = 'cancelled', completed_at = NOW()
-       WHERE id = $1 AND status IN ('draft','ready','running','paused') RETURNING id`,
+       WHERE id = $1 AND status IN ('draft','ready','scheduled','running','paused') RETURNING id`,
       [req.params.id]
     );
     if (!result.rowCount) {
@@ -1900,7 +1980,7 @@ router.delete('/campaigns/:id', async (req, res) => {
       return res.status(404).json({ error: 'Campaign not found.' });
     }
     const campaign = campaignResult.rows[0];
-    if (['running', 'paused'].includes(campaign.status)) {
+    if (['scheduled', 'running', 'paused'].includes(campaign.status)) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Stop this campaign before deleting it permanently.' });
     }
@@ -2440,12 +2520,13 @@ router.post('/brain/brands', async (req, res) => {
     if (!/^[a-z][a-z0-9_]*$/.test(code)) return res.status(400).json({ error: 'Brand code must be lowercase letters, numbers, and underscores, starting with a letter.' });
     if (text(req.body.email) && !isValidEmailAddress(req.body.email)) return res.status(400).json({ error: 'Enter a valid email address.' });
     if (['phone', 'whatsapp', 'escalation_phone'].some((field) => !isValidOptionalTenDigitPhone(req.body[field]))) return res.status(400).json({ error: 'Phone numbers must contain exactly 10 digits.' });
-    if (!isValidBusinessHours(req.body.business_hours)) return res.status(400).json({ error: 'Business hours must use the format 10:00 AM - 8:00 PM.' });
+    const businessHours = normalizeBusinessHours(req.body.business_hours);
+    if (businessHours === null) return res.status(400).json({ error: 'Enter a recognizable business-hours range, such as 10am-8pm or 09:00-20:00.' });
     const result = await db.query(
       `INSERT INTO alliance_brands (code, audience, name, description, phone, whatsapp, email, website, address, business_hours, languages, target_customers, primary_contact, escalation_contact, escalation_phone, policies, verified_by, last_verified_date)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18) RETURNING *`,
       [code, text(req.body.audience) || null, name, text(req.body.description), text(req.body.phone), text(req.body.whatsapp),
-        text(req.body.email), text(req.body.website), text(req.body.address), text(req.body.business_hours), text(req.body.languages),
+        text(req.body.email), text(req.body.website), text(req.body.address), businessHours, text(req.body.languages),
         text(req.body.target_customers), text(req.body.primary_contact), text(req.body.escalation_contact), text(req.body.escalation_phone),
         JSON.stringify(req.body.policies && typeof req.body.policies === 'object' ? req.body.policies : {}),
         text(req.body.verified_by), req.body.last_verified_date || null]
@@ -2466,16 +2547,15 @@ router.patch('/brain/brands/:id', async (req, res) => {
     if (['phone', 'whatsapp', 'escalation_phone'].some((field) => field in req.body && !isValidOptionalTenDigitPhone(req.body[field]))) {
       return res.status(400).json({ error: 'Phone numbers must contain exactly 10 digits.' });
     }
-    if ('business_hours' in req.body && !isValidBusinessHours(req.body.business_hours)) {
-      return res.status(400).json({ error: 'Business hours must use the format 10:00 AM - 8:00 PM.' });
-    }
+    const businessHours = 'business_hours' in req.body ? normalizeBusinessHours(req.body.business_hours) : undefined;
+    if (businessHours === null) return res.status(400).json({ error: 'Enter a recognizable business-hours range, such as 10am-8pm or 09:00-20:00.' });
     const fields = ['audience', 'name', 'description', 'phone', 'whatsapp', 'email', 'website', 'address', 'business_hours',
       'languages', 'target_customers', 'primary_contact', 'escalation_contact', 'escalation_phone', 'verified_by', 'last_verified_date', 'active'];
     const nullIfEmpty = new Set(['audience', 'last_verified_date']); // FK / date columns reject '' — must be NULL instead
     const sets = [];
     const values = [];
     for (const field of fields) {
-      if (field in req.body) { values.push(nullIfEmpty.has(field) ? (req.body[field] || null) : req.body[field]); sets.push(`${field} = $${values.length}`); }
+      if (field in req.body) { const fieldValue = field === 'business_hours' ? businessHours : req.body[field]; values.push(nullIfEmpty.has(field) ? (fieldValue || null) : fieldValue); sets.push(`${field} = $${values.length}`); }
     }
     if ('policies' in req.body) { values.push(JSON.stringify(req.body.policies && typeof req.body.policies === 'object' ? req.body.policies : {})); sets.push(`policies = $${values.length}::jsonb`); }
     if (!sets.length) return res.status(400).json({ error: 'No fields to update.' });

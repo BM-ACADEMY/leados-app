@@ -73,6 +73,14 @@ async function claimDueTouch() {
       return null;
     }
     const touch = result.rows[0];
+    if (touch.campaign_status === 'scheduled') {
+      await client.query(
+        `UPDATE alliance_campaigns SET status = 'running', started_at = COALESCE(started_at, NOW())
+         WHERE id = $1 AND status = 'scheduled'`,
+        [touch.campaign_id]
+      );
+      touch.campaign_status = 'running';
+    }
     const stopReason = touch.campaign_status !== 'running' ? 'campaign_not_running'
       : touch.suppressed ? 'suppressed'
         : ['converted', 'closed', 'not_interested', 'unsubscribed'].includes(touch.prospect_status) ? `prospect_${touch.prospect_status}`

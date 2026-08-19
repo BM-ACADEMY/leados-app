@@ -682,8 +682,8 @@ class LeadOSAPI {
     return this.request(`/api/alliance/campaigns/${id}`);
   }
 
-  async startAllianceCampaign(id) {
-    return this.request(`/api/alliance/campaigns/${id}/start`, { method: 'POST' });
+  async startAllianceCampaign(id, payload = {}) {
+    return this.request(`/api/alliance/campaigns/${id}/start`, { method: 'POST', body: JSON.stringify(payload) });
   }
 
   async pauseAllianceCampaign(id) {

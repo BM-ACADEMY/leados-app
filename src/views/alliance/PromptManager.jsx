@@ -83,7 +83,7 @@ export const PromptManager = () => {
         <button className="al-btn" onClick={openNew}><Plus size={16} /> Add rule</button>
       </div>
 
-      <div className="al-prompt-guard"><ShieldCheck size={20} /><div><b>Brain facts remain authoritative</b><span>Rules can control tone, conditions, calls to action, escalation, and response behavior. They cannot authorize the AI to invent prices, dates, policies, or course details.</span></div></div>
+      <div className="al-prompt-guard"><ShieldCheck size={20} /><div><b>Brain facts remain authoritative</b><span>Before AI generation, active rule conditions are matched against the current recipient message or campaign context. Only matching rules are applied, in priority order. Rules cannot authorize invented prices, dates, policies, or course details.</span></div></div>
 
       {loading ? <div className="al-brain-empty">Loading AI rules...</div> : !rules.length ? (
         <div className="al-brain-empty">No custom rules yet. The protected system defaults still apply.</div>

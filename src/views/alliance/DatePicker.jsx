@@ -17,7 +17,11 @@ const formatDisplay = (value, withTime) => {
   if (!date) return '';
   const dateStr = `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()}`;
   if (!withTime) return dateStr;
-  return `${dateStr} ${timePartOf(value) || '--:--'}`;
+  const timePart = timePartOf(value);
+  if (!timePart) return `${dateStr} --:--`;
+  const [hour24, minute] = timePart.split(':').map(Number);
+  const hour12 = ((hour24 + 11) % 12) + 1;
+  return `${dateStr} ${pad(hour12)}:${pad(minute)} ${hour24 >= 12 ? 'PM' : 'AM'}`;
 };
 const sameDay = (a, b) => Boolean(a) && Boolean(b)
   && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
@@ -58,7 +62,6 @@ export const DatePicker = ({ value, onChange, min, max, placeholder, withTime = 
   const maxDate = fromISO(max);
   const timePart = timePartOf(value);
   const now = new Date();
-  const nowTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const [viewYear, setViewYear] = useState((selected || today).getFullYear());
@@ -91,11 +94,29 @@ export const DatePicker = ({ value, onChange, min, max, placeholder, withTime = 
   const pick = (date) => {
     if (isDisabled(date)) return;
     if (withTime) {
-      onChange(`${toISO(date)}T${timePart || nowTime}`);
+      const liveNow = new Date();
+      liveNow.setMinutes(liveNow.getMinutes() + 1, 0, 0);
+      const liveTime = `${pad(liveNow.getHours())}:${pad(liveNow.getMinutes())}`;
+      onChange(`${toISO(date)}T${timePart || liveTime}`);
     } else {
       onChange(toISO(date));
       setOpen(false);
     }
+  };
+
+  const pickToday = () => {
+    const liveNow = new Date();
+    if (withTime) {
+      // Scheduling at the exact current minute is already in the past once
+      // submitted, so default to the next minute using a fresh clock value.
+      liveNow.setMinutes(liveNow.getMinutes() + 1, 0, 0);
+      onChange(`${toISO(liveNow)}T${pad(liveNow.getHours())}:${pad(liveNow.getMinutes())}`);
+    } else {
+      onChange(toISO(liveNow));
+      setOpen(false);
+    }
+    setViewYear(liveNow.getFullYear());
+    setViewMonth(liveNow.getMonth());
   };
 
   const changeTime = (newTime) => {
@@ -195,7 +216,7 @@ export const DatePicker = ({ value, onChange, min, max, placeholder, withTime = 
           <div className="al-dp-foot">
             <button type="button" className="al-dp-link" onClick={() => { onChange(''); setOpen(false); }}>Clear</button>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" className="al-dp-link" onClick={() => pick(today)}>Today</button>
+              <button type="button" className="al-dp-link" onClick={pickToday}>Today</button>
               {withTime && <button type="button" className="al-dp-link" onClick={() => setOpen(false)}>Done</button>}
             </div>
           </div>

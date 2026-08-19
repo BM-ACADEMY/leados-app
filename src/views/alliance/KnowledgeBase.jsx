@@ -6,8 +6,25 @@ import './alliance.css';
 
 const digitsOnly = (value, maxLen) => String(value || '').replace(/\D/g, '').slice(0, maxLen);
 const isValidPhone = (value) => !String(value || '').trim() || /^\d{10}$/.test(String(value).trim());
-const isValidBusinessHours = (value) => !String(value || '').trim()
-  || /^(?:0?[1-9]|1[0-2]):[0-5]\d\s(?:AM|PM)\s-\s(?:0?[1-9]|1[0-2]):[0-5]\d\s(?:AM|PM)$/i.test(String(value).trim());
+const normalizeBusinessHours = (value) => {
+  const hours = String(value || '').trim();
+  if (!hours) return '';
+  const match = hours.replace(/[–—]/g, '-').replace(/\b(?:to|until|till)\b/gi, '-').match(/^\s*(\d{1,2})(?:[:.]?(\d{2}))?\s*(am|pm)?\s*-\s*(\d{1,2})(?:[:.]?(\d{2}))?\s*(am|pm)?\s*$/i);
+  if (!match) return null;
+  const start = { hour: Number(match[1]), minute: Number(match[2] || 0), period: match[3]?.toUpperCase() || '' };
+  const end = { hour: Number(match[4]), minute: Number(match[5] || 0), period: match[6]?.toUpperCase() || '' };
+  if (start.minute > 59 || end.minute > 59) return null;
+  const normalizePart = (part, fallbackPeriod) => {
+    if (!part.period && (part.hour > 12 || part.hour === 0)) return part.hour <= 23 ? { hour: ((part.hour + 11) % 12) + 1, minute: part.minute, period: part.hour >= 12 ? 'PM' : 'AM' } : null;
+    return part.hour >= 1 && part.hour <= 12 ? { ...part, period: part.period || fallbackPeriod } : null;
+  };
+  const normalizedStart = normalizePart(start, 'AM');
+  const normalizedEnd = normalizePart(end, 'PM');
+  if (!normalizedStart || !normalizedEnd) return null;
+  const format = (part) => `${part.hour}:${String(part.minute).padStart(2, '0')} ${part.period}`;
+  return `${format(normalizedStart)} - ${format(normalizedEnd)}`;
+};
+const isValidBusinessHours = (value) => normalizeBusinessHours(value) !== null;
 const isValidWebsite = (value) => !value.trim() || /^(https?:\/\/)?([\w-]+\.)+[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(value.trim());
 const isValidEmail = (value) => {
   const email = String(value || '').trim();
@@ -308,9 +325,10 @@ export const KnowledgeBase = () => {
       toast.error('Phone numbers must contain exactly 10 digits.');
       return;
     }
-    if (!isValidBusinessHours(brandForm.business_hours)) {
+    const normalizedBusinessHours = normalizeBusinessHours(brandForm.business_hours);
+    if (normalizedBusinessHours === null) {
       setBusinessHoursTouched(true);
-      toast.error('Enter business hours as a valid time range, e.g. 10:00 AM - 8:00 PM.');
+      toast.error('Enter business hours as a range, such as 10am-8pm or 09:00-20:00.');
       return;
     }
     if (!isValidEmail(brandForm.email)) {
@@ -321,7 +339,7 @@ export const KnowledgeBase = () => {
     if (!isValidWebsite(brandForm.website)) { toast.error('Enter a valid website URL (e.g. example.com or https://example.com).'); return; }
     setSavingBrand(true);
     try {
-      const payload = { ...brandForm, policies: rowsToObject(brandPolicyRows) };
+      const payload = { ...brandForm, business_hours: normalizedBusinessHours, policies: rowsToObject(brandPolicyRows) };
       await api.updateAllianceBrainBrand(editingBrand.id, payload);
       toast.success('Brand updated');
       setEditingBrand(null);
@@ -637,7 +655,11 @@ export const KnowledgeBase = () => {
                       className={businessHoursTouched && !isValidBusinessHours(brandForm.business_hours) ? 'al-input-invalid' : ''}
                       aria-invalid={businessHoursTouched && !isValidBusinessHours(brandForm.business_hours)}
                       aria-describedby="alliance-business-hours-error"
-                      onBlur={() => setBusinessHoursTouched(true)}
+                      onBlur={() => {
+                        setBusinessHoursTouched(true);
+                        const normalized = normalizeBusinessHours(brandForm.business_hours);
+                        if (normalized !== null) setBrandForm((current) => ({ ...current, business_hours: normalized }));
+                      }}
                       onChange={(e) => {
                         setBrandForm({ ...brandForm, business_hours: e.target.value });
                         setBusinessHoursTouched(true);
@@ -645,7 +667,7 @@ export const KnowledgeBase = () => {
                     />
                     {businessHoursTouched && !isValidBusinessHours(brandForm.business_hours) && (
                       <span id="alliance-business-hours-error" className="al-field-error" role="alert">
-                        Use the format 10:00 AM - 8:00 PM.
+                        Enter a range such as 10am-8pm, 10 AM to 8 PM, or 09:00-20:00.
                       </span>
                     )}
                   </div>

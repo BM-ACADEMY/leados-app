@@ -25,12 +25,13 @@ async function claimRecipient() {
        FROM limits allowed WHERE r.id=allowed.id AND allowed.position>GREATEST(allowed.custom_limit-allowed.sent_total,0)`
     );
     const result = await client.query(
-      `SELECT r.id,r.campaign_id,r.prospect_id,c.template_name,c.template_language,c.template_body,c.parameter_mapping,
+      `SELECT r.id,r.campaign_id,r.prospect_id,c.template_name,c.template_language,c.template_body,c.parameter_mapping,t.buttons AS template_buttons,
               c.phone_number_id,c.created_at AS campaign_created_at,c.followup_template_id,c.followup_delay_days,c.followup_delay_minutes,p.name,p.business_name,p.location,p.phone,p.status AS prospect_status,
               p.email,p.audience,p.industry,p.status,p.consent,p.consent_source,p.suppressed,s.access_token_env,s.active AS sender_active,
               cv.last_inbound_at
        FROM alliance_whatsapp_campaign_recipients r
        JOIN alliance_whatsapp_campaigns c ON c.id=r.campaign_id
+       LEFT JOIN templates t ON t.id=c.template_id
        JOIN alliance_prospects p ON p.id=r.prospect_id
        LEFT JOIN alliance_inbox_settings s ON s.phone_number_id=c.phone_number_id
        LEFT JOIN alliance_inbox_contacts ic ON ic.prospect_id=p.id
@@ -107,8 +108,8 @@ async function storeInboxMessage(job, waMessageId, rendered) {
       `INSERT INTO alliance_inbox_messages (conversation_id,contact_id,wa_msg_id,direction,msg_type,content,status,raw_payload,sent_at)
        VALUES ($1,$2,$3,'outbound','template',$4,'sent',$5::jsonb,NOW())
        ON CONFLICT (wa_msg_id) DO UPDATE SET status=EXCLUDED.status
-       RETURNING *`,
-      [conversation.rows[0].id,contact.rows[0].id,waMessageId,rendered,JSON.stringify({ purpose:job.followup_no ? 'automated_followup' : 'bulk_campaign',campaign_id:job.campaign_id,template_name:job.template_name,sender_type:'automation' })]
+       RETURNING *,raw_payload->'buttons' AS template_buttons`,
+      [conversation.rows[0].id,contact.rows[0].id,waMessageId,rendered,JSON.stringify({ purpose:job.followup_no ? 'automated_followup' : 'bulk_campaign',campaign_id:job.campaign_id,template_name:job.template_name,buttons:Array.isArray(job.template_buttons)?job.template_buttons:[],sender_type:'automation' })]
     );
     await client.query('COMMIT');
     return { contactId: contact.rows[0].id, message: message.rows[0] || null };
@@ -243,7 +244,7 @@ async function scheduleAllianceInactivityReminder(prospectId, activityAt = new D
 }
 
 async function sendAllianceWhatsAppFollowup(jobId,io){
-  const result=await db.query(`SELECT j.*,c.status AS campaign_status,c.phone_number_id,c.followup_template_name AS template_name,c.followup_template_language AS template_language,c.followup_template_body AS template_body,c.followup_parameter_mapping AS parameter_mapping,c.followup_repeat_days,c.max_followups,c.created_at AS campaign_created_at,p.name,p.business_name,p.location,p.phone,p.email,p.audience,p.industry,p.status,p.status AS prospect_status,p.consent,p.consent_source,p.suppressed,s.access_token_env,cv.last_inbound_at FROM alliance_whatsapp_followup_jobs j JOIN alliance_whatsapp_campaigns c ON c.id=j.campaign_id JOIN alliance_prospects p ON p.id=j.prospect_id LEFT JOIN alliance_inbox_settings s ON s.phone_number_id=c.phone_number_id LEFT JOIN alliance_inbox_contacts ic ON ic.prospect_id=p.id LEFT JOIN alliance_inbox_conversations cv ON cv.contact_id=ic.id WHERE j.id=$1`,[jobId]);if(!result.rowCount)throw Object.assign(new Error('Follow-up job not found.'),{status:404});const job=result.rows[0];
+  const result=await db.query(`SELECT j.*,c.status AS campaign_status,c.phone_number_id,c.followup_template_name AS template_name,c.followup_template_language AS template_language,c.followup_template_body AS template_body,c.followup_parameter_mapping AS parameter_mapping,t.buttons AS template_buttons,c.followup_repeat_days,c.max_followups,c.created_at AS campaign_created_at,p.name,p.business_name,p.location,p.phone,p.email,p.audience,p.industry,p.status,p.status AS prospect_status,p.consent,p.consent_source,p.suppressed,s.access_token_env,cv.last_inbound_at FROM alliance_whatsapp_followup_jobs j JOIN alliance_whatsapp_campaigns c ON c.id=j.campaign_id LEFT JOIN templates t ON t.id=c.followup_template_id JOIN alliance_prospects p ON p.id=j.prospect_id LEFT JOIN alliance_inbox_settings s ON s.phone_number_id=c.phone_number_id LEFT JOIN alliance_inbox_contacts ic ON ic.prospect_id=p.id LEFT JOIN alliance_inbox_conversations cv ON cv.contact_id=ic.id WHERE j.id=$1`,[jobId]);if(!result.rowCount)throw Object.assign(new Error('Follow-up job not found.'),{status:404});const job=result.rows[0];
   const reason=!['claimed','pending'].includes(job.status)?`job_${job.status}`:job.campaign_status==='stopped'?'campaign_stopped':!job.consent||!job.consent_source?'whatsapp_consent_missing':job.suppressed?'suppressed':['converted','closed','complete','completed','not_interested','unsubscribed'].includes(job.prospect_status)?`prospect_${job.prospect_status}`:job.last_inbound_at&&new Date(job.last_inbound_at)>new Date(job.activity_cutoff_at||job.campaign_created_at)?'recipient_replied_after_latest_activity':null;
   if(reason){await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='skipped',error_message=$1 WHERE id=$2`,[reason,job.id]);return{sent:false,skipped:true,reason};}
   await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='sending',error_message=NULL WHERE id=$1`,[job.id]);try{const token=tokenFor(job);if(!token)throw new Error('Alliance WhatsApp access token is missing.');const mapping=Array.isArray(job.parameter_mapping)?job.parameter_mapping:[];const parameters=mapping.map(field=>valueFor(field,job));const payload={messaging_product:'whatsapp',to:job.phone,type:'template',template:{name:job.template_name,language:{code:job.template_language||'en'},...(parameters.length?{components:[{type:'body',parameters:parameters.map(text=>({type:'text',text}))}]}:{})}};const response=await axios.post(`https://graph.facebook.com/v19.0/${job.phone_number_id}/messages`,payload,{headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},timeout:20000});const waMessageId=response.data?.messages?.[0]?.id||null;await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='sent',wa_msg_id=$1,sent_at=NOW() WHERE id=$2`,[waMessageId,job.id]);const rendered=mapping.reduce((body,field,index)=>body.replaceAll(`{{${index+1}}}`,valueFor(field,job)),job.template_body);const inbox=await storeInboxMessage(job,waMessageId,rendered);

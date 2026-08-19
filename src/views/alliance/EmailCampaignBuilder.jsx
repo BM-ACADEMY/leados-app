@@ -15,6 +15,7 @@ const formatImportedDateTime = (value) => {
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleString('en-IN', { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
+const toLocalDateTimeInput = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 const STEPS = [
   { id: 1, label: 'Campaign details', icon: FileText },
   { id: 2, label: 'Audience', icon: Users },
@@ -57,7 +58,7 @@ export const EmailCampaignBuilder = () => {
   const [activeTouch, setActiveTouch] = useState(0);
   const [brand, setBrand] = useState('');
   const [aiGenerated, setAiGenerated] = useState(false);
-  const [form, setForm] = useState({ name: '', objective: '', sender_domain_id: '' });
+  const [form, setForm] = useState({ name: '', objective: '', sender_domain_id: '', launch_mode: 'immediate', scheduled_at: '' });
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState('');
   const [activeCampaigns, setActiveCampaigns] = useState([]);
@@ -74,7 +75,7 @@ export const EmailCampaignBuilder = () => {
       const saved = JSON.parse(localStorage.getItem(EMAIL_CAMPAIGN_DRAFT_KEY) || 'null');
       if (saved && saved.version === 1) {
         if (saved.step) setStep(Math.min(Math.max(Number(saved.step), 1), 5));
-        if (saved.form) setForm(saved.form);
+        if (saved.form) setForm({ launch_mode: 'immediate', scheduled_at: '', ...saved.form });
         if (saved.filters) { setFilters({ ...EMPTY_FILTERS, ...saved.filters }); restoredAudienceRef.current = saved.filters.audience || ''; }
         if (Array.isArray(saved.templates)) setTemplates(saved.templates.map((template) => ({ ...template, body: normalizeLineBreaks(template.body) })));
         if (saved.selectedLeads && typeof saved.selectedLeads === 'object') setSelectedLeads(saved.selectedLeads);
@@ -140,7 +141,7 @@ export const EmailCampaignBuilder = () => {
     const loadActiveCampaigns = async () => {
       try {
         const data = await api.getAllianceCampaigns();
-        if (mounted) setActiveCampaigns((data.campaigns || []).filter((campaign) => ['running', 'paused'].includes(campaign.status)));
+        if (mounted) setActiveCampaigns((data.campaigns || []).filter((campaign) => ['scheduled', 'running', 'paused'].includes(campaign.status)));
       } catch {
         // Campaign creation remains available if the monitoring request fails.
       }
@@ -197,6 +198,9 @@ export const EmailCampaignBuilder = () => {
   const dailyCapacity = Math.max(1, Number(sender?.daily_cap || 20) - Number(sender?.sent_today || 0));
   const deliveryDays = selected.size ? Math.ceil(selected.size / dailyCapacity) : 0;
   const lastTouchDay = templates.length ? Math.max(...templates.map((item) => Number(item.delay_days || 0))) : 0;
+  const scheduledDate = form.scheduled_at ? new Date(form.scheduled_at) : null;
+  const scheduledDateIsValid = scheduledDate && !Number.isNaN(scheduledDate.getTime()) && scheduledDate.getTime() > Date.now();
+  const minimumScheduleTime = toLocalDateTimeInput(new Date(Date.now() + 5 * 60 * 1000));
 
   const updateFilter = (key, value) => {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -305,6 +309,7 @@ export const EmailCampaignBuilder = () => {
     if (targetStep > 3 && (!templates.length || templates.some((item) => !item.subject?.trim() || !item.body?.trim()))) return 'Complete every active email touch.';
     if (targetStep > 4 && Number(templates[0]?.delay_days || 0) !== 0) return 'The first email must be scheduled for day 0.';
     if (targetStep > 4 && templates.some((item, index) => index > 0 && Number(item.delay_days) <= Number(templates[index - 1].delay_days))) return 'Each follow-up must be scheduled after the previous email.';
+    if (targetStep > 4 && form.launch_mode === 'scheduled' && !scheduledDateIsValid) return 'Choose a future date and time for the scheduled campaign.';
     return '';
   };
   const goTo = (target) => {
@@ -315,11 +320,12 @@ export const EmailCampaignBuilder = () => {
     const error = validateStep(5); if (error) return toast.error(error);
     setBusy('create');
     try {
-      const result = await api.createAllianceEmailCampaign({ ...form, audience: filters.audience, sender_domain_id: Number(form.sender_domain_id), prospect_ids: Object.values(selectedLeads).map((lead) => lead.id), templates, ai_generated: aiGenerated });
+      const result = await api.createAllianceEmailCampaign({ name: form.name, objective: form.objective, audience: filters.audience, sender_domain_id: Number(form.sender_domain_id), prospect_ids: Object.values(selectedLeads).map((lead) => lead.id), templates, ai_generated: aiGenerated });
+      const launchResult = await api.startAllianceCampaign(result.campaign.id, form.launch_mode === 'scheduled' ? { scheduled_at: scheduledDate.toISOString() } : {});
       draftDiscardedRef.current = true;
       latestDraftRef.current = null;
       localStorage.removeItem(EMAIL_CAMPAIGN_DRAFT_KEY);
-      toast.success(result.message);
+      toast.success(launchResult.message);
       navigate('/alliance/planner');
     } catch (requestError) { toast.error(requestError.message || 'Failed to create campaign'); }
     finally { setBusy(''); }
@@ -330,7 +336,7 @@ export const EmailCampaignBuilder = () => {
     draftDiscardedRef.current = true;
     latestDraftRef.current = null;
     localStorage.removeItem(EMAIL_CAMPAIGN_DRAFT_KEY);
-    setStep(1); setForm({ name: '', objective: '', sender_domain_id: options.senders?.length === 1 ? String(options.senders[0].id) : '' });
+    setStep(1); setForm({ name: '', objective: '', sender_domain_id: options.senders?.length === 1 ? String(options.senders[0].id) : '', launch_mode: 'immediate', scheduled_at: '' });
     setFilters(EMPTY_FILTERS); setTemplates([]); setSelectedLeads({}); setActiveTouch(0); setBrand(''); setAiGenerated(false);
     setDraftStatus('Draft discarded');
   };
@@ -351,7 +357,7 @@ export const EmailCampaignBuilder = () => {
             <span><small>Replies</small><b>{campaign.replied || 0}</b></span>
             <ArrowRight size={16} />
           </button>
-        ))}</div> : <div className="al-cb-active-empty">No running or paused campaigns.</div>}
+        ))}</div> : <div className="al-cb-active-empty">No scheduled, running, or paused campaigns.</div>}
       </section>
 
       <nav className="al-cb-steps" aria-label="Campaign creation progress">
@@ -396,18 +402,23 @@ export const EmailCampaignBuilder = () => {
 
           {step === 4 && <section className="al-cb-card">
             <div className="al-cb-section-head"><span className="al-cb-icon"><CalendarClock size={20} /></span><div><h2>Sequence schedule</h2><p>Control when each follow-up becomes eligible to send after campaign launch.</p></div></div>
+            <div className="al-delivery-plan">
+              <button type="button" className={form.launch_mode === 'immediate' ? 'active' : ''} onClick={() => setForm((current) => ({ ...current, launch_mode: 'immediate', scheduled_at: '' }))}><Send size={20} /><span><b>Start immediately</b><small>Begin sending as soon as the campaign is created.</small></span></button>
+              <button type="button" className={form.launch_mode === 'scheduled' ? 'active' : ''} onClick={() => setForm((current) => ({ ...current, launch_mode: 'scheduled' }))}><CalendarClock size={20} /><span><b>Schedule for later</b><small>Choose the exact date and time to begin sending.</small></span></button>
+            </div>
+            {form.launch_mode === 'scheduled' && <div className="al-field al-schedule-date"><label>Campaign start date and time <b>*</b></label><DatePicker withTime min={minimumScheduleTime} value={form.scheduled_at} placeholder="dd-mm-yyyy --:--" onChange={(value) => setForm((current) => ({ ...current, scheduled_at: value }))} /><small className="al-help">Choose the date, hour, minute, and AM/PM. Time uses your current browser timezone.</small></div>}
             <div className="al-cb-timeline">{templates.map((item, index) => <div className="al-cb-time" key={item.touch_no || index}><div className="al-time-line"><span>{index + 1}</span>{index < templates.length - 1 && <i />}</div><div><b>Touch {index + 1}</b><p>{item.purpose || item.subject}</p></div><div className="al-field"><label>Send on day</label><input type="number" min="0" max="30" value={item.delay_days ?? 0} onChange={(e) => updateTemplate(index, 'delay_days', Number(e.target.value))} /></div></div>)}</div>
-            <div className="al-note success"><Info size={18} /><div><b>Safe scheduling:</b> Campaign creation produces a draft only. Use Campaign Planner to send a test email, run readiness checks, and start delivery. Replies, unsubscribe requests, and closed lead statuses stop future touches automatically.</div></div>
+            <div className="al-note success"><Info size={18} /><div><b>Delivery protection:</b> Daily sender limits are still applied. Replies, unsubscribe requests, and closed lead statuses stop future touches automatically.</div></div>
             <BulkSendLimitControl channel="email" recipientCount={selected.size} />
           </section>}
 
           {step === 5 && <section className="al-cb-card">
-            <div className="al-cb-section-head"><span className="al-cb-icon"><Check size={20} /></span><div><h2>Review campaign</h2><p>Confirm the audience, content, and delivery plan before creating the draft.</p></div></div>
-            <div className="al-review-list"><div><FileText size={17} /><span><small>Campaign</small><b>{form.name}</b></span><button onClick={() => goTo(1)}>Edit</button></div><div><Users size={17} /><span><small>Audience</small><b>{audience?.label} · {selected.size} recipients</b></span><button onClick={() => goTo(2)}>Edit</button></div><div><Mail size={17} /><span><small>Content</small><b>4-touch {aiGenerated ? 'AI-assisted' : 'approved template'} sequence</b></span><button onClick={() => goTo(3)}>Edit</button></div><div><CalendarClock size={17} /><span><small>Timeline</small><b>Day 0 through day {lastTouchDay}</b></span><button onClick={() => goTo(4)}>Edit</button></div></div>
-            <div className="al-launch-note"><Send size={20} /><div><b>Next: test and launch safely</b><p>After creating this draft, Campaign Planner lets you send a test to your own address, verify readiness, and then start the real campaign.</p></div></div>
+            <div className="al-cb-section-head"><span className="al-cb-icon"><Check size={20} /></span><div><h2>Review campaign</h2><p>Confirm the audience, content, and delivery plan before launch.</p></div></div>
+            <div className="al-review-list"><div><FileText size={17} /><span><small>Campaign</small><b>{form.name}</b></span><button onClick={() => goTo(1)}>Edit</button></div><div><Users size={17} /><span><small>Audience</small><b>{audience?.label} · {selected.size} recipients</b></span><button onClick={() => goTo(2)}>Edit</button></div><div><Mail size={17} /><span><small>Content</small><b>{templates.length}-touch {aiGenerated ? 'AI-assisted' : 'approved template'} sequence</b></span><button onClick={() => goTo(3)}>Edit</button></div><div><CalendarClock size={17} /><span><small>Delivery</small><b>{form.launch_mode === 'scheduled' && scheduledDateIsValid ? `Scheduled for ${scheduledDate.toLocaleString('en-IN')}` : 'Start immediately'} · Day 0 through day {lastTouchDay}</b></span><button onClick={() => goTo(4)}>Edit</button></div></div>
+            <div className="al-launch-note"><Send size={20} /><div><b>{form.launch_mode === 'scheduled' ? 'Campaign will be scheduled' : 'Campaign will start immediately'}</b><p>{form.launch_mode === 'scheduled' ? 'The first email becomes eligible at the selected date and time. Daily sender limits may spread delivery across multiple days.' : 'The first email becomes eligible as soon as creation finishes. Daily sender limits may spread delivery across multiple days.'}</p></div></div>
           </section>}
 
-          <footer className="al-cb-actions"><button className="al-btn ghost" disabled={step === 1} onClick={() => goTo(step - 1)}><ArrowLeft size={16} /> Back</button><span>Step {step} of {STEPS.length}</span>{step < 5 ? <button className="al-btn" onClick={() => goTo(step + 1)}>Continue <ArrowRight size={16} /></button> : <button className="al-btn" disabled={busy === 'create'} onClick={createCampaign}><Check size={16} />{busy === 'create' ? 'Creating…' : 'Create draft & continue'}</button>}</footer>
+          <footer className="al-cb-actions"><button className="al-btn ghost" disabled={step === 1} onClick={() => goTo(step - 1)}><ArrowLeft size={16} /> Back</button><span>Step {step} of {STEPS.length}</span>{step < 5 ? <button className="al-btn" onClick={() => goTo(step + 1)}>Continue <ArrowRight size={16} /></button> : <button className="al-btn" disabled={busy === 'create'} onClick={createCampaign}><Check size={16} />{busy === 'create' ? 'Creating…' : form.launch_mode === 'scheduled' ? 'Schedule campaign' : 'Create & start now'}</button>}</footer>
         </main>
 
         <aside className="al-cb-summary">

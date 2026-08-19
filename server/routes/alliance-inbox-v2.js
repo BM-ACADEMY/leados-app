@@ -12,6 +12,7 @@ const { processQueuedAllianceWelcomes } = require('../services/alliance-welcome'
 const { scheduleAllianceInactivityReminder } = require('../services/alliance-whatsapp-campaign-worker');
 const { getAllianceBrainContext } = require('../services/alliance-brain-context');
 const { getAlliancePromptRules } = require('../services/alliance-prompt-rules');
+const { getAllianceLeadMemory, saveAllianceLeadMemory } = require('../services/alliance-lead-memory');
 
 function createAllianceInboxRouter({ auth, io }) {
   const router = express.Router();
@@ -157,6 +158,7 @@ function createAllianceInboxRouter({ auth, io }) {
     SELECT m.id, m.wa_msg_id, m.direction, m.msg_type, m.msg_type AS type, m.content,
            m.media_id, m.media_url, m.mime_type, m.filename, m.status, m.reactions,
            m.is_starred, m.is_deleted, m.pinned_until, m.sent_at, m.sent_at AS timestamp,
+           COALESCE(m.raw_payload->'buttons',template.buttons,'[]'::jsonb) AS template_buttons,
            (m.raw_payload->>'sender_type' = 'ai') AS is_ai,
            COALESCE(m.raw_payload->>'sender_type', CASE WHEN m.raw_payload->>'purpose'='automated_followup' THEN 'automation' END) AS sender_type,
            CASE WHEN parent.id IS NULL THEN NULL ELSE json_build_object(
@@ -164,6 +166,7 @@ function createAllianceInboxRouter({ auth, io }) {
              'media_url', parent.media_url, 'type', parent.msg_type
            ) END AS reply_to
     FROM alliance_inbox_messages m
+    LEFT JOIN templates template ON template.name=m.raw_payload->>'template_name'
     LEFT JOIN alliance_inbox_messages parent ON parent.wa_msg_id = m.reply_to_wa_msg_id`;
 
   router.use(async (_req, res, next) => {
@@ -368,25 +371,42 @@ function createAllianceInboxRouter({ auth, io }) {
       if (!contact.rowCount) return res.status(404).json({ error: 'Alliance contact not found.' });
       const history = await db.query(
         `SELECT direction,content,msg_type,sent_at FROM alliance_inbox_messages
-         WHERE contact_id=$1 AND is_deleted=FALSE ORDER BY sent_at DESC LIMIT 20`, [req.params.id]
+         WHERE contact_id=$1 AND is_deleted=FALSE ORDER BY sent_at DESC LIMIT 30`, [req.params.id]
       );
-      const facts = contact.rows[0].audience ? await db.query(
-        `SELECT fact_key,fact_value FROM alliance_kb WHERE audience=$1 AND active=TRUE ORDER BY id LIMIT 30`,
-        [contact.rows[0].audience]
-      ) : { rows: [] };
       const latestInbound = history.rows.find((message) => message.direction === 'inbound');
       const brain = await getAllianceBrainContext(contact.rows[0].audience, latestInbound?.content);
-      const promptRules = await getAlliancePromptRules('reply_suggestion', 'whatsapp', contact.rows[0].audience);
+      const durableLeadMemory = contact.rows[0].prospect_id ? await getAllianceLeadMemory(contact.rows[0].prospect_id) : null;
+      const promptRules = await getAlliancePromptRules('reply_suggestion', 'whatsapp', contact.rows[0].audience, latestInbound?.content || '');
       const prompt = `Write one concise WhatsApp reply suggestion for HUMAN REVIEW. Never claim it was sent.
 Lead context: ${JSON.stringify(contact.rows[0])}
-Approved brand knowledge: ${JSON.stringify(facts.rows)}
-Brand knowledge (courses/services, pricing, FAQs): ${brain ? JSON.stringify(brain) : 'Not configured for this audience yet — do not invent brand facts.'}
-Administrator rules (apply only when their written condition matches): ${promptRules}
-Conversation oldest to newest: ${JSON.stringify(history.rows.reverse())}
-Directly answer the latest inbound message, stay professional and conversational, use only known facts, and end with at most one useful question.${brain ? ` ${brain.instructions}` : ''} Return only the message text.`;
-      const generated = await openRouter.generateContent({ contents: prompt, config: { temperature: 0.3, maxOutputTokens: 350 } });
-      const suggestion = String(generated.text || '').trim();
+AUTHORITATIVE AI BRAIN (the only source for brand, course, service, price, duration, policy, and contact facts): ${brain ? JSON.stringify(brain) : 'Not configured for this audience yet — do not state any brand facts.'}
+Pre-matched administrator rules (mandatory; lower priority number wins if instructions conflict): ${promptRules}
+This contact's separate conversation memory, oldest to newest: ${JSON.stringify(history.rows.reverse())}
+Durable lead memory${durableLeadMemory ? ` keyed by ${durableLeadMemory.lead_key}` : ''}: ${JSON.stringify(durableLeadMemory || {})}
+Directly answer the latest inbound message using the detected brand only and continue naturally from this contact's own raw history and durable memory. Never restart the introduction when this is an ongoing conversation. End with at most one useful question. If question_scope is "broad_catalog", list EVERY active entry in exact_catalog exactly once without renaming or omitting entries; include stored duration and fee when present. If suggested_questions is non-empty, use at most one question from that list. For a specific-offering match, answer only with relevant_offerings.${brain ? ` ${brain.instructions}` : ''}
+Merge the latest exchange into durable memory while preserving relevant prior facts. Return JSON only: {"suggestion":"message text","memory":{"summary":"concise cumulative conversation summary","requirements":[],"interests":[],"objections":[],"commitments":[],"next_step":"","relationship_stage":"new|engaged|evaluating|ready|closed"}}.`;
+      const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1, maxOutputTokens: 2000 } });
+      let parsed;
+      try { parsed = JSON.parse(String(generated.text || '').replace(/^```json\s*|\s*```$/g, '')); }
+      catch { parsed = { suggestion: String(generated.text || '').trim(), memory: durableLeadMemory }; }
+      let suggestion = String(parsed.suggestion || '').trim();
       if (!suggestion) return res.status(502).json({ error: 'AI returned an empty suggestion.' });
+      if (brain?.question_scope === 'broad_catalog' && brain.exact_catalog?.length) {
+        const normalizeCatalogText = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const normalizedSuggestion = normalizeCatalogText(suggestion);
+        const missingOfferings = brain.exact_catalog.filter((offering) => !normalizedSuggestion.includes(normalizeCatalogText(offering.name)));
+        if (missingOfferings.length) {
+          const catalogLines = brain.exact_catalog.map((offering) => {
+            const facts = [offering.duration, offering.fee ? `₹${offering.fee}` : ''].filter(Boolean).join(', ');
+            return `• ${offering.name}${facts ? ` — ${facts}` : ''}`;
+          });
+          suggestion = `Thank you for your interest in ${brain.brand.name}. Here is our complete current catalog:\n\n${catalogLines.join('\n')}\n\n${brain.suggested_questions?.[0] || 'Which course would you like to explore in detail?'}`;
+        }
+      }
+      if (contact.rows[0].prospect_id) {
+        const memoryUpdate = parsed.memory || { ...durableLeadMemory, summary: `${durableLeadMemory?.summary ? `${durableLeadMemory.summary}\n` : ''}Latest inbound message: ${latestInbound?.content || ''}` };
+        await saveAllianceLeadMemory(contact.rows[0].prospect_id, memoryUpdate, 'whatsapp', latestInbound?.sent_at || new Date());
+      }
       res.json({ success: true, suggestion });
     } catch (error) {
       console.error('Alliance WhatsApp AI suggestion failed:', error.message);

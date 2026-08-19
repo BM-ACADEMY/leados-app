@@ -6,7 +6,7 @@ import { api } from '../../services/api.js';
 import './alliance.css';
 
 const TIERS = [250, 1000, 10000, 100000];
-const STATUS_CLASS = { running: 'seq', paused: 'rep', completed: 'int', draft: 'new', ready: 'int' };
+const STATUS_CLASS = { scheduled: 'seq', running: 'seq', paused: 'rep', completed: 'int', draft: 'new', ready: 'int' };
 const PAGE_SIZE = 10;
 
 export const CampaignPlanner = () => {
@@ -82,7 +82,7 @@ export const CampaignPlanner = () => {
   };
 
   const openDeleteCampaign = (campaign) => {
-    if (['running', 'paused'].includes(campaign.status)) {
+    if (['scheduled', 'running', 'paused'].includes(campaign.status)) {
       toast.error('Stop this campaign before deleting it permanently.');
       return;
     }
@@ -168,11 +168,11 @@ export const CampaignPlanner = () => {
                       <button className="al-btn ghost sm" onClick={() => openCampaign(campaign.id)}>Readiness</button>
                       {campaign.status === 'running' ? (
                         <button className="al-btn ghost sm" disabled={busy === campaign.id} onClick={() => changeStatus(campaign, 'pause')}>Pause</button>
-                      ) : ['draft', 'ready', 'paused'].includes(campaign.status) ? (
-                        <button className="al-btn sm" disabled={busy === campaign.id} onClick={() => changeStatus(campaign, 'start')}>{campaign.status === 'paused' ? 'Resume' : 'Start'}</button>
+                      ) : ['draft', 'ready', 'paused', 'scheduled'].includes(campaign.status) ? (
+                        <button className="al-btn sm" disabled={busy === campaign.id} onClick={() => changeStatus(campaign, 'start')}>{campaign.status === 'paused' ? 'Resume' : campaign.status === 'scheduled' ? 'Start now' : 'Start'}</button>
                       ) : null}
-                      {['draft', 'ready', 'running', 'paused'].includes(campaign.status) && <button className="al-btn ghost sm" disabled={busy === campaign.id} style={{ color: '#ff8f8f' }} onClick={() => setConfirmingStop(campaign)}>Stop</button>}
-                      <button className="al-btn ghost sm" disabled={busy === `delete-${campaign.id}`} style={{ color: '#ff6b6b' }} title={['running', 'paused'].includes(campaign.status) ? 'Stop the campaign before deleting it' : 'Delete campaign permanently'} onClick={() => openDeleteCampaign(campaign)}><Trash2 size={14} /> Delete</button>
+                      {['draft', 'ready', 'scheduled', 'running', 'paused'].includes(campaign.status) && <button className="al-btn ghost sm" disabled={busy === campaign.id} style={{ color: '#ff8f8f' }} onClick={() => setConfirmingStop(campaign)}>Stop</button>}
+                      <button className="al-btn ghost sm" disabled={busy === `delete-${campaign.id}`} style={{ color: '#ff6b6b' }} title={['scheduled', 'running', 'paused'].includes(campaign.status) ? 'Stop the campaign before deleting it' : 'Delete campaign permanently'} onClick={() => openDeleteCampaign(campaign)}><Trash2 size={14} /> Delete</button>
                     </div>
                   </td>
                 </tr>

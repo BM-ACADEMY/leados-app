@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClock,
   Check,
@@ -10,10 +10,35 @@ import {
   ShieldCheck,
   Trash2,
   Users,
+  Download,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { api } from "../../services/api.js";
+import { DatePicker } from "./DatePicker.jsx";
+import { WhatsAppCampaignDetail } from "./WhatsAppCampaignDetail.jsx";
+import { BulkSendLimitControl } from "./BulkSendLimitControl.jsx";
 import "./alliance.css";
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const todayLocalISO = (() => {
+  const now = new Date();
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+})();
+const WHATSAPP_CAMPAIGN_DRAFT_KEY = "alliance_whatsapp_campaign_builder_draft_v1";
+const PARAMETER_FIELD_LABELS = {
+  name: "Prospect contact name", business_name: "Business name", location: "Location",
+  phone: "Phone", email: "Email", audience: "Audience", industry: "Industry",
+  source: "Source", status: "Status", consent_source: "Consent source",
+  ai_score: "AI score", channel: "Channel", consent: "WhatsApp consent",
+  campaign_name: "Campaign name", created_at: "Date added",
+};
+
+const formatDate = (value) => {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "2-digit" });
+};
 
 export const WhatsAppCampaignBuilder = () => {
   const [templates, setTemplates] = useState([]);
@@ -25,6 +50,8 @@ export const WhatsAppCampaignBuilder = () => {
     template_id: "",
     audience: "",
     search: "",
+    dateFrom: "",
+    dateTo: "",
     delivery_mode: "now",
     scheduled_at: "",
     test_phone: "",
@@ -40,7 +67,66 @@ export const WhatsAppCampaignBuilder = () => {
   const [total, setTotal] = useState(0);
   const [busy, setBusy] = useState("");
   const [deletingCampaign, setDeletingCampaign] = useState(null);
+  const [stoppingCampaign, setStoppingCampaign] = useState(null);
+  const [viewingCampaignId, setViewingCampaignId] = useState(null);
+  const [draftStatus, setDraftStatus] = useState("");
+  const draftReadyRef = useRef(false);
+  const latestDraftRef = useRef(null);
+  const discardDraftRef = useRef(false);
+  const restoredMappingRef = useRef(null);
+  const restoredFollowupMappingRef = useRef(null);
   const limit = 10;
+
+  useEffect(() => {
+    try {
+      const draft = JSON.parse(localStorage.getItem(WHATSAPP_CAMPAIGN_DRAFT_KEY) || "null");
+      if (draft?.version === 1) {
+        if (draft.form) setForm((current) => ({ ...current, ...draft.form }));
+        if (draft.selected && typeof draft.selected === "object") setSelected(draft.selected);
+        if (Number.isInteger(draft.page)) setPage(Math.max(1, draft.page));
+        restoredMappingRef.current = Array.isArray(draft.mapping) ? draft.mapping : [];
+        restoredFollowupMappingRef.current = Array.isArray(draft.followupMapping) ? draft.followupMapping : [];
+        setMapping(restoredMappingRef.current);
+        setFollowupMapping(restoredFollowupMappingRef.current);
+        setDraftStatus("Draft restored");
+      }
+    } catch {
+      localStorage.removeItem(WHATSAPP_CAMPAIGN_DRAFT_KEY);
+    } finally { draftReadyRef.current = true; }
+  }, []);
+
+  useEffect(() => {
+    if (!draftReadyRef.current) return undefined;
+    const hasContent = Boolean(form.name.trim() || form.template_id || form.audience || Object.keys(selected).length);
+    if (!hasContent) { latestDraftRef.current = null; localStorage.removeItem(WHATSAPP_CAMPAIGN_DRAFT_KEY); return undefined; }
+    discardDraftRef.current = false;
+    const compactSelected = Object.fromEntries(Object.entries(selected).map(([id, lead]) => [id, {
+      id: lead.id, name: lead.name, business_name: lead.business_name, phone: lead.phone,
+      email: lead.email, audience: lead.audience, industry: lead.industry, location: lead.location,
+      status: lead.status, consent_source: lead.consent_source, created_at: lead.created_at,
+    }]));
+    const snapshot = { version: 1, savedAt: new Date().toISOString(), form, mapping, followupMapping, selected: compactSelected, page };
+    latestDraftRef.current = snapshot;
+    const timer = window.setTimeout(() => {
+      try { localStorage.setItem(WHATSAPP_CAMPAIGN_DRAFT_KEY, JSON.stringify(snapshot)); setDraftStatus("Draft saved"); }
+      catch { setDraftStatus("Draft could not be saved"); }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [form, mapping, followupMapping, selected, page]);
+
+  useEffect(() => () => {
+    if (!discardDraftRef.current && latestDraftRef.current) {
+      try { localStorage.setItem(WHATSAPP_CAMPAIGN_DRAFT_KEY, JSON.stringify(latestDraftRef.current)); } catch { /* Navigation must remain available. */ }
+    }
+  }, []);
+  const refreshCampaigns = useCallback(async () => {
+    try {
+      const data = await api.getAllianceWhatsAppCampaigns();
+      setCampaigns(data.campaigns || []);
+    } catch (error) {
+      toast.error(error.message);
+    }
+  }, []);
   useEffect(() => {
     Promise.all([
       api.getTemplates(),
@@ -50,7 +136,7 @@ export const WhatsAppCampaignBuilder = () => {
       .then(([templateData, options, campaignData]) => {
         setTemplates(
           (templateData.templates || []).filter(
-            (item) => String(item.status).toLowerCase() === "approved",
+            (item) => String(item.status).toLowerCase() === "approved" && (!item.template_scope || ["alliance", "shared"].includes(item.template_scope)),
           ),
         );
         setAudiences(options.audiences || []);
@@ -58,11 +144,17 @@ export const WhatsAppCampaignBuilder = () => {
       })
       .catch((error) => toast.error(error.message));
   }, []);
+  useEffect(() => {
+    const interval = window.setInterval(refreshCampaigns, 10000);
+    return () => window.clearInterval(interval);
+  }, [refreshCampaigns]);
   const loadProspects = useCallback(async () => {
     try {
       const data = await api.getAllianceWhatsAppProspects({
         audience: form.audience,
         search: form.search,
+        dateFrom: form.dateFrom,
+        dateTo: form.dateTo,
         limit,
         offset: (page - 1) * limit,
       });
@@ -71,7 +163,7 @@ export const WhatsAppCampaignBuilder = () => {
     } catch (error) {
       toast.error(error.message);
     }
-  }, [form.audience, form.search, page]);
+  }, [form.audience, form.search, form.dateFrom, form.dateTo, page]);
   useEffect(() => {
     const timer = setTimeout(loadProspects, 200);
     return () => clearTimeout(timer);
@@ -79,6 +171,10 @@ export const WhatsAppCampaignBuilder = () => {
   const template = templates.find(
     (item) => String(item.id) === String(form.template_id),
   );
+  const templateButtons = useMemo(() => {
+    try { return Array.isArray(template?.buttons) ? template.buttons : JSON.parse(template?.buttons || '[]'); }
+    catch { return []; }
+  }, [template]);
   const variableCount = useMemo(
     () =>
       Math.max(
@@ -103,21 +199,43 @@ export const WhatsAppCampaignBuilder = () => {
     [followupTemplate],
   );
   useEffect(() => {
+    if (!template && restoredMappingRef.current) return;
+    if (template && restoredMappingRef.current) {
+      const restored = restoredMappingRef.current;
+      restoredMappingRef.current = null;
+      if (restored.length === variableCount) { setMapping(restored); return; }
+    }
+    const defaultField = (index) => {
+      const source = template?.parameter_definitions?.body?.[String(index + 1)]?.default_source;
+      if (source === 'recipient_name') return 'name';
+      if (source === 'brand_name') return 'business_name';
+      return ["name", "business_name", "location"][index] || "name";
+    };
     setMapping(
       Array.from(
         { length: variableCount },
-        (_, index) => ["name", "business_name", "location"][index] || "name",
+        (_, index) => defaultField(index),
       ),
     );
-  }, [variableCount]);
+  }, [variableCount, template]);
   useEffect(() => {
+    if (!followupTemplate && restoredFollowupMappingRef.current) return;
+    if (followupTemplate && restoredFollowupMappingRef.current) {
+      const restored = restoredFollowupMappingRef.current;
+      restoredFollowupMappingRef.current = null;
+      if (restored.length === followupVariableCount) { setFollowupMapping(restored); return; }
+    }
     setFollowupMapping(
       Array.from(
         { length: followupVariableCount },
-        (_, index) => ["name", "business_name", "location"][index] || "name",
+        (_, index) => {
+          const source = followupTemplate?.parameter_definitions?.body?.[String(index + 1)]?.default_source;
+          return ['name','business_name','location','phone','email','audience','industry','status','consent_source'].includes(source)
+            ? source : (["name", "business_name", "location"][index] || "name");
+        },
       ),
     );
-  }, [followupVariableCount]);
+  }, [followupVariableCount, followupTemplate]);
   const selectedIds = Object.keys(selected).map(Number);
   const previewLead = Object.values(selected)[0] ||
     prospects[0] || {
@@ -144,6 +262,8 @@ export const WhatsAppCampaignBuilder = () => {
       const data = await api.getAllianceWhatsAppProspects({
         audience: form.audience,
         search: form.search,
+        dateFrom: form.dateFrom,
+        dateTo: form.dateTo,
         limit: 5000,
         offset: 0,
       });
@@ -203,10 +323,15 @@ export const WhatsAppCampaignBuilder = () => {
           ? new Date(form.scheduled_at).toISOString()
           : null,
       });
+      discardDraftRef.current = true;
+      latestDraftRef.current = null;
+      localStorage.removeItem(WHATSAPP_CAMPAIGN_DRAFT_KEY);
+      setDraftStatus("");
       toast.success(result.message);
       const data = await api.getAllianceWhatsAppCampaigns();
       setCampaigns(data.campaigns || []);
-      setSelected({});
+      setForm({ name: "", template_id: "", audience: "", search: "", dateFrom: "", dateTo: "", delivery_mode: "now", scheduled_at: "", test_phone: "", followup_template_id: "", followup_delay_minutes: 5760, followup_repeat_days: 4, max_followups: 0 });
+      setMapping([]); setFollowupMapping([]); setSelected({}); setPage(1);
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -214,6 +339,44 @@ export const WhatsAppCampaignBuilder = () => {
     }
   };
   const pages = Math.max(1, Math.ceil(total / limit));
+  const pauseCampaign = async (item) => {
+    setBusy(`pause-${item.id}`);
+    try {
+      const result = await api.pauseAllianceWhatsAppCampaign(item.id);
+      toast.success(result.message);
+      await refreshCampaigns();
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const resumeCampaign = async (item) => {
+    setBusy(`resume-${item.id}`);
+    try {
+      const result = await api.resumeAllianceWhatsAppCampaign(item.id);
+      toast.success(result.message);
+      await refreshCampaigns();
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const confirmStopCampaign = async () => {
+    if (!stoppingCampaign) return;
+    setBusy(`stop-${stoppingCampaign.id}`);
+    try {
+      const result = await api.stopAllianceWhatsAppCampaign(stoppingCampaign.id);
+      toast.success(result.message);
+      setStoppingCampaign(null);
+      await refreshCampaigns();
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setBusy("");
+    }
+  };
   const deleteCampaign = async () => {
     if (!deletingCampaign) return;
     setBusy(`delete-${deletingCampaign.id}`);
@@ -228,10 +391,17 @@ export const WhatsAppCampaignBuilder = () => {
       setBusy("");
     }
   };
+  const discardDraft = () => {
+    discardDraftRef.current = true;
+    latestDraftRef.current = null;
+    localStorage.removeItem(WHATSAPP_CAMPAIGN_DRAFT_KEY);
+    setForm({ name: "", template_id: "", audience: "", search: "", dateFrom: "", dateTo: "", delivery_mode: "now", scheduled_at: "", test_phone: "", followup_template_id: "", followup_delay_minutes: 5760, followup_repeat_days: 4, max_followups: 0 });
+    setMapping([]); setFollowupMapping([]); setSelected({}); setPage(1); setDraftStatus("Draft discarded");
+  };
   return (
     <div className="al-wrap al-wa-builder">
       <div className="al-eyebrow">AllianceOS · WhatsApp bulk messaging</div>
-      <div className="al-page-title">WhatsApp campaign builder</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}><div className="al-page-title">WhatsApp campaign builder</div><div style={{ display: "flex", alignItems: "center", gap: 8 }}><small style={{ color: "var(--al-faint)" }}>{draftStatus}</small><button type="button" className="al-btn ghost sm" onClick={discardDraft}>Discard draft</button></div></div>
       <p className="al-page-desc">
         Send Meta-approved templates only to Alliance prospects with recorded
         WhatsApp consent.
@@ -255,7 +425,7 @@ export const WhatsAppCampaignBuilder = () => {
                 <MessageCircle size={20} />
               </span>
               <div>
-                <h2 className="text-white">Campaign and registered template</h2>
+                <h2>Campaign and registered template</h2>
                 <p>
                   Templates below come directly from the same GET /api/templates
                   source used by the Templates page.
@@ -311,6 +481,10 @@ export const WhatsAppCampaignBuilder = () => {
                 </header>
                 <div>{template.body}</div>
                 {template.footer && <small>{template.footer}</small>}
+                {!!templateButtons.length && <div className="al-wa-template-buttons">{templateButtons.map((button, index) => <span key={`${button.type}-${index}`}>{button.type === 'URL' ? '↗' : button.type === 'PHONE_NUMBER' ? '☎' : '↩'} {button.text}</span>)}</div>}
+                <a href={`${api.baseUrl}/api/templates/${template.id}/campaign-sheet`} download className="al-button secondary" style={{ marginTop: 10, width: 'fit-content', textDecoration: 'none' }}>
+                  <Download size={14} /> Download parameter Excel
+                </a>
               </div>
             )}
             {variableCount > 0 && (
@@ -318,7 +492,7 @@ export const WhatsAppCampaignBuilder = () => {
                 <b>Template variable mapping</b>
                 {mapping.map((field, index) => (
                   <label key={index}>
-                    <span>{`{{${index + 1}}}`}</span>
+                    <span>{`{{${index + 1}}}`}<small style={{ display: 'block' }}>{template?.parameter_definitions?.body?.[String(index + 1)]?.label || `Parameter ${index + 1}`}</small></span>
                     <select
                       value={field}
                       onChange={(e) =>
@@ -332,6 +506,12 @@ export const WhatsAppCampaignBuilder = () => {
                       <option value="name">Lead name</option>
                       <option value="business_name">Business name</option>
                       <option value="location">Location</option>
+                      <option value="phone">Prospect phone</option>
+                      <option value="email">Prospect email</option>
+                      <option value="audience">Audience</option>
+                      <option value="industry">Industry</option>
+                      <option value="status">Prospect status</option>
+                      <option value="consent_source">Consent source</option>
                     </select>
                     <em>{valueFor(field)}</em>
                   </label>
@@ -377,7 +557,7 @@ export const WhatsAppCampaignBuilder = () => {
               </div>
               {followupTemplate && <>
                 <div className="al-wa-template"><header><b>{followupTemplate.name}</b><span>n8n reminder · approved</span></header><div>{followupTemplate.body}</div></div>
-                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field, index) => <label key={index}><span>{`{{${index + 1}}}`}</span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value, i) => i === index ? e.target.value : value))}><option value="name">Lead name</option><option value="business_name">Business name</option><option value="location">Location</option></select><em>{valueFor(field)}</em></label>)}</div>}
+                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field, index) => <label key={index}><span>{`{{${index + 1}}}`}<small style={{ display: 'block' }}>{followupTemplate?.parameter_definitions?.body?.[String(index + 1)]?.label || PARAMETER_FIELD_LABELS[field] || field?.replaceAll('_', ' ') || `Parameter ${index + 1}`}</small></span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value, i) => i === index ? e.target.value : value))}><option value="name">Prospect contact name</option><option value="business_name">Business name</option><option value="location">Location</option><option value="phone">Phone</option><option value="email">Email</option><option value="audience">Audience</option><option value="industry">Industry</option><option value="status">Status</option><option value="consent_source">Consent source</option></select><em>{valueFor(field)}</em></label>)}</div>}
                 <small className="al-help">The approved reminder repeats only while the lead is inactive. It stops automatically for Not Interested, Closed, Converted, Completed, Unsubscribed, or suppressed leads. A recipient reply pauses reminders; a later admin/AI reply starts a fresh inactivity timer.</small>
               </>}
             </div>
@@ -388,7 +568,7 @@ export const WhatsAppCampaignBuilder = () => {
                 <Users size={20} />
               </span>
               <div>
-                <h2 className="text-white">Select opted-in leads</h2>
+                <h2>Select opted-in leads</h2>
                 <p>Non-consented phone numbers are excluded by the server.</p>
               </div>
             </div>
@@ -426,6 +606,47 @@ export const WhatsAppCampaignBuilder = () => {
                 </div>
               </div>
             </div>
+            <div className="al-cb-grid three">
+              <div className="al-field">
+                <label>From date</label>
+                <DatePicker
+                  value={form.dateFrom}
+                  max={form.dateTo}
+                  onChange={(value) => {
+                    setForm({ ...form, dateFrom: value });
+                    setPage(1);
+                    setSelected({});
+                  }}
+                />
+              </div>
+              <div className="al-field">
+                <label>To date</label>
+                <DatePicker
+                  value={form.dateTo}
+                  min={form.dateFrom}
+                  onChange={(value) => {
+                    setForm({ ...form, dateTo: value });
+                    setPage(1);
+                    setSelected({});
+                  }}
+                />
+              </div>
+              {(form.dateFrom || form.dateTo) && (
+                <div className="al-field" style={{ display: "flex", alignItems: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="al-btn ghost sm"
+                    onClick={() => {
+                      setForm({ ...form, dateFrom: "", dateTo: "" });
+                      setPage(1);
+                      setSelected({});
+                    }}
+                  >
+                    Clear dates
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="al-cb-selection">
               <b>{selectedIds.length} selected</b>
               <span>{total} WhatsApp-eligible leads</span>
@@ -449,6 +670,7 @@ export const WhatsAppCampaignBuilder = () => {
                     <th>Phone</th>
                     <th>Audience</th>
                     <th>Consent source</th>
+                    <th>Date added</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -471,11 +693,12 @@ export const WhatsAppCampaignBuilder = () => {
                       <td>{lead.phone}</td>
                       <td>{lead.audience}</td>
                       <td>{lead.consent_source}</td>
+                      <td>{formatDate(lead.created_at)}</td>
                     </tr>
                   ))}
                   {!prospects.length && (
                     <tr>
-                      <td colSpan="5" className="al-empty">
+                      <td colSpan="6" className="al-empty">
                         No opted-in WhatsApp leads match this selection.
                       </td>
                     </tr>
@@ -518,6 +741,7 @@ export const WhatsAppCampaignBuilder = () => {
                   ✓
                 </small>
               </div>
+              {!!templateButtons.length && <div className="al-wa-preview-buttons">{templateButtons.map((button, index) => button.type === 'URL' ? <a key={index} href={button.url || '#'} target="_blank" rel="noreferrer">↗ {button.text}</a> : button.type === 'PHONE_NUMBER' ? <a key={index} href={`tel:${button.phone_number || ''}`}>☎ {button.text}</a> : <button type="button" key={index}>↩ {button.text}</button>)}</div>}
             </div>
           </section>
           <section className="al-cb-summary">
@@ -544,11 +768,11 @@ export const WhatsAppCampaignBuilder = () => {
                 </button>
               </div>
               {form.delivery_mode === "schedule" && (
-                <input
-                  type="datetime-local"
+                <DatePicker
+                  withTime
                   value={form.scheduled_at}
-                  min={new Date().toISOString().slice(0, 16)}
-                  onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })}
+                  min={todayLocalISO}
+                  onChange={(value) => setForm({ ...form, scheduled_at: value })}
                 />
               )}
               <small className="al-help">
@@ -557,6 +781,7 @@ export const WhatsAppCampaignBuilder = () => {
                   : "Messages remain queued until the selected date and time."}
               </small>
             </div>
+            <BulkSendLimitControl channel="whatsapp" recipientCount={selectedIds.length} />
             <div className="al-cb-metric">
               <span>Recipients</span>
               <b>{selectedIds.length}</b>
@@ -598,7 +823,7 @@ export const WhatsAppCampaignBuilder = () => {
       </div>
       {campaigns.length > 0 && (
         <section className="al-wa-recent">
-          <h2 className="text-white" >Recent WhatsApp campaigns</h2>
+          <h2>Recent WhatsApp campaigns</h2>
           {campaigns.slice(0, 5).map((item) => (
             <div key={item.id}>
               <span>
@@ -607,6 +832,9 @@ export const WhatsAppCampaignBuilder = () => {
                   {item.template_name} ·{" "}
                   {new Date(item.scheduled_at).toLocaleString()}
                 </small>
+                <small>
+                  Reminder: {item.followup_template_name || "None configured"}
+                </small>
               </span>
               <em>{item.status}</em>
               <span>
@@ -614,20 +842,80 @@ export const WhatsAppCampaignBuilder = () => {
                 <small>
                   {item.delivered || 0} delivered · {item.read || 0} read · {item.failed || 0} failed · {item.skipped || 0} skipped
                 </small>
+                {item.next_followup_at && <small>Next reminder: {new Date(item.next_followup_at).toLocaleString()}</small>}
                 {item.latest_error && <small className="al-wa-campaign-error">{item.latest_error}</small>}
               </span>
-              <button
-                type="button"
-                className="al-wa-delete"
-                title="Delete campaign"
-                aria-label={`Delete ${item.name}`}
-                onClick={() => setDeletingCampaign(item)}
-              >
-                <Trash2 size={15} />
-              </button>
+              <div className="al-wa-actions">
+                <button
+                  type="button"
+                  className="al-btn ghost sm"
+                  onClick={() => setViewingCampaignId(item.id)}
+                >
+                  Details
+                </button>
+                {["scheduled", "running"].includes(item.status) && (
+                  <button
+                    type="button"
+                    className="al-btn ghost sm"
+                    disabled={busy === `pause-${item.id}`}
+                    onClick={() => pauseCampaign(item)}
+                  >
+                    {busy === `pause-${item.id}` ? "Pausing…" : "Pause"}
+                  </button>
+                )}
+                {item.status === "paused" && (
+                  <button
+                    type="button"
+                    className="al-btn sm"
+                    disabled={busy === `resume-${item.id}`}
+                    onClick={() => resumeCampaign(item)}
+                  >
+                    {busy === `resume-${item.id}` ? "Resuming…" : "Resume"}
+                  </button>
+                )}
+                {(["scheduled", "running", "paused"].includes(item.status) || (item.status === "completed" && item.next_followup_at)) && (
+                  <button
+                    type="button"
+                    className="al-btn ghost sm"
+                    style={{ color: "#ff8f8f" }}
+                    disabled={busy === `stop-${item.id}`}
+                    onClick={() => setStoppingCampaign(item)}
+                  >
+                    {item.status === "completed" ? "Stop reminders" : "Stop"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="al-wa-delete"
+                  title="Delete campaign"
+                  aria-label={`Delete ${item.name}`}
+                  onClick={() => setDeletingCampaign(item)}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
             </div>
           ))}
         </section>
+      )}
+      {stoppingCampaign && (
+        <div className="al-wa-modal-backdrop" role="presentation" onMouseDown={() => setStoppingCampaign(null)}>
+          <div className="al-wa-modal" role="dialog" aria-modal="true" aria-labelledby="stop-wa-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="al-wa-modal-icon"><ShieldCheck size={20} /></div>
+            <h2 id="stop-wa-title">{stoppingCampaign.status === "completed" ? "Stop pending reminders?" : "Stop WhatsApp campaign?"}</h2>
+            <p>
+              {stoppingCampaign.status === "completed"
+                ? <>The initial send for <b>{stoppingCampaign.name}</b> is done, but future automated reminders are still scheduled. This cancels those pending reminders. Already-sent messages cannot be recalled.</>
+                : <>All unsent messages and pending reminders for <b>{stoppingCampaign.name}</b> will be cancelled. Already-sent messages cannot be recalled. This cannot be undone — use Pause instead if you just want to hold off temporarily.</>}
+            </p>
+            <footer>
+              <button className="al-btn ghost" onClick={() => setStoppingCampaign(null)}>Keep campaign</button>
+              <button className="al-btn al-wa-confirm-delete" disabled={busy === `stop-${stoppingCampaign.id}`} onClick={confirmStopCampaign}>
+                {busy === `stop-${stoppingCampaign.id}` ? "Stopping…" : stoppingCampaign.status === "completed" ? "Stop reminders" : "Stop permanently"}
+              </button>
+            </footer>
+          </div>
+        </div>
       )}
       {deletingCampaign && (
         <div className="al-wa-modal-backdrop" role="presentation" onMouseDown={() => setDeletingCampaign(null)}>
@@ -643,6 +931,12 @@ export const WhatsAppCampaignBuilder = () => {
             </footer>
           </div>
         </div>
+      )}
+      {viewingCampaignId && (
+        <WhatsAppCampaignDetail
+          campaignId={viewingCampaignId}
+          onClose={() => setViewingCampaignId(null)}
+        />
       )}
     </div>
   );

@@ -10,6 +10,10 @@ const ensureAllianceSchema = require('../db/alliance-schema');
 const openRouter = require('../services/openrouter');
 const { processQueuedAllianceWelcomes } = require('../services/alliance-welcome');
 const { scheduleAllianceInactivityReminder } = require('../services/alliance-whatsapp-campaign-worker');
+const { getAllianceBrainContext } = require('../services/alliance-brain-context');
+const { getAlliancePromptRules } = require('../services/alliance-prompt-rules');
+const { getAllianceLeadMemory, saveAllianceLeadMemory } = require('../services/alliance-lead-memory');
+const { scoreAllianceProspect } = require('../services/alliance-lead-scoring');
 
 function createAllianceInboxRouter({ auth, io }) {
   const router = express.Router();
@@ -152,9 +156,13 @@ function createAllianceInboxRouter({ auth, io }) {
     }
   };
   const messageSelect = `
-    SELECT m.id, m.wa_msg_id, m.direction, m.msg_type, m.msg_type AS type, m.content,
+    SELECT m.id, m.wa_msg_id, m.direction, m.msg_type, m.msg_type AS type,
+           CASE WHEN m.msg_type='unsupported' AND m.content='[unsupported]'
+             THEN 'This WhatsApp message type is not available through Meta. Ask the sender to resend it as text, image, audio, or document.'
+             ELSE m.content END AS content,
            m.media_id, m.media_url, m.mime_type, m.filename, m.status, m.reactions,
            m.is_starred, m.is_deleted, m.pinned_until, m.sent_at, m.sent_at AS timestamp,
+           COALESCE(m.raw_payload->'buttons',template.buttons,'[]'::jsonb) AS template_buttons,
            (m.raw_payload->>'sender_type' = 'ai') AS is_ai,
            COALESCE(m.raw_payload->>'sender_type', CASE WHEN m.raw_payload->>'purpose'='automated_followup' THEN 'automation' END) AS sender_type,
            CASE WHEN parent.id IS NULL THEN NULL ELSE json_build_object(
@@ -162,6 +170,7 @@ function createAllianceInboxRouter({ auth, io }) {
              'media_url', parent.media_url, 'type', parent.msg_type
            ) END AS reply_to
     FROM alliance_inbox_messages m
+    LEFT JOIN templates template ON template.name=m.raw_payload->>'template_name'
     LEFT JOIN alliance_inbox_messages parent ON parent.wa_msg_id = m.reply_to_wa_msg_id`;
 
   router.use(async (_req, res, next) => {
@@ -223,7 +232,28 @@ function createAllianceInboxRouter({ auth, io }) {
               const conversation = conversationResult.rows[0];
               const type = incoming.type || 'text';
               const typedPayload = incoming[type] || {};
-              const content = type === 'text' ? incoming.text?.body : (typedPayload.caption || typedPayload.filename || `[${type}]`);
+              const interactiveReply = incoming.interactive?.button_reply || incoming.interactive?.list_reply;
+              const contactText = (incoming.contacts || []).map((item) => {
+                const name = item.name?.formatted_name || [item.name?.first_name, item.name?.last_name].filter(Boolean).join(' ') || 'Shared contact';
+                const phones = (item.phones || []).map((phoneItem) => phoneItem.phone || phoneItem.wa_id).filter(Boolean).join(', ');
+                return phones ? `${name}: ${phones}` : name;
+              }).join('\n');
+              const locationText = incoming.location
+                ? [incoming.location.name, incoming.location.address, incoming.location.latitude != null && incoming.location.longitude != null ? `${incoming.location.latitude}, ${incoming.location.longitude}` : ''].filter(Boolean).join(' — ')
+                : '';
+              const unsupportedDetail = incoming.errors?.[0]?.error_data?.details || incoming.errors?.[0]?.message;
+              const contentByType = {
+                text: incoming.text?.body,
+                button: incoming.button?.text || incoming.button?.payload,
+                interactive: interactiveReply?.title || interactiveReply?.description || interactiveReply?.id || incoming.interactive?.nfm_reply?.body,
+                contacts: contactText,
+                location: locationText,
+                reaction: incoming.reaction?.emoji ? `Reacted ${incoming.reaction.emoji}` : 'Reaction removed',
+                system: incoming.system?.body || incoming.system?.identity,
+                order: incoming.order?.product_items?.length ? `Order shared with ${incoming.order.product_items.length} item(s)` : 'Order shared',
+                unsupported: unsupportedDetail ? `This WhatsApp message type is unavailable: ${unsupportedDetail}` : 'This WhatsApp message type is not available through Meta. Ask the sender to resend it as text, image, audio, or document.',
+              };
+              const content = contentByType[type] || typedPayload.caption || typedPayload.filename || `[${type}]`;
               const mediaId = ['image', 'video', 'audio', 'document', 'sticker'].includes(type) ? typedPayload.id : null;
               const mediaUrl = mediaId ? `/api/alliance-inbox/media/${mediaId}` : null;
               const replyToId = incoming.context?.id || null;
@@ -253,6 +283,11 @@ function createAllianceInboxRouter({ auth, io }) {
                      WHERE prospect_id=$1 AND status IN ('pending','claimed')`,
                     [contact.prospect_id]
                   );
+                  await scoreAllianceProspect(contact.prospect_id, {
+                    message: content,
+                    channel: 'whatsapp',
+                    eventKey: incoming.id,
+                  }, client);
                 }
               }
               await client.query('COMMIT');
@@ -294,11 +329,13 @@ function createAllianceInboxRouter({ auth, io }) {
     const search = String(req.query.search || '').trim();
     const result = await db.query(
       `SELECT c.id, c.name, c.profile_name, c.phone, c.status, c.interest, c.source, c.prospect_id,
+              COALESCE(p.ai_score,10) AS score,
               cv.last_message AS last, cv.last_message AS last_msg, cv.last_message_at AS time,
               cv.unread_count AS unread, cv.last_inbound_at, cv.welcome_status,
               cv.welcome_template_name, cv.welcome_wa_msg_id, cv.welcome_sent_at, cv.welcome_error
        FROM alliance_inbox_contacts c
        JOIN alliance_inbox_conversations cv ON cv.contact_id = c.id
+       LEFT JOIN alliance_prospects p ON p.id = c.prospect_id
        WHERE ($1 = '' OR c.name ILIKE '%' || $1 || '%' OR c.phone ILIKE '%' || $1 || '%')
        ORDER BY cv.last_message_at DESC NULLS LAST LIMIT $2 OFFSET $3`,
       [search, limit, offset]
@@ -309,10 +346,11 @@ function createAllianceInboxRouter({ auth, io }) {
 
   router.get('/contacts/:id', async (req, res) => {
     const result = await db.query(
-      `SELECT c.*, cv.last_inbound_at, cv.welcome_status, cv.welcome_template_name,
+      `SELECT c.*, COALESCE(p.ai_score,10) AS score, cv.last_inbound_at, cv.welcome_status, cv.welcome_template_name,
               cv.welcome_wa_msg_id, cv.welcome_sent_at, cv.welcome_error
        FROM alliance_inbox_contacts c
        JOIN alliance_inbox_conversations cv ON cv.contact_id = c.id
+       LEFT JOIN alliance_prospects p ON p.id = c.prospect_id
        WHERE c.id = $1`,
       [req.params.id]
     );
@@ -366,20 +404,48 @@ function createAllianceInboxRouter({ auth, io }) {
       if (!contact.rowCount) return res.status(404).json({ error: 'Alliance contact not found.' });
       const history = await db.query(
         `SELECT direction,content,msg_type,sent_at FROM alliance_inbox_messages
-         WHERE contact_id=$1 AND is_deleted=FALSE ORDER BY sent_at DESC LIMIT 20`, [req.params.id]
+         WHERE contact_id=$1 AND is_deleted=FALSE ORDER BY sent_at DESC LIMIT 30`, [req.params.id]
       );
-      const facts = contact.rows[0].audience ? await db.query(
-        `SELECT fact_key,fact_value FROM alliance_kb WHERE audience=$1 AND active=TRUE ORDER BY id LIMIT 30`,
-        [contact.rows[0].audience]
-      ) : { rows: [] };
+      const latestInbound = history.rows.find((message) => message.direction === 'inbound');
+      const brain = await getAllianceBrainContext(contact.rows[0].audience, latestInbound?.content);
+      const durableLeadMemory = contact.rows[0].prospect_id ? await getAllianceLeadMemory(contact.rows[0].prospect_id) : null;
+      const promptRules = await getAlliancePromptRules('reply_suggestion', 'whatsapp', contact.rows[0].audience, latestInbound?.content || '');
       const prompt = `Write one concise WhatsApp reply suggestion for HUMAN REVIEW. Never claim it was sent.
 Lead context: ${JSON.stringify(contact.rows[0])}
-Approved brand knowledge: ${JSON.stringify(facts.rows)}
-Conversation oldest to newest: ${JSON.stringify(history.rows.reverse())}
-Directly answer the latest inbound message, stay professional and conversational, use only known facts, and end with at most one useful question. Return only the message text.`;
-      const generated = await openRouter.generateContent({ contents: prompt, config: { temperature: 0.3, maxOutputTokens: 350 } });
-      const suggestion = String(generated.text || '').trim();
+AUTHORITATIVE AI BRAIN (the only source for brand, course, service, price, duration, policy, and contact facts): ${brain ? JSON.stringify(brain) : 'Not configured for this audience yet — do not state any brand facts.'}
+Pre-matched administrator rules (mandatory; lower priority number wins if instructions conflict): ${promptRules}
+This contact's separate conversation memory, oldest to newest: ${JSON.stringify(history.rows.reverse())}
+Durable lead memory${durableLeadMemory ? ` keyed by ${durableLeadMemory.lead_key}` : ''}: ${JSON.stringify(durableLeadMemory || {})}
+Directly answer the latest inbound message using the detected brand only and continue naturally from this contact's own raw history and durable memory. Never restart the introduction when this is an ongoing conversation. End with at most one useful question. If question_scope is "broad_catalog", list EVERY active entry in exact_catalog exactly once without renaming or omitting entries; include stored duration and fee when present. If suggested_questions is non-empty, use at most one question from that list. For a specific-offering match, answer only with relevant_offerings.${brain ? ` ${brain.instructions}` : ''}
+Merge the latest exchange into durable memory while preserving relevant prior facts. Return JSON only: {"suggestion":"message text","memory":{"summary":"concise cumulative conversation summary","requirements":[],"interests":[],"objections":[],"commitments":[],"next_step":"","relationship_stage":"new|engaged|evaluating|ready|closed"}}.`;
+      const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1, maxOutputTokens: 2000 } });
+      let parsed;
+      try { parsed = JSON.parse(String(generated.text || '').replace(/^```json\s*|\s*```$/g, '')); }
+      catch { parsed = { suggestion: String(generated.text || '').trim(), memory: durableLeadMemory }; }
+      let suggestion = String(parsed.suggestion || '').trim();
       if (!suggestion) return res.status(502).json({ error: 'AI returned an empty suggestion.' });
+      if (brain?.internal?.escalation_phone && brain.internal.public_contact_phone) {
+        suggestion = suggestion.replaceAll(brain.internal.escalation_phone, brain.internal.public_contact_phone);
+      }
+      if (brain?.question_scope === 'broad_catalog' && brain.exact_catalog?.length) {
+        const normalizeCatalogText = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const normalizedSuggestion = normalizeCatalogText(suggestion);
+        const missingOfferings = brain.exact_catalog.filter((offering) => !normalizedSuggestion.includes(normalizeCatalogText(offering.name)));
+        if (missingOfferings.length) {
+          const catalogLines = brain.exact_catalog.map((offering) => {
+            const facts = [offering.duration, offering.fee ? `₹${offering.fee}` : ''].filter(Boolean).join(', ');
+            return `• ${offering.name}${facts ? ` — ${facts}` : ''}`;
+          });
+          suggestion = `Thank you for your interest in ${brain.brand.name}. Here is our complete current catalog:\n\n${catalogLines.join('\n')}\n\n${brain.suggested_questions?.[0] || 'Which course would you like to explore in detail?'}`;
+        }
+      }
+      if (brain?.internal?.escalation_phone && brain.internal.public_contact_phone) {
+        suggestion = suggestion.replaceAll(brain.internal.escalation_phone, brain.internal.public_contact_phone);
+      }
+      if (contact.rows[0].prospect_id) {
+        const memoryUpdate = parsed.memory || { ...durableLeadMemory, summary: `${durableLeadMemory?.summary ? `${durableLeadMemory.summary}\n` : ''}Latest inbound message: ${latestInbound?.content || ''}` };
+        await saveAllianceLeadMemory(contact.rows[0].prospect_id, memoryUpdate, 'whatsapp', latestInbound?.sent_at || new Date());
+      }
       res.json({ success: true, suggestion });
     } catch (error) {
       console.error('Alliance WhatsApp AI suggestion failed:', error.message);

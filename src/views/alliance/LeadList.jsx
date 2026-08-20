@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../../services/api.js';
+import { DatePicker } from './DatePicker.jsx';
+import { ScoreBar } from '../../components/ui.jsx';
 import './alliance.css';
 
 const PAGE_SIZE = 10;
@@ -25,9 +27,14 @@ const emptyCreate = { ...emptyEdit, audience: '', custom_fields: {} };
 export const LeadList = () => {
   const [prospects, setProspects] = useState([]);
   const [audiences, setAudiences] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
+  const [audienceFilter, setAudienceFilter] = useState('');
+  const [campaignFilter, setCampaignFilter] = useState('');
   const [status, setStatus] = useState('all');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -39,13 +46,15 @@ export const LeadList = () => {
   const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreate);
+  const [confirmingRepair, setConfirmingRepair] = useState(false);
+  const [repairing, setRepairing] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [status, debouncedSearch]);
+  useEffect(() => { setPage(1); }, [status, audienceFilter, campaignFilter, debouncedSearch, dateFrom, dateTo]);
 
   const loadProspects = async () => {
     setLoading(true);
@@ -55,7 +64,11 @@ export const LeadList = () => {
         limit: PAGE_SIZE,
         offset: (page - 1) * PAGE_SIZE,
         status: status === 'all' ? '' : status,
+        audience: audienceFilter,
+        campaign_name: campaignFilter,
         search: debouncedSearch,
+        dateFrom,
+        dateTo,
       });
       setProspects(data.prospects || []);
       setTotal(data.total || 0);
@@ -64,11 +77,35 @@ export const LeadList = () => {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { loadProspects(); }, [page, status, debouncedSearch]);
-  useEffect(() => { api.getAllianceAudiences().then((data) => setAudiences(data.audiences || [])).catch(() => {}); }, []);
+  useEffect(() => { loadProspects(); }, [page, status, audienceFilter, campaignFilter, debouncedSearch, dateFrom, dateTo]);
+  useEffect(() => {
+    Promise.all([api.getAllianceAudiences(), api.getAllianceCampaigns({ limit: 5000 })])
+      .then(([audienceData, campaignData]) => {
+        setAudiences(audienceData.audiences || []);
+        setCampaigns(campaignData.campaigns || []);
+      }).catch(() => {});
+  }, []);
 
   const audienceLabel = (code) => audiences.find((item) => item.code === code)?.label || code;
+  const formatDate = (value) => {
+    if (!value) return '—';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: '2-digit' });
+  };
   const selectedAudience = audiences.find((item) => item.code === createForm.audience);
+  const filterCampaigns = [...new Map(
+    (audienceFilter ? campaigns.filter((item) => item.audience === audienceFilter) : campaigns)
+      .map((item) => [item.name, item])
+  ).values()];
+  const dynamicFields = useMemo(() => {
+    const applicableAudiences = audienceFilter ? audiences.filter((item) => item.code === audienceFilter) : audiences;
+    const fields = new Map();
+    applicableAudiences.forEach((item) => (item.fields || []).forEach((field) => {
+      if (!fields.has(field.field_key)) fields.set(field.field_key, field);
+    }));
+    return [...fields.values()];
+  }, [audiences, audienceFilter]);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const usesEmail = (channel) => channel === 'email' || channel === 'both';
   const usesWhatsApp = (channel) => channel === 'whatsapp' || channel === 'both';
@@ -136,41 +173,63 @@ export const LeadList = () => {
     finally { setDeleting(null); }
   };
 
+  const repairImportedNames = async () => {
+    setRepairing(true);
+    try {
+      const result = await api.repairAllianceProspectNames();
+      toast.success(result.message);
+      setConfirmingRepair(false);
+      await loadProspects();
+    } catch (err) {
+      toast.error(err.message || 'Failed to repair imported names');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   return (
     <div className="al-wrap">
       <div className="al-eyebrow">AllianceOS · Imported Leads</div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
         <div className="al-page-title">Prospects</div>
-        <button className="al-btn" type="button" onClick={() => { setCreateForm(emptyCreate); setCreating(true); }}>+ Add prospect</button>
+        <div style={{ display: 'flex', gap: 8 }}><button className="al-btn ghost" type="button" onClick={() => setConfirmingRepair(true)}>Repair imported names</button><button className="al-btn" type="button" onClick={() => { setCreateForm(emptyCreate); setCreating(true); }}>+ Add prospect</button></div>
       </div>
       <p className="al-page-desc">Review, edit, and remove imported prospect records. Showing 10 records per page.</p>
 
       <div className="al-fields" style={{ alignItems: 'flex-end' }}>
         <div className="al-field" style={{ flex: 2 }}><label>Search</label><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search business, contact, or email" /></div>
+        <div className="al-field"><label>Audience</label><select value={audienceFilter} onChange={(event) => { setAudienceFilter(event.target.value); setCampaignFilter(''); }}><option value="">All audiences</option>{audiences.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select></div>
+        <div className="al-field"><label>Campaign</label><select value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value)}><option value="">All campaigns</option>{filterCampaigns.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></div>
         <div className="al-field"><label>Status</label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="new">New</option><option value="pending">Pending</option><option value="in_process">In Process</option><option value="interested">Interested</option><option value="not_interested">Not Interested</option><option value="converted">Converted</option></select></div>
+        <div className="al-field"><label>From date</label><DatePicker value={dateFrom} max={dateTo} onChange={setDateFrom} /></div>
+        <div className="al-field"><label>To date</label><DatePicker value={dateTo} min={dateFrom} onChange={setDateTo} /></div>
+        {(dateFrom || dateTo) && <button type="button" className="al-btn ghost sm" style={{ marginBottom: 1 }} onClick={() => { setDateFrom(''); setDateTo(''); }}>Clear dates</button>}
         <div style={{ color: 'var(--al-muted)', fontSize: 12, paddingBottom: 11 }}>{total.toLocaleString('en-IN')} records</div>
       </div>
 
       <div style={{ background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 12, overflowX: 'auto' }}>
         {error ? <p style={{ padding: 24, color: '#EF9A9A' }}>{error}</p> : loading ? <p style={{ padding: 24, color: 'var(--al-muted)' }}>Loading imported leads…</p> : (
-          <table className="al-table" style={{ minWidth: 1700, whiteSpace: 'nowrap' }}>
-            <thead><tr><th>Business / Contact</th><th>Email</th><th>Phone</th><th>Audience</th><th>Industry / Location</th><th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Custom data</th><th>Actions</th></tr></thead>
+          <table className="al-table" style={{ minWidth: 1750 + dynamicFields.length * 150, whiteSpace: 'nowrap' }}>
+            <thead><tr><th>Business / Contact</th><th>Email</th><th>Phone</th><th>AI Score</th><th>Audience</th><th>Industry / Location</th><th>Source</th>{dynamicFields.map((field) => <th key={field.field_key}>{field.label || field.field_key.replaceAll('_', ' ')}</th>)}<th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Actions</th></tr></thead>
             <tbody>
               {prospects.map((prospect) => (
                 <tr key={prospect.id}>
                   <td>{prospect.business_name} <span style={{ color: 'var(--al-muted)' }}>· {prospect.name || 'No contact name'}</span></td>
                   <td>{prospect.email || '—'}</td><td>{prospect.phone || '—'}</td>
+                  <td><ScoreBar score={Number(prospect.ai_score) || 10} /></td>
                   <td><span className={`al-tag ${prospect.audience}`}>{audienceLabel(prospect.audience)}</span></td>
                   <td>{prospect.industry || '—'} <span style={{ color: 'var(--al-muted)' }}>· {prospect.location || '—'}</span></td>
+                  <td>{prospect.source || '—'}</td>
+                  {dynamicFields.map((field) => <td key={field.field_key}>{String(prospect.custom_fields?.[field.field_key] ?? '') || '—'}</td>)}
                   <td><div style={{ display: 'flex', gap: 5 }}>{usesEmail(prospect.channel) && <span className="al-tag email">email</span>}{usesWhatsApp(prospect.channel) && <span className="al-tag wa">whatsapp</span>}</div></td>
                   <td>{usesWhatsApp(prospect.channel) ? (prospect.consent ? `Yes · ${prospect.consent_source || 'recorded'}` : 'No') : 'Not required'}</td>
                   <td>{prospect.campaign_name || '—'}</td>
                   <td><span className={`al-st ${statusMap[prospect.status]?.cls || 'new'}`}><span className="d" />{statusMap[prospect.status]?.label || prospect.status}</span></td>
-                  <td style={{ maxWidth: 180, fontSize: 11.5, color: 'var(--al-muted)' }}>{Object.entries(prospect.custom_fields || {}).map(([key, value]) => `${key}: ${value}`).join(' · ') || '—'}</td>
+                  <td>{formatDate(prospect.created_at)}</td>
                   <td><div style={{ display: 'flex', gap: 6 }}><button className="al-btn ghost sm" onClick={() => openEdit(prospect)}>Edit</button><button className="al-btn ghost sm" disabled={deleting === prospect.id} onClick={() => setDeleteCandidate(prospect)} style={{ color: '#EF9A9A' }}>{deleting === prospect.id ? 'Deleting…' : 'Delete'}</button></div></td>
                 </tr>
               ))}
-              {!prospects.length && <tr><td colSpan={11} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
+              {!prospects.length && <tr><td colSpan={13 + dynamicFields.length} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
             </tbody>
           </table>
         )}
@@ -235,6 +294,19 @@ export const LeadList = () => {
               <button className="al-btn" type="button" disabled={Boolean(deleting)} onClick={() => deleteProspect(deleteCandidate)} style={{ background: '#C62828', color: '#fff' }}>
                 {deleting ? 'Deleting…' : 'Delete prospect'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmingRepair && (
+        <div role="dialog" aria-modal="true" aria-labelledby="repair-names-title" style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => !repairing && setConfirmingRepair(false)}>
+          <div onClick={(event) => event.stopPropagation()} style={{ width: 'min(510px, 100%)', background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 14, padding: 24, boxShadow: '0 24px 70px rgba(0,0,0,.45)' }}>
+            <div id="repair-names-title" className="al-page-title" style={{ fontSize: 21, marginBottom: 8 }}>Repair imported names?</div>
+            <p style={{ color: 'var(--al-muted)', fontSize: 13, lineHeight: 1.65, margin: 0 }}>This scans all prospects and updates only confidently detected character-encoding corruption. Contact names and business names are preserved as separate fields, even when their values are identical. Email addresses, phone numbers, campaign membership, and correctly encoded names are not changed.</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 22 }}>
+              <button className="al-btn ghost" type="button" disabled={repairing} onClick={() => setConfirmingRepair(false)}>Cancel</button>
+              <button className="al-btn" type="button" disabled={repairing} onClick={repairImportedNames}>{repairing ? 'Repairing…' : 'Repair names'}</button>
             </div>
           </div>
         </div>

@@ -37,7 +37,7 @@ Agent asks: 📄 Here is the detailed syllabus: - Java: https://drive.google.com
   - If user replies "➕ Enquire More" -> go to [Step: multi_enquiry_loop]
 
 [Step: academy_mentor]
-Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9944940051 💬 https://wa.me/919944940051
   - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
   - If user replies "🏁 Finish & Submit" -> go to [Step: final_thank_you]
 
@@ -103,7 +103,7 @@ Agent asks: We don’t just train — we place 👍  📄 **Placement Opportunit
   - If user replies "Talk to mentor" -> go to [Step: talents_team_msg]
 
 [Step: talents_team_msg]
-Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9403892971 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
+Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9944940051 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: prop_buy_budget]
@@ -122,7 +122,7 @@ Agent asks: 📊 Hot Locations: ECR, Villianur 👉 What do you want?
   - If user replies "ROI Details" -> go to [Step: prop_invest_roi]
 
 [Step: prop_expert_msg]
-Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 https://wa.me/919944940051
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: tech_leads]
@@ -171,7 +171,7 @@ Agent asks: 📅 Please select your preferred **date**:
   - Automatically go to [Step: tech_demo_calendar_time]
 
 [Step: tech_expert_msg]
-Agent asks: 📞 9403892971 💬 WhatsApp: https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 WhatsApp: https://wa.me/919944940051
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: talents_job_location]
@@ -179,7 +179,7 @@ Agent asks: 📍 **Preferred Location** 👉 Where would you like to work? (Lett
   - Automatically go to [Step: talents_job_resume]
 
 [Step: prop_buy_cta]
-Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 https://wa.me/919944940051
   - If user replies "Show Property" -> go to [Step: prop_showcase_final]
 
 [Step: prop_sell_price]
@@ -251,7 +251,7 @@ Agent asks: We don’t just train — we place 👍  📄 **Placement Opportunit
   - If user replies "Talk to mentor" -> go to [Step: talents_team_msg]
 
 [Step: talents_team_msg]
-Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9403892971 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
+Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9944940051 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: talents_job_details]
@@ -283,7 +283,7 @@ Agent asks: 🎬 Video Editing 📚 Key Topics: Premiere Pro, Reels 💰 Fees: S
   - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
 
 [Step: academy_mentor]
-Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9944940051 💬 https://wa.me/919944940051
   - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
   - If user replies "🏁 Finish & Submit" -> go to [Step: final_thank_you]
 
@@ -365,7 +365,7 @@ Agent asks: 📊 Hot Locations: ECR, Villianur 👉 What do you want?
   - If user replies "ROI Details" -> go to [Step: prop_invest_roi]
 
 [Step: prop_expert_msg]
-Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 https://wa.me/919944940051
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: tech_leads]
@@ -410,11 +410,11 @@ Agent asks: 📅 Please select your preferred **date**:
   - Automatically go to [Step: tech_demo_calendar_time]
 
 [Step: tech_expert_msg]
-Agent asks: 📞 9403892971 💬 WhatsApp: https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 WhatsApp: https://wa.me/919944940051
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: prop_buy_cta]
-Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 https://wa.me/919944940051
   - If user replies "Show Property" -> go to [Step: prop_showcase_final]
 
 [Step: prop_sell_price]
@@ -476,7 +476,7 @@ Agent asks: 📊 Hot Locations: ECR, Villianur 👉 What do you want?
   - If user replies "ROI Details" -> go to [Step: prop_invest_roi]
 
 [Step: prop_expert_msg]
-Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 https://wa.me/919944940051
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: prop_buy_location]
@@ -502,7 +502,7 @@ Agent asks: I’ve added that to your enquiry list! ✅  Would you like to enqui
   - If user replies "🏁 Finish & Submit All" -> go to [Step: final_thank_you]
 
 [Step: prop_buy_cta]
-Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 https://wa.me/919944940051
   - If user replies "Show Property" -> go to [Step: prop_showcase_final]
 
 [Step: prop_sell_price]
@@ -608,7 +608,7 @@ Agent asks: We don’t just train — we place 👍  📄 **Placement Opportunit
   - If user replies "Talk to mentor" -> go to [Step: talents_team_msg]
 
 [Step: talents_team_msg]
-Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9403892971 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
+Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9944940051 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: tech_leads]
@@ -638,7 +638,7 @@ Agent asks: 📄 Here is the detailed syllabus: - Java: https://drive.google.com
   - If user replies "➕ Enquire More" -> go to [Step: multi_enquiry_loop]
 
 [Step: academy_mentor]
-Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9944940051 💬 https://wa.me/919944940051
   - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
   - If user replies "🏁 Finish & Submit" -> go to [Step: final_thank_you]
 
@@ -655,7 +655,7 @@ Agent asks: 📅 Please select your preferred **date**:
   - Automatically go to [Step: tech_demo_calendar_time]
 
 [Step: tech_expert_msg]
-Agent asks: 📞 9403892971 💬 WhatsApp: https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 WhatsApp: https://wa.me/919944940051
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: academy_demo_time]
@@ -712,7 +712,7 @@ Agent asks: 📅 Please select your preferred **date**:
   - Automatically go to [Step: tech_demo_calendar_time]
 
 [Step: tech_expert_msg]
-Agent asks: 📞 9403892971 💬 WhatsApp: https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 WhatsApp: https://wa.me/919944940051
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: tech_demo_calendar_time]
@@ -797,7 +797,7 @@ Agent asks: We don’t just train — we place 👍  📄 **Placement Opportunit
   - If user replies "Talk to mentor" -> go to [Step: talents_team_msg]
 
 [Step: talents_team_msg]
-Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9403892971 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
+Agent asks: Perfect 👍 You can directly connect with our mentor for guidance: 📞 Call: 9944940051 💬 WhatsApp: https://wa.me/919944940051 Feel free to ask any doubts anytime 👍
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: prop_buy_budget]
@@ -816,7 +816,7 @@ Agent asks: 📊 Hot Locations: ECR, Villianur 👉 What do you want?
   - If user replies "ROI Details" -> go to [Step: prop_invest_roi]
 
 [Step: prop_expert_msg]
-Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 https://wa.me/919944940051
   - Automatically go to [Step: multi_enquiry_loop]
 
 [Step: academy_syllabus]
@@ -826,7 +826,7 @@ Agent asks: 📄 Here is the detailed syllabus: - Java: https://drive.google.com
   - If user replies "➕ Enquire More" -> go to [Step: multi_enquiry_loop]
 
 [Step: academy_mentor]
-Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 👨‍‍🏫 Connect with Mentor: 📞 9944940051 💬 https://wa.me/919944940051
   - If user replies "Book Demo Session" -> go to [Step: academy_demo_date]
   - If user replies "🏁 Finish & Submit" -> go to [Step: final_thank_you]
 
@@ -864,7 +864,7 @@ Agent asks: 📍 **Preferred Location** 👉 Where would you like to work? (Lett
   - Automatically go to [Step: talents_job_resume]
 
 [Step: prop_buy_cta]
-Agent asks: 📞 9403892971 💬 https://wa.me/919944940051
+Agent asks: 📞 9944940051 💬 https://wa.me/919944940051
   - If user replies "Show Property" -> go to [Step: prop_showcase_final]
 
 [Step: prop_sell_price]

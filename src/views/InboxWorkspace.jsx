@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
-import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut, Phone, Video, User, Sparkles } from 'lucide-react';
+import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut, Phone, Video, User, Sparkles, ExternalLink } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 import { io as socketIO } from 'socket.io-client';
 import { C } from '../constants/theme.js';
@@ -1394,6 +1394,32 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
                       })()}
 
                       <p style={{ fontSize: 12, color: C.text, whiteSpace: 'pre-wrap', lineHeight: 1.7, paddingRight: 10 }}>{renderMessageWithLinks(getMessageText(m))}</p>
+                      {alliance && Array.isArray(m.template_buttons) && m.template_buttons.length > 0 && (
+                        <div style={{ margin: '9px -13px -9px', borderTop: `1px solid ${C.border}` }}>
+                          {m.template_buttons.map((button, buttonIndex) => {
+                            const type = String(button.type || '').toUpperCase();
+                            const label = button.text || (type === 'URL' ? 'Open link' : type === 'PHONE_NUMBER' ? 'Call' : 'Reply');
+                            const href = type === 'URL' && /^https?:\/\//i.test(String(button.url || ''))
+                              ? button.url
+                              : type === 'PHONE_NUMBER' && button.phone_number
+                                ? `tel:${String(button.phone_number).replace(/[^+\d]/g, '')}`
+                                : null;
+                            const ButtonTag = href ? 'a' : 'div';
+                            return (
+                              <ButtonTag
+                                key={`${type}-${label}-${buttonIndex}`}
+                                href={href || undefined}
+                                target={type === 'URL' ? '_blank' : undefined}
+                                rel={type === 'URL' ? 'noopener noreferrer' : undefined}
+                                style={{ minHeight: 38, padding: '7px 12px', borderTop: buttonIndex ? `1px solid ${C.border}` : 'none', color: C.green, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', cursor: href ? 'pointer' : 'default' }}
+                              >
+                                {type === 'URL' ? <ExternalLink size={14} /> : type === 'PHONE_NUMBER' ? <Phone size={14} /> : <CornerUpLeft size={14} />}
+                                {label}
+                              </ButtonTag>
+                            );
+                          })}
+                        </div>
+                      )}
                     </>
                   )}
 

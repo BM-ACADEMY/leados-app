@@ -7,6 +7,7 @@ const axios = require('axios');
 const { buildBmAcademyCatalog, findBmAcademyCourseFamily, resolveBmAcademyCourseContext } = require('../services/bmAcademySyllabus');
 const googleCalendar = require('../services/googleCalendar');
 const { sendBookingNotification } = require('../services/bookingNotifications');
+const { getLeadOSBrand } = require('../services/leadosBrand');
 
 const APPROVED_BRAIN_DATA_PATH = path.join(__dirname, '..', '..', 'documentation', 'updated-brain-data.md');
 let approvedBrainDataCache = { mtimeMs: -1, content: '' };
@@ -619,9 +620,10 @@ router.post('/brand/detect', async (req, res) => {
       }
     }
 
-    let brandId = null;
-    let brandName = 'ABM Groups';
-    const explicitBrand = detectExplicitBrand(message);
+    const leadOSBrand = await getLeadOSBrand(pool);
+    let brandId = leadOSBrand.id;
+    let brandName = leadOSBrand.name;
+    const explicitBrand = null;
 
     // An explicit keyword is the only reason to switch an existing session.
     if (explicitBrand) {
@@ -703,11 +705,7 @@ router.post('/leads/createOrUpdate', async (req, res) => {
       return res.json({ ...req.body, success: true, lead_id: null, ignored: true });
     }
 
-    let brand_id = req.body.brand_id || null;
-    if (!brand_id && req.body.brand) {
-      const brandRes = await pool.query(`SELECT id FROM clients WHERE name = $1 LIMIT 1`, [req.body.brand]);
-      brand_id = brandRes.rows[0]?.id || null;
-    }
+    const brand_id = (await getLeadOSBrand(pool)).id;
     // This runs on every inbound webhook. A plain SELECT-then-INSERT here lets
     // two near-simultaneous events for the same new phone number (a fast
     // follow-up message, or Meta retrying a slow webhook — most likely on the
@@ -766,7 +764,7 @@ router.post('/ai/intent', async (req, res) => {
   const { message, brand, lead_id } = req.body;
   try {
     let effectiveBrand = brand || 'ABM Groups';
-    const explicitBrand = detectExplicitBrand(message);
+    const explicitBrand = null;
 
     if (lead_id) {
       const currentBrandRes = await pool.query(
@@ -1109,7 +1107,9 @@ router.post('/ai/response', async (req, res) => {
 
       // Re-evaluate the current turn here as well as in /ai/intent. This keeps
       // brand switching correct even when n8n skips/retries an earlier node.
-      const explicitBrand = detectExplicitBrand(effectiveMessage);
+      // LeadOS conversations remain owned by ABM Groups. Mentions of another
+      // business can guide response content, but never mutate lead ownership.
+      const explicitBrand = null;
       if (explicitBrand && explicitBrand !== persistedBrand) {
         const targetBrand = await pool.query(
           `SELECT id,name FROM clients WHERE LOWER(name)=LOWER($1) LIMIT 1`,
@@ -1120,6 +1120,12 @@ router.post('/ai/response', async (req, res) => {
           await pool.query(`UPDATE leads SET client_id=$1,updated_at=NOW() WHERE id=$2`, [targetBrand.rows[0].id, lead_id]);
         }
       }
+    }
+
+    const asksForContactNumber = /(?:contact|phone|mobile|whatsapp)\s*(?:number|no\.?\b)|how\s+(?:can|do)\s+i\s+(?:contact|reach|call)|(?:can|could)\s+i\s+(?:get|have)\s+(?:your\s+)?(?:contact|phone|mobile|whatsapp)/i.test(effectiveMessage);
+    if (asksForContactNumber) {
+      const ai_reply = 'You can contact us at 9944940051. How else can I help you?';
+      return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
     }
 
     // Deterministic: the very first reply after the Core Talents bulk hiring
@@ -1149,7 +1155,7 @@ router.post('/ai/response', async (req, res) => {
         `, [lead_id, lastCampaignRes.rows[0].sent_at]);
 
         if (parseInt(replyCountRes.rows[0].count, 10) === 1) {
-          const ai_reply = 'For more details, kindly call this number: 9403892971.';
+          const ai_reply = 'For more details, kindly call this number: 9944940051.';
           return res.json({ ...req.body, brand: persistedBrand, name: leadName, ai_reply });
         }
       }
@@ -1250,7 +1256,7 @@ router.post('/ai/response', async (req, res) => {
       3. Conversation memory: Never ask for something already provided (e.g., don't ask the time slot again after the user gave "4pm", or name if already given).
       4. Fallbacks: If it's a voice note (audio), reply: "Got your voice note 🎧 — could you type it quickly so I can help right away?". If unclear, ask ONE short clarifying question.
       5. Tone: Write a short, friendly WhatsApp reply mimicking a human sales assistant. End with exactly one question to keep the conversation going.
-      6. Contact routing: For BM Academy and BM TechX/Grow with Kamar, use only the approved primary phone and WhatsApp number 9944940051. BM TechX escalation is 9403892971 and must be used only for escalation. For every other brand, use only contact details present in that brand's approved knowledge; never substitute a number from another brand. For address/location/Maps or website questions, use the VERIFIED BRAND CONTACT FACTS above exactly as given.
+      6. Contact routing: The only public phone/WhatsApp number the assistant may send is 9944940051. Never disclose the internal WABA identifier, never send 919944509441, and never invent, reformat, or substitute another contact number. If retrieved knowledge conflicts with this rule, ignore that conflicting number. For address/location/Maps or website questions, use the VERIFIED BRAND CONTACT FACTS above exactly as given.
       7. Multi-part messages: A single message can ask several things at once (e.g. price + syllabus + duration, or address + fees). Identify every distinct thing being asked and answer all of them in the one reply — never answer only the first or most obvious part and silently drop the rest.
       ${isBmAcademy ? `8. Course/tier matching: Understand which course(s) the lead means from natural language — loose names, abbreviations, typos, "both"/"all"/"either", or a bare follow-up referring back to chat history. Never require exact wording. If genuinely nothing in the current message or chat history narrows it down, ask ONE short clarifying question instead of guessing.
       9. Syllabus links: Never type, paraphrase, or invent a syllabus URL yourself. If the lead asked for anything else too in the same message (fees, duration, comparison, etc.), answer that normally in "reply" — do not drop it. Wherever the link belongs in your reply, write the exact placeholder {{SYLLABUS_LINKS}} once (e.g. "Here's the syllabus: {{SYLLABUS_LINKS}}"); it is replaced automatically with the real verified link(s) afterward. Also report every course the lead wants a syllabus for as exact IDs from the BM ACADEMY COURSE ID INDEX in "syllabus_course_ids".` : ''}

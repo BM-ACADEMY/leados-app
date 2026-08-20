@@ -5,6 +5,7 @@
 const pool = require("../db/connection"); // reuse your existing LeadOS pool if you have one
 const Groq = require("groq-sdk");
 const groq = new Groq({ apiKey: process.env.OPENAI_API_KEY || "dummy_key" });
+const openRouter = require("../services/openrouter");
 const axios = require("axios");
 const fs = require("fs");
 const os = require("os");
@@ -29,10 +30,27 @@ const genAIv1 = process.env.GEMINI_API_KEY
   : null;
 
 // Helper: multi-model fallback for text generation
-// gemini-2.0-flash works for TEXT in v1alpha (just not image output).
-// Groq is the final safety net.
+// OpenRouter is Primary (uses user's paid OpenRouter balance).
+// Direct Gemini & Groq are safety nets.
 async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
-  // v1alpha text-capable models (confirmed to exist)
+  // Strategy 1: Try OpenRouter first (Primary - uses active paid credits)
+  if (openRouter && openRouter.isConfigured) {
+    try {
+      console.log('[geminiChat] Primary: Trying OpenRouter (gemini-2.5-flash-lite)...');
+      const response = await openRouter.generateContent({
+        contents: prompt,
+        config: { maxOutputTokens: maxTokens, temperature, responseMimeType: 'application/json' }
+      });
+      if (response && response.text && response.text.trim()) {
+        console.log('[geminiChat] Success with OpenRouter');
+        return response.text.trim();
+      }
+    } catch (openRouterErr) {
+      console.warn('[geminiChat] OpenRouter failed:', openRouterErr.message?.substring(0, 80));
+    }
+  }
+
+  // Strategy 2: Fall back to direct Gemini v1alpha models
   const v1alphaModels = ['gemini-2.0-flash', 'gemini-2.0-flash-001'];
   if (genAIImage) {
     for (const model of v1alphaModels) {
@@ -53,10 +71,8 @@ async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
     }
   }
 
-  // v1 stable models to try
+  // Strategy 3: Try v1 stable Gemini models
   const geminiModels = ['gemini-2.0-flash', 'gemini-2.0-flash-001', 'gemini-1.5-flash', 'gemini-1.5-flash-001'];
-
-  // Strategy 2: Try v1 stable Gemini models
   if (genAIv1) {
     for (const model of geminiModels) {
       try {
@@ -81,9 +97,9 @@ async function geminiChat({ prompt, maxTokens = 2000, temperature = 0.7 }) {
     }
   }
 
-  // Strategy 2: Fall back to Groq llama
+  // Strategy 4: Fall back to Groq llama
   try {
-    console.log('[geminiChat] All Gemini models exhausted, falling back to Groq...');
+    console.log('[geminiChat] All primary AI models exhausted, falling back to Groq...');
     const response = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       max_tokens: maxTokens,
@@ -179,6 +195,8 @@ function transcodeVideo(inputPath, outputPath) {
       const cmd = ffmpeg(inputPath).outputOptions([
         '-map 0:v',
         '-c:v libx264',
+        '-profile:v high',
+        '-level 4.0',
         '-preset fast',
         '-crf 23',
         '-r 30',
@@ -187,7 +205,8 @@ function transcodeVideo(inputPath, outputPath) {
         '-c:a aac',
         '-b:a 128k',
         '-ac 2',
-        '-movflags +faststart'
+        '-movflags +faststart',
+        '-brand mp42'
       ]);
 
       if (hasAudio) {
@@ -521,7 +540,7 @@ async function approveContent(req, res) {
       `UPDATE content_queue
          SET status = $3, approved_by = $2, approved_at = NOW()
        WHERE id = $1 AND status IN ('PENDING', 'pending_approval', 'pending', 'PENDING_APPROVAL')
-       RETURNING id, brand_name, status, scheduled_at`,
+       RETURNING *`,
       [id, approvedBy, newStatus]
     );
 
@@ -529,7 +548,76 @@ async function approveContent(req, res) {
       return res.status(409).json({ success: false, error: "Item not found or not in pending state" });
     }
 
-    res.json({ success: true, item: rows[0] });
+    const post = rows[0];
+
+    // ── Auto-select social accounts if none were selected ──
+    let selectedAccounts = {};
+    try {
+      if (typeof post.selected_accounts === 'string' && post.selected_accounts.trim()) {
+        selectedAccounts = JSON.parse(post.selected_accounts);
+      } else if (post.selected_accounts && typeof post.selected_accounts === 'object' && !Array.isArray(post.selected_accounts)) {
+        selectedAccounts = post.selected_accounts;
+      }
+    } catch (e) {
+      selectedAccounts = {};
+    }
+
+    // Check if any accounts are actually selected (non-empty arrays)
+    const hasAnyAccountSelected = Object.values(selectedAccounts).some(arr => Array.isArray(arr) && arr.length > 0);
+
+    if (!hasAnyAccountSelected) {
+      // Fetch all active social accounts for this brand
+      const { rows: brandAccounts } = await pool.query(
+        `SELECT platform, account_id FROM brand_social_accounts 
+         WHERE (LOWER(REPLACE(REPLACE(brand_name, ' ', ''), '-', '_')) = LOWER(REPLACE(REPLACE($1, ' ', ''), '-', '_'))
+            OR LOWER(REPLACE(REPLACE(brand_name, ' ', ''), '-', '')) = LOWER(REPLACE(REPLACE($1, ' ', ''), '-', '')))
+           AND is_active = true`,
+        [post.brand_name]
+      );
+
+      if (brandAccounts.length > 0) {
+        // Build selected_accounts map: { instagram: [acc1], facebook: [acc2], youtube: [acc3], ... }
+        const autoSelected = {};
+        for (const acc of brandAccounts) {
+          const platform = acc.platform.toLowerCase();
+          if (!autoSelected[platform]) autoSelected[platform] = [];
+          autoSelected[platform].push(acc.account_id);
+        }
+
+        // Also auto-populate platforms array from the available accounts
+        let platforms = [];
+        try {
+          if (typeof post.platforms === 'string' && post.platforms.trim()) {
+            platforms = JSON.parse(post.platforms);
+          } else if (Array.isArray(post.platforms)) {
+            platforms = post.platforms;
+          }
+        } catch (e) {
+          platforms = [];
+        }
+
+        // If no platforms selected either, auto-select all platforms that have accounts
+        if (!Array.isArray(platforms) || platforms.length === 0) {
+          const platformMap = {
+            instagram: 'instagram_post',
+            facebook: 'facebook_post',
+            youtube: 'youtube',
+            linkedin: 'linkedin',
+            x_twitter: 'x_twitter'
+          };
+          platforms = Object.keys(autoSelected).map(p => platformMap[p] || p);
+        }
+
+        await pool.query(
+          `UPDATE content_queue SET selected_accounts = $1, platforms = $2, updated_at = NOW() WHERE id = $3`,
+          [JSON.stringify(autoSelected), JSON.stringify(platforms), id]
+        );
+
+        console.log(`[approveContent] Auto-selected accounts for post ${id} (brand: ${post.brand_name}):`, JSON.stringify(autoSelected));
+      }
+    }
+
+    res.json({ success: true, item: { id: post.id, brand_name: post.brand_name, status: post.status, scheduled_at: post.scheduled_at } });
   } catch (err) {
     console.error("approveContent error:", err);
     res.status(500).json({ success: false, error: "Failed to approve" });
@@ -1751,7 +1839,7 @@ function isTransientMetaError(err) {
     const code = err.errorCode;
     const status = err.metaResponse?.status || '';
     
-    const isTransientCode = [2207082, 2207026, 9007].includes(code);
+    const isTransientCode = [2207082, 2207052, 2207026, 9007].includes(code);
     if (isTransientCode) return true;
     
     const lowercaseStatus = status.toLowerCase();
@@ -1771,7 +1859,7 @@ function isTransientMetaError(err) {
     const subcode = metaError.error_subcode;
     const message = metaError.message || '';
     
-    const isTransientCode = [2207082, 2207026, 9007].includes(code) || [2207082, 2207026, 9007].includes(subcode);
+    const isTransientCode = [2207082, 2207052, 2207026, 9007].includes(code) || [2207082, 2207052, 2207026, 9007].includes(subcode);
     if (isTransientCode) return true;
     
     const lowercaseMsg = message.toLowerCase();
@@ -1785,7 +1873,7 @@ function isTransientMetaError(err) {
 
   // Case 3: Message-based check
   const errMsg = (err.message || '').toLowerCase();
-  if (errMsg.includes('2207082') || errMsg.includes('2207026') || errMsg.includes('9007') ||
+  if (errMsg.includes('2207082') || errMsg.includes('2207052') || errMsg.includes('2207026') || errMsg.includes('9007') ||
       errMsg.includes('transcode') || 
       errMsg.includes('transcoding') || 
       errMsg.includes('media upload has failed') ||
@@ -1841,8 +1929,8 @@ async function publishToInstagramWithRetry(instagramBusinessId, accessToken, { v
         throw err;
       }
 
-      console.log(`[publishToInstagramWithRetry] Waiting 30 seconds before retry attempt ${attempt + 1}...`);
-      await new Promise(resolve => setTimeout(resolve, 30000));
+      console.log(`[publishToInstagramWithRetry] Waiting 60 seconds before retry attempt ${attempt + 1}...`);
+      await new Promise(resolve => setTimeout(resolve, 60000));
     }
   }
   throw lastErr;

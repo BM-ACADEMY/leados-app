@@ -1,9 +1,32 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Trash2, Check, AlertCircle, Loader2, Smartphone, ChevronDown, Image, Video, FileText, Link, MessageSquare, Type, RefreshCw, Search, Phone } from 'lucide-react';
+import { Plus, X, Trash2, Check, AlertCircle, Loader2, Smartphone, ChevronDown, Image, Video, FileText, Link, MessageSquare, Type, RefreshCw, Search, Phone, Download } from 'lucide-react';
 import { C } from '../constants/theme.js';
 import { TBadge } from '../components/ui.jsx';
 import { useTemplates } from '../hooks/useTemplates.js';
 import { api } from '../services/api.js';
+
+const PARAMETER_SOURCE_OPTIONS = {
+  leados: [
+    ['recipient_name', 'Lead name'], ['recipient_phone', 'Lead phone'],
+    ['recipient_email', 'Lead email'], ['lead_status', 'Lead status'],
+    ['lead_source', 'Lead source'], ['lead_interest', 'Lead interest'],
+    ['lead_score', 'Lead score'], ['brand_name', 'Brand name'],
+    ['campaign_name', 'Campaign name'], ['custom', 'Custom value'],
+    ['excel_parameter', 'Excel column']
+  ],
+  alliance: [
+    ['name', 'Prospect contact name'], ['business_name', 'Prospect business name'],
+    ['phone', 'Prospect phone'], ['email', 'Prospect email'],
+    ['audience', 'Prospect audience'], ['industry', 'Prospect industry'],
+    ['location', 'Prospect location'], ['source', 'Prospect source'],
+    ['ai_score', 'AI score'], ['channel', 'Channel'], ['consent', 'WhatsApp consent'],
+    ['consent_source', 'Consent source'], ['campaign_name', 'Campaign name'],
+    ['status', 'Prospect status'], ['created_at', 'Date added']
+  ]
+};
+const defaultParameterSource = (scope, index) => scope === 'alliance'
+  ? (['name', 'business_name', 'location'][index] || 'name')
+  : (index === 0 ? 'recipient_name' : 'custom');
 
 // ── Toast Notification ────────────────────────────────────
 const Toast = ({ toast, onClose }) => {
@@ -234,15 +257,20 @@ export const TemplatesView = () => {
   const [submitLoading, setSubmitLoading] = useState(null); // id of template being submitted
   const [syncLoading, setSyncLoading] = useState(null); // id of template being synced
   const [bulkSyncLoading, setBulkSyncLoading] = useState(false);
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState([]);
+  const [bulkWorkspace, setBulkWorkspace] = useState('leados');
+  const [bulkWorkspaceLoading, setBulkWorkspaceLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterLanguage, setFilterLanguage] = useState('all');
+  const [filterWorkspace, setFilterWorkspace] = useState('all');
   const [filterStatuses, setFilterStatuses] = useState([]);
   const [filterDate, setFilterDate] = useState('all');
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [toast, setToast] = useState(null);
   const [clients, setClients] = useState([]);
+  const [allianceAudiences, setAllianceAudiences] = useState([]);
   const [previewTemplate, setPreviewTemplate] = useState(null); // template object to preview
   const [templateToDelete, setTemplateToDelete] = useState(null); // template object to delete
   const [deleteConfirmText, setDeleteConfirmText] = useState(''); // text for delete confirmation
@@ -261,6 +289,9 @@ export const TemplatesView = () => {
     buttons: [],
     client_id: '',
     samples: [],
+    parameter_definitions: { body: {}, header: {} },
+    template_scope: 'leados',
+    alliance_audience: '',
   };
   const [form, setForm] = useState(defaultForm);
 
@@ -271,7 +302,19 @@ export const TemplatesView = () => {
 
   useEffect(() => {
     api.getClients().then(d => setClients(d.clients || [])).catch(() => {});
+    api.getAllianceAudiences().then(d => setAllianceAudiences(d.audiences || [])).catch(() => {});
   }, []);
+
+  const selectedAllianceAudience = allianceAudiences.find((audience) => audience.code === form.alliance_audience);
+  const allianceParameterOptions = (() => {
+    const fields = new Map(PARAMETER_SOURCE_OPTIONS.alliance);
+    const applicableAudiences = selectedAllianceAudience ? [selectedAllianceAudience] : allianceAudiences;
+    applicableAudiences.forEach((audience) => {
+      (audience.column_config || []).filter((column) => column.enabled !== false).forEach((column) => fields.set(column.key, column.label || column.key.replaceAll('_', ' ')));
+      (audience.fields || []).filter((field) => field.active !== false).forEach((field) => fields.set(field.field_key, field.label || field.field_key.replaceAll('_', ' ')));
+    });
+    return [...fields.entries()];
+  })();
 
   const handleCategoryChange = (cat) => {
     const defaults = CATEGORY_DEFAULTS[cat] || {};
@@ -367,6 +410,21 @@ export const TemplatesView = () => {
     }
   };
 
+  const handleBulkWorkspaceUpdate = async () => {
+    if (!selectedTemplateIds.length) return showToast('Select at least one template', 'error');
+    setBulkWorkspaceLoading(true);
+    try {
+      const result = await api.updateTemplateScopes(selectedTemplateIds, bulkWorkspace);
+      showToast(`${result.updated} template${result.updated === 1 ? '' : 's'} moved to ${bulkWorkspace === 'alliance' ? 'AllianceOS' : bulkWorkspace === 'leados' ? 'LeadOS' : 'Shared'}`);
+      setSelectedTemplateIds([]);
+      if (refetch) await refetch();
+    } catch (err) {
+      showToast('Workspace update failed: ' + err.message, 'error');
+    } finally {
+      setBulkWorkspaceLoading(false);
+    }
+  };
+
   const handleMediaUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -389,6 +447,7 @@ export const TemplatesView = () => {
   const handleCreateTemplate = async () => {
     if (!form.name.trim()) return showToast('Template name is required', 'error');
     if (!form.body.trim()) return showToast('Message body is required', 'error');
+    if (form.template_scope === 'alliance' && !form.alliance_audience) return showToast('Select the AllianceOS audience this template is created for', 'error');
     if (!/^[a-z0-9_]+$/.test(form.name)) return showToast('Template name must be lowercase letters, numbers, underscores only', 'error');
     
     const matches = form.body.match(/\{\{(\d+)\}\}/g);
@@ -397,6 +456,9 @@ export const TemplatesView = () => {
       for (let i = 0; i < maxVar; i++) {
         if (!form.samples || !form.samples[i] || !form.samples[i].trim()) {
           return showToast(`Please provide a sample value for {{${i + 1}}}`, 'error');
+        }
+        if (!form.parameter_definitions?.body?.[String(i + 1)]?.label?.trim()) {
+          return showToast(`Please describe what {{${i + 1}}} means`, 'error');
         }
       }
     }
@@ -435,6 +497,8 @@ export const TemplatesView = () => {
         buttons: normalizedButtons,
         client_id: form.client_id || null,
         samples: form.samples,
+        parameter_definitions: { ...form.parameter_definitions, alliance_audience: form.template_scope === 'alliance' ? form.alliance_audience : undefined },
+        template_scope: form.template_scope,
       };
       if (editingId) {
         await api.updateTemplate(editingId, payload);
@@ -466,6 +530,9 @@ export const TemplatesView = () => {
       buttons: (() => { try { return typeof t.buttons === 'string' ? JSON.parse(t.buttons) : (t.buttons || []); } catch { return []; } })(),
       client_id: t.client_id || '',
       samples: (() => { try { return typeof t.samples === 'string' ? JSON.parse(t.samples) : (t.samples || []); } catch { return []; } })(),
+      parameter_definitions: (() => { try { return typeof t.parameter_definitions === 'string' ? JSON.parse(t.parameter_definitions) : (t.parameter_definitions || { body: {}, header: {} }); } catch { return { body: {}, header: {} }; } })(),
+      template_scope: t.template_scope || 'shared',
+      alliance_audience: (() => { try { const definitions = typeof t.parameter_definitions === 'string' ? JSON.parse(t.parameter_definitions) : t.parameter_definitions; return definitions?.alliance_audience || ''; } catch { return ''; } })(),
     });
     setEditingId(t.id);
     setShowBuilder(true);
@@ -510,13 +577,14 @@ export const TemplatesView = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, filterCategory, filterLanguage, filterStatuses, filterDate]);
+  }, [searchQuery, filterCategory, filterLanguage, filterWorkspace, filterStatuses, filterDate]);
 
   const filteredTemplates = templates.filter(t => {
     const searchTerms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
     const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => t.name.toLowerCase().includes(term));
     const matchesCategory = filterCategory === 'all' || t.category?.toLowerCase() === filterCategory.toLowerCase();
     const matchesLanguage = filterLanguage === 'all' || t.language === filterLanguage;
+    const matchesWorkspace = filterWorkspace === 'all' || (t.template_scope || 'shared') === filterWorkspace;
     
     let matchesStatus = true;
     if (filterStatuses.length > 0) {
@@ -543,7 +611,7 @@ export const TemplatesView = () => {
       else if (filterDate === '60d') matchesDate = diffDays <= 60;
       else if (filterDate === '90d') matchesDate = diffDays <= 90;
     }
-    return matchesSearch && matchesCategory && matchesLanguage && matchesStatus && matchesDate;
+    return matchesSearch && matchesCategory && matchesLanguage && matchesWorkspace && matchesStatus && matchesDate;
   });
 
   const itemsPerPage = 10;
@@ -654,6 +722,13 @@ export const TemplatesView = () => {
         >
           <option value="all">Language</option>
           {LANGUAGES.map(language => <option key={language.code} value={language.code}>{language.label}</option>)}
+        </select>
+
+        <select value={filterWorkspace} onChange={(e) => setFilterWorkspace(e.target.value)} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', fontSize: 12, color: C.text, outline: 'none', minWidth: 125, cursor: 'pointer' }}>
+          <option value="all">Workspace</option>
+          <option value="leados">LeadOS</option>
+          <option value="alliance">AllianceOS</option>
+          <option value="shared">Shared</option>
         </select>
 
         {/* Status Custom Multi-Select Dropdown */}
@@ -767,11 +842,29 @@ export const TemplatesView = () => {
       </div>
 
       {/* Table */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10, padding: '10px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+        <strong style={{ color: C.text, fontSize: 11 }}>{selectedTemplateIds.length} selected</strong>
+        <select value={bulkWorkspace} onChange={(e) => setBulkWorkspace(e.target.value)} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 7, color: C.text, padding: '7px 10px', fontSize: 11 }}>
+          <option value="leados">Move to LeadOS</option>
+          <option value="alliance">Move to AllianceOS</option>
+          <option value="shared">Make Shared</option>
+        </select>
+        <button onClick={handleBulkWorkspaceUpdate} disabled={!selectedTemplateIds.length || bulkWorkspaceLoading} style={{ background: C.accent, border: 'none', borderRadius: 7, color: '#fff', padding: '7px 12px', fontSize: 11, fontWeight: 700, cursor: selectedTemplateIds.length ? 'pointer' : 'not-allowed', opacity: selectedTemplateIds.length ? 1 : 0.5 }}>
+          {bulkWorkspaceLoading ? 'Updating...' : 'Apply Workspace'}
+        </button>
+        <span style={{ color: C.muted, fontSize: 10 }}>Use Workspace column below to verify where each template will appear.</span>
+      </div>
       <div className="table-responsive" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {['Template Name', 'Category', 'Brand', 'Status', 'Submitted', 'Approved', 'Uses', 'Actions'].map(h => (
+              <th style={{ padding: '11px 10px', textAlign: 'center' }}>
+                <input type="checkbox" checked={currentTemplates.length > 0 && currentTemplates.every((template) => selectedTemplateIds.includes(template.id))} onChange={(e) => {
+                  const pageIds = currentTemplates.map((template) => template.id);
+                  setSelectedTemplateIds((current) => e.target.checked ? [...new Set([...current, ...pageIds])] : current.filter((id) => !pageIds.includes(id)));
+                }} style={{ accentColor: C.accent }} title="Select all templates on this page" />
+              </th>
+              {['Template Name', 'Workspace', 'Category', 'Brand', 'Status', 'Submitted', 'Approved', 'Uses', 'Actions'].map(h => (
                 <th key={h} style={{ padding: '11px 14px', fontSize: 9, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'left' }}>{h}</th>
               ))}
             </tr>
@@ -779,9 +872,11 @@ export const TemplatesView = () => {
           <tbody>
             {currentTemplates.map(t => (
               <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                <td style={{ padding: '13px 10px', textAlign: 'center' }}><input type="checkbox" checked={selectedTemplateIds.includes(t.id)} onChange={(e) => setSelectedTemplateIds((current) => e.target.checked ? [...new Set([...current, t.id])] : current.filter((id) => id !== t.id))} style={{ accentColor: C.accent }} /></td>
                 <td style={{ padding: '13px 14px' }}>
                   <span style={{ fontFamily: 'monospace', fontSize: 11, color: C.accent, background: C.accent + '10', padding: '2px 7px', borderRadius: 5 }}>{t.name}</span>
                 </td>
+                <td style={{ padding: '13px 14px', fontSize: 10, color: t.template_scope === 'alliance' ? C.purple : t.template_scope === 'shared' ? C.muted : C.accent, fontWeight: 700, textTransform: 'capitalize' }}>{t.template_scope || 'shared'}</td>
                 <td style={{ padding: '13px 14px' }}>
                   <span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 7px', borderRadius: 10 }}>{t.category || t.cat}</span>
                 </td>
@@ -819,6 +914,12 @@ export const TemplatesView = () => {
                       onClick={() => setPreviewTemplate(t)}
                       style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.muted, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}
                     >Preview</button>
+                    <a
+                      href={`${api.baseUrl}/api/templates/${t.id}/campaign-sheet`}
+                      download
+                      title="Download an Excel recipient sheet with columns matching this template's parameters"
+                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.green, padding: '3px 9px', fontSize: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3, textDecoration: 'none' }}
+                    ><Download size={9} /> Excel</a>
                     <button
                       onClick={() => handleEditTemplate(t)}
                       style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.blue, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}
@@ -1108,6 +1209,26 @@ export const TemplatesView = () => {
 
                 {/* Category */}
                 <div>
+                  <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>Created For *</label>
+                  <select style={inp()} value={form.template_scope} onChange={e => setForm(f => ({ ...f, template_scope: e.target.value, parameter_definitions: { body: {}, header: {} } }))}>
+                    <option value="leados">LeadOS — map from lead fields</option>
+                    <option value="alliance">AllianceOS — map from prospect fields</option>
+                    <option value="shared">Shared — configure when sending</option>
+                  </select>
+                  <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>Templates remain in this common library; this controls which campaign builder and fields they use.</p>
+                </div>
+
+                {form.template_scope === 'alliance' && <div>
+                  <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>AllianceOS Audience *</label>
+                  <select style={inp()} value={form.alliance_audience} onChange={e => setForm(f => ({ ...f, alliance_audience: e.target.value, parameter_definitions: { body: {}, header: {} } }))}>
+                    <option value="">Select audience</option>
+                    {allianceAudiences.map((audience) => <option key={audience.code} value={audience.code}>{audience.label}</option>)}
+                  </select>
+                  <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>Variable sources below load from this audience's current system and custom columns.</p>
+                </div>}
+
+                {/* Category */}
+                <div>
                   <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 10 }}>Category *</label>
                   <div className="flex-col-mobile" style={{ display: 'flex', gap: 10 }}>
                     {[
@@ -1263,17 +1384,59 @@ export const TemplatesView = () => {
                     if (maxVar > 0) {
                       return (
                         <div style={{ background: C.card, border: `1px dashed ${C.border}`, borderRadius: 8, padding: '14px', marginTop: 12 }}>
-                          <h4 style={{ fontSize: 12, color: C.text, fontWeight: 700, marginBottom: 4 }}>Variable samples</h4>
-                          <p style={{ fontSize: 10, color: C.muted, marginBottom: 12 }}>Add a sample for each variable so Meta can review your template.</p>
+                          <h4 style={{ fontSize: 12, color: C.text, fontWeight: 700, marginBottom: 4 }}>Variable definitions</h4>
+                          <p style={{ fontSize: 10, color: C.muted, marginBottom: 12 }}>Name what each variable means, choose its usual data source, and provide Meta's review sample.</p>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                             {Array.from({ length: maxVar }).map((_, i) => (
-                              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <div key={i} style={{ display: 'grid', gridTemplateColumns: '45px 1fr 150px 1fr', alignItems: 'center', gap: 10 }}>
                                 <div style={{ width: 45, textAlign: 'center', fontSize: 11, fontWeight: 600, color: C.muted, background: C.surface, padding: '6px 0', borderRadius: 6, border: `1px solid ${C.border}` }}>
                                   {`{{${i + 1}}}`}
                                 </div>
                                 <input
-                                  style={{ ...inp(), flex: 1, padding: '6px 10px' }}
-                                  placeholder={`Enter sample text for {{${i + 1}}}`}
+                                  style={{ ...inp(), padding: '6px 10px' }}
+                                  placeholder={`Meaning, e.g. Candidate name`}
+                                  value={form.parameter_definitions?.body?.[String(i + 1)]?.label || ''}
+                                  onChange={e => setForm(f => ({
+                                    ...f,
+                                    parameter_definitions: {
+                                      ...(f.parameter_definitions || {}),
+                                      body: {
+                                        ...(f.parameter_definitions?.body || {}),
+                                        [String(i + 1)]: {
+                                          ...(f.parameter_definitions?.body?.[String(i + 1)] || {}),
+                                          label: e.target.value,
+                                          default_source: f.parameter_definitions?.body?.[String(i + 1)]?.default_source || defaultParameterSource(f.template_scope, i)
+                                        }
+                                      }
+                                    }
+                                  }))}
+                                />
+                                <select
+                                  style={{ ...inp(), padding: '6px 8px' }}
+                                  value={form.parameter_definitions?.body?.[String(i + 1)]?.default_source || defaultParameterSource(form.template_scope, i)}
+                                  onChange={e => setForm(f => ({
+                                    ...f,
+                                    parameter_definitions: {
+                                      ...(f.parameter_definitions || {}),
+                                      body: {
+                                        ...(f.parameter_definitions?.body || {}),
+                                        [String(i + 1)]: {
+                                          ...(f.parameter_definitions?.body?.[String(i + 1)] || {}),
+                                          label: f.parameter_definitions?.body?.[String(i + 1)]?.label || '',
+                                          default_source: e.target.value
+                                        }
+                                      }
+                                    }
+                                  }))}
+                                >
+                                  {(form.template_scope === 'shared'
+                                    ? [...PARAMETER_SOURCE_OPTIONS.leados, ...PARAMETER_SOURCE_OPTIONS.alliance.filter(([value]) => !PARAMETER_SOURCE_OPTIONS.leados.some(([leadValue]) => leadValue === value))]
+                                    : form.template_scope === 'alliance' ? allianceParameterOptions : PARAMETER_SOURCE_OPTIONS[form.template_scope]
+                                  ).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                                </select>
+                                <input
+                                  style={{ ...inp(), padding: '6px 10px' }}
+                                  placeholder={`Meta sample for {{${i + 1}}}`}
                                   value={form.samples?.[i] || ''}
                                   onChange={e => {
                                     const newSamples = [...(form.samples || [])];

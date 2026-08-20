@@ -2,6 +2,7 @@ const db = require('../db/connection');
 const cryptoHelper = require('../utils/crypto');
 const axios = require('axios');
 const { evaluateLeadBrandAndSchedule } = require('../services/aiBrain');
+const { getLeadOSBrand } = require('../services/leadosBrand');
 
 const META_NEW_LEAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -158,7 +159,7 @@ async function handleMetaWebhook(req, res) {
 
             const masterTokenEncrypted = rows[0].lead_ads_access_token;
             const masterToken = cryptoHelper.decrypt(masterTokenEncrypted);
-            const clientId = rows[0].client_id;
+            const clientId = (await getLeadOSBrand(db)).id;
             
             const pageTokenRes = await axios.get(
               `https://graph.facebook.com/v18.0/${pageId}?fields=access_token&access_token=${masterToken}`
@@ -249,7 +250,7 @@ async function syncHistoricalLeads(req, res) {
     if (!pageId) return res.status(400).json({ error: 'Not a Facebook Page' });
 
     const masterToken = cryptoHelper.decrypt(acc.lead_ads_access_token);
-    const clientId = acc.client_id;
+    const clientId = (await getLeadOSBrand(db)).id;
     
     const pageTokenRes = await axios.get(
       `https://graph.facebook.com/v18.0/${pageId}?fields=access_token&access_token=${masterToken}`
@@ -315,6 +316,7 @@ async function syncHistoricalLeads(req, res) {
                 WHERE id = $8`,
                 [leadgenId, syncedStatus, formIdStr, campaignIdStr, campaignNameStr, adNameStr, adIdStr, pcRes.rows[0].id]
               );
+              await db.query('UPDATE leads SET client_id=$1, updated_at=NOW() WHERE id=$2', [clientId, pcRes.rows[0].id]);
               totalSynced++;
               continue;
            }
@@ -369,7 +371,7 @@ async function syncAllHistoricalLeads(req, res) {
       for (const acc of rows) {
         const pageId = acc.facebook_page_id;
         const masterToken = cryptoHelper.decrypt(acc.lead_ads_access_token);
-        const clientId = acc.client_id;
+        const clientId = (await getLeadOSBrand(db)).id;
         
         try {
           const pageTokenRes = await axios.get(

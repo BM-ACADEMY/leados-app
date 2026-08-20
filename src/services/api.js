@@ -223,6 +223,13 @@ class LeadOSAPI {
     });
   }
 
+  async updateTemplateScopes(templateIds, templateScope) {
+    return this.request('/api/templates/bulk-scope', {
+      method: 'POST',
+      body: JSON.stringify({ template_ids: templateIds, template_scope: templateScope })
+    });
+  }
+
   async updateTemplate(id, templateData) {
     return this.request(`/api/templates/${id}`, {
       method: 'PUT',
@@ -594,6 +601,18 @@ class LeadOSAPI {
     return this.request(`/api/alliance/prospects${query ? `?${query}` : ''}`);
   }
 
+  async getAllianceAnalytics() {
+    return this.request(`/api/alliance/analytics?_=${Date.now()}`);
+  }
+
+  async getAllianceBulkSendLimits() {
+    return this.request('/api/alliance/bulk-send-limits');
+  }
+
+  async updateAllianceBulkSendLimit(channel, payload) {
+    return this.request(`/api/alliance/bulk-send-limits/${encodeURIComponent(channel)}`, { method: 'PUT', body: JSON.stringify(payload) });
+  }
+
   async createAllianceProspect(prospect) {
     return this.request('/api/alliance/prospects', {
       method: 'POST',
@@ -610,6 +629,10 @@ class LeadOSAPI {
 
   async deleteAllianceProspect(id) {
     return this.request(`/api/alliance/prospects/${id}`, { method: 'DELETE' });
+  }
+
+  async repairAllianceProspectNames() {
+    return this.request('/api/alliance/prospects/repair-imported-names', { method: 'POST' });
   }
 
   async getAllianceAudiences() {
@@ -639,24 +662,49 @@ class LeadOSAPI {
     });
   }
 
-  async getAllianceCampaigns() {
-    return this.request('/api/alliance/campaigns');
+  async getAllianceCampaigns(params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null));
+    return this.request(`/api/alliance/campaigns${query.toString() ? `?${query}` : ''}`);
+  }
+
+  async getAllianceEmailCampaignDetail(id, params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString();
+    return this.request(`/api/alliance/campaigns/${id}/detail${query ? `?${query}` : ''}`);
+  }
+
+  async updateAllianceAudience(code, payload) {
+    return this.request(`/api/alliance/audiences/${encodeURIComponent(code)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteAllianceAudience(code) {
+    return this.request(`/api/alliance/audiences/${encodeURIComponent(code)}`, { method: 'DELETE' });
   }
 
   async getAllianceCampaign(id) {
     return this.request(`/api/alliance/campaigns/${id}`);
   }
 
-  async startAllianceCampaign(id) {
-    return this.request(`/api/alliance/campaigns/${id}/start`, { method: 'POST' });
+  async startAllianceCampaign(id, payload = {}) {
+    return this.request(`/api/alliance/campaigns/${id}/start`, { method: 'POST', body: JSON.stringify(payload) });
   }
 
   async pauseAllianceCampaign(id) {
     return this.request(`/api/alliance/campaigns/${id}/pause`, { method: 'POST' });
   }
 
+  async retryFailedAllianceCampaignEmails(id) {
+    return this.request(`/api/alliance/campaigns/${id}/retry-failed`, { method: 'POST' });
+  }
+
   async stopAllianceCampaign(id) {
     return this.request(`/api/alliance/campaigns/${id}/stop`, { method: 'POST' });
+  }
+
+  async deleteAllianceCampaign(id) {
+    return this.request(`/api/alliance/campaigns/${id}`, { method: 'DELETE' });
   }
 
   async sendAllianceCampaignTest(id, payload) {
@@ -684,6 +732,11 @@ class LeadOSAPI {
     return this.request('/api/alliance/whatsapp-campaigns');
   }
 
+  async getAllianceWhatsAppCampaignDetail(id, params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null));
+    return this.request(`/api/alliance/whatsapp-campaigns/${id}${query.toString() ? `?${query}` : ''}`);
+  }
+
   async createAllianceWhatsAppCampaign(payload) {
     return this.request('/api/alliance/whatsapp-campaigns', { method: 'POST', body: JSON.stringify(payload) });
   }
@@ -692,12 +745,96 @@ class LeadOSAPI {
     return this.request('/api/alliance/whatsapp-campaigns/test', { method: 'POST', body: JSON.stringify(payload) });
   }
 
+  async pauseAllianceWhatsAppCampaign(id) {
+    return this.request(`/api/alliance/whatsapp-campaigns/${id}/pause`, { method: 'POST' });
+  }
+
+  async resumeAllianceWhatsAppCampaign(id) {
+    return this.request(`/api/alliance/whatsapp-campaigns/${id}/resume`, { method: 'POST' });
+  }
+
   async stopAllianceWhatsAppCampaign(id) {
     return this.request(`/api/alliance/whatsapp-campaigns/${id}/stop`, { method: 'POST' });
   }
 
   async deleteAllianceWhatsAppCampaign(id) {
     return this.request(`/api/alliance/whatsapp-campaigns/${id}`, { method: 'DELETE' });
+  }
+
+  async getAllianceBrainBrands() {
+    return this.request('/api/alliance/brain/brands');
+  }
+
+  async extractAllianceBrainBrand(text) {
+    return this.request('/api/alliance/brain/brands/extract', { method: 'POST', body: JSON.stringify({ text }) });
+  }
+
+  async createAllianceBrainBrand(payload) {
+    return this.request('/api/alliance/brain/brands', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async updateAllianceBrainBrand(id, payload) {
+    return this.request(`/api/alliance/brain/brands/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
+  async deleteAllianceBrainBrand(id) {
+    return this.request(`/api/alliance/brain/brands/${id}`, { method: 'DELETE' });
+  }
+
+  async getAllianceBrainOfferings(brandId) {
+    return this.request(`/api/alliance/brain/brands/${brandId}/offerings`);
+  }
+
+  async createAllianceBrainOffering(payload) {
+    return this.request('/api/alliance/brain/offerings', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async importAllianceBrainOfferingsBulk(payload) {
+    return this.request('/api/alliance/brain/offerings/import-bulk', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async updateAllianceBrainOffering(id, payload) {
+    return this.request(`/api/alliance/brain/offerings/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
+  async deleteAllianceBrainOffering(id) {
+    return this.request(`/api/alliance/brain/offerings/${id}`, { method: 'DELETE' });
+  }
+
+  async getAllianceBrainFaqs(offeringId) {
+    return this.request(`/api/alliance/brain/offerings/${offeringId}/faqs`);
+  }
+
+  async createAllianceBrainFaq(offeringId, payload) {
+    return this.request(`/api/alliance/brain/offerings/${offeringId}/faqs`, { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async updateAllianceBrainFaq(id, payload) {
+    return this.request(`/api/alliance/brain/faqs/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
+  async deleteAllianceBrainFaq(id) {
+    return this.request(`/api/alliance/brain/faqs/${id}`, { method: 'DELETE' });
+  }
+
+  async getAlliancePromptRules() {
+    return this.request('/api/alliance/prompt-rules');
+  }
+
+  async extractAlliancePromptRule(text) {
+    return this.request('/api/alliance/prompt-rules/extract', { method: 'POST', body: JSON.stringify({ text }) });
+  }
+
+  async createAlliancePromptRule(payload) {
+    return this.request('/api/alliance/prompt-rules', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async updateAlliancePromptRule(id, payload) {
+    return this.request(`/api/alliance/prompt-rules/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  }
+
+  async deleteAlliancePromptRule(id) {
+    return this.request(`/api/alliance/prompt-rules/${id}`, { method: 'DELETE' });
   }
 
   async sendAllianceEmailReply(id, body) {
@@ -715,6 +852,10 @@ class LeadOSAPI {
     return this.request('/api/alliance/email-settings');
   }
 
+  async getAllianceNumberHealth() {
+    return this.request('/api/alliance/number-health');
+  }
+
   async saveAllianceEmailSettings(settings) {
     return this.request('/api/alliance/email-settings', {
       method: 'PUT',
@@ -726,8 +867,9 @@ class LeadOSAPI {
     return this.request('/api/alliance/email-settings/verify', { method: 'POST' });
   }
 
-  async getAllianceCampaignBuilderOptions() {
-    return this.request('/api/alliance/campaign-builder/options');
+  async getAllianceCampaignBuilderOptions(params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value !== undefined && value !== null)).toString();
+    return this.request(`/api/alliance/campaign-builder/options${query ? `?${query}` : ''}`);
   }
 
   async getAllianceCampaignProspects(params = {}) {
@@ -737,6 +879,22 @@ class LeadOSAPI {
 
   async getAllianceCampaignTemplates(audience) {
     return this.request(`/api/alliance/campaign-builder/templates?audience=${encodeURIComponent(audience)}`);
+  }
+
+  async saveAllianceCampaignTemplate(touchNo, payload) {
+    return this.request(`/api/alliance/campaign-builder/templates/${touchNo}`, {
+      method: 'PUT', body: JSON.stringify(payload)
+    });
+  }
+
+  async createAllianceCampaignTemplate(audience) {
+    return this.request('/api/alliance/campaign-builder/templates', {
+      method: 'POST', body: JSON.stringify({ audience })
+    });
+  }
+
+  async deleteAllianceCampaignTemplate(touchNo, audience) {
+    return this.request(`/api/alliance/campaign-builder/templates/${touchNo}?audience=${encodeURIComponent(audience)}`, { method: 'DELETE' });
   }
 
   async suggestAllianceCampaignTemplates(payload) {

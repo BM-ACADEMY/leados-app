@@ -4,6 +4,43 @@ import toast from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { api } from '../services/api.js';
 
+const getTemplateVariables = (value) => [...new Set(
+  [...String(value || '').matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((match) => Number(match[1]))
+)].sort((a, b) => a - b);
+
+const getCampaignTemplateError = (template) => {
+  if (!template) return '';
+  const bodyVariables = getTemplateVariables(template.body);
+  const headerVariables = getTemplateVariables(template.header);
+  if (bodyVariables.some((value, index) => value !== index + 1)) {
+    return 'Body variables must be consecutive and start at {{1}}.';
+  }
+  if (headerVariables.some((value, index) => value !== index + 1)) return 'Header variables must be consecutive and start at {{1}}.';
+  return '';
+};
+
+const createDefaultParameterMappings = (template) => ({
+  body: Object.fromEntries(getTemplateVariables(template?.body).map((number, index) => [
+    String(number), {
+      source: template?.parameter_definitions?.body?.[String(number)]?.default_source || (index === 0 ? 'recipient_name' : 'custom'),
+      value: '', section: 'body', number
+    }
+  ])),
+  header: Object.fromEntries(getTemplateVariables(template?.header).map((number) => [
+    String(number), { source: 'custom', value: '', section: 'header', number }
+  ]))
+});
+
+const formatCampaignDateTime = (value) => {
+  if (!value) return 'Not available';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not available';
+  return date.toLocaleString([], {
+    year: 'numeric', month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit'
+  });
+};
+
 export const CampaignsView = () => {
   const [tab, setTab] = useState('list');
   const [campaigns, setCampaigns] = useState([]);
@@ -17,6 +54,7 @@ export const CampaignsView = () => {
   const [scheduledAt, setScheduledAt] = useState('');
   const [clients, setClients] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [templateParameters, setTemplateParameters] = useState({ body: {}, header: {} });
   const [submitting, setSubmitting] = useState(false);
 
   // Custom CSV Upload state
@@ -108,8 +146,10 @@ export const CampaignsView = () => {
 
   const handleDownloadTemplate = () => {
     const link = document.createElement('a');
-    link.href = `${api.baseUrl}/api/leads/template`;
-    link.download = 'leados_campaign_template.xlsx';
+    link.href = templateId
+      ? `${api.baseUrl}/api/templates/${encodeURIComponent(templateId)}/campaign-sheet`
+      : `${api.baseUrl}/api/leads/template`;
+    link.download = templateId ? 'template_campaign_recipients.xlsx' : 'leados_campaign_template.xlsx';
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -118,6 +158,17 @@ export const CampaignsView = () => {
   const handleCreateCampaign = async (e) => {
     e.preventDefault();
     if (!name || !clientId || !templateId) return toast.error('Please fill required fields');
+    const selectedTemplate = templates.find((template) => String(template.id) === String(templateId));
+    const templateError = getCampaignTemplateError(selectedTemplate);
+    if (templateError) return toast.error(templateError);
+    for (const section of ['header', 'body']) {
+      for (const number of getTemplateVariables(selectedTemplate?.[section])) {
+        const mapping = templateParameters[section]?.[String(number)];
+        if (!mapping || (mapping.source === 'custom' && !mapping.value?.trim())) {
+          return toast.error(`Please configure ${section} parameter {{${number}}}`);
+        }
+      }
+    }
     
     setSubmitting(true);
     try {
@@ -132,6 +183,7 @@ export const CampaignsView = () => {
         const batchId = `csv_${Date.now()}`;
         const formData = new FormData();
         formData.append('client_id', clientId);
+        formData.append('template_id', templateId);
         formData.append('file', importFile);
         formData.append('force_source', batchId);
         
@@ -153,7 +205,7 @@ export const CampaignsView = () => {
       const res = await api.createCampaign({
         name, client_id: clientId, template_id: templateId,
         target_status: finalTargetStatus, scheduled_at: finalScheduledAt || null,
-        send_immediately: sendType === 'now'
+        send_immediately: sendType === 'now', template_parameters: templateParameters
       });
 
       toast.success('Campaign created! ' + res.campaign.name);
@@ -244,7 +296,7 @@ export const CampaignsView = () => {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid ' + C.border }}>
-                  {['Campaign', 'Brand', 'Sent', 'Delivered', 'Read', 'Replied', 'Status', 'Date', 'Actions'].map((h) => (
+                  {['Campaign', 'Brand', 'Template', 'Sent', 'Delivered', 'Read', 'Replied', 'Status', 'Date & Time', 'Actions'].map((h) => (
                     <th key={h} style={{ padding: '11px 14px', fontSize: 9, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'left' }}>{h}</th>
                   ))}
                 </tr>
@@ -256,12 +308,18 @@ export const CampaignsView = () => {
                     <tr key={c.id} style={{ borderBottom: '1px solid ' + C.border }}>
                       <td style={{ padding: '13px 14px', fontSize: 12, fontWeight: 600, color: C.text }}>{c.name}</td>
                       <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{c.brand_name || c.brand || 'All Brands'}</td>
+                      <td style={{ padding: '13px 14px', fontSize: 11, color: C.text }}>{c.template_name || 'Template unavailable'}</td>
                       <td style={{ padding: '13px 14px', fontSize: 12, color: C.text }}>{c.sent_count ?? c.sent ?? 0}</td>
                       <td style={{ padding: '13px 14px', fontSize: 12, color: C.green }}>{c.delivered_count ?? c.delivered ?? 0}</td>
                       <td style={{ padding: '13px 14px', fontSize: 12, color: C.blue }}>{c.read_count ?? c.read ?? 0}</td>
                       <td style={{ padding: '13px 14px', fontSize: 12, color: C.accent }}>{c.replied_count ?? c.replied ?? 0}</td>
                       <td style={{ padding: '13px 14px' }}><span style={{ background: s.bg, color: s.tc, padding: '3px 9px', borderRadius: 12, fontSize: 11, fontWeight: 600, textTransform: 'capitalize' }}>{c.status}</span></td>
-                      <td style={{ padding: '13px 14px', fontSize: 11, color: C.dim }}>{c.scheduled_at ? new Date(c.scheduled_at).toLocaleDateString() : c.date || 'Immediate'}</td>
+                      <td style={{ padding: '13px 14px', fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>
+                        <div style={{ color: C.text }}>{formatCampaignDateTime(c.scheduled_at || c.created_at || c.date)}</div>
+                        <div style={{ marginTop: 3, fontSize: 9, color: c.scheduled_at ? C.blue : C.green, fontWeight: 700, textTransform: 'uppercase' }}>
+                          {c.scheduled_at ? 'Scheduled' : 'Sent immediately'}
+                        </div>
+                      </td>
                       <td style={{ padding: '13px 14px' }}>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <button onClick={() => handleViewReport(c)} style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.text, padding: '5px 10px', fontSize: 11, cursor: 'pointer', transition: 'all 0.2s' }}>View Report</button>
@@ -295,7 +353,19 @@ export const CampaignsView = () => {
             </div>
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Target Audience Status</label>
-              <select value={targetStatus} onChange={(e) => setTargetStatus(e.target.value)} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
+              <select value={targetStatus} onChange={(e) => {
+                const nextStatus = e.target.value;
+                setTargetStatus(nextStatus);
+                if (nextStatus === 'custom_csv') {
+                  setTemplateParameters((current) => Object.fromEntries(
+                    ['header', 'body'].map((section) => [section, Object.fromEntries(
+                      Object.entries(current[section] || {}).map(([number, mapping]) => [number, {
+                        ...mapping, source: 'excel_parameter', value: '', section, number: Number(number)
+                      }])
+                    )])
+                  ));
+                }
+              }} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
                 <option value="new">New leads</option>
                 <option value="warm">Warm leads</option>
                 <option value="cold">Cold leads</option>
@@ -309,7 +379,7 @@ export const CampaignsView = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
                   <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Upload Target List</label>
                   <button type="button" onClick={handleDownloadTemplate} style={{ background: 'transparent', border: 'none', color: C.accent, fontSize: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Download size={12} /> Download Template
+                    <Download size={12} /> {templateId ? 'Download Sheet for Selected Template' : 'Download Basic Template'}
                   </button>
                 </div>
                 <div style={{ position: 'relative', border: `1.5px dashed ${importFile ? C.green : C.border}`, background: C.card, borderRadius: 10, padding: '24px 20px', textAlign: 'center', transition: 'all 0.2s', marginTop: 8 }}>
@@ -329,14 +399,80 @@ export const CampaignsView = () => {
             <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 18 }}>Message & Schedule</h3>
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Select Approved Template</label>
-              <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
+              <select value={templateId} onChange={(e) => {
+                const nextId = e.target.value;
+                const template = templates.find((item) => String(item.id) === String(nextId));
+                setTemplateId(nextId);
+                const defaults = createDefaultParameterMappings(template);
+                if (targetStatus === 'custom_csv') {
+                  for (const section of ['header', 'body']) {
+                    for (const [number, mapping] of Object.entries(defaults[section])) {
+                      defaults[section][number] = { ...mapping, source: 'excel_parameter', section, number: Number(number) };
+                    }
+                  }
+                }
+                setTemplateParameters(defaults);
+              }} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
                 <option value="">Select Template</option>
                 {templates
-                  .filter((t) => t.status === 'approved' || t.status === 'active' || t.status === 'draft')
+                  .filter((t) => t.status === 'approved' || t.status === 'active')
+                  .filter((t) => !t.template_scope || t.template_scope === 'leados' || t.template_scope === 'shared')
                   .filter((t) => !clientId || t.client_id === parseInt(clientId) || t.client_id === null)
-                  .map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  .map((t) => {
+                    const templateError = getCampaignTemplateError(t);
+                    return <option key={t.id} value={t.id} disabled={Boolean(templateError)}>{t.name}{templateError ? ' — needs parameter setup' : ''}</option>;
+                  })}
               </select>
+              {templateId && getCampaignTemplateError(templates.find((template) => String(template.id) === String(templateId))) && (
+                <p style={{ color: C.red, fontSize: 11, marginTop: 6, lineHeight: 1.4 }}>
+                  {getCampaignTemplateError(templates.find((template) => String(template.id) === String(templateId)))}
+                </p>
+              )}
             </div>
+            {templateId && ['header', 'body'].map((section) => {
+              const selectedTemplate = templates.find((template) => String(template.id) === String(templateId));
+              const variables = getTemplateVariables(selectedTemplate?.[section]);
+              if (!variables.length) return null;
+              return (
+                <div key={section} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, marginBottom: 14 }}>
+                  <p style={{ fontSize: 10, color: C.text, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>{section} parameters</p>
+                  <p style={{ fontSize: 10, color: C.muted, marginBottom: 10 }}>Map every variable to recipient or campaign data.</p>
+                  {variables.map((number) => {
+                    const mapping = templateParameters[section]?.[String(number)] || { source: 'custom', value: '', section, number };
+                    const updateMapping = (next) => setTemplateParameters((current) => ({
+                      ...current,
+                      [section]: { ...current[section], [String(number)]: { ...mapping, ...next } }
+                    }));
+                    return (
+                      <div key={number} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, .9fr) minmax(130px, 1fr) minmax(140px, 1.4fr)', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ color: C.accent, fontSize: 11, fontWeight: 700 }}>
+                          {`{{${number}}}`}
+                          <small style={{ display: 'block', color: C.muted, fontSize: 9, fontWeight: 500, marginTop: 2 }}>{selectedTemplate?.parameter_definitions?.[section]?.[String(number)]?.label || `Parameter ${number}`}</small>
+                        </span>
+                        <select value={mapping.source} onChange={(e) => updateMapping({ source: e.target.value, value: e.target.value === 'custom' ? mapping.value : '' })} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: '7px 8px', fontSize: 11 }}>
+                          <option value="recipient_name">Recipient name</option>
+                          <option value="recipient_phone">Recipient phone</option>
+                          <option value="recipient_email">Recipient email</option>
+                          <option value="lead_status">Lead status</option>
+                          <option value="lead_source">Lead source</option>
+                          <option value="lead_interest">Lead interest</option>
+                          <option value="lead_score">Lead score</option>
+                          <option value="campaign_name">Campaign name</option>
+                          <option value="brand_name">Brand name</option>
+                          <option value="excel_parameter" disabled={targetStatus !== 'custom_csv'}>Excel: this parameter column</option>
+                          <option value="custom">Custom value</option>
+                        </select>
+                        {mapping.source === 'custom' ? (
+                          <input value={mapping.value || ''} onChange={(e) => updateMapping({ value: e.target.value })} placeholder={`Value for {{${number}}}`} style={{ background: C.card, border: `1px solid ${mapping.value?.trim() ? C.border : C.red}`, borderRadius: 6, color: C.text, padding: '7px 8px', fontSize: 11, outline: 'none' }} />
+                        ) : (
+                          <span style={{ color: C.muted, fontSize: 10 }}>Filled automatically</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
             <div style={{ background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, padding: 13, marginBottom: 14 }}>
               <p style={{ fontSize: 9, color: C.muted, marginBottom: 7, letterSpacing: 0.8 }}>PREVIEW</p>
               <div style={{ background: C.accent + '15', border: '1px solid ' + C.accentDim, borderRadius: 9, padding: 11 }}>
@@ -385,7 +521,21 @@ export const CampaignsView = () => {
               <button onClick={() => { setReportModal(null); setIsLiveTracking(false); }} style={{ background: 'transparent', border: 'none', color: C.muted, fontSize: 18, cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
-              <p style={{ color: C.muted, fontSize: 13, marginBottom: 16 }}>Live logs for campaign: <strong style={{ color: C.text }}>{reportModal.name}</strong></p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 10, marginBottom: 18 }}>
+                {[
+                  ['Campaign', reportModal.name],
+                  ['Brand', reportModal.brand_name || reportModal.brand || 'All Brands'],
+                  ['Template', reportModal.template_name || 'Template unavailable'],
+                  ['Audience', reportModal.target_status || 'All leads'],
+                  ['Created', formatCampaignDateTime(reportModal.created_at)],
+                  [reportModal.scheduled_at ? 'Scheduled for' : 'Delivery', reportModal.scheduled_at ? formatCampaignDateTime(reportModal.scheduled_at) : `Immediate · ${formatCampaignDateTime(reportModal.created_at)}`]
+                ].map(([label, value]) => (
+                  <div key={label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', minWidth: 0 }}>
+                    <div style={{ color: C.muted, fontSize: 9, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+                    <div style={{ color: C.text, fontSize: 11, fontWeight: 600, wordBreak: 'break-word' }}>{value}</div>
+                  </div>
+                ))}
+              </div>
 
               {!loadingLogs && reportModal.status !== 'scheduled' && reportModal.status !== 'running' && campaignLogs.length > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>

@@ -128,11 +128,11 @@ async function sendRecipient(job, io) {
     const response = await axios.post(`https://graph.facebook.com/v19.0/${job.phone_number_id}/messages`,payload,{headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},timeout:20000});
     waMessageId = response.data?.messages?.[0]?.id || null;
     await db.query(`UPDATE alliance_whatsapp_campaign_recipients SET status='sent',wa_msg_id=$1,sent_at=NOW() WHERE id=$2`,[waMessageId,job.id]);
-    const rendered = mapping.reduce((body,field,index)=>body.replaceAll(`{{${index+1}}}`,valueFor(field,job)),job.template_body);
-    const inbox = await storeInboxMessage(job,waMessageId,rendered);
     if(job.followup_template_id){
       await db.query(`INSERT INTO alliance_whatsapp_followup_jobs(campaign_id,prospect_id,followup_no,scheduled_at,activity_cutoff_at,trigger_source) VALUES($1,$2,1,NOW()+($3*INTERVAL '1 minute'),NOW(),'initial_campaign') ON CONFLICT DO NOTHING`,[job.campaign_id,job.prospect_id,Number(job.followup_delay_minutes)||(Number(job.followup_delay_days)||4)*1440]);
     }
+    const rendered = mapping.reduce((body,field,index)=>body.replaceAll(`{{${index+1}}}`,valueFor(field,job)),job.template_body);
+    const inbox = await storeInboxMessage(job,waMessageId,rendered);
     io?.emit('alliance_campaign_updated',{campaign_id:job.campaign_id,prospect_id:job.prospect_id,channel:'whatsapp',status:'sent'});
     io?.emit('alliance_contacts_changed',{contact_id:String(inbox.contactId)});
     if(inbox.message) io?.emit('alliance_outgoing_message',{lead_id:String(inbox.contactId),message:{...inbox.message,type:inbox.message.msg_type,timestamp:inbox.message.sent_at,sender_type:'automation'}});
@@ -146,7 +146,9 @@ async function sendRecipient(job, io) {
   }
   await db.query(
     `UPDATE alliance_whatsapp_campaigns c SET status='completed',completed_at=NOW(),updated_at=NOW()
-     WHERE c.id=$1 AND NOT EXISTS (SELECT 1 FROM alliance_whatsapp_campaign_recipients r WHERE r.campaign_id=c.id AND r.status IN ('queued','sending'))`,
+     WHERE c.id=$1
+       AND NOT EXISTS (SELECT 1 FROM alliance_whatsapp_campaign_recipients r WHERE r.campaign_id=c.id AND r.status IN ('queued','sending'))
+       AND NOT EXISTS (SELECT 1 FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status IN ('pending','claimed','sending'))`,
     [job.campaign_id]
   );
 }
@@ -182,6 +184,28 @@ async function startAllianceWhatsAppCampaignWorker(io){
 
 async function claimAllianceWhatsAppFollowups(limit=20,claimId='n8n'){
   const client=await db.connect();try{await client.query('BEGIN');await client.query(`UPDATE alliance_whatsapp_followup_jobs SET status='pending',claimed_at=NULL,claim_id=NULL WHERE status='claimed' AND claimed_at<NOW()-INTERVAL '15 minutes'`);
+  // Recover an initial reminder if Meta accepted the campaign message but the
+  // process stopped before the original reminder job could be persisted.
+  await client.query(`INSERT INTO alliance_whatsapp_followup_jobs
+    (campaign_id,prospect_id,followup_no,scheduled_at,activity_cutoff_at,trigger_source)
+    SELECT c.id,r.prospect_id,1,
+      r.sent_at+(COALESCE(NULLIF(c.followup_delay_minutes,0),GREATEST(COALESCE(c.followup_delay_days,4),1)*1440)*INTERVAL '1 minute'),
+      r.sent_at,'initial_recovery'
+    FROM alliance_whatsapp_campaign_recipients r
+    JOIN alliance_whatsapp_campaigns c ON c.id=r.campaign_id
+    JOIN alliance_prospects p ON p.id=r.prospect_id
+    WHERE r.status IN ('sent','delivered','read') AND r.sent_at IS NOT NULL
+      AND c.followup_template_id IS NOT NULL AND c.status<>'stopped'
+      AND p.suppressed=FALSE AND p.status NOT IN ('converted','closed','complete','completed','not_interested','unsubscribed')
+      AND NOT EXISTS (SELECT 1 FROM alliance_whatsapp_followup_jobs existing
+        WHERE existing.campaign_id=c.id AND existing.prospect_id=r.prospect_id)
+    ON CONFLICT DO NOTHING`);
+  await client.query(`UPDATE alliance_whatsapp_campaigns c
+    SET status='running',completed_at=NULL,updated_at=NOW()
+    WHERE c.status='completed' AND EXISTS (
+      SELECT 1 FROM alliance_whatsapp_followup_jobs j
+      WHERE j.campaign_id=c.id AND j.status IN ('pending','claimed','sending')
+    )`);
   // Recover campaigns created under the former one-reminder rule. For each
   // latest sent reminder with no future job, create the next inactivity check.
   await client.query(`INSERT INTO alliance_whatsapp_followup_jobs(campaign_id,prospect_id,followup_no,scheduled_at,activity_cutoff_at,trigger_source)

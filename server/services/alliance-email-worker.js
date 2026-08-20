@@ -5,6 +5,60 @@ const { createAllianceEmailTransport, getAllianceEmailConfig, isAllianceSenderAl
 let interval;
 let processing = false;
 
+async function recoverMissingEmailFollowups() {
+  await db.query(
+    `INSERT INTO alliance_touches
+      (prospect_id,campaign_id,touch_no,channel,domain_id,subject,message_body,status,scheduled_at)
+     SELECT first_touch.prospect_id,first_touch.campaign_id,template.touch_no,'email',campaign.sender_domain_id,
+            template.subject,template.body,'scheduled',
+            COALESCE(campaign.started_at,first_touch.sent_at,NOW())+(template.delay_days*INTERVAL '1 day')
+     FROM alliance_touches first_touch
+     JOIN alliance_campaigns campaign ON campaign.id=first_touch.campaign_id
+     JOIN alliance_campaign_prospects enrollment ON enrollment.campaign_id=first_touch.campaign_id AND enrollment.prospect_id=first_touch.prospect_id
+     JOIN alliance_prospects prospect ON prospect.id=first_touch.prospect_id
+     JOIN alliance_campaign_templates template ON template.campaign_id=first_touch.campaign_id AND template.touch_no>1
+     WHERE first_touch.touch_no=1 AND first_touch.status='sent' AND first_touch.sent_at IS NOT NULL
+       AND campaign.status IN ('running','completed') AND enrollment.enrollment_status='in_sequence'
+       AND prospect.suppressed=FALSE AND prospect.status NOT IN ('converted','closed','not_interested','unsubscribed')
+       AND NOT EXISTS (SELECT 1 FROM alliance_replies reply WHERE reply.prospect_id=first_touch.prospect_id)
+     ON CONFLICT (campaign_id,prospect_id,touch_no) DO NOTHING`
+  );
+  await db.query(
+    `UPDATE alliance_campaigns campaign SET status='running',completed_at=NULL
+     WHERE campaign.status='completed' AND EXISTS (
+       SELECT 1 FROM alliance_touches touch
+       WHERE touch.campaign_id=campaign.id AND touch.status='scheduled'
+     )`
+  );
+  await db.query(
+    `UPDATE alliance_campaign_prospects enrollment SET next_touch_at=due.next_touch_at
+     FROM (SELECT campaign_id,prospect_id,MIN(scheduled_at) AS next_touch_at
+           FROM alliance_touches WHERE status='scheduled' GROUP BY campaign_id,prospect_id) due
+     WHERE enrollment.campaign_id=due.campaign_id AND enrollment.prospect_id=due.prospect_id`
+  );
+}
+
+async function finalizeEmailCampaigns() {
+  await db.query(
+    `UPDATE alliance_campaign_prospects enrollment
+     SET enrollment_status='completed',next_touch_at=NULL
+     WHERE enrollment.enrollment_status='in_sequence'
+       AND EXISTS (SELECT 1 FROM alliance_touches sent WHERE sent.campaign_id=enrollment.campaign_id AND sent.prospect_id=enrollment.prospect_id AND sent.status='sent')
+       AND NOT EXISTS (
+         SELECT 1 FROM alliance_campaign_templates template
+         WHERE template.campaign_id=enrollment.campaign_id
+           AND NOT EXISTS (SELECT 1 FROM alliance_touches expected WHERE expected.campaign_id=enrollment.campaign_id AND expected.prospect_id=enrollment.prospect_id AND expected.touch_no=template.touch_no)
+       )
+       AND NOT EXISTS (SELECT 1 FROM alliance_touches active WHERE active.campaign_id=enrollment.campaign_id AND active.prospect_id=enrollment.prospect_id AND active.status IN ('scheduled','processing','paused','failed'))`
+  );
+  await db.query(
+    `UPDATE alliance_campaigns campaign SET status='completed',completed_at=NOW()
+     WHERE campaign.status='running'
+       AND NOT EXISTS (SELECT 1 FROM alliance_campaign_prospects enrollment WHERE enrollment.campaign_id=campaign.id AND enrollment.enrollment_status NOT IN ('completed','stopped'))
+       AND NOT EXISTS (SELECT 1 FROM alliance_touches active WHERE active.campaign_id=campaign.id AND active.status IN ('scheduled','processing','paused','failed'))`
+  );
+}
+
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
@@ -123,12 +177,12 @@ async function scheduleRemainingTouches(touch) {
     `INSERT INTO alliance_touches
       (prospect_id, campaign_id, touch_no, channel, domain_id, subject, message_body, status, scheduled_at)
      SELECT $1, ct.campaign_id, ct.touch_no, 'email', $2, ct.subject, ct.body, 'scheduled',
-            NOW() + (ct.delay_days * INTERVAL '1 day')
+            COALESCE(c.started_at,$4::timestamptz,NOW()) + (ct.delay_days * INTERVAL '1 day')
      FROM alliance_campaign_templates ct
      JOIN alliance_campaigns c ON c.id = ct.campaign_id
      WHERE ct.campaign_id = $3 AND ct.touch_no > 1
      ON CONFLICT (campaign_id, prospect_id, touch_no) DO NOTHING`,
-    [touch.prospect_id, touch.sender_domain_id, touch.campaign_id]
+    [touch.prospect_id, touch.sender_domain_id, touch.campaign_id, touch.sent_at || new Date().toISOString()]
   );
   await db.query(
     `UPDATE alliance_campaign_prospects cp SET next_touch_at = due.next_touch_at
@@ -165,6 +219,7 @@ async function finalEligibilityCheck(touch) {
 
 async function deliverTouch(touch, io) {
   const config = getAllianceEmailConfig();
+  let deliveryRecorded = false;
   try {
     const stoppedBecause = await finalEligibilityCheck(touch);
     if (stoppedBecause) {
@@ -222,6 +277,7 @@ async function deliverTouch(touch, io) {
         [touch.id, touch.campaign_id, touch.prospect_id, result.messageId || null, JSON.stringify({ accepted: result.accepted, rejected: result.rejected, response: result.response })]
       );
       await client.query('COMMIT');
+      deliveryRecorded = true;
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -232,6 +288,15 @@ async function deliverTouch(touch, io) {
     io?.emit('alliance_campaign_updated', { campaign_id: touch.campaign_id, prospect_id: touch.prospect_id, touch_id: touch.id, status: 'sent' });
   } catch (error) {
     const reason = error.response || error.message || 'Zoho email delivery failed.';
+    if (deliveryRecorded) {
+      await db.query(
+        `INSERT INTO alliance_email_events (touch_id,campaign_id,prospect_id,event_type,event_payload)
+         VALUES ($1,$2,$3,'followup_schedule_failed',$4::jsonb)`,
+        [touch.id,touch.campaign_id,touch.prospect_id,JSON.stringify({ error:String(reason).slice(0,2000) })]
+      );
+      console.error('[Alliance email follow-up scheduling]', reason);
+      return;
+    }
     await db.query(
       `UPDATE alliance_touches SET status = 'failed', error_message = $1, processing_started_at = NULL WHERE id = $2`,
       [String(reason).slice(0, 2000), touch.id]
@@ -250,11 +315,13 @@ async function processAllianceEmailQueue(io) {
   if (processing) return;
   processing = true;
   try {
+    await recoverMissingEmailFollowups();
     for (let count = 0; count < 20; count += 1) {
       const touch = await claimDueTouch();
       if (!touch) break;
       await deliverTouch(touch, io);
     }
+    await finalizeEmailCampaigns();
   } finally {
     processing = false;
   }

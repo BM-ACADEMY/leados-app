@@ -50,7 +50,11 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
     }
   }, [campaignId, status, debouncedSearch, page]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 15000);
+    return () => clearInterval(timer);
+  }, [load]);
 
   useEffect(() => {
     const handleKey = (event) => { if (event.key === 'Escape') onClose(); };
@@ -88,10 +92,19 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
             <div><b>{campaign.skipped}</b><span>Skipped</span></div>
             {campaign.pending > 0 && <div><b>{campaign.pending}</b><span>Pending</span></div>}
             {campaign.followup_template_id && <div><b>{campaign.reminders_sent_total || 0}</b><span>Reminders sent</span></div>}
+            {campaign.followup_template_id && <div><b>{campaign.reminders_pending_total || 0}</b><span>Reminders pending</span></div>}
+            {campaign.followup_template_id && <div><b>{campaign.reminders_failed_total || 0}</b><span>Reminders failed</span></div>}
+            {campaign.followup_template_id && <div><b>{campaign.reminders_skipped_total || 0}</b><span>Reminders skipped</span></div>}
           </div>
         )}
         {campaign?.next_followup_at && (
           <div className="al-wa-detail-note">Next reminder due {formatDateTime(campaign.next_followup_at)}</div>
+        )}
+        {campaign?.latest_reminder_error && (
+          <div className="al-wa-detail-note">Latest reminder issue: {campaign.latest_reminder_error}</div>
+        )}
+        {campaign?.followup_template_id && Number(campaign.reminder_jobs_total) === 0 && Number(campaign.sent) > 0 && (
+          <div className="al-wa-detail-note">No reminder job exists for this sent campaign. Restart the backend so the reminder recovery worker can recreate it.</div>
         )}
 
         <div className="al-wa-detail-filters">
@@ -136,8 +149,9 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
                   <td>
                     {recipient.reminders_sent || 0}
                     {recipient.next_reminder_at ? ` · next ${formatDateTime(recipient.next_reminder_at)}` : ''}
+                    {!recipient.next_reminder_at && recipient.reminder_status ? ` · ${recipient.reminder_status}` : ''}
                   </td>
-                  <td>{recipient.error_message || '—'}</td>
+                  <td>{recipient.reminder_error || recipient.error_message || '—'}</td>
                 </tr>
               ))}
               {!loading && !recipients.length && (

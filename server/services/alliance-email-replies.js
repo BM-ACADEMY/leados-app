@@ -85,6 +85,19 @@ async function recordCampaignReply(inboundId, correlation, parsed) {
     const storedReply = reply.rowCount
       ? reply.rows[0]
       : (await client.query(`SELECT * FROM alliance_replies WHERE email_inbound_id=$1`, [inboundId])).rows[0];
+    // Outreach safety is synchronous with recording the reply. AI enrichment
+    // happens later and must never be able to delay or prevent this stop.
+    await client.query(
+      `UPDATE alliance_touches SET status='cancelled',error_message='Recipient replied; follow-ups stopped.'
+       WHERE campaign_id=$1 AND prospect_id=$2 AND status IN ('scheduled','paused') AND sent_at IS NULL`,
+      [correlation.campaign_id, correlation.prospect_id]
+    );
+    await client.query(
+      `UPDATE alliance_campaign_prospects
+       SET enrollment_status='stopped',stopped_at=NOW(),stop_reason='recipient_replied',next_touch_at=NULL
+       WHERE campaign_id=$1 AND prospect_id=$2`,
+      [correlation.campaign_id, correlation.prospect_id]
+    );
     await client.query('COMMIT');
     return storedReply;
   } catch (error) {

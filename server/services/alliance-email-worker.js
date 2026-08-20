@@ -5,6 +5,30 @@ const { createAllianceEmailTransport, getAllianceEmailConfig, isAllianceSenderAl
 let interval;
 let processing = false;
 
+async function stopFollowupsForRecordedReplies() {
+  await db.query(
+    `UPDATE alliance_touches touch
+     SET status='cancelled',processing_started_at=NULL,error_message='Recipient replied; follow-ups stopped.'
+     WHERE touch.status IN ('scheduled','paused') AND touch.sent_at IS NULL
+       AND EXISTS (
+         SELECT 1 FROM alliance_replies reply
+         JOIN alliance_email_inbound inbound ON inbound.id=reply.email_inbound_id
+         WHERE reply.prospect_id=touch.prospect_id AND inbound.campaign_id=touch.campaign_id
+       )`
+  );
+  await db.query(
+    `UPDATE alliance_campaign_prospects enrollment
+     SET enrollment_status='stopped',stopped_at=COALESCE(stopped_at,NOW()),
+         stop_reason='recipient_replied',next_touch_at=NULL
+     WHERE enrollment.enrollment_status<>'stopped'
+       AND EXISTS (
+         SELECT 1 FROM alliance_replies reply
+         JOIN alliance_email_inbound inbound ON inbound.id=reply.email_inbound_id
+         WHERE reply.prospect_id=enrollment.prospect_id AND inbound.campaign_id=enrollment.campaign_id
+       )`
+  );
+}
+
 async function recoverMissingEmailFollowups() {
   await db.query(
     `INSERT INTO alliance_touches
@@ -315,6 +339,7 @@ async function processAllianceEmailQueue(io) {
   if (processing) return;
   processing = true;
   try {
+    await stopFollowupsForRecordedReplies();
     await recoverMissingEmailFollowups();
     for (let count = 0; count < 20; count += 1) {
       const touch = await claimDueTouch();

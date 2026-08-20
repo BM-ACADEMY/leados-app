@@ -56,7 +56,7 @@ async function claimRecipient() {
   finally { client.release(); }
 }
 
-async function storeInboxMessage(job, waMessageId, rendered) {
+async function storeInboxMessageUnsafe(job, waMessageId, rendered) {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -117,6 +117,25 @@ async function storeInboxMessage(job, waMessageId, rendered) {
   finally { client.release(); }
 }
 
+async function storeInboxMessageSafely(job, waMessageId, rendered) {
+  try {
+    return await storeInboxMessageUnsafe(job, waMessageId, rendered);
+  } catch (error) {
+    // Meta already accepted the message. Inbox mirroring is secondary and
+    // must not mark a real send failed or cause a duplicate retry.
+    console.error('[Alliance WhatsApp inbox mirror]', {
+      campaign_id: job.campaign_id,
+      prospect_id: job.prospect_id,
+      followup_no: job.followup_no || null,
+      wa_msg_id: waMessageId,
+      error: error.message,
+    });
+    return { contactId: null, message: null };
+  }
+}
+
+const storeInboxMessage = storeInboxMessageSafely;
+
 async function sendRecipient(job, io) {
   let waMessageId = null;
   try {
@@ -132,9 +151,9 @@ async function sendRecipient(job, io) {
       await db.query(`INSERT INTO alliance_whatsapp_followup_jobs(campaign_id,prospect_id,followup_no,scheduled_at,activity_cutoff_at,trigger_source) VALUES($1,$2,1,NOW()+($3*INTERVAL '1 minute'),NOW(),'initial_campaign') ON CONFLICT DO NOTHING`,[job.campaign_id,job.prospect_id,Number(job.followup_delay_minutes)||(Number(job.followup_delay_days)||4)*1440]);
     }
     const rendered = mapping.reduce((body,field,index)=>body.replaceAll(`{{${index+1}}}`,valueFor(field,job)),job.template_body);
-    const inbox = await storeInboxMessage(job,waMessageId,rendered);
+    const inbox = await storeInboxMessageSafely(job,waMessageId,rendered);
     io?.emit('alliance_campaign_updated',{campaign_id:job.campaign_id,prospect_id:job.prospect_id,channel:'whatsapp',status:'sent'});
-    io?.emit('alliance_contacts_changed',{contact_id:String(inbox.contactId)});
+    if(inbox.contactId) io?.emit('alliance_contacts_changed',{contact_id:String(inbox.contactId)});
     if(inbox.message) io?.emit('alliance_outgoing_message',{lead_id:String(inbox.contactId),message:{...inbox.message,type:inbox.message.msg_type,timestamp:inbox.message.sent_at,sender_type:'automation'}});
   } catch (error) {
     const reason=error.response?.data?.error?.message||error.message||'WhatsApp send failed.';
@@ -184,6 +203,11 @@ async function startAllianceWhatsAppCampaignWorker(io){
 
 async function claimAllianceWhatsAppFollowups(limit=20,claimId='n8n'){
   const client=await db.connect();try{await client.query('BEGIN');await client.query(`UPDATE alliance_whatsapp_followup_jobs SET status='pending',claimed_at=NULL,claim_id=NULL WHERE status='claimed' AND claimed_at<NOW()-INTERVAL '15 minutes'`);
+  // Repair reminders skipped by the former SQL column collision where the
+  // prospect status (`in_process`) overwrote the actual reminder job status.
+  await client.query(`UPDATE alliance_whatsapp_followup_jobs
+    SET status='pending',claimed_at=NULL,claim_id=NULL,error_message=NULL
+    WHERE status='skipped' AND error_message='job_in_process'`);
   // Recover an initial reminder if Meta accepted the campaign message but the
   // process stopped before the original reminder job could be persisted.
   await client.query(`INSERT INTO alliance_whatsapp_followup_jobs
@@ -268,11 +292,11 @@ async function scheduleAllianceInactivityReminder(prospectId, activityAt = new D
 }
 
 async function sendAllianceWhatsAppFollowup(jobId,io){
-  const result=await db.query(`SELECT j.*,c.status AS campaign_status,c.phone_number_id,c.followup_template_name AS template_name,c.followup_template_language AS template_language,c.followup_template_body AS template_body,c.followup_parameter_mapping AS parameter_mapping,t.buttons AS template_buttons,c.followup_repeat_days,c.max_followups,c.created_at AS campaign_created_at,p.name,p.business_name,p.location,p.phone,p.email,p.audience,p.industry,p.status,p.status AS prospect_status,p.consent,p.consent_source,p.suppressed,s.access_token_env,cv.last_inbound_at FROM alliance_whatsapp_followup_jobs j JOIN alliance_whatsapp_campaigns c ON c.id=j.campaign_id LEFT JOIN templates t ON t.id=c.followup_template_id JOIN alliance_prospects p ON p.id=j.prospect_id LEFT JOIN alliance_inbox_settings s ON s.phone_number_id=c.phone_number_id LEFT JOIN alliance_inbox_contacts ic ON ic.prospect_id=p.id LEFT JOIN alliance_inbox_conversations cv ON cv.contact_id=ic.id WHERE j.id=$1`,[jobId]);if(!result.rowCount)throw Object.assign(new Error('Follow-up job not found.'),{status:404});const job=result.rows[0];
-  const reason=!['claimed','pending'].includes(job.status)?`job_${job.status}`:job.campaign_status==='stopped'?'campaign_stopped':!job.consent||!job.consent_source?'whatsapp_consent_missing':job.suppressed?'suppressed':['converted','closed','complete','completed','not_interested','unsubscribed'].includes(job.prospect_status)?`prospect_${job.prospect_status}`:job.last_inbound_at&&new Date(job.last_inbound_at)>new Date(job.activity_cutoff_at||job.campaign_created_at)?'recipient_replied_after_latest_activity':null;
+  const result=await db.query(`SELECT j.*,j.status AS job_status,c.status AS campaign_status,c.phone_number_id,c.followup_template_name AS template_name,c.followup_template_language AS template_language,c.followup_template_body AS template_body,c.followup_parameter_mapping AS parameter_mapping,t.buttons AS template_buttons,c.followup_repeat_days,c.max_followups,c.created_at AS campaign_created_at,p.name,p.business_name,p.location,p.phone,p.email,p.audience,p.industry,p.status AS prospect_status,p.consent,p.consent_source,p.suppressed,s.access_token_env,cv.last_inbound_at FROM alliance_whatsapp_followup_jobs j JOIN alliance_whatsapp_campaigns c ON c.id=j.campaign_id LEFT JOIN templates t ON t.id=c.followup_template_id JOIN alliance_prospects p ON p.id=j.prospect_id LEFT JOIN alliance_inbox_settings s ON s.phone_number_id=c.phone_number_id LEFT JOIN alliance_inbox_contacts ic ON ic.prospect_id=p.id LEFT JOIN alliance_inbox_conversations cv ON cv.contact_id=ic.id WHERE j.id=$1`,[jobId]);if(!result.rowCount)throw Object.assign(new Error('Follow-up job not found.'),{status:404});const job=result.rows[0];
+  const reason=!['claimed','pending'].includes(job.job_status)?`job_${job.job_status}`:job.campaign_status==='stopped'?'campaign_stopped':!job.consent||!job.consent_source?'whatsapp_consent_missing':job.suppressed?'suppressed':['converted','closed','complete','completed','not_interested','unsubscribed'].includes(job.prospect_status)?`prospect_${job.prospect_status}`:job.last_inbound_at&&new Date(job.last_inbound_at)>new Date(job.activity_cutoff_at||job.campaign_created_at)?'recipient_replied_after_latest_activity':null;
   if(reason){await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='skipped',error_message=$1 WHERE id=$2`,[reason,job.id]);return{sent:false,skipped:true,reason};}
   await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='sending',error_message=NULL WHERE id=$1`,[job.id]);try{const token=tokenFor(job);if(!token)throw new Error('Alliance WhatsApp access token is missing.');const mapping=Array.isArray(job.parameter_mapping)?job.parameter_mapping:[];const parameters=mapping.map(field=>valueFor(field,job));const payload={messaging_product:'whatsapp',to:job.phone,type:'template',template:{name:job.template_name,language:{code:job.template_language||'en'},...(parameters.length?{components:[{type:'body',parameters:parameters.map(text=>({type:'text',text}))}]}:{})}};const response=await axios.post(`https://graph.facebook.com/v19.0/${job.phone_number_id}/messages`,payload,{headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},timeout:20000});const waMessageId=response.data?.messages?.[0]?.id||null;await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='sent',wa_msg_id=$1,sent_at=NOW() WHERE id=$2`,[waMessageId,job.id]);const rendered=mapping.reduce((body,field,index)=>body.replaceAll(`{{${index+1}}}`,valueFor(field,job)),job.template_body);const inbox=await storeInboxMessage(job,waMessageId,rendered);
   const repeatDays=Math.min(Math.max(Number(job.followup_repeat_days)||4,1),30);const nextNo=Number(job.followup_no)+1;const withinLimit=Number(job.max_followups)===0||nextNo<=Number(job.max_followups);if(withinLimit){await db.query(`INSERT INTO alliance_whatsapp_followup_jobs(campaign_id,prospect_id,followup_no,scheduled_at,activity_cutoff_at,trigger_source) VALUES($1,$2,$3,NOW()+($4*INTERVAL '1 day'),NOW(),'recurring_inactivity') ON CONFLICT DO NOTHING`,[job.campaign_id,job.prospect_id,nextNo,repeatDays]);}
-  io?.emit('alliance_campaign_updated',{campaign_id:job.campaign_id,prospect_id:job.prospect_id,channel:'whatsapp_followup',status:'sent'});io?.emit('alliance_contacts_changed',{contact_id:String(inbox.contactId)});if(inbox.message)io?.emit('alliance_outgoing_message',{lead_id:String(inbox.contactId),message:{...inbox.message,type:inbox.message.msg_type,timestamp:inbox.message.sent_at,sender_type:'automation'}});return{sent:true,wa_msg_id:waMessageId,next_followup_scheduled:withinLimit};}catch(error){const reason=error.response?.data?.error?.message||error.message;await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='failed',error_message=$1 WHERE id=$2`,[String(reason).slice(0,2000),job.id]);throw error;}
+  io?.emit('alliance_campaign_updated',{campaign_id:job.campaign_id,prospect_id:job.prospect_id,channel:'whatsapp_followup',status:'sent'});if(inbox.contactId)io?.emit('alliance_contacts_changed',{contact_id:String(inbox.contactId)});if(inbox.message)io?.emit('alliance_outgoing_message',{lead_id:String(inbox.contactId),message:{...inbox.message,type:inbox.message.msg_type,timestamp:inbox.message.sent_at,sender_type:'automation'}});return{sent:true,wa_msg_id:waMessageId,next_followup_scheduled:withinLimit};}catch(error){const reason=error.response?.data?.error?.message||error.message;await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='failed',error_message=$1 WHERE id=$2`,[String(reason).slice(0,2000),job.id]);throw error;}
 }
 module.exports={startAllianceWhatsAppCampaignWorker,processAllianceWhatsAppCampaigns,processAllianceWhatsAppFollowups,claimAllianceWhatsAppFollowups,sendAllianceWhatsAppFollowup,scheduleAllianceInactivityReminder};

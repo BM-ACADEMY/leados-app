@@ -1867,6 +1867,9 @@ router.get('/campaigns/:id/detail', async (req, res) => {
               COUNT(DISTINCT cp.prospect_id)::int AS prospects,
               COUNT(DISTINCT t.id) FILTER (WHERE t.status='sent')::int AS sent,
               COUNT(DISTINCT t.id) FILTER (WHERE t.status='failed')::int AS failed,
+              COUNT(DISTINCT t.id) FILTER (WHERE t.status='processing')::int AS processing,
+              COUNT(DISTINCT t.id) FILTER (WHERE t.status='cancelled')::int AS cancelled,
+              (SELECT error_message FROM alliance_touches issue WHERE issue.campaign_id=c.id AND issue.error_message IS NOT NULL ORDER BY issue.id DESC LIMIT 1) AS latest_touch_error,
               COUNT(DISTINCT r.prospect_id)::int AS replied
        FROM alliance_campaigns c
        LEFT JOIN alliance_audiences a ON a.code=c.audience
@@ -1882,7 +1885,9 @@ router.get('/campaigns/:id/detail', async (req, res) => {
       db.query(`SELECT touch_no,
         COUNT(*) FILTER (WHERE status='sent')::int AS sent,
         COUNT(*) FILTER (WHERE status IN ('scheduled','paused'))::int AS pending,
-        COUNT(*) FILTER (WHERE status='failed')::int AS failed
+        COUNT(*) FILTER (WHERE status='processing')::int AS processing,
+        COUNT(*) FILTER (WHERE status='failed')::int AS failed,
+        COUNT(*) FILTER (WHERE status='cancelled')::int AS cancelled
         FROM alliance_touches WHERE campaign_id=$1 GROUP BY touch_no ORDER BY touch_no`, [campaignId]),
       db.query(`SELECT COUNT(*)::int AS total FROM alliance_campaign_prospects cp
         JOIN alliance_prospects p ON p.id=cp.prospect_id
@@ -2235,7 +2240,11 @@ router.get('/whatsapp-campaigns/:id',async(req,res)=>{
       COUNT(r.id) FILTER(WHERE r.status='cancelled')::int AS cancelled,
       (SELECT MIN(j.scheduled_at) FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status IN ('pending','claimed')) AS next_followup_at,
       (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status='sent') AS reminders_sent_total,
-      (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status='failed') AS reminders_failed_total
+      (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status='failed') AS reminders_failed_total,
+      (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status IN ('pending','claimed','sending')) AS reminders_pending_total,
+      (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.status='skipped') AS reminders_skipped_total,
+      (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id) AS reminder_jobs_total,
+      (SELECT j.error_message FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=c.id AND j.error_message IS NOT NULL ORDER BY j.id DESC LIMIT 1) AS latest_reminder_error
       FROM alliance_whatsapp_campaigns c LEFT JOIN alliance_whatsapp_campaign_recipients r ON r.campaign_id=c.id
       WHERE c.id=$1 GROUP BY c.id`,[req.params.id]);
     if(!campaignResult.rowCount)return res.status(404).json({error:'WhatsApp campaign not found.'});
@@ -2250,7 +2259,10 @@ router.get('/whatsapp-campaigns/:id',async(req,res)=>{
     const recipients=await db.query(`SELECT r.id,r.prospect_id,r.status,r.wa_msg_id,r.sent_at,r.scheduled_at,r.error_message,
         p.name,p.business_name,p.phone,p.audience,p.location,
         (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id AND j.status='sent') AS reminders_sent,
-        (SELECT MIN(j.scheduled_at) FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id AND j.status IN ('pending','claimed')) AS next_reminder_at
+        (SELECT MIN(j.scheduled_at) FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id AND j.status IN ('pending','claimed')) AS next_reminder_at,
+        (SELECT j.status FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id ORDER BY j.id DESC LIMIT 1) AS reminder_status,
+        (SELECT j.scheduled_at FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id ORDER BY j.id DESC LIMIT 1) AS reminder_scheduled_at,
+        (SELECT j.error_message FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id ORDER BY j.id DESC LIMIT 1) AS reminder_error
       FROM alliance_whatsapp_campaign_recipients r JOIN alliance_prospects p ON p.id=r.prospect_id
       WHERE ${where.join(' AND ')} ORDER BY r.id LIMIT ${limitParam} OFFSET ${offsetParam}`,values);
     res.json({campaign:campaignResult.rows[0],recipients:recipients.rows,total:countResult.rows[0].total,limit,offset});

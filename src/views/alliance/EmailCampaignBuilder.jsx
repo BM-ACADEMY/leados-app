@@ -129,12 +129,15 @@ export const EmailCampaignBuilder = () => {
   }, []);
 
   useEffect(() => {
-    Promise.all([api.getAllianceCampaignBuilderOptions(), api.getAllianceAudiences()]).then(([data, audienceData]) => {
-      setOptions(data);
-      setAudienceConfigs(audienceData.audiences || []);
-      if (data.senders?.length === 1) setForm((current) => ({ ...current, sender_domain_id: String(data.senders[0].id) }));
-    }).catch((error) => toast.error(error.message));
+    api.getAllianceAudiences().then((data) => setAudienceConfigs(data.audiences || [])).catch((error) => toast.error(error.message));
   }, []);
+
+  useEffect(() => {
+    api.getAllianceCampaignBuilderOptions({ audience: filters.audience }).then((data) => {
+      setOptions(data);
+      if (data.senders?.length === 1) setForm((current) => ({ ...current, sender_domain_id: current.sender_domain_id || String(data.senders[0].id) }));
+    }).catch((error) => toast.error(error.message));
+  }, [filters.audience]);
 
   useEffect(() => {
     let mounted = true;
@@ -203,7 +206,9 @@ export const EmailCampaignBuilder = () => {
   const minimumScheduleTime = toLocalDateTimeInput(new Date(Date.now() + 5 * 60 * 1000));
 
   const updateFilter = (key, value) => {
-    setFilters((current) => ({ ...current, [key]: value }));
+    setFilters((current) => key === 'audience'
+      ? { ...current, audience: value, industry: '', status: '', source: '', location: '' }
+      : { ...current, [key]: value });
     setPage(1);
     if (key === 'audience') setSelectedLeads({});
   };

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../../services/api.js';
 import { DatePicker } from './DatePicker.jsx';
@@ -27,6 +27,9 @@ const emptyCreate = { ...emptyEdit, audience: '', custom_fields: {} };
 export const LeadList = () => {
   const [prospects, setProspects] = useState([]);
   const [audiences, setAudiences] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
+  const [audienceFilter, setAudienceFilter] = useState('');
+  const [campaignFilter, setCampaignFilter] = useState('');
   const [status, setStatus] = useState('all');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -51,7 +54,7 @@ export const LeadList = () => {
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [status, debouncedSearch, dateFrom, dateTo]);
+  useEffect(() => { setPage(1); }, [status, audienceFilter, campaignFilter, debouncedSearch, dateFrom, dateTo]);
 
   const loadProspects = async () => {
     setLoading(true);
@@ -61,6 +64,8 @@ export const LeadList = () => {
         limit: PAGE_SIZE,
         offset: (page - 1) * PAGE_SIZE,
         status: status === 'all' ? '' : status,
+        audience: audienceFilter,
+        campaign_name: campaignFilter,
         search: debouncedSearch,
         dateFrom,
         dateTo,
@@ -72,8 +77,14 @@ export const LeadList = () => {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { loadProspects(); }, [page, status, debouncedSearch, dateFrom, dateTo]);
-  useEffect(() => { api.getAllianceAudiences().then((data) => setAudiences(data.audiences || [])).catch(() => {}); }, []);
+  useEffect(() => { loadProspects(); }, [page, status, audienceFilter, campaignFilter, debouncedSearch, dateFrom, dateTo]);
+  useEffect(() => {
+    Promise.all([api.getAllianceAudiences(), api.getAllianceCampaigns({ limit: 5000 })])
+      .then(([audienceData, campaignData]) => {
+        setAudiences(audienceData.audiences || []);
+        setCampaigns(campaignData.campaigns || []);
+      }).catch(() => {});
+  }, []);
 
   const audienceLabel = (code) => audiences.find((item) => item.code === code)?.label || code;
   const formatDate = (value) => {
@@ -83,6 +94,18 @@ export const LeadList = () => {
     return date.toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: '2-digit' });
   };
   const selectedAudience = audiences.find((item) => item.code === createForm.audience);
+  const filterCampaigns = [...new Map(
+    (audienceFilter ? campaigns.filter((item) => item.audience === audienceFilter) : campaigns)
+      .map((item) => [item.name, item])
+  ).values()];
+  const dynamicFields = useMemo(() => {
+    const applicableAudiences = audienceFilter ? audiences.filter((item) => item.code === audienceFilter) : audiences;
+    const fields = new Map();
+    applicableAudiences.forEach((item) => (item.fields || []).forEach((field) => {
+      if (!fields.has(field.field_key)) fields.set(field.field_key, field);
+    }));
+    return [...fields.values()];
+  }, [audiences, audienceFilter]);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const usesEmail = (channel) => channel === 'email' || channel === 'both';
   const usesWhatsApp = (channel) => channel === 'whatsapp' || channel === 'both';
@@ -175,6 +198,8 @@ export const LeadList = () => {
 
       <div className="al-fields" style={{ alignItems: 'flex-end' }}>
         <div className="al-field" style={{ flex: 2 }}><label>Search</label><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search business, contact, or email" /></div>
+        <div className="al-field"><label>Audience</label><select value={audienceFilter} onChange={(event) => { setAudienceFilter(event.target.value); setCampaignFilter(''); }}><option value="">All audiences</option>{audiences.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select></div>
+        <div className="al-field"><label>Campaign</label><select value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value)}><option value="">All campaigns</option>{filterCampaigns.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></div>
         <div className="al-field"><label>Status</label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="new">New</option><option value="pending">Pending</option><option value="in_process">In Process</option><option value="interested">Interested</option><option value="not_interested">Not Interested</option><option value="converted">Converted</option></select></div>
         <div className="al-field"><label>From date</label><DatePicker value={dateFrom} max={dateTo} onChange={setDateFrom} /></div>
         <div className="al-field"><label>To date</label><DatePicker value={dateTo} min={dateFrom} onChange={setDateTo} /></div>
@@ -184,8 +209,8 @@ export const LeadList = () => {
 
       <div style={{ background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 12, overflowX: 'auto' }}>
         {error ? <p style={{ padding: 24, color: '#EF9A9A' }}>{error}</p> : loading ? <p style={{ padding: 24, color: 'var(--al-muted)' }}>Loading imported leads…</p> : (
-          <table className="al-table" style={{ minWidth: 1700, whiteSpace: 'nowrap' }}>
-            <thead><tr><th>Business / Contact</th><th>Email</th><th>Phone</th><th>AI Score</th><th>Audience</th><th>Industry / Location</th><th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Custom data</th><th>Actions</th></tr></thead>
+          <table className="al-table" style={{ minWidth: 1750 + dynamicFields.length * 150, whiteSpace: 'nowrap' }}>
+            <thead><tr><th>Business / Contact</th><th>Email</th><th>Phone</th><th>AI Score</th><th>Audience</th><th>Industry / Location</th><th>Source</th>{dynamicFields.map((field) => <th key={field.field_key}>{field.label || field.field_key.replaceAll('_', ' ')}</th>)}<th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Actions</th></tr></thead>
             <tbody>
               {prospects.map((prospect) => (
                 <tr key={prospect.id}>
@@ -194,16 +219,17 @@ export const LeadList = () => {
                   <td><ScoreBar score={Number(prospect.ai_score) || 10} /></td>
                   <td><span className={`al-tag ${prospect.audience}`}>{audienceLabel(prospect.audience)}</span></td>
                   <td>{prospect.industry || '—'} <span style={{ color: 'var(--al-muted)' }}>· {prospect.location || '—'}</span></td>
+                  <td>{prospect.source || '—'}</td>
+                  {dynamicFields.map((field) => <td key={field.field_key}>{String(prospect.custom_fields?.[field.field_key] ?? '') || '—'}</td>)}
                   <td><div style={{ display: 'flex', gap: 5 }}>{usesEmail(prospect.channel) && <span className="al-tag email">email</span>}{usesWhatsApp(prospect.channel) && <span className="al-tag wa">whatsapp</span>}</div></td>
                   <td>{usesWhatsApp(prospect.channel) ? (prospect.consent ? `Yes · ${prospect.consent_source || 'recorded'}` : 'No') : 'Not required'}</td>
                   <td>{prospect.campaign_name || '—'}</td>
                   <td><span className={`al-st ${statusMap[prospect.status]?.cls || 'new'}`}><span className="d" />{statusMap[prospect.status]?.label || prospect.status}</span></td>
                   <td>{formatDate(prospect.created_at)}</td>
-                  <td style={{ maxWidth: 180, fontSize: 11.5, color: 'var(--al-muted)' }}>{Object.entries(prospect.custom_fields || {}).map(([key, value]) => `${key}: ${value}`).join(' · ') || '—'}</td>
                   <td><div style={{ display: 'flex', gap: 6 }}><button className="al-btn ghost sm" onClick={() => openEdit(prospect)}>Edit</button><button className="al-btn ghost sm" disabled={deleting === prospect.id} onClick={() => setDeleteCandidate(prospect)} style={{ color: '#EF9A9A' }}>{deleting === prospect.id ? 'Deleting…' : 'Delete'}</button></div></td>
                 </tr>
               ))}
-              {!prospects.length && <tr><td colSpan={13} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
+              {!prospects.length && <tr><td colSpan={13 + dynamicFields.length} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
             </tbody>
           </table>
         )}

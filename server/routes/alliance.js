@@ -18,7 +18,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-const CHANNELS = new Set(['auto', 'email', 'whatsapp']);
+const CHANNELS = new Set(['auto', 'email', 'whatsapp', 'both']);
 const TRUTHY = new Set(['true', 'yes', 'y', '1', 'opted_in', 'opt-in']);
 const COMMON_FIELDS = new Set(['name', 'business_name', 'business name', 'organisation name', 'organization name', 'email', 'phone', 'mobile', 'audience', 'industry', 'location', 'source', 'channel_pref', 'channel preference', 'consent', 'whatsapp_consent', 'whatsapp consent', 'consent_source', 'consent source']);
 const SYSTEM_COLUMN_KEYS = ['name','business_name','email','phone','audience','industry','location','source','channel_pref','consent','consent_source'];
@@ -660,6 +660,18 @@ router.post('/audiences', async (req, res) => {
            VALUES ($1,$2,$3,$4,$5) ON CONFLICT (audience, channel, touch_no) DO NOTHING`,
           [code, channel, touchNo, delayDays, purpose]
         );
+        if (channel === 'email') {
+          const subject = touchNo === 1 ? 'Introduction for {{org}}' : `Follow-up ${touchNo} for {{org}}`;
+          const messageType = touchNo === 1 ? 'introduction' : 'follow-up message';
+          await client.query(
+            `INSERT INTO alliance_templates
+               (audience,channel,touch_no,template_name,subject,body,provider_status,active)
+             VALUES ($1,'email',$2,$3,$4,$5,'draft',TRUE)
+             ON CONFLICT (audience,channel,touch_no) DO NOTHING`,
+            [code, touchNo, `Touch ${touchNo}`, subject,
+              `Hi {{name}},\n\nAdd your ${messageType} for {{org}} here.\n\nTo stop receiving these, reply "unsubscribe".`]
+          );
+        }
       }
     }
     await client.query('COMMIT');
@@ -919,6 +931,18 @@ router.get('/prospects', async (req, res) => {
   const where = [];
   const add = (sql, value) => { values.push(value); where.push(sql.replace('?', `$${values.length}`)); };
   if (req.query.audience) add('p.audience = ?', req.query.audience);
+  const campaignName = text(req.query.campaign_name);
+  if (campaignName) {
+    values.push(campaignName);
+    where.push(`EXISTS (
+      SELECT 1 FROM alliance_campaigns selected_campaign
+      WHERE selected_campaign.name = $${values.length}
+        AND (selected_campaign.id = p.campaign_id OR EXISTS (
+          SELECT 1 FROM alliance_campaign_prospects selected_cp
+          WHERE selected_cp.prospect_id = p.id AND selected_cp.campaign_id = selected_campaign.id
+        ))
+    )`);
+  }
   if (req.query.status) add('p.status = ?', req.query.status);
   if (req.query.channel && ['email', 'whatsapp'].includes(req.query.channel)) {
     add(`p.channel IN (?, 'both')`, req.query.channel);
@@ -933,8 +957,8 @@ router.get('/prospects', async (req, res) => {
           REGEXP_REPLACE(COALESCE(p.phone, ''), '[^0-9]', '', 'g') LIKE '%' ||
           REGEXP_REPLACE(${searchParam}, '[^0-9]', '', 'g') || '%'))`);
   }
-  if (req.query.dateFrom) add('p.created_at >= ?::date', req.query.dateFrom);
-  if (req.query.dateTo) add(`p.created_at < (?::date + INTERVAL '1 day')`, req.query.dateTo);
+  if (req.query.dateFrom) add(`(p.created_at AT TIME ZONE 'Asia/Kolkata')::date >= ?::date`, req.query.dateFrom);
+  if (req.query.dateTo) add(`(p.created_at AT TIME ZONE 'Asia/Kolkata')::date <= ?::date`, req.query.dateTo);
 
   const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 500);
   const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -952,9 +976,16 @@ router.get('/prospects', async (req, res) => {
       `SELECT p.id, p.name, p.business_name, p.location, p.industry, p.audience, p.channel,
               p.status, p.current_touch, p.ai_score, p.email, p.phone, p.source,
               p.consent, p.consent_source, p.custom_fields, p.updated_at,
-              c.id AS campaign_id, c.name AS campaign_name, p.created_at
+              p.campaign_id, linked_campaigns.campaign_name, p.created_at
        FROM alliance_prospects p
-       LEFT JOIN alliance_campaigns c ON c.id = p.campaign_id
+       LEFT JOIN LATERAL (
+         SELECT STRING_AGG(DISTINCT linked.name, ', ' ORDER BY linked.name) AS campaign_name
+         FROM alliance_campaigns linked
+         WHERE linked.id = p.campaign_id OR EXISTS (
+           SELECT 1 FROM alliance_campaign_prospects linked_cp
+           WHERE linked_cp.prospect_id = p.id AND linked_cp.campaign_id = linked.id
+         )
+       ) linked_campaigns ON TRUE
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY p.created_at DESC
        LIMIT ${limitParam} OFFSET ${offsetParam}`,
@@ -969,12 +1000,14 @@ router.get('/prospects', async (req, res) => {
 
 router.put('/audiences/:code', async (req, res) => {
   const code = text(req.params.code).toLowerCase();
+  const newCode = text(req.body.code || code).toLowerCase();
   const label = text(req.body.label);
   const brand = text(req.body.brand);
   const defaultChannel = text(req.body.default_channel).toLowerCase();
   const fields = Array.isArray(req.body.fields) ? req.body.fields : [];
   let systemColumns;
   try { systemColumns = normalizeSystemColumns(req.body.system_columns); } catch (error) { return res.status(error.status || 400).json({ error: error.message }); }
+  if (!/^[a-z][a-z0-9_]*$/.test(newCode)) return res.status(400).json({ error: 'Audience code must use lowercase letters, numbers, and underscores.' });
   if (!label) return res.status(400).json({ error: 'Audience label is required.' });
   if (!['email', 'whatsapp', 'both'].includes(defaultChannel)) return res.status(400).json({ error: 'Default channel must be email, whatsapp, or both.' });
   try { validateChannelSystemColumns(systemColumns, defaultChannel); } catch (error) { return res.status(error.status || 400).json({ error: error.message }); }
@@ -993,13 +1026,22 @@ router.put('/audiences/:code', async (req, res) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    if (newCode !== code) {
+      const duplicate = await client.query(`SELECT 1 FROM alliance_audiences WHERE code=$1`, [newCode]);
+      if (duplicate.rowCount) throw Object.assign(new Error('That audience code already exists.'), { status: 409 });
+    }
     const audienceResult = await client.query(
-      `UPDATE alliance_audiences SET label=$1, brand=$2, default_channel=$3, column_config=$4::jsonb, updated_at=NOW()
-       WHERE code=$5 AND active=TRUE RETURNING *`,
-      [label, brand || null, defaultChannel, JSON.stringify(systemColumns), code]
+      `UPDATE alliance_audiences SET code=$1,label=$2,brand=$3,default_channel=$4,column_config=$5::jsonb,updated_at=NOW()
+       WHERE code=$6 AND active=TRUE RETURNING *`,
+      [newCode, label, brand || null, defaultChannel, JSON.stringify(systemColumns), code]
     );
     if (!audienceResult.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Audience not found.' }); }
     const audienceId = audienceResult.rows[0].id;
+    if (newCode !== code) {
+      for (const table of ['alliance_prospects', 'alliance_campaigns', 'alliance_sequences', 'alliance_templates', 'alliance_kb', 'alliance_objections', 'alliance_whatsapp_campaigns']) {
+        await client.query(`UPDATE ${table} SET audience=$1 WHERE audience=$2`, [newCode, code]);
+      }
+    }
     for (const field of normalizedFields) {
       if (field.originalFieldKey === field.fieldKey) continue;
       if (!/^[a-z][a-z0-9_]*$/.test(field.originalFieldKey)) throw Object.assign(new Error(`Invalid original field key: ${field.originalFieldKey}`), { status: 400 });
@@ -1007,7 +1049,7 @@ router.put('/audiences/:code', async (req, res) => {
         `UPDATE alliance_prospects
          SET custom_fields = (custom_fields - $1) || jsonb_build_object($2, COALESCE(custom_fields -> $2, custom_fields -> $1)), updated_at=NOW()
          WHERE audience=$3 AND custom_fields ? $1`,
-        [field.originalFieldKey, field.fieldKey, code]
+        [field.originalFieldKey, field.fieldKey, newCode]
       );
     }
     await client.query(`UPDATE alliance_audience_fields SET active=FALSE WHERE audience_id=$1`, [audienceId]);
@@ -1021,7 +1063,7 @@ router.put('/audiences/:code', async (req, res) => {
       );
     }
     await client.query('COMMIT');
-    res.json({ success: true, audience: { ...audienceResult.rows[0], fields: normalizedFields }, message: 'Audience configuration updated.' });
+    res.json({ success: true, audience: { ...audienceResult.rows[0], fields: normalizedFields }, message: newCode === code ? 'Audience configuration updated.' : `Audience renamed to ${newCode}.` });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Alliance audience update failed:', error);
@@ -1260,8 +1302,8 @@ function campaignProspectFilters(query) {
   if (query.status) add('p.status = ?', text(query.status));
   if (query.source) add('p.source = ?', text(query.source));
   if (query.location) add('p.location = ?', text(query.location));
-  if (query.dateFrom) add('p.created_at >= ?::date', text(query.dateFrom));
-  if (query.dateTo) add(`p.created_at < (?::date + INTERVAL '1 day')`, text(query.dateTo));
+  if (query.dateFrom) add(`(p.created_at AT TIME ZONE 'Asia/Kolkata')::date >= ?::date`, text(query.dateFrom));
+  if (query.dateTo) add(`(p.created_at AT TIME ZONE 'Asia/Kolkata')::date <= ?::date`, text(query.dateTo));
   if (query.tag) add('? = ANY(p.tags)', text(query.tag));
   if (query.search) {
     values.push(text(query.search));
@@ -1271,16 +1313,28 @@ function campaignProspectFilters(query) {
   return { values, where };
 }
 
-router.get('/campaign-builder/options', async (_req, res) => {
+router.get('/campaign-builder/options', async (req, res) => {
   try {
+    const audience = text(req.query.audience).toLowerCase();
+    const facetValues = [];
+    const facetWhere = [
+      `email IS NOT NULL`,
+      `suppressed = FALSE`,
+      `status NOT IN ('converted','closed','not_interested','unsubscribed')`,
+    ];
+    if (audience) {
+      facetValues.push(audience);
+      facetWhere.push(`audience = $${facetValues.length}`);
+    }
     const [audiences, facets, senders] = await Promise.all([
       db.query(`SELECT code, label, brand FROM alliance_audiences WHERE active = TRUE ORDER BY label`),
       db.query(`SELECT
-        ARRAY_REMOVE(ARRAY_AGG(DISTINCT industry ORDER BY industry), NULL) AS industries,
-        ARRAY_REMOVE(ARRAY_AGG(DISTINCT status ORDER BY status), NULL) AS statuses,
-        ARRAY_REMOVE(ARRAY_AGG(DISTINCT source ORDER BY source), NULL) AS sources,
-        ARRAY_REMOVE(ARRAY_AGG(DISTINCT location ORDER BY location), NULL) AS locations
-        FROM alliance_prospects`),
+        COALESCE(ARRAY_AGG(DISTINCT industry ORDER BY industry) FILTER (WHERE NULLIF(BTRIM(industry), '') IS NOT NULL), ARRAY[]::TEXT[]) AS industries,
+        COALESCE(ARRAY_AGG(DISTINCT status ORDER BY status) FILTER (WHERE NULLIF(BTRIM(status), '') IS NOT NULL), ARRAY[]::TEXT[]) AS statuses,
+        COALESCE(ARRAY_AGG(DISTINCT source ORDER BY source) FILTER (WHERE NULLIF(BTRIM(source), '') IS NOT NULL), ARRAY[]::TEXT[]) AS sources,
+        COALESCE(ARRAY_AGG(DISTINCT location ORDER BY location) FILTER (WHERE NULLIF(BTRIM(location), '') IS NOT NULL), ARRAY[]::TEXT[]) AS locations
+        FROM alliance_prospects
+        WHERE ${facetWhere.join(' AND ')}`, facetValues),
       db.query(`SELECT id, inbox_email, provider, daily_cap, sent_today, status FROM alliance_domains WHERE status = 'active' ORDER BY inbox_email`),
     ]);
     res.json({ audiences: audiences.rows, ...(facets.rows[0] || {}), senders: senders.rows });
@@ -1634,6 +1688,16 @@ router.post('/campaigns', async (req, res) => {
   if (!templates.length || templates.some((template) => !text(template.subject) || !text(template.body))) {
     return res.status(400).json({ error: 'Review every active email touch before creating the campaign.' });
   }
+  if (templates.length > 10) {
+    return res.status(400).json({ error: 'An email campaign can have at most 10 touches.' });
+  }
+  const touchNumbers = templates.map((template, index) => Number(template.touch_no) || index + 1);
+  if (touchNumbers.some((touchNo) => !Number.isInteger(touchNo) || touchNo < 1 || touchNo > 10)) {
+    return res.status(400).json({ error: 'Email touch numbers must be whole numbers from 1 to 10.' });
+  }
+  if (new Set(touchNumbers).size !== touchNumbers.length) {
+    return res.status(400).json({ error: 'Each email touch must have a unique touch number.' });
+  }
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -1666,7 +1730,7 @@ router.post('/campaigns', async (req, res) => {
       [campaign.id, prospectIds]
     );
     for (const [index, template] of templates.entries()) {
-      const touchNo = Math.max(1, Number(template.touch_no) || index + 1);
+      const touchNo = touchNumbers[index];
       const subject = text(template.subject);
       const body = text(template.body);
       if (!subject || !body) throw new Error(`Touch ${touchNo} subject and body are required.`);
@@ -1755,7 +1819,7 @@ async function getCampaignReadiness(queryable, campaignId) {
 
 router.get('/campaigns', async (req, res) => {
   try {
-    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 1), 100);
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 1), 5000);
     const offset = Math.max(Number.parseInt(req.query.offset, 10) || 0, 0);
     const totalResult = await db.query(`SELECT COUNT(*)::int AS total FROM alliance_campaigns`);
     const result = await db.query(

@@ -44,6 +44,7 @@ export const UploadLeads = () => {
   const [draftStatus, setDraftStatus] = useState(initialDraft.saved_at ? 'Draft restored' : '');
   const [result, setResult] = useState(null);
   const [audiences, setAudiences] = useState(DEFAULT_AUDIENCES);
+  const [brandOptions, setBrandOptions] = useState([]);
   const [showAudienceForm, setShowAudienceForm] = useState(false);
   const [editingAudienceCode, setEditingAudienceCode] = useState('');
   const [audienceCodeManuallyEdited, setAudienceCodeManuallyEdited] = useState(false);
@@ -78,7 +79,14 @@ export const UploadLeads = () => {
     } catch (_) { /* Database readiness is displayed by upload when used. */ }
   };
 
-  useEffect(() => { loadAudiences(); }, []);
+  useEffect(() => {
+    loadAudiences();
+    api.getClients().then((data) => {
+      const brands = [...new Set((data.clients || []).map((client) => String(client.name || '').trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b));
+      setBrandOptions(brands);
+    }).catch(() => setBrandOptions([]));
+  }, []);
 
   useEffect(() => {
     if (uploading || result?.report) return undefined;
@@ -204,7 +212,7 @@ export const UploadLeads = () => {
   const openEditAudience = () => {
     if (!selectedAudience) return;
     setEditingAudienceCode(selectedAudience.code); setEditingFieldKey('');
-    setAudienceCodeManuallyEdited(true);
+    setAudienceCodeManuallyEdited(false);
     const existingColumns = selectedAudience.column_config?.length ? selectedAudience.column_config.map((column) => ({ ...column })) : defaultSystemColumns();
     setNewAudience({ code: selectedAudience.code, label: selectedAudience.label, brand: selectedAudience.brand || '', default_channel: selectedAudience.default_channel, fields: (selectedAudience.fields || []).map((field) => ({ ...field })), system_columns: enforceChannelColumns(existingColumns, selectedAudience.default_channel) });
     setNewField({ field_key: '', label: '', data_type: 'auto', required: false, sample_value: '' });
@@ -382,6 +390,7 @@ export const UploadLeads = () => {
             <option value="auto">Auto (by audience)</option>
             <option value="email">Email only</option>
             <option value="whatsapp">WhatsApp only</option>
+            <option value="both">Email + WhatsApp</option>
           </select>
         </div>
       </section>
@@ -415,9 +424,9 @@ export const UploadLeads = () => {
       {showAudienceForm && (
         <div style={{ background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 12, padding: 16, marginBottom: 18 }}>
           <div className="al-fields">
-            <div className="al-field"><label>Audience code</label><input disabled={Boolean(editingAudienceCode)} value={newAudience.code} placeholder="hospitals_administrators" onChange={(e) => { const code = audienceCodeFromLabel(e.target.value); setAudienceCodeManuallyEdited(Boolean(code)); setNewAudience({ ...newAudience, code }); }} />{editingAudienceCode ? <small style={{ color: 'var(--al-muted)' }}>Code cannot change because existing records use it.</small> : <small style={{ color: 'var(--al-muted)' }}>Generated automatically from the display label. You can edit it before saving.</small>}</div>
-            <div className="al-field"><label>Display label</label><input value={newAudience.label} placeholder="Hospitals / administrators" onChange={(e) => { const label = e.target.value; setNewAudience({ ...newAudience, label, ...(!editingAudienceCode && !audienceCodeManuallyEdited ? { code: audienceCodeFromLabel(label) } : {}) }); }} /></div>
-            <div className="al-field"><label>Brand</label><input value={newAudience.brand} placeholder="BM TechX" onChange={(e) => setNewAudience({ ...newAudience, brand: e.target.value })} /></div>
+            <div className="al-field"><label>Display label</label><input value={newAudience.label} placeholder="Hospitals / administrators" onChange={(e) => { const label = e.target.value; setNewAudience({ ...newAudience, label, ...(!audienceCodeManuallyEdited ? { code: audienceCodeFromLabel(label) } : {}) }); }} /></div>
+            <div className="al-field"><label>Audience code</label><input value={newAudience.code} placeholder="hospitals_administrators" onChange={(e) => { const code = audienceCodeFromLabel(e.target.value); setAudienceCodeManuallyEdited(Boolean(code)); setNewAudience({ ...newAudience, code }); }} /><small style={{ color: 'var(--al-muted)' }}>{editingAudienceCode ? 'Changing this code also updates existing prospects, campaigns, templates, and AI configuration.' : 'Generated automatically from the display label. You can edit it before saving.'}</small></div>
+            <div className="al-field"><label>Brand</label><select value={newAudience.brand} onChange={(e) => setNewAudience({ ...newAudience, brand: e.target.value })}><option value="">Select brand</option>{newAudience.brand && !brandOptions.includes(newAudience.brand) && <option value={newAudience.brand}>{newAudience.brand}</option>}{brandOptions.map((brandName) => <option key={brandName} value={brandName}>{brandName}</option>)}</select><small style={{ color: 'var(--al-muted)' }}>Loaded dynamically from Clients.</small></div>
             <div className="al-field"><label>Default channel</label><select value={newAudience.default_channel} onChange={(e) => { const defaultChannel = e.target.value; setNewAudience({ ...newAudience, default_channel: defaultChannel, system_columns: enforceChannelColumns(newAudience.system_columns, defaultChannel) }); }}><option value="email">Email</option><option value="whatsapp">WhatsApp</option><option value="both">Email + WhatsApp</option></select></div>
           </div>
           <div className="al-field">

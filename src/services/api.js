@@ -862,8 +862,9 @@ class LeadOSAPI {
     return this.request('/api/alliance/email-settings/verify', { method: 'POST' });
   }
 
-  async getAllianceCampaignBuilderOptions() {
-    return this.request('/api/alliance/campaign-builder/options');
+  async getAllianceCampaignBuilderOptions(params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value !== undefined && value !== null)).toString();
+    return this.request(`/api/alliance/campaign-builder/options${query ? `?${query}` : ''}`);
   }
 
   async getAllianceCampaignProspects(params = {}) {

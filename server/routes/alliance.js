@@ -1826,7 +1826,7 @@ router.get('/campaigns', async (req, res) => {
       `SELECT c.id, c.name, c.audience, c.channel, c.status, c.created_at, c.started_at, c.completed_at,
               COUNT(DISTINCT p.id)::int AS prospects,
               COUNT(DISTINCT p.id) FILTER (WHERE p.status = 'in_sequence')::int AS in_sequence,
-              COUNT(DISTINCT p.id) FILTER (WHERE p.status IN ('replied','interested','not_interested'))::int AS replied,
+              (SELECT COUNT(DISTINCT inbound.prospect_id)::int FROM alliance_email_inbound inbound WHERE inbound.campaign_id=c.id AND inbound.prospect_id IS NOT NULL) AS replied,
               COUNT(DISTINCT p.id) FILTER (WHERE p.status = 'interested')::int AS interested,
               COUNT(DISTINCT t.id) FILTER (WHERE t.status = 'sent')::int AS sent
        FROM alliance_campaigns c
@@ -1860,7 +1860,7 @@ router.get('/campaigns/:id/detail', async (req, res) => {
     }
     if (text(req.query.status)) {
       values.push(text(req.query.status));
-      where.push(`COALESCE(latest_touch.status, cp.enrollment_status) = $${values.length}`);
+      where.push(`p.status = $${values.length}`);
     }
     const campaignResult = await db.query(
       `SELECT c.*, a.label AS audience_label, d.inbox_email AS sender_email,
@@ -1869,7 +1869,7 @@ router.get('/campaigns/:id/detail', async (req, res) => {
               COUNT(DISTINCT t.id) FILTER (WHERE t.status='failed')::int AS failed,
               COUNT(DISTINCT t.id) FILTER (WHERE t.status='processing')::int AS processing,
               COUNT(DISTINCT t.id) FILTER (WHERE t.status='cancelled')::int AS cancelled,
-              (SELECT error_message FROM alliance_touches issue WHERE issue.campaign_id=c.id AND issue.error_message IS NOT NULL ORDER BY issue.id DESC LIMIT 1) AS latest_touch_error,
+              (SELECT error_message FROM alliance_touches issue WHERE issue.campaign_id=c.id AND issue.status='failed' AND issue.error_message IS NOT NULL ORDER BY issue.id DESC LIMIT 1) AS latest_touch_error,
               COUNT(DISTINCT r.prospect_id)::int AS replied
        FROM alliance_campaigns c
        LEFT JOIN alliance_audiences a ON a.code=c.audience
@@ -1896,8 +1896,9 @@ router.get('/campaigns/:id/detail', async (req, res) => {
     ]);
     const listValues = [...values, limit, offset];
     const recipientsResult = await db.query(
-      `SELECT p.id,p.name,p.business_name,p.email,p.audience,cp.enrollment_status,cp.current_touch,cp.next_touch_at,
-              COALESCE(latest_touch.status,cp.enrollment_status) AS delivery_status,
+      `SELECT p.id,p.name,p.business_name,p.email,p.audience,p.status AS prospect_status,cp.enrollment_status,cp.current_touch,cp.next_touch_at,
+              p.status AS delivery_status,
+              cp.stop_reason,
               latest_touch.error_message,latest_touch.last_sent_at,
               COALESCE(touch_totals.sent_count,0)::int AS sent_count,
               COALESCE(reply_totals.reply_count,0)::int AS reply_count

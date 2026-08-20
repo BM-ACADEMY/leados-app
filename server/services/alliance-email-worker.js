@@ -5,27 +5,25 @@ const { createAllianceEmailTransport, getAllianceEmailConfig, isAllianceSenderAl
 let interval;
 let processing = false;
 
-async function stopFollowupsForRecordedReplies() {
+async function reconcileEmailFollowups() {
   await db.query(
     `UPDATE alliance_touches touch
-     SET status='cancelled',processing_started_at=NULL,error_message='Recipient replied; follow-ups stopped.'
-     WHERE touch.status IN ('scheduled','paused') AND touch.sent_at IS NULL
-       AND EXISTS (
-         SELECT 1 FROM alliance_replies reply
-         JOIN alliance_email_inbound inbound ON inbound.id=reply.email_inbound_id
-         WHERE reply.prospect_id=touch.prospect_id AND inbound.campaign_id=touch.campaign_id
-       )`
+     SET status='scheduled',processing_started_at=NULL,error_message=NULL
+     FROM alliance_prospects prospect, alliance_campaigns campaign
+     WHERE prospect.id=touch.prospect_id AND campaign.id=touch.campaign_id
+       AND touch.status='cancelled' AND touch.sent_at IS NULL
+       AND touch.error_message='Recipient replied; follow-ups stopped.'
+       AND campaign.status<>'stopped' AND prospect.suppressed=FALSE
+       AND prospect.status NOT IN ('converted','closed','not_interested','unsubscribed','complete','completed')`
   );
   await db.query(
     `UPDATE alliance_campaign_prospects enrollment
-     SET enrollment_status='stopped',stopped_at=COALESCE(stopped_at,NOW()),
-         stop_reason='recipient_replied',next_touch_at=NULL
-     WHERE enrollment.enrollment_status<>'stopped'
-       AND EXISTS (
-         SELECT 1 FROM alliance_replies reply
-         JOIN alliance_email_inbound inbound ON inbound.id=reply.email_inbound_id
-         WHERE reply.prospect_id=enrollment.prospect_id AND inbound.campaign_id=enrollment.campaign_id
-       )`
+     SET enrollment_status='in_sequence',stopped_at=NULL,stop_reason=NULL
+     FROM alliance_prospects prospect, alliance_campaigns campaign
+     WHERE prospect.id=enrollment.prospect_id AND campaign.id=enrollment.campaign_id
+       AND enrollment.stop_reason='recipient_replied' AND campaign.status<>'stopped'
+       AND prospect.suppressed=FALSE
+       AND prospect.status NOT IN ('converted','closed','not_interested','unsubscribed','complete','completed')`
   );
 }
 
@@ -43,8 +41,7 @@ async function recoverMissingEmailFollowups() {
      JOIN alliance_campaign_templates template ON template.campaign_id=first_touch.campaign_id AND template.touch_no>1
      WHERE first_touch.touch_no=1 AND first_touch.status='sent' AND first_touch.sent_at IS NOT NULL
        AND campaign.status IN ('running','completed') AND enrollment.enrollment_status='in_sequence'
-       AND prospect.suppressed=FALSE AND prospect.status NOT IN ('converted','closed','not_interested','unsubscribed')
-       AND NOT EXISTS (SELECT 1 FROM alliance_replies reply WHERE reply.prospect_id=first_touch.prospect_id)
+       AND prospect.suppressed=FALSE AND prospect.status NOT IN ('converted','closed','not_interested','unsubscribed','complete','completed')
      ON CONFLICT (campaign_id,prospect_id,touch_no) DO NOTHING`
   );
   await db.query(
@@ -78,8 +75,23 @@ async function finalizeEmailCampaigns() {
   await db.query(
     `UPDATE alliance_campaigns campaign SET status='completed',completed_at=NOW()
      WHERE campaign.status='running'
-       AND NOT EXISTS (SELECT 1 FROM alliance_campaign_prospects enrollment WHERE enrollment.campaign_id=campaign.id AND enrollment.enrollment_status NOT IN ('completed','stopped'))
+       AND NOT EXISTS (
+         SELECT 1 FROM alliance_campaign_prospects enrollment
+         JOIN alliance_prospects prospect ON prospect.id=enrollment.prospect_id
+         WHERE enrollment.campaign_id=campaign.id
+           AND prospect.status NOT IN ('converted','closed','not_interested','unsubscribed','complete','completed')
+       )
        AND NOT EXISTS (SELECT 1 FROM alliance_touches active WHERE active.campaign_id=campaign.id AND active.status IN ('scheduled','processing','paused','failed'))`
+  );
+  await db.query(
+    `UPDATE alliance_campaigns campaign SET status='running',completed_at=NULL
+     WHERE campaign.status='completed'
+       AND EXISTS (
+         SELECT 1 FROM alliance_campaign_prospects enrollment
+         JOIN alliance_prospects prospect ON prospect.id=enrollment.prospect_id
+         WHERE enrollment.campaign_id=campaign.id
+           AND prospect.status NOT IN ('converted','closed','not_interested','unsubscribed','complete','completed')
+       )`
   );
 }
 
@@ -339,7 +351,7 @@ async function processAllianceEmailQueue(io) {
   if (processing) return;
   processing = true;
   try {
-    await stopFollowupsForRecordedReplies();
+    await reconcileEmailFollowups();
     await recoverMissingEmailFollowups();
     for (let count = 0; count < 20; count += 1) {
       const touch = await claimDueTouch();

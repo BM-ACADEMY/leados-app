@@ -85,19 +85,6 @@ async function recordCampaignReply(inboundId, correlation, parsed) {
     const storedReply = reply.rowCount
       ? reply.rows[0]
       : (await client.query(`SELECT * FROM alliance_replies WHERE email_inbound_id=$1`, [inboundId])).rows[0];
-    // Outreach safety is synchronous with recording the reply. AI enrichment
-    // happens later and must never be able to delay or prevent this stop.
-    await client.query(
-      `UPDATE alliance_touches SET status='cancelled',error_message='Recipient replied; follow-ups stopped.'
-       WHERE campaign_id=$1 AND prospect_id=$2 AND status IN ('scheduled','paused') AND sent_at IS NULL`,
-      [correlation.campaign_id, correlation.prospect_id]
-    );
-    await client.query(
-      `UPDATE alliance_campaign_prospects
-       SET enrollment_status='stopped',stopped_at=NOW(),stop_reason='recipient_replied',next_touch_at=NULL
-       WHERE campaign_id=$1 AND prospect_id=$2`,
-      [correlation.campaign_id, correlation.prospect_id]
-    );
     await client.query('COMMIT');
     return storedReply;
   } catch (error) {
@@ -205,19 +192,18 @@ Update memory by merging prior durable memory with the latest exchange. Preserve
       channel: 'email',
       eventKey: `inbound:${reply.email_inbound_id || reply.id}`,
     });
-    await db.query(
-      `UPDATE alliance_touches SET status='cancelled',error_message='Recipient replied; follow-ups stopped.'
-       WHERE campaign_id=$1 AND prospect_id=$2 AND status IN ('scheduled','paused') AND sent_at IS NULL`,
-      [correlation.campaign_id,correlation.prospect_id]
-    );
-    await db.query(
-      `UPDATE alliance_campaign_prospects
-       SET enrollment_status='stopped',stopped_at=NOW(),stop_reason='recipient_replied',next_touch_at=NULL
-       WHERE campaign_id=$1 AND prospect_id=$2`,
-      [correlation.campaign_id,correlation.prospect_id]
-    );
     if (intent === 'not_interested') {
-      await db.query(`UPDATE alliance_campaign_prospects SET stop_reason='not_interested' WHERE campaign_id=$1 AND prospect_id=$2`, [correlation.campaign_id,correlation.prospect_id]);
+      await db.query(
+        `UPDATE alliance_touches SET status='cancelled',error_message='Prospect is not interested; follow-ups stopped.'
+         WHERE campaign_id=$1 AND prospect_id=$2 AND status IN ('scheduled','paused') AND sent_at IS NULL`,
+        [correlation.campaign_id,correlation.prospect_id]
+      );
+      await db.query(
+        `UPDATE alliance_campaign_prospects SET enrollment_status='stopped',stopped_at=NOW(),
+                stop_reason='not_interested',next_touch_at=NULL
+         WHERE campaign_id=$1 AND prospect_id=$2`,
+        [correlation.campaign_id,correlation.prospect_id]
+      );
       await db.query(
         `INSERT INTO alliance_suppression (email, phone, reason)
          SELECT email,phone,'not_interested' FROM alliance_prospects WHERE id=$1

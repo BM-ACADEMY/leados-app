@@ -3591,16 +3591,43 @@ app.get('/api/templates/:id/sync', auth, async (req, res) => {
     const tpl = rows[0];
 
     const client = tpl.client_id ? (await pool.query('SELECT * FROM clients WHERE id = $1', [tpl.client_id])).rows[0] : null;
-    const waToken = client?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
-    const waBusinessId = client?.wa_business_id || process.env.WA_BUSINESS_ACCOUNT_ID;
+    const sharedWaToken = process.env.META_SYSTEM_USER_ACCESS_TOKEN || process.env.META_PAGE_ACCESS_TOKEN;
+    const isAllianceTemplate = ['alliance', 'shared'].includes(String(tpl.template_scope || '').toLowerCase());
+    const waToken = isAllianceTemplate ? (sharedWaToken || client?.wa_access_token) : (client?.wa_access_token || sharedWaToken);
+    const waBusinessId = isAllianceTemplate ? (process.env.WA_BUSINESS_ACCOUNT_ID || client?.wa_business_id) : (client?.wa_business_id || process.env.WA_BUSINESS_ACCOUNT_ID);
 
-    // Fetch from Meta
-    const metaRes = await axios.get(
-      `https://graph.facebook.com/v18.0/${waBusinessId}/message_templates?name=${tpl.name}`,
-      { headers: { Authorization: `Bearer ${waToken}` } }
-    );
+    if (!waToken) {
+      return res.status(409).json({
+        error: 'Meta access token is not configured. Add a client WhatsApp token, META_SYSTEM_USER_ACCESS_TOKEN, or META_PAGE_ACCESS_TOKEN and restart the backend.',
+        code: 'META_TOKEN_MISSING',
+      });
+    }
+    if (!tpl.meta_template_id && !waBusinessId) {
+      return res.status(409).json({
+        error: 'This template has no Meta template ID and no WhatsApp Business Account ID is configured.',
+        code: 'META_TEMPLATE_AND_WABA_MISSING',
+      });
+    }
 
-    const metaTpl = metaRes.data.data.find(t => t.name === tpl.name && t.language === (tpl.language || 'en'));
+    const base = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+    let metaTpl = null;
+    if (tpl.meta_template_id) {
+      const metaRes = await axios.get(`${base}/${tpl.meta_template_id}`, {
+        params: { fields: 'id,name,status,language,category,components' },
+        headers: { Authorization: `Bearer ${waToken}` },
+        timeout: 20000,
+      });
+      metaTpl = metaRes.data;
+    } else {
+      const metaRes = await axios.get(`${base}/${waBusinessId}/message_templates`, {
+        params: { name: tpl.name, limit: 100 },
+        headers: { Authorization: `Bearer ${waToken}` },
+        timeout: 20000,
+      });
+      metaTpl = (metaRes.data?.data || []).find(
+        (item) => item.name === tpl.name && item.language === (tpl.language || 'en')
+      );
+    }
 
     if (metaTpl) {
       const status = metaTpl.status.toLowerCase();
@@ -3609,19 +3636,31 @@ app.get('/api/templates/:id/sync', auth, async (req, res) => {
       const footerComp = metaTpl.components?.find((component) => component.type === 'FOOTER');
       const buttonsComp = metaTpl.components?.find((component) => component.type === 'BUTTONS');
       const { rows: updatedRows } = await pool.query(
-        `UPDATE templates SET status=$1,meta_template_id=$2,approved_at=CASE WHEN $1='approved' THEN COALESCE(approved_at,NOW()) ELSE approved_at END,
+        `UPDATE templates SET status=$1,meta_template_id=$2,approved_at=CASE WHEN $9 THEN COALESCE(approved_at,NOW()) ELSE approved_at END,
           category=$3,header_format=$4,header=$5,body=$6,footer=$7,buttons=$8::jsonb,updated_at=NOW()
-         WHERE id=$9 RETURNING *`,
+         WHERE id=$10 RETURNING *`,
         [status, metaTpl.id, metaTpl.category, headerComp?.format || 'NONE', headerComp?.text || headerComp?.example?.header_handle?.[0] || null,
-          bodyComp.text || '', footerComp?.text || null, JSON.stringify(buttonsComp?.buttons || []), tpl.id]
+          bodyComp.text || '', footerComp?.text || null, JSON.stringify(buttonsComp?.buttons || []), status === 'approved', tpl.id]
       );
       return res.json({ template: updatedRows[0] });
     }
 
-    res.json({ template: tpl });
+    return res.status(404).json({
+      error: `Meta did not return template "${tpl.name}" (${tpl.language || 'en'}) for the configured WhatsApp Business Account. Verify its WABA, language, and Meta template ID.`,
+      code: 'META_TEMPLATE_NOT_FOUND',
+    });
   } catch (err) {
-    console.error('Template sync error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to sync template status' });
+    const metaError = err.response?.data?.error;
+    const message = metaError
+      ? `Meta API error${metaError.code ? ` (${metaError.code})` : ''}: ${metaError.message}`
+      : err.code === 'ECONNABORTED'
+        ? 'Meta status check timed out. Please try again.'
+        : err.message || 'Failed to sync template status.';
+    console.error('Template sync error:', metaError || err.message);
+    // Do not return 401 here: that status is reserved for the LeadOS login
+    // session and would incorrectly log the administrator out.
+    const status = err.response?.status >= 400 && err.response?.status < 500 ? 502 : 500;
+    res.status(status).json({ error: message, code: metaError?.code || err.code || 'TEMPLATE_SYNC_FAILED' });
   }
 });
 

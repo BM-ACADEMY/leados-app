@@ -374,7 +374,14 @@ export const TemplatesView = () => {
         showToast('Template is still pending on Meta.');
       }
     } catch (err) {
-      showToast('Failed to check status: ' + err.message, 'error');
+      const message = err.message || 'Unknown template status error';
+      if (/access token|oauth|\(190\)/i.test(message)) {
+        showToast(`Meta authentication failed: ${message}`, 'error');
+      } else if (/business account|waba|template id/i.test(message)) {
+        showToast(`Meta template configuration issue: ${message}`, 'error');
+      } else {
+        showToast(`Failed to check status: ${message}`, 'error');
+      }
     } finally {
       setSyncLoading(null);
     }

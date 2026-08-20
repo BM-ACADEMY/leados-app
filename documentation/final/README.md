@@ -13,6 +13,7 @@ Prepared as the technical and operational handover for the current LeadOS reposi
 7. [Database, APIs, and background workers](07-technical-reference.md)
 8. [Operations and troubleshooting](08-operations-and-troubleshooting.md)
 9. [Final handover checklist](09-handover-checklist.md)
+10. [Credentials and account handover — restricted](10-credentials-and-accounts.md)
 
 ## Repository locations
 
@@ -31,7 +32,7 @@ Prepared as the technical and operational handover for the current LeadOS reposi
 
 ## Important security note
 
-This documentation intentionally lists environment-variable names but never secret values. Before handing over access, rotate database passwords, JWT secrets, Meta tokens, email passwords, AI keys, Google credentials, payment secrets, and internal API keys. Do not send `.env` through chat or email.
+The restricted credential handover file temporarily contains plaintext access supplied for company transfer. Move it into the approved password manager, rotate all credentials, and remove the plaintext file after the receiving owner verifies access. Do not add further secrets or customer data to the repository.
 
 ## Current verification commands
 

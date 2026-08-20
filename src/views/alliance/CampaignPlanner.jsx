@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { api } from '../../services/api.js';
+import { EmailCampaignDetail } from './EmailCampaignDetail.jsx';
 import './alliance.css';
 
 const TIERS = [250, 1000, 10000, 100000];
@@ -24,6 +25,7 @@ export const CampaignPlanner = () => {
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [testEmail, setTestEmail] = useState('');
   const [testTouch, setTestTouch] = useState(1);
+  const [detailCampaignId, setDetailCampaignId] = useState(null);
 
   const loadCampaigns = useCallback(async () => {
     setLoading(true);
@@ -165,6 +167,7 @@ export const CampaignPlanner = () => {
                   <td>{campaign.prospects}</td><td>{campaign.sent}</td><td>{campaign.replied}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="al-btn ghost sm" onClick={() => setDetailCampaignId(campaign.id)}>Details</button>
                       <button className="al-btn ghost sm" onClick={() => openCampaign(campaign.id)}>Readiness</button>
                       {campaign.status === 'running' ? (
                         <button className="al-btn ghost sm" disabled={busy === campaign.id} onClick={() => changeStatus(campaign, 'pause')}>Pause</button>
@@ -223,6 +226,8 @@ export const CampaignPlanner = () => {
           </div>
         </div>
       )}
+
+      {detailCampaignId && <EmailCampaignDetail campaignId={detailCampaignId} onClose={() => setDetailCampaignId(null)} />}
 
       {confirmingStop && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(2,8,18,.78)', display: 'grid', placeItems: 'center', padding: 20 }}>

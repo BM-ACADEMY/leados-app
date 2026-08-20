@@ -1845,6 +1845,80 @@ router.get('/campaigns', async (req, res) => {
   }
 });
 
+router.get('/campaigns/:id/detail', async (req, res) => {
+  try {
+    const campaignId = Number(req.params.id);
+    if (!Number.isInteger(campaignId) || campaignId < 1) return res.status(400).json({ error: 'Select a valid campaign.' });
+    const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const values = [campaignId];
+    const where = ['cp.campaign_id = $1'];
+    if (text(req.query.search)) {
+      values.push(text(req.query.search));
+      const param = `$${values.length}`;
+      where.push(`(p.name ILIKE '%' || ${param} || '%' OR p.business_name ILIKE '%' || ${param} || '%' OR p.email ILIKE '%' || ${param} || '%')`);
+    }
+    if (text(req.query.status)) {
+      values.push(text(req.query.status));
+      where.push(`COALESCE(latest_touch.status, cp.enrollment_status) = $${values.length}`);
+    }
+    const campaignResult = await db.query(
+      `SELECT c.*, a.label AS audience_label, d.inbox_email AS sender_email,
+              COUNT(DISTINCT cp.prospect_id)::int AS prospects,
+              COUNT(DISTINCT t.id) FILTER (WHERE t.status='sent')::int AS sent,
+              COUNT(DISTINCT t.id) FILTER (WHERE t.status='failed')::int AS failed,
+              COUNT(DISTINCT r.prospect_id)::int AS replied
+       FROM alliance_campaigns c
+       LEFT JOIN alliance_audiences a ON a.code=c.audience
+       LEFT JOIN alliance_domains d ON d.id=c.sender_domain_id
+       LEFT JOIN alliance_campaign_prospects cp ON cp.campaign_id=c.id
+       LEFT JOIN alliance_touches t ON t.campaign_id=c.id
+       LEFT JOIN alliance_replies r ON r.prospect_id=cp.prospect_id
+       WHERE c.id=$1 GROUP BY c.id,a.label,d.inbox_email`, [campaignId]
+    );
+    if (!campaignResult.rowCount) return res.status(404).json({ error: 'Campaign not found.' });
+    const [templatesResult, touchStatsResult, countResult] = await Promise.all([
+      db.query(`SELECT touch_no,delay_days,subject,body FROM alliance_campaign_templates WHERE campaign_id=$1 ORDER BY touch_no`, [campaignId]),
+      db.query(`SELECT touch_no,
+        COUNT(*) FILTER (WHERE status='sent')::int AS sent,
+        COUNT(*) FILTER (WHERE status IN ('scheduled','paused'))::int AS pending,
+        COUNT(*) FILTER (WHERE status='failed')::int AS failed
+        FROM alliance_touches WHERE campaign_id=$1 GROUP BY touch_no ORDER BY touch_no`, [campaignId]),
+      db.query(`SELECT COUNT(*)::int AS total FROM alliance_campaign_prospects cp
+        JOIN alliance_prospects p ON p.id=cp.prospect_id
+        LEFT JOIN LATERAL (SELECT status FROM alliance_touches WHERE campaign_id=cp.campaign_id AND prospect_id=cp.prospect_id ORDER BY touch_no DESC,id DESC LIMIT 1) latest_touch ON TRUE
+        WHERE ${where.join(' AND ')}`, values),
+    ]);
+    const listValues = [...values, limit, offset];
+    const recipientsResult = await db.query(
+      `SELECT p.id,p.name,p.business_name,p.email,p.audience,cp.enrollment_status,cp.current_touch,cp.next_touch_at,
+              COALESCE(latest_touch.status,cp.enrollment_status) AS delivery_status,
+              latest_touch.error_message,latest_touch.last_sent_at,
+              COALESCE(touch_totals.sent_count,0)::int AS sent_count,
+              COALESCE(reply_totals.reply_count,0)::int AS reply_count
+       FROM alliance_campaign_prospects cp JOIN alliance_prospects p ON p.id=cp.prospect_id
+       LEFT JOIN LATERAL (
+         SELECT status,error_message,sent_at AS last_sent_at FROM alliance_touches
+         WHERE campaign_id=cp.campaign_id AND prospect_id=cp.prospect_id ORDER BY touch_no DESC,id DESC LIMIT 1
+       ) latest_touch ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) FILTER (WHERE status='sent') AS sent_count FROM alliance_touches
+         WHERE campaign_id=cp.campaign_id AND prospect_id=cp.prospect_id
+       ) touch_totals ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS reply_count FROM alliance_replies WHERE prospect_id=cp.prospect_id
+       ) reply_totals ON TRUE
+       WHERE ${where.join(' AND ')} ORDER BY cp.created_at DESC
+       LIMIT $${listValues.length - 1} OFFSET $${listValues.length}`, listValues
+    );
+    res.json({ campaign: campaignResult.rows[0], templates: templatesResult.rows, touch_stats: touchStatsResult.rows,
+      recipients: recipientsResult.rows, total: countResult.rows[0].total, limit, offset });
+  } catch (error) {
+    console.error('Alliance email campaign detail failed:', error);
+    res.status(500).json({ error: 'Failed to load email campaign detail.' });
+  }
+});
+
 router.get('/campaigns/:id', async (req, res) => {
   try {
     const readiness = await getCampaignReadiness(db, req.params.id);

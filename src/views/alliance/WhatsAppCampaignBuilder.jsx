@@ -25,6 +25,13 @@ const todayLocalISO = (() => {
   return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
 })();
 const WHATSAPP_CAMPAIGN_DRAFT_KEY = "alliance_whatsapp_campaign_builder_draft_v1";
+const PARAMETER_FIELD_LABELS = {
+  name: "Prospect contact name", business_name: "Business name", location: "Location",
+  phone: "Phone", email: "Email", audience: "Audience", industry: "Industry",
+  source: "Source", status: "Status", consent_source: "Consent source",
+  ai_score: "AI score", channel: "Channel", consent: "WhatsApp consent",
+  campaign_name: "Campaign name", created_at: "Date added",
+};
 
 const formatDate = (value) => {
   if (!value) return "—";
@@ -550,7 +557,7 @@ export const WhatsAppCampaignBuilder = () => {
               </div>
               {followupTemplate && <>
                 <div className="al-wa-template"><header><b>{followupTemplate.name}</b><span>n8n reminder · approved</span></header><div>{followupTemplate.body}</div></div>
-                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field, index) => <label key={index}><span>{`{{${index + 1}}}`}<small style={{ display: 'block' }}>{followupTemplate?.parameter_definitions?.body?.[String(index + 1)]?.label || `Parameter ${index + 1}`}</small></span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value, i) => i === index ? e.target.value : value))}><option value="name">Prospect contact name</option><option value="business_name">Business name</option><option value="location">Location</option><option value="phone">Phone</option><option value="email">Email</option><option value="audience">Audience</option><option value="industry">Industry</option><option value="status">Status</option><option value="consent_source">Consent source</option></select><em>{valueFor(field)}</em></label>)}</div>}
+                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field, index) => <label key={index}><span>{`{{${index + 1}}}`}<small style={{ display: 'block' }}>{followupTemplate?.parameter_definitions?.body?.[String(index + 1)]?.label || PARAMETER_FIELD_LABELS[field] || field?.replaceAll('_', ' ') || `Parameter ${index + 1}`}</small></span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value, i) => i === index ? e.target.value : value))}><option value="name">Prospect contact name</option><option value="business_name">Business name</option><option value="location">Location</option><option value="phone">Phone</option><option value="email">Email</option><option value="audience">Audience</option><option value="industry">Industry</option><option value="status">Status</option><option value="consent_source">Consent source</option></select><em>{valueFor(field)}</em></label>)}</div>}
                 <small className="al-help">The approved reminder repeats only while the lead is inactive. It stops automatically for Not Interested, Closed, Converted, Completed, Unsubscribed, or suppressed leads. A recipient reply pauses reminders; a later admin/AI reply starts a fresh inactivity timer.</small>
               </>}
             </div>

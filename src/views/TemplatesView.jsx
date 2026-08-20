@@ -18,8 +18,10 @@ const PARAMETER_SOURCE_OPTIONS = {
     ['name', 'Prospect contact name'], ['business_name', 'Prospect business name'],
     ['phone', 'Prospect phone'], ['email', 'Prospect email'],
     ['audience', 'Prospect audience'], ['industry', 'Prospect industry'],
-    ['location', 'Prospect location'], ['status', 'Prospect status'],
-    ['consent_source', 'Consent source']
+    ['location', 'Prospect location'], ['source', 'Prospect source'],
+    ['ai_score', 'AI score'], ['channel', 'Channel'], ['consent', 'WhatsApp consent'],
+    ['consent_source', 'Consent source'], ['campaign_name', 'Campaign name'],
+    ['status', 'Prospect status'], ['created_at', 'Date added']
   ]
 };
 const defaultParameterSource = (scope, index) => scope === 'alliance'
@@ -268,6 +270,7 @@ export const TemplatesView = () => {
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [toast, setToast] = useState(null);
   const [clients, setClients] = useState([]);
+  const [allianceAudiences, setAllianceAudiences] = useState([]);
   const [previewTemplate, setPreviewTemplate] = useState(null); // template object to preview
   const [templateToDelete, setTemplateToDelete] = useState(null); // template object to delete
   const [deleteConfirmText, setDeleteConfirmText] = useState(''); // text for delete confirmation
@@ -288,6 +291,7 @@ export const TemplatesView = () => {
     samples: [],
     parameter_definitions: { body: {}, header: {} },
     template_scope: 'leados',
+    alliance_audience: '',
   };
   const [form, setForm] = useState(defaultForm);
 
@@ -298,7 +302,19 @@ export const TemplatesView = () => {
 
   useEffect(() => {
     api.getClients().then(d => setClients(d.clients || [])).catch(() => {});
+    api.getAllianceAudiences().then(d => setAllianceAudiences(d.audiences || [])).catch(() => {});
   }, []);
+
+  const selectedAllianceAudience = allianceAudiences.find((audience) => audience.code === form.alliance_audience);
+  const allianceParameterOptions = (() => {
+    const fields = new Map(PARAMETER_SOURCE_OPTIONS.alliance);
+    const applicableAudiences = selectedAllianceAudience ? [selectedAllianceAudience] : allianceAudiences;
+    applicableAudiences.forEach((audience) => {
+      (audience.column_config || []).filter((column) => column.enabled !== false).forEach((column) => fields.set(column.key, column.label || column.key.replaceAll('_', ' ')));
+      (audience.fields || []).filter((field) => field.active !== false).forEach((field) => fields.set(field.field_key, field.label || field.field_key.replaceAll('_', ' ')));
+    });
+    return [...fields.entries()];
+  })();
 
   const handleCategoryChange = (cat) => {
     const defaults = CATEGORY_DEFAULTS[cat] || {};
@@ -431,6 +447,7 @@ export const TemplatesView = () => {
   const handleCreateTemplate = async () => {
     if (!form.name.trim()) return showToast('Template name is required', 'error');
     if (!form.body.trim()) return showToast('Message body is required', 'error');
+    if (form.template_scope === 'alliance' && !form.alliance_audience) return showToast('Select the AllianceOS audience this template is created for', 'error');
     if (!/^[a-z0-9_]+$/.test(form.name)) return showToast('Template name must be lowercase letters, numbers, underscores only', 'error');
     
     const matches = form.body.match(/\{\{(\d+)\}\}/g);
@@ -480,7 +497,7 @@ export const TemplatesView = () => {
         buttons: normalizedButtons,
         client_id: form.client_id || null,
         samples: form.samples,
-        parameter_definitions: form.parameter_definitions,
+        parameter_definitions: { ...form.parameter_definitions, alliance_audience: form.template_scope === 'alliance' ? form.alliance_audience : undefined },
         template_scope: form.template_scope,
       };
       if (editingId) {
@@ -515,6 +532,7 @@ export const TemplatesView = () => {
       samples: (() => { try { return typeof t.samples === 'string' ? JSON.parse(t.samples) : (t.samples || []); } catch { return []; } })(),
       parameter_definitions: (() => { try { return typeof t.parameter_definitions === 'string' ? JSON.parse(t.parameter_definitions) : (t.parameter_definitions || { body: {}, header: {} }); } catch { return { body: {}, header: {} }; } })(),
       template_scope: t.template_scope || 'shared',
+      alliance_audience: (() => { try { const definitions = typeof t.parameter_definitions === 'string' ? JSON.parse(t.parameter_definitions) : t.parameter_definitions; return definitions?.alliance_audience || ''; } catch { return ''; } })(),
     });
     setEditingId(t.id);
     setShowBuilder(true);
@@ -1200,6 +1218,15 @@ export const TemplatesView = () => {
                   <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>Templates remain in this common library; this controls which campaign builder and fields they use.</p>
                 </div>
 
+                {form.template_scope === 'alliance' && <div>
+                  <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>AllianceOS Audience *</label>
+                  <select style={inp()} value={form.alliance_audience} onChange={e => setForm(f => ({ ...f, alliance_audience: e.target.value, parameter_definitions: { body: {}, header: {} } }))}>
+                    <option value="">Select audience</option>
+                    {allianceAudiences.map((audience) => <option key={audience.code} value={audience.code}>{audience.label}</option>)}
+                  </select>
+                  <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>Variable sources below load from this audience's current system and custom columns.</p>
+                </div>}
+
                 {/* Category */}
                 <div>
                   <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, display: 'block', marginBottom: 10 }}>Category *</label>
@@ -1404,7 +1431,7 @@ export const TemplatesView = () => {
                                 >
                                   {(form.template_scope === 'shared'
                                     ? [...PARAMETER_SOURCE_OPTIONS.leados, ...PARAMETER_SOURCE_OPTIONS.alliance.filter(([value]) => !PARAMETER_SOURCE_OPTIONS.leados.some(([leadValue]) => leadValue === value))]
-                                    : PARAMETER_SOURCE_OPTIONS[form.template_scope]
+                                    : form.template_scope === 'alliance' ? allianceParameterOptions : PARAMETER_SOURCE_OPTIONS[form.template_scope]
                                   ).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                                 </select>
                                 <input

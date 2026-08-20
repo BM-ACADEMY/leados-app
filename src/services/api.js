@@ -667,6 +667,11 @@ class LeadOSAPI {
     return this.request(`/api/alliance/campaigns${query.toString() ? `?${query}` : ''}`);
   }
 
+  async getAllianceEmailCampaignDetail(id, params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString();
+    return this.request(`/api/alliance/campaigns/${id}/detail${query ? `?${query}` : ''}`);
+  }
+
   async updateAllianceAudience(code, payload) {
     return this.request(`/api/alliance/audiences/${encodeURIComponent(code)}`, {
       method: 'PUT',

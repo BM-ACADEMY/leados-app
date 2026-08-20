@@ -16,6 +16,15 @@ const valueFor = (field, prospect) => {
   return resolved === null || resolved === undefined || resolved === '' ? 'there' : String(resolved);
 };
 
+const phoneValidationReason = (value) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!/^\d{8,15}$/.test(digits)) return 'invalid_e164_phone_format';
+  if (digits.startsWith('91') && !/^91[6-9]\d{9}$/.test(digits)) {
+    return 'invalid_india_mobile_format_expected_91_plus_10_digits_starting_6_to_9';
+  }
+  return null;
+};
+
 async function claimRecipient() {
   const client = await db.connect();
   try {
@@ -47,10 +56,10 @@ async function claimRecipient() {
     );
     if (!result.rowCount) { await client.query('COMMIT'); return null; }
     const row = result.rows[0];
-    const reason = !row.phone ? 'missing_phone' : !row.consent || !row.consent_source ? 'whatsapp_consent_missing'
+    const reason = !row.phone ? 'missing_phone' : phoneValidationReason(row.phone) || (!row.consent || !row.consent_source ? 'whatsapp_consent_missing'
       : row.suppressed ? 'suppressed' : ['converted','closed','complete','completed','not_interested','unsubscribed'].includes(row.prospect_status) ? `prospect_${row.prospect_status}`
         : row.last_inbound_at && new Date(row.last_inbound_at) >= new Date(row.campaign_created_at) ? 'recipient_replied'
-          : row.sender_active === false ? 'sender_inactive' : null;
+          : row.sender_active === false ? 'sender_inactive' : null);
     if (reason) {
       await client.query(`UPDATE alliance_whatsapp_campaign_recipients SET status='skipped',error_message=$1 WHERE id=$2`, [reason,row.id]);
       await client.query('COMMIT'); return { skipped:true };
@@ -209,6 +218,11 @@ async function startAllianceWhatsAppCampaignWorker(io){
 
 async function claimAllianceWhatsAppFollowups(limit=20,claimId='n8n'){
   const client=await db.connect();try{await client.query('BEGIN');await client.query(`UPDATE alliance_whatsapp_followup_jobs SET status='pending',claimed_at=NULL,claim_id=NULL WHERE status='claimed' AND claimed_at<NOW()-INTERVAL '15 minutes'`);
+  await client.query(`UPDATE alliance_whatsapp_followup_jobs job
+    SET status='cancelled',error_message=LEFT('Initial WhatsApp delivery failed: ' || COALESCE(recipient.error_message,'Meta reported failure.'),2000)
+    FROM alliance_whatsapp_campaign_recipients recipient
+    WHERE recipient.campaign_id=job.campaign_id AND recipient.prospect_id=job.prospect_id
+      AND recipient.status='failed' AND job.status IN ('pending','claimed')`);
   // Repair reminders skipped by the former SQL column collision where the
   // prospect status (`in_process`) overwrote the actual reminder job status.
   await client.query(`UPDATE alliance_whatsapp_followup_jobs

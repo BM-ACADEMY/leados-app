@@ -88,7 +88,7 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
             <div><b>{campaign.sent}</b><span>Sent</span></div>
             <div><b>{campaign.delivered}</b><span>Delivered</span></div>
             <div><b>{campaign.read}</b><span>Read</span></div>
-            <div><b>{campaign.failed}</b><span>Failed</span></div>
+            <button type="button" className={`al-wa-stat-filter ${status === 'failed' ? 'active' : ''}`} onClick={() => { setStatus('failed'); setPage(1); }} title="Show failed leads and their reasons"><b>{campaign.failed}</b><span>Failed</span></button>
             <div><b>{campaign.skipped}</b><span>Skipped</span></div>
             {campaign.pending > 0 && <div><b>{campaign.pending}</b><span>Pending</span></div>}
             {campaign.followup_template_id && <div><b>{campaign.reminders_sent_total || 0}</b><span>Reminders sent</span></div>}
@@ -151,7 +151,7 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
                     {recipient.next_reminder_at ? ` · next ${formatDateTime(recipient.next_reminder_at)}` : ''}
                     {!recipient.next_reminder_at && recipient.reminder_status ? ` · ${recipient.reminder_status}` : ''}
                   </td>
-                  <td>{recipient.reminder_error || recipient.error_message || '—'}</td>
+                  <td className="al-wa-error-cell" title={recipient.reminder_error || recipient.error_message || ''}>{recipient.reminder_error || recipient.error_message || '—'}</td>
                 </tr>
               ))}
               {!loading && !recipients.length && (

@@ -2257,7 +2257,30 @@ router.get('/whatsapp-campaigns/:id',async(req,res)=>{
     const offset=Math.max(Number(req.query.offset)||0,0);
     const countResult=await db.query(`SELECT COUNT(*)::int AS total FROM alliance_whatsapp_campaign_recipients r JOIN alliance_prospects p ON p.id=r.prospect_id WHERE ${where.join(' AND ')}`,values);
     values.push(limit);const limitParam=`$${values.length}`;values.push(offset);const offsetParam=`$${values.length}`;
-    const recipients=await db.query(`SELECT r.id,r.prospect_id,r.status,r.wa_msg_id,r.sent_at,r.scheduled_at,r.error_message,
+    const recipients=await db.query(`SELECT r.id,r.prospect_id,r.status,r.wa_msg_id,r.sent_at,r.scheduled_at,
+        COALESCE(NULLIF(r.error_message,'Meta reported message delivery failed without additional details.'),
+          CASE WHEN r.status='failed' THEN (
+            SELECT COALESCE(
+              NULLIF(CONCAT_WS(': ',
+                CASE WHEN msg.raw_payload #>> '{status_event,errors,0,code}' IS NOT NULL THEN 'Meta ' || (msg.raw_payload #>> '{status_event,errors,0,code}') END,
+                msg.raw_payload #>> '{status_event,errors,0,title}',
+                msg.raw_payload #>> '{status_event,errors,0,message}',
+                msg.raw_payload #>> '{status_event,errors,0,error_data,details}'
+              ),''),
+              CASE WHEN REGEXP_REPLACE(COALESCE(p.phone,''),'[^0-9]','','g') LIKE '91%'
+                        AND REGEXP_REPLACE(COALESCE(p.phone,''),'[^0-9]','','g') !~ '^91[6-9][0-9]{9}$'
+                   THEN 'Likely invalid Indian mobile format: expected country code 91 followed by a 10-digit mobile number starting with 6, 7, 8, or 9.'
+                   ELSE 'Meta reported delivery failure without details. The number may not be registered on WhatsApp or may be unreachable.' END
+            )
+            FROM alliance_inbox_messages msg WHERE msg.wa_msg_id=r.wa_msg_id LIMIT 1
+          ) END,
+          CASE WHEN r.status='failed' THEN
+            CASE WHEN REGEXP_REPLACE(COALESCE(p.phone,''),'[^0-9]','','g') LIKE '91%'
+                       AND REGEXP_REPLACE(COALESCE(p.phone,''),'[^0-9]','','g') !~ '^91[6-9][0-9]{9}$'
+                 THEN 'Likely invalid Indian mobile format: expected country code 91 followed by a 10-digit mobile number starting with 6, 7, 8, or 9.'
+                 ELSE 'Meta reported delivery failure without details. The number may not be registered on WhatsApp or may be unreachable.' END
+          END
+        ) AS error_message,
         p.name,p.business_name,p.phone,p.audience,p.location,
         (SELECT COUNT(*)::int FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id AND j.status='sent') AS reminders_sent,
         (SELECT MIN(j.scheduled_at) FROM alliance_whatsapp_followup_jobs j WHERE j.campaign_id=r.campaign_id AND j.prospect_id=r.prospect_id AND j.status IN ('pending','claimed')) AS next_reminder_at,

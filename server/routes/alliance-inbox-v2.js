@@ -199,16 +199,34 @@ function createAllianceInboxRouter({ auth, io }) {
           if (String(value.metadata?.phone_number_id || '') !== String(settings.phone_number_id)) continue;
 
           for (const statusEvent of value.statuses || []) {
+            const failureReason = (statusEvent.errors || []).map((error) => [
+              error.code ? `Meta ${error.code}` : '',
+              error.title,
+              error.message,
+              error.error_data?.details,
+            ].filter(Boolean).join(': ')).filter(Boolean).join(' | ')
+              || (statusEvent.status === 'failed' ? 'Meta reported message delivery failed without additional details.' : null);
             const updated = await db.query(
               `UPDATE alliance_inbox_messages SET status = $1, raw_payload = raw_payload || $2::jsonb WHERE wa_msg_id = $3 RETURNING *`,
               [statusEvent.status, JSON.stringify({ status_event: statusEvent }), statusEvent.id]
             );
             if (updated.rowCount) io.emit('alliance_message_status', { wa_message_id: statusEvent.id, status: statusEvent.status });
             await db.query(
-              `UPDATE alliance_whatsapp_campaign_recipients SET status=$1
+              `UPDATE alliance_whatsapp_campaign_recipients
+               SET status=$1,error_message=CASE WHEN $1='failed' THEN $3 ELSE error_message END
                WHERE wa_msg_id=$2 AND status IN ('sent','delivered','read','failed')`,
-              [statusEvent.status, statusEvent.id]
+              [statusEvent.status, statusEvent.id, failureReason]
             ).catch(() => {});
+            if (statusEvent.status === 'failed') {
+              await db.query(
+                `UPDATE alliance_whatsapp_followup_jobs job
+                 SET status='cancelled',error_message=$2
+                 FROM alliance_whatsapp_campaign_recipients recipient
+                 WHERE recipient.campaign_id=job.campaign_id AND recipient.prospect_id=job.prospect_id
+                   AND recipient.wa_msg_id=$1 AND job.status IN ('pending','claimed')`,
+                [statusEvent.id, `Initial WhatsApp delivery failed: ${failureReason}`.slice(0, 2000)]
+              ).catch(() => {});
+            }
           }
 
           for (const incoming of value.messages || []) {

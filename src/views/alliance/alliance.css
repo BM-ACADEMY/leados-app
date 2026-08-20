@@ -673,9 +673,12 @@
 .al-wa-detail-close:hover{color:var(--al-ink);border-color:rgba(201,162,39,.5)}
 .al-wa-detail-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--al-line);flex-shrink:0}
 .al-wa-detail-stats>div{background:#0d1829;padding:15px 18px}
+.al-wa-detail-stats>.al-wa-stat-filter{background:#0d1829;border:0;padding:15px 18px;text-align:left;cursor:pointer;color:inherit}
+.al-wa-detail-stats>.al-wa-stat-filter:hover,.al-wa-detail-stats>.al-wa-stat-filter.active{background:rgba(239,83,80,.12);box-shadow:inset 0 -2px #ef5350}
 .al-wa-detail-stats b{display:block;font:600 20px 'IBM Plex Mono',monospace;color:var(--al-ink)}
 .al-wa-detail-stats span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--al-faint);margin-top:3px}
 .al-wa-detail-note{padding:10px 22px;background:rgba(201,162,39,.08);border-bottom:1px solid var(--al-line);color:var(--al-gold2);font-size:12px;flex-shrink:0}
+.al-wa-error-cell{min-width:280px;max-width:440px;white-space:normal!important;overflow-wrap:anywhere;color:#ffb0b0;line-height:1.45}
 .al-wa-detail-filters{display:flex;align-items:center;gap:10px;padding:14px 22px;border-bottom:1px solid var(--al-line);flex-shrink:0}
 .al-wa-detail-filters .al-input-icon{flex:1}
 .al-wa-detail-filters .al-input-icon input{width:100%;box-sizing:border-box;background:var(--al-panel);border:1px solid var(--al-line);border-radius:8px;color:var(--al-ink);padding:8px 10px 8px 34px;font-size:12.5px}

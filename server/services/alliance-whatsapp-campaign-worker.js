@@ -7,6 +7,10 @@ let followupInterval;
 let processing = false;
 let followupProcessing = false;
 
+const APPROVED_CONSENT_SOURCES = new Set(['website_form', 'click_to_whatsapp_ad', 'qr_code_optin', 'inbound_whatsapp_optin', 'event_registration', 'customer_request', 'written_consent']);
+const APPROVED_CONSENT_SCOPES = new Set(['marketing', 'service', 'both']);
+const NON_CONSENT_SOURCE_PATTERN = /(scrap|purchas|directory|research)/i;
+
 const tokenFor = (settings) => process.env[settings?.access_token_env || 'ALLIANCE_WA_ACCESS_TOKEN'];
 const valueFor = (field, prospect) => {
   const customFields = typeof prospect.custom_fields === 'string'
@@ -42,7 +46,7 @@ async function claimRecipient() {
     const result = await client.query(
       `SELECT r.id,r.campaign_id,r.prospect_id,c.template_name,c.template_language,c.template_body,c.parameter_mapping,t.buttons AS template_buttons,
               c.phone_number_id,c.name AS campaign_name,c.created_at AS campaign_created_at,c.followup_template_id,c.followup_delay_days,c.followup_delay_minutes,p.name,p.business_name,p.location,p.phone,p.status AS prospect_status,
-              p.email,p.audience,p.industry,p.source,p.channel,p.channel_pref,p.ai_score,p.created_at,p.custom_fields,p.status,p.consent,p.consent_source,p.suppressed,s.access_token_env,s.active AS sender_active,
+              p.email,p.audience,p.industry,p.source,p.channel,p.channel_pref,p.ai_score,p.created_at,p.custom_fields,p.status,p.consent,p.consent_source,p.consent_at,p.consent_evidence,p.consent_scope,p.suppressed,s.access_token_env,s.active AS sender_active,
               cv.last_inbound_at
        FROM alliance_whatsapp_campaign_recipients r
        JOIN alliance_whatsapp_campaigns c ON c.id=r.campaign_id
@@ -56,7 +60,12 @@ async function claimRecipient() {
     );
     if (!result.rowCount) { await client.query('COMMIT'); return null; }
     const row = result.rows[0];
-    const reason = !row.phone ? 'missing_phone' : phoneValidationReason(row.phone) || (!row.consent || !row.consent_source ? 'whatsapp_consent_missing'
+    const reason = !row.phone ? 'missing_phone' : phoneValidationReason(row.phone) || (!row.consent ? 'whatsapp_consent_missing'
+      : !APPROVED_CONSENT_SOURCES.has(String(row.consent_source || '').toLowerCase()) ? 'whatsapp_consent_source_not_approved'
+        : !row.consent_at ? 'whatsapp_consent_timestamp_missing'
+          : !String(row.consent_evidence || '').trim() ? 'whatsapp_consent_evidence_missing'
+            : !APPROVED_CONSENT_SCOPES.has(String(row.consent_scope || '').toLowerCase()) ? 'whatsapp_consent_scope_invalid'
+              : NON_CONSENT_SOURCE_PATTERN.test(String(row.source || '')) ? 'whatsapp_consent_disallowed_for_scraped_purchased_directory_or_researched_source'
       : row.suppressed ? 'suppressed' : ['converted','closed','complete','completed','not_interested','unsubscribed'].includes(row.prospect_status) ? `prospect_${row.prospect_status}`
         : row.last_inbound_at && new Date(row.last_inbound_at) >= new Date(row.campaign_created_at) ? 'recipient_replied'
           : row.sender_active === false ? 'sender_inactive' : null);
@@ -312,8 +321,9 @@ async function scheduleAllianceInactivityReminder(prospectId, activityAt = new D
 }
 
 async function sendAllianceWhatsAppFollowup(jobId,io){
-  const result=await db.query(`SELECT j.*,j.status AS job_status,c.status AS campaign_status,c.name AS campaign_name,c.phone_number_id,c.followup_template_name AS template_name,c.followup_template_language AS template_language,c.followup_template_body AS template_body,c.followup_parameter_mapping AS parameter_mapping,t.buttons AS template_buttons,c.followup_repeat_days,c.max_followups,c.created_at AS campaign_created_at,p.name,p.business_name,p.location,p.phone,p.email,p.audience,p.industry,p.source,p.channel,p.channel_pref,p.ai_score,p.created_at,p.custom_fields,p.status AS prospect_status,p.consent,p.consent_source,p.suppressed,s.access_token_env,cv.last_inbound_at FROM alliance_whatsapp_followup_jobs j JOIN alliance_whatsapp_campaigns c ON c.id=j.campaign_id LEFT JOIN templates t ON t.id=c.followup_template_id JOIN alliance_prospects p ON p.id=j.prospect_id LEFT JOIN alliance_inbox_settings s ON s.phone_number_id=c.phone_number_id LEFT JOIN alliance_inbox_contacts ic ON ic.prospect_id=p.id LEFT JOIN alliance_inbox_conversations cv ON cv.contact_id=ic.id WHERE j.id=$1`,[jobId]);if(!result.rowCount)throw Object.assign(new Error('Follow-up job not found.'),{status:404});const job=result.rows[0];
-  const reason=!['claimed','pending'].includes(job.job_status)?`job_${job.job_status}`:job.campaign_status==='stopped'?'campaign_stopped':!job.consent||!job.consent_source?'whatsapp_consent_missing':job.suppressed?'suppressed':['converted','closed','complete','completed','not_interested','unsubscribed'].includes(job.prospect_status)?`prospect_${job.prospect_status}`:job.last_inbound_at&&new Date(job.last_inbound_at)>new Date(job.activity_cutoff_at||job.campaign_created_at)?'recipient_replied_after_latest_activity':null;
+  const result=await db.query(`SELECT j.*,j.status AS job_status,c.status AS campaign_status,c.name AS campaign_name,c.phone_number_id,c.followup_template_name AS template_name,c.followup_template_language AS template_language,c.followup_template_body AS template_body,c.followup_parameter_mapping AS parameter_mapping,t.buttons AS template_buttons,c.followup_repeat_days,c.max_followups,c.created_at AS campaign_created_at,p.name,p.business_name,p.location,p.phone,p.email,p.audience,p.industry,p.source,p.channel,p.channel_pref,p.ai_score,p.created_at,p.custom_fields,p.status AS prospect_status,p.consent,p.consent_source,p.consent_at,p.consent_evidence,p.consent_scope,p.suppressed,s.access_token_env,cv.last_inbound_at FROM alliance_whatsapp_followup_jobs j JOIN alliance_whatsapp_campaigns c ON c.id=j.campaign_id LEFT JOIN templates t ON t.id=c.followup_template_id JOIN alliance_prospects p ON p.id=j.prospect_id LEFT JOIN alliance_inbox_settings s ON s.phone_number_id=c.phone_number_id LEFT JOIN alliance_inbox_contacts ic ON ic.prospect_id=p.id LEFT JOIN alliance_inbox_conversations cv ON cv.contact_id=ic.id WHERE j.id=$1`,[jobId]);if(!result.rowCount)throw Object.assign(new Error('Follow-up job not found.'),{status:404});const job=result.rows[0];
+  const consentAuditValid=job.consent&&APPROVED_CONSENT_SOURCES.has(String(job.consent_source||'').toLowerCase())&&job.consent_at&&String(job.consent_evidence||'').trim()&&APPROVED_CONSENT_SCOPES.has(String(job.consent_scope||'').toLowerCase())&&!NON_CONSENT_SOURCE_PATTERN.test(String(job.source||''));
+  const reason=!['claimed','pending'].includes(job.job_status)?`job_${job.job_status}`:job.campaign_status==='stopped'?'campaign_stopped':!consentAuditValid?'whatsapp_consent_audit_invalid':job.suppressed?'suppressed':['converted','closed','complete','completed','not_interested','unsubscribed'].includes(job.prospect_status)?`prospect_${job.prospect_status}`:job.last_inbound_at&&new Date(job.last_inbound_at)>new Date(job.activity_cutoff_at||job.campaign_created_at)?'recipient_replied_after_latest_activity':null;
   if(reason){await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='skipped',error_message=$1 WHERE id=$2`,[reason,job.id]);return{sent:false,skipped:true,reason};}
   await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='sending',error_message=NULL WHERE id=$1`,[job.id]);try{const token=tokenFor(job);if(!token)throw new Error('Alliance WhatsApp access token is missing.');const mapping=Array.isArray(job.parameter_mapping)?job.parameter_mapping:[];const parameters=mapping.map(field=>valueFor(field,job));const payload={messaging_product:'whatsapp',to:job.phone,type:'template',template:{name:job.template_name,language:{code:job.template_language||'en'},...(parameters.length?{components:[{type:'body',parameters:parameters.map(text=>({type:'text',text}))}]}:{})}};const response=await axios.post(`https://graph.facebook.com/v19.0/${job.phone_number_id}/messages`,payload,{headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},timeout:20000});const waMessageId=response.data?.messages?.[0]?.id||null;await db.query(`UPDATE alliance_whatsapp_followup_jobs SET status='sent',wa_msg_id=$1,sent_at=NOW() WHERE id=$2`,[waMessageId,job.id]);const rendered=mapping.reduce((body,field,index)=>body.replaceAll(`{{${index+1}}}`,valueFor(field,job)),job.template_body);const inbox=await storeInboxMessage(job,waMessageId,rendered);
   const repeatDays=Math.min(Math.max(Number(job.followup_repeat_days)||4,1),30);const nextNo=Number(job.followup_no)+1;const withinLimit=Number(job.max_followups)===0||nextNo<=Number(job.max_followups);if(withinLimit){await db.query(`INSERT INTO alliance_whatsapp_followup_jobs(campaign_id,prospect_id,followup_no,scheduled_at,activity_cutoff_at,trigger_source) VALUES($1,$2,$3,NOW()+($4*INTERVAL '1 day'),NOW(),'recurring_inactivity') ON CONFLICT DO NOTHING`,[job.campaign_id,job.prospect_id,nextNo,repeatDays]);}

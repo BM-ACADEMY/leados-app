@@ -4,11 +4,15 @@ import { Download, FileSpreadsheet, Trash2, UploadCloud } from 'lucide-react';
 import { api } from '../../services/api.js';
 import './alliance.css';
 
-const COLUMNS = ['name', 'business_name', 'email', 'phone', 'audience', 'industry', 'location', 'source', 'channel_pref', 'consent', 'consent_source'];
+const COLUMNS = ['name', 'business_name', 'email', 'phone', 'audience', 'industry', 'location', 'source', 'channel_pref', 'consent', 'consent_source', 'consent_at', 'consent_evidence', 'consent_scope'];
 const defaultSystemColumns = () => COLUMNS.map((key) => ({ key, label: key, enabled: true, required: false }));
+const normalizeAudienceColumns = (columns) => {
+  const configured = new Map((Array.isArray(columns) ? columns : []).map((column) => [column.key, column]));
+  return defaultSystemColumns().map((column) => ({ ...column, ...(configured.get(column.key) || {}) }));
+};
 const requiredSystemKeys = (channel) => new Set([
   ...(['email', 'both'].includes(channel) ? ['email'] : []),
-  ...(['whatsapp', 'both'].includes(channel) ? ['phone', 'consent', 'consent_source'] : []),
+  ...(['whatsapp', 'both'].includes(channel) ? ['phone', 'consent', 'consent_source', 'consent_at', 'consent_evidence', 'consent_scope'] : []),
 ]);
 const enforceChannelColumns = (columns, channel) => {
   const required = requiredSystemKeys(channel);
@@ -52,13 +56,14 @@ export const UploadLeads = () => {
   const [editingFieldKey, setEditingFieldKey] = useState('');
   const [newAudience, setNewAudienceState] = useState({ code: '', label: '', brand: '', default_channel: 'email', fields: [], system_columns: defaultSystemColumns() });
   const setNewAudience = (next) => {
+    const normalizedColumns = normalizeAudienceColumns(next.system_columns);
     const required = requiredSystemKeys(next.default_channel);
-    const removedRequired = next.system_columns.filter((column) => required.has(column.key) && !column.enabled);
+    const removedRequired = normalizedColumns.filter((column) => required.has(column.key) && !column.enabled);
     if (removedRequired.length) {
       const channelLabel = next.default_channel === 'both' ? 'Email + WhatsApp' : next.default_channel;
       toast.error(`${removedRequired.map((column) => column.key).join(', ')} cannot be deleted because ${channelLabel} requires it.`);
     }
-    setNewAudienceState({ ...next, system_columns: enforceChannelColumns(next.system_columns, next.default_channel) });
+    setNewAudienceState({ ...next, system_columns: enforceChannelColumns(normalizedColumns, next.default_channel) });
   };
   const [newField, setNewField] = useState({ field_key: '', label: '', data_type: 'auto', required: false, sample_value: '' });
   const [savingAudience, setSavingAudience] = useState(false);
@@ -213,7 +218,7 @@ export const UploadLeads = () => {
     if (!selectedAudience) return;
     setEditingAudienceCode(selectedAudience.code); setEditingFieldKey('');
     setAudienceCodeManuallyEdited(false);
-    const existingColumns = selectedAudience.column_config?.length ? selectedAudience.column_config.map((column) => ({ ...column })) : defaultSystemColumns();
+    const existingColumns = normalizeAudienceColumns(selectedAudience.column_config);
     setNewAudience({ code: selectedAudience.code, label: selectedAudience.label, brand: selectedAudience.brand || '', default_channel: selectedAudience.default_channel, fields: (selectedAudience.fields || []).map((field) => ({ ...field })), system_columns: enforceChannelColumns(existingColumns, selectedAudience.default_channel) });
     setNewField({ field_key: '', label: '', data_type: 'auto', required: false, sample_value: '' });
     setShowAudienceForm(true);
@@ -319,7 +324,7 @@ export const UploadLeads = () => {
         <span>i</span>
         <div>
           <b>Required:</b> business_name, audience, and the contact field needed by the selected channel.
-          Email requires email. WhatsApp requires phone, consent=true, and consent_source.
+          Email requires email. WhatsApp requires phone and complete, verifiable consent details.
           <div style={{ marginTop: 5 }}>Audience must match the selected configuration. channel_pref can be blank, email, whatsapp, or both. Both requires email plus a consented WhatsApp number.</div>
           {!!selectedAudience?.fields?.length && (
             <div style={{ marginTop: 5 }}>Custom columns: {selectedAudience.fields.map((field) => `${field.field_key}${field.required ? ' (required)' : ''}`).join(', ')}</div>
@@ -344,7 +349,10 @@ export const UploadLeads = () => {
               <tr><td><code>source</code></td><td>Records where the lead came from.</td><td>Free text. Recommended: <code>website_form</code>, <code>manual_research</code>, <code>csv_import</code>, <code>referral</code>, <code>event</code>, <code>linkedin</code>, <code>google_search</code>, <code>existing_customer</code>, <code>partner</code>, or <code>other</code>.</td><td>website_form</td></tr>
               <tr><td><code>channel_pref</code></td><td>Overrides the import channel for this individual row.</td><td>Enter only <code>email</code>, <code>whatsapp</code>, <code>both</code>, or leave blank.</td><td>both</td></tr>
               <tr><td><code>consent</code></td><td>Confirms permission to send WhatsApp messages.</td><td>Accepted opt-in values: <code>true</code>, <code>yes</code>, <code>y</code>, <code>1</code>, <code>opted_in</code>, or <code>opt-in</code>. Blank or any other value means no consent.</td><td>true</td></tr>
-              <tr><td><code>consent_source</code></td><td>Records how WhatsApp consent was obtained.</td><td>Free text, but required for WhatsApp consent. Recommended: <code>website_form</code>, <code>click_to_whatsapp</code>, <code>qr_code</code>, <code>whatsapp_reply</code>, <code>inbound_message</code>, <code>event_registration</code>, <code>customer_request</code>, <code>written_consent</code>, <code>verbal_consent</code>, <code>existing_customer</code>, or <code>other</code>.</td><td>click_to_whatsapp</td></tr>
+              <tr><td><code>consent_source</code></td><td>Records how WhatsApp consent was obtained.</td><td>Required for WhatsApp. Enter only <code>website_form</code>, <code>click_to_whatsapp_ad</code>, <code>qr_code_optin</code>, <code>inbound_whatsapp_optin</code>, <code>event_registration</code>, <code>customer_request</code>, or <code>written_consent</code>.</td><td>website_form</td></tr>
+              <tr><td><code>consent_at</code></td><td>Records when the recipient opted in.</td><td>Required for WhatsApp. Use an ISO date/time including timezone.</td><td>2026-08-20T10:30:00+05:30</td></tr>
+              <tr><td><code>consent_evidence</code></td><td>Provides an auditable reference to the opt-in.</td><td>Required for WhatsApp. Enter a form submission ID, message ID, ticket ID, or securely stored evidence URL. Do not enter unsupported claims.</td><td>form_submission_4821</td></tr>
+              <tr><td><code>consent_scope</code></td><td>Records what the recipient agreed to receive.</td><td>Required for WhatsApp. Enter only <code>marketing</code>, <code>service</code>, or <code>both</code>.</td><td>marketing</td></tr>
               {(selectedAudience?.fields || []).map((field) => <tr key={field.field_key}><td><code>{field.field_key}</code>{field.required ? ' *' : ''}</td><td>Custom information configured for {selectedAudience?.label || audience}.</td><td>{field.required ? 'Required. ' : 'Optional. '}Enter a valid {field.data_type === 'auto' ? 'value' : field.data_type}.</td><td>{field.sample_value || '—'}</td></tr>)}
             </tbody>
           </table>

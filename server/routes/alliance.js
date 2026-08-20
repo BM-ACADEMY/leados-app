@@ -20,8 +20,11 @@ const upload = multer({
 
 const CHANNELS = new Set(['auto', 'email', 'whatsapp', 'both']);
 const TRUTHY = new Set(['true', 'yes', 'y', '1', 'opted_in', 'opt-in']);
-const COMMON_FIELDS = new Set(['name', 'business_name', 'business name', 'organisation name', 'organization name', 'email', 'phone', 'mobile', 'audience', 'industry', 'location', 'source', 'channel_pref', 'channel preference', 'consent', 'whatsapp_consent', 'whatsapp consent', 'consent_source', 'consent source']);
-const SYSTEM_COLUMN_KEYS = ['name','business_name','email','phone','audience','industry','location','source','channel_pref','consent','consent_source'];
+const WHATSAPP_CONSENT_SOURCES = new Set(['website_form', 'click_to_whatsapp_ad', 'qr_code_optin', 'inbound_whatsapp_optin', 'event_registration', 'customer_request', 'written_consent']);
+const CONSENT_SCOPES = new Set(['marketing', 'service', 'both']);
+const NON_CONSENT_SOURCE_PATTERN = /(scrap|purchas|directory|research)/i;
+const COMMON_FIELDS = new Set(['name', 'business_name', 'business name', 'organisation name', 'organization name', 'email', 'phone', 'mobile', 'audience', 'industry', 'location', 'source', 'channel_pref', 'channel preference', 'consent', 'whatsapp_consent', 'whatsapp consent', 'consent_source', 'consent source', 'consent_at', 'consent at', 'consent_evidence', 'consent evidence', 'consent_scope', 'consent scope']);
+const SYSTEM_COLUMN_KEYS = ['name','business_name','email','phone','audience','industry','location','source','channel_pref','consent','consent_source','consent_at','consent_evidence','consent_scope'];
 const defaultSystemColumns = () => SYSTEM_COLUMN_KEYS.map((key) => ({ key, label: key, enabled: true, required: false }));
 function normalizeSystemColumns(value) {
   const supplied = Array.isArray(value) ? value : [];
@@ -40,7 +43,7 @@ function normalizeSystemColumns(value) {
 function validateChannelSystemColumns(columns, channel) {
   const required = [
     ...(['email','both'].includes(channel) ? ['email'] : []),
-    ...(['whatsapp','both'].includes(channel) ? ['phone','consent','consent_source'] : []),
+    ...(['whatsapp','both'].includes(channel) ? ['phone','consent','consent_source','consent_at','consent_evidence','consent_scope'] : []),
   ];
   const missing = required.filter((key) => !columns.some((column) => column.key === key && column.enabled));
   if (missing.length) throw Object.assign(new Error(`${channel === 'both' ? 'Email + WhatsApp' : channel} requires these system columns: ${missing.join(', ')}. Restore them before saving.`), { status: 400 });
@@ -275,9 +278,12 @@ async function buildAudienceTemplateData(code) {
   const headers = [...enabledSystemColumns.map((column) => column.label), ...audience.fields.map((field) => field.field_key)];
   const generic = {
     name: 'Contact Name', business_name: `Example ${audience.label}`, email: 'contact@example.com', phone: '919876543210',
-    audience: audience.code, industry: 'Industry', location: 'Chennai', source: 'manual_research',
+    audience: audience.code, industry: 'Industry', location: 'Chennai', source: ['whatsapp','both'].includes(audience.default_channel) ? 'website_form' : 'manual_research',
     channel_pref: audience.default_channel, consent: ['whatsapp','both'].includes(audience.default_channel) ? 'true' : 'false',
-    consent_source: ['whatsapp','both'].includes(audience.default_channel) ? 'click_to_whatsapp' : '',
+    consent_source: ['whatsapp','both'].includes(audience.default_channel) ? 'website_form' : '',
+    consent_at: ['whatsapp','both'].includes(audience.default_channel) ? '2026-08-20T10:30:00+05:30' : '',
+    consent_evidence: ['whatsapp','both'].includes(audience.default_channel) ? 'form_submission_4821' : '',
+    consent_scope: ['whatsapp','both'].includes(audience.default_channel) ? 'marketing' : '',
   };
   const samples = (Array.isArray(audience.template_samples) && audience.template_samples.length ? audience.template_samples : [generic]).slice(0, 2);
   const rows = samples.map((sample) => {
@@ -763,7 +769,13 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       const rowChannelRaw = text(valueFrom(row, ['channel_pref', 'channel preference']));
       const rowChannel = normalizeChannelPreference(rowChannelRaw);
       const consent = TRUTHY.has(text(valueFrom(row, ['consent', 'whatsapp_consent', 'whatsapp consent'])).toLowerCase());
-      const consentSource = text(valueFrom(row, ['consent_source', 'consent source']));
+      const consentSource = text(valueFrom(row, ['consent_source', 'consent source'])).toLowerCase();
+      const consentAtRaw = text(valueFrom(row, ['consent_at', 'consent at']));
+      const consentAtHasTimezone = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(consentAtRaw);
+      const consentAt = consentAtHasTimezone && !Number.isNaN(Date.parse(consentAtRaw)) ? new Date(consentAtRaw) : null;
+      const consentEvidence = text(valueFrom(row, ['consent_evidence', 'consent evidence']));
+      const consentScope = text(valueFrom(row, ['consent_scope', 'consent scope'])).toLowerCase();
+      const leadSource = text(valueFrom(row, ['source'])) || 'file_upload';
       const channelPref = rowChannel || (requestedChannel === 'auto' ? '' : requestedChannel);
       const hasWhatsAppAccess = Boolean(phone && consent && consentSource);
       const inferredChannel = email && hasWhatsAppAccess ? 'both' : email ? 'email' : 'whatsapp';
@@ -784,6 +796,12 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       if (['whatsapp', 'both'].includes(channel) && !phone) problems.push('mobile number is required for WhatsApp');
       if (['whatsapp', 'both'].includes(channel) && !consent) problems.push('WhatsApp consent is required');
       if (['whatsapp', 'both'].includes(channel) && !consentSource) problems.push('consent_source is required for WhatsApp');
+      if (['whatsapp', 'both'].includes(channel) && consentSource && !WHATSAPP_CONSENT_SOURCES.has(consentSource)) problems.push(`invalid consent_source "${consentSource}"; use ${[...WHATSAPP_CONSENT_SOURCES].join(', ')}`);
+      if (['whatsapp', 'both'].includes(channel) && !consentAtRaw) problems.push('consent_at is required for WhatsApp');
+      else if (consentAtRaw && !consentAt) problems.push('consent_at must be a valid date/time with timezone');
+      if (['whatsapp', 'both'].includes(channel) && !consentEvidence) problems.push('consent_evidence is required for WhatsApp');
+      if (['whatsapp', 'both'].includes(channel) && !CONSENT_SCOPES.has(consentScope)) problems.push('consent_scope must be marketing, service, or both');
+      if (consent && NON_CONSENT_SOURCE_PATTERN.test(leadSource)) problems.push(`source "${leadSource}" cannot be marked consent=true; scraped, purchased, directory, and researched numbers must remain consent=false`);
 
       const customFields = {};
       for (const field of audienceConfig.fields) {
@@ -827,14 +845,15 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       const prospectResult = await client.query(
         `INSERT INTO alliance_prospects
           (campaign_id, audience, name, business_name, phone, email, industry, location,
-           channel_pref, channel, consent, consent_source, consent_at, source, custom_fields)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           channel_pref, channel, consent, consent_source, consent_at, consent_evidence, consent_scope, source, custom_fields)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          RETURNING id`,
         [campaign.id, audience, name || null, businessName, phone, email,
           text(valueFrom(row, ['industry'])) || null, text(valueFrom(row, ['location'])) || null,
           channelPref || null, channel, consent,
           consent ? consentSource : null,
-          consent ? new Date() : null, text(valueFrom(row, ['source'])) || 'file_upload', customFields]
+          consent ? consentAt : null, consent ? consentEvidence : null, consent ? consentScope : null,
+          leadSource, customFields]
       );
       const prospectId = prospectResult.rows[0].id;
       await client.query(
@@ -2203,14 +2222,14 @@ router.post('/campaigns/:id/test-email', async (req, res) => {
 
 router.get('/whatsapp-campaigns/prospects', async (req, res) => {
   try {
-    const values=[]; const where=[`p.phone IS NOT NULL`,`p.consent=TRUE`,`p.consent_source IS NOT NULL`,`p.suppressed=FALSE`,`p.status NOT IN ('converted','closed','not_interested','unsubscribed')`];
+    const values=[]; const where=[`p.phone IS NOT NULL`,`p.consent=TRUE`,`p.consent_source IN ('website_form','click_to_whatsapp_ad','qr_code_optin','inbound_whatsapp_optin','event_registration','customer_request','written_consent')`,`p.consent_at IS NOT NULL`,`NULLIF(BTRIM(p.consent_evidence),'') IS NOT NULL`,`p.consent_scope IN ('marketing','service','both')`,`COALESCE(p.source,'') !~* '(scrap|purchas|directory|research)'`,`p.suppressed=FALSE`,`p.status NOT IN ('converted','closed','not_interested','unsubscribed')`];
     if(text(req.query.audience)){values.push(text(req.query.audience));where.push(`p.audience=$${values.length}`);}
     if(text(req.query.search)){values.push(`%${text(req.query.search).toLowerCase()}%`);where.push(`(LOWER(COALESCE(p.name,'')) LIKE $${values.length} OR LOWER(p.business_name) LIKE $${values.length} OR p.phone LIKE $${values.length})`);}
     if(text(req.query.dateFrom)){values.push(text(req.query.dateFrom));where.push(`p.created_at >= $${values.length}::date`);}
     if(text(req.query.dateTo)){values.push(text(req.query.dateTo));where.push(`p.created_at < ($${values.length}::date + INTERVAL '1 day')`);}
     const limit=Math.min(Math.max(Number(req.query.limit)||20,1),5000);const offset=Math.max(Number(req.query.offset)||0,0);
     const count=await db.query(`SELECT COUNT(*)::int AS total FROM alliance_prospects p WHERE ${where.join(' AND ')}`,values);
-    const rows=await db.query(`SELECT p.id,p.name,p.business_name,p.phone,p.email,p.audience,p.industry,p.location,p.status,p.source,p.channel,p.channel_pref,p.consent,p.consent_source,p.ai_score,p.campaign_id,p.custom_fields,p.created_at FROM alliance_prospects p WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT $${values.length+1} OFFSET $${values.length+2}`,[...values,limit,offset]);
+    const rows=await db.query(`SELECT p.id,p.name,p.business_name,p.phone,p.email,p.audience,p.industry,p.location,p.status,p.source,p.channel,p.channel_pref,p.consent,p.consent_source,p.consent_at,p.consent_evidence,p.consent_scope,p.ai_score,p.campaign_id,p.custom_fields,p.created_at FROM alliance_prospects p WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT $${values.length+1} OFFSET $${values.length+2}`,[...values,limit,offset]);
     res.json({prospects:rows.rows,total:count.rows[0]?.total||0});
   }catch(error){console.error('Alliance WhatsApp prospects failed:',error);res.status(500).json({error:'Failed to load WhatsApp-eligible prospects.'});}
 });
@@ -2322,8 +2341,9 @@ router.post('/whatsapp-campaigns', async (req,res)=>{
     const settings=await getAllianceWhatsAppSettings(client);
     if(!settings)throw Object.assign(new Error('Configure ALLIANCE_WA_PHONE_NUMBER_ID or an active Alliance WhatsApp number.'),{status:409});
     if(!process.env[settings.access_token_env||'ALLIANCE_WA_ACCESS_TOKEN'])throw Object.assign(new Error('Alliance WhatsApp access token is missing.'),{status:409});
-    const eligible=await client.query(`SELECT id FROM alliance_prospects WHERE id=ANY($1::bigint[]) AND phone IS NOT NULL AND consent=TRUE AND consent_source IS NOT NULL AND suppressed=FALSE AND status NOT IN ('converted','closed','complete','completed','not_interested','unsubscribed')`,[prospectIds]);
+    const eligible=await client.query(`SELECT id FROM alliance_prospects WHERE id=ANY($1::bigint[]) AND phone IS NOT NULL AND consent=TRUE AND consent_source IN ('website_form','click_to_whatsapp_ad','qr_code_optin','inbound_whatsapp_optin','event_registration','customer_request','written_consent') AND consent_at IS NOT NULL AND NULLIF(BTRIM(consent_evidence),'') IS NOT NULL AND consent_scope IN ('marketing','service','both') AND COALESCE(source,'') !~* '(scrap|purchas|directory|research)' AND suppressed=FALSE AND status NOT IN ('converted','closed','complete','completed','not_interested','unsubscribed')`,[prospectIds]);
     if(!eligible.rowCount)throw Object.assign(new Error('No selected leads have valid WhatsApp consent.'),{status:409});
+    if(eligible.rowCount!==prospectIds.length)throw Object.assign(new Error(`${prospectIds.length-eligible.rowCount} selected lead${prospectIds.length-eligible.rowCount===1?' is':'s are'} missing valid WhatsApp consent evidence. Nothing was scheduled. Correct consent_source, consent_at, consent_evidence, and consent_scope, then try again.`),{status:409});
     assertBulkSendLimit(await getBulkSendLimit('whatsapp',client),eligible.rowCount);
     const scheduledAt=req.body.scheduled_at?new Date(req.body.scheduled_at):new Date();if(Number.isNaN(scheduledAt.getTime()))throw Object.assign(new Error('Enter a valid schedule date and time.'),{status:400});
     const campaign=await client.query(`INSERT INTO alliance_whatsapp_campaigns(name,audience,template_id,template_name,template_language,template_body,parameter_mapping,phone_number_id,status,scheduled_at,created_by,followup_template_id,followup_template_name,followup_template_language,followup_template_body,followup_parameter_mapping,followup_delay_days,followup_delay_minutes,followup_repeat_days,max_followups) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,'scheduled',$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19) RETURNING *`,[name,text(req.body.audience)||null,templateId,template.rows[0].name,template.rows[0].language||'en',template.rows[0].body,JSON.stringify(mapping),settings.phone_number_id,scheduledAt,req.user?.id||null,followup?.id||null,followup?.name||null,followup?.language||null,followup?.body||null,JSON.stringify(followupMapping),followupDelay,followupDelayMinutes,followupRepeat,maxFollowups]);

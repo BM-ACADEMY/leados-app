@@ -434,7 +434,7 @@ export const WhatsAppCampaignBuilder = () => {
         <div>
           <b>Consent-safe sending</b>
           <span>
-            Only leads with consent=true and a consent source are available.
+            Only leads with consent=true, an approved consent source, consent time, evidence, and scope are available. Scraped, purchased, directory, or researched numbers are excluded.
             Replies, STOP, suppression, and closed lead statuses prevent
             sending.
           </span>

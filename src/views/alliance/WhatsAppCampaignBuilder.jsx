@@ -103,7 +103,9 @@ export const WhatsAppCampaignBuilder = () => {
     const compactSelected = Object.fromEntries(Object.entries(selected).map(([id, lead]) => [id, {
       id: lead.id, name: lead.name, business_name: lead.business_name, phone: lead.phone,
       email: lead.email, audience: lead.audience, industry: lead.industry, location: lead.location,
-      status: lead.status, consent_source: lead.consent_source, created_at: lead.created_at,
+      status: lead.status, source: lead.source, channel: lead.channel, channel_pref: lead.channel_pref, consent: lead.consent,
+      consent_source: lead.consent_source, ai_score: lead.ai_score, campaign_name: lead.campaign_name,
+      custom_fields: lead.custom_fields, created_at: lead.created_at,
     }]));
     const snapshot = { version: 1, savedAt: new Date().toISOString(), form, mapping, followupMapping, selected: compactSelected, page };
     latestDraftRef.current = snapshot;
@@ -132,14 +134,15 @@ export const WhatsAppCampaignBuilder = () => {
       api.getTemplates(),
       api.getAllianceCampaignBuilderOptions(),
       api.getAllianceWhatsAppCampaigns(),
+      api.getAllianceAudiences(),
     ])
-      .then(([templateData, options, campaignData]) => {
+      .then(([templateData, options, campaignData, audienceData]) => {
         setTemplates(
           (templateData.templates || []).filter(
             (item) => String(item.status).toLowerCase() === "approved" && (!item.template_scope || ["alliance", "shared"].includes(item.template_scope)),
           ),
         );
-        setAudiences(options.audiences || []);
+        setAudiences(audienceData.audiences || options.audiences || []);
         setCampaigns(campaignData.campaigns || []);
       })
       .catch((error) => toast.error(error.message));
@@ -198,6 +201,24 @@ export const WhatsAppCampaignBuilder = () => {
       ),
     [followupTemplate],
   );
+  const parameterFieldOptions = useMemo(() => {
+    const fields = new Map(Object.entries(PARAMETER_FIELD_LABELS));
+    audiences.forEach((audience) => {
+      (audience.column_config || [])
+        .filter((column) => column.enabled !== false)
+        .forEach((column) => fields.set(column.key, column.label || column.key.replaceAll('_', ' ')));
+      (audience.fields || [])
+        .filter((field) => field.active !== false)
+        .forEach((field) => fields.set(field.field_key, field.label || field.field_key.replaceAll('_', ' ')));
+    });
+    [...prospects, ...Object.values(selected)].forEach((prospect) => {
+      const customFields = prospect?.custom_fields && typeof prospect.custom_fields === 'object'
+        ? prospect.custom_fields : {};
+      Object.keys(customFields).forEach((key) => fields.set(key, fields.get(key) || key.replaceAll('_', ' ')));
+    });
+    [...mapping, ...followupMapping].filter(Boolean).forEach((key) => fields.set(key, fields.get(key) || key.replaceAll('_', ' ')));
+    return [...fields.entries()];
+  }, [audiences, prospects, selected, mapping, followupMapping]);
   useEffect(() => {
     if (!template && restoredMappingRef.current) return;
     if (template && restoredMappingRef.current) {
@@ -230,7 +251,7 @@ export const WhatsAppCampaignBuilder = () => {
         { length: followupVariableCount },
         (_, index) => {
           const source = followupTemplate?.parameter_definitions?.body?.[String(index + 1)]?.default_source;
-          return ['name','business_name','location','phone','email','audience','industry','status','consent_source'].includes(source)
+          return source && /^[a-z][a-z0-9_]*$/.test(source)
             ? source : (["name", "business_name", "location"][index] || "name");
         },
       ),
@@ -243,7 +264,9 @@ export const WhatsAppCampaignBuilder = () => {
     business_name: "Example Organisation",
     location: "Pondicherry",
   };
-  const valueFor = (field) => previewLead[field] || "—";
+  const valueFor = (field) => field === 'campaign_name'
+    ? (form.name || previewLead.campaign_name || '—')
+    : (previewLead[field] ?? previewLead.custom_fields?.[field] ?? "—");
   const preview = mapping.reduce(
     (body, field, index) =>
       body.replaceAll(`{{${index + 1}}}`, valueFor(field)),
@@ -503,15 +526,7 @@ export const WhatsAppCampaignBuilder = () => {
                         )
                       }
                     >
-                      <option value="name">Lead name</option>
-                      <option value="business_name">Business name</option>
-                      <option value="location">Location</option>
-                      <option value="phone">Prospect phone</option>
-                      <option value="email">Prospect email</option>
-                      <option value="audience">Audience</option>
-                      <option value="industry">Industry</option>
-                      <option value="status">Prospect status</option>
-                      <option value="consent_source">Consent source</option>
+                      {parameterFieldOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                     </select>
                     <em>{valueFor(field)}</em>
                   </label>
@@ -557,7 +572,7 @@ export const WhatsAppCampaignBuilder = () => {
               </div>
               {followupTemplate && <>
                 <div className="al-wa-template"><header><b>{followupTemplate.name}</b><span>n8n reminder · approved</span></header><div>{followupTemplate.body}</div></div>
-                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field, index) => <label key={index}><span>{`{{${index + 1}}}`}<small style={{ display: 'block' }}>{followupTemplate?.parameter_definitions?.body?.[String(index + 1)]?.label || PARAMETER_FIELD_LABELS[field] || field?.replaceAll('_', ' ') || `Parameter ${index + 1}`}</small></span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value, i) => i === index ? e.target.value : value))}><option value="name">Prospect contact name</option><option value="business_name">Business name</option><option value="location">Location</option><option value="phone">Phone</option><option value="email">Email</option><option value="audience">Audience</option><option value="industry">Industry</option><option value="status">Status</option><option value="consent_source">Consent source</option></select><em>{valueFor(field)}</em></label>)}</div>}
+                {followupVariableCount > 0 && <div className="al-wa-map"><b>Follow-up variable mapping</b>{followupMapping.map((field, index) => <label key={index}><span>{`{{${index + 1}}}`}<small style={{ display: 'block' }}>{followupTemplate?.parameter_definitions?.body?.[String(index + 1)]?.label || PARAMETER_FIELD_LABELS[field] || field?.replaceAll('_', ' ') || `Parameter ${index + 1}`}</small></span><select value={field} onChange={(e) => setFollowupMapping((current) => current.map((value, i) => i === index ? e.target.value : value))}>{parameterFieldOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><em>{valueFor(field)}</em></label>)}</div>}
                 <small className="al-help">The approved reminder repeats only while the lead is inactive. It stops automatically for Not Interested, Closed, Converted, Completed, Unsubscribed, or suppressed leads. A recipient reply pauses reminders; a later admin/AI reply starts a fresh inactivity timer.</small>
               </>}
             </div>

@@ -139,8 +139,9 @@ async function claimDueTouch() {
     const result = await client.query(
       `SELECT t.id, t.campaign_id, t.prospect_id, t.touch_no, t.subject, t.message_body,
               p.name, p.business_name, p.email, p.phone, p.audience, p.industry, p.location,
-              p.source, p.consent_source, p.custom_fields, p.status AS prospect_status,
-              p.suppressed, c.status AS campaign_status, c.started_at, c.sender_domain_id,
+              p.source, p.channel, p.channel_pref, p.consent, p.consent_source, p.ai_score, p.created_at,
+              p.custom_fields, p.status AS prospect_status,
+              p.suppressed, c.name AS campaign_name, c.status AS campaign_status, c.started_at, c.sender_domain_id,
               cp.enrollment_status, d.inbox_email, d.status AS sender_status,
               d.daily_cap, d.sent_today, policy.limit_mode AS bulk_limit_mode, policy.custom_limit AS bulk_custom_limit,
               sent_count.contacted_count

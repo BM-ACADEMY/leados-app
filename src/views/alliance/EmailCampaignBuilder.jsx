@@ -103,7 +103,8 @@ export const EmailCampaignBuilder = () => {
     const compactSelected = Object.fromEntries(Object.entries(selectedLeads).map(([id, lead]) => [id, {
       id: lead.id, name: lead.name, business_name: lead.business_name, email: lead.email,
       phone: lead.phone, location: lead.location, industry: lead.industry, audience: lead.audience,
-      status: lead.status, source: lead.source, consent_source: lead.consent_source,
+      status: lead.status, source: lead.source, channel: lead.channel, channel_pref: lead.channel_pref, consent: lead.consent,
+      consent_source: lead.consent_source, ai_score: lead.ai_score,
       custom_fields: lead.custom_fields, created_at: lead.created_at
     }]));
     const snapshot = {
@@ -186,15 +187,30 @@ export const EmailCampaignBuilder = () => {
   const selected = useMemo(() => new Set(Object.keys(selectedLeads)), [selectedLeads]);
   const sender = options.senders?.find((item) => String(item.id) === String(form.sender_domain_id));
   const audience = options.audiences?.find((item) => item.code === filters.audience);
-  const audienceConfig = audienceConfigs.find((item) => item.code === filters.audience);
-  const personalizationFields = [
-    { key: 'name', label: 'Contact name' }, { key: 'org', label: 'Business / organisation name' },
-    { key: 'location', label: 'Location' }, { key: 'email', label: 'Email' },
-    { key: 'phone', label: 'Phone' }, { key: 'industry', label: 'Industry' },
-    { key: 'audience', label: 'Audience' }, { key: 'source', label: 'Lead source' },
-    { key: 'status', label: 'Lead status' }, { key: 'consent_source', label: 'Consent source' },
-    ...(audienceConfig?.fields || []).map((field) => ({ key: field.field_key, label: field.label || field.field_key }))
-  ].filter((field, index, fields) => fields.findIndex((item) => item.key === field.key) === index);
+  const personalizationFields = useMemo(() => {
+    const fields = new Map([
+      ['name', 'Contact name'], ['org', 'Business / organisation name'],
+      ['business_name', 'Business name'], ['location', 'Location'], ['email', 'Email'],
+      ['phone', 'Phone'], ['industry', 'Industry'], ['audience', 'Audience'],
+      ['source', 'Lead source'], ['status', 'Lead status'], ['channel', 'Channel'],
+      ['consent', 'WhatsApp consent'], ['consent_source', 'Consent source'],
+      ['ai_score', 'AI score'], ['campaign_name', 'Campaign name'], ['created_at', 'Date added'],
+    ]);
+    audienceConfigs.forEach((audienceConfig) => {
+      (audienceConfig.column_config || [])
+        .filter((column) => column.enabled !== false)
+        .forEach((column) => fields.set(column.key, column.label || column.key.replaceAll('_', ' ')));
+      (audienceConfig.fields || [])
+        .filter((field) => field.active !== false)
+        .forEach((field) => fields.set(field.field_key, field.label || field.field_key.replaceAll('_', ' ')));
+    });
+    [...prospects, ...Object.values(selectedLeads)].forEach((prospect) => {
+      const customFields = prospect?.custom_fields && typeof prospect.custom_fields === 'object'
+        ? prospect.custom_fields : {};
+      Object.keys(customFields).forEach((key) => fields.set(key, fields.get(key) || key.replaceAll('_', ' ')));
+    });
+    return [...fields].map(([key, label]) => ({ key, label }));
+  }, [audienceConfigs, prospects, selectedLeads]);
   const previewLead = Object.values(selectedLeads)[0] || prospects[0] || { name: 'Dr. Charles', business_name: 'Example Organisation', location: 'Pondicherry' };
   const pages = Math.max(1, Math.ceil(total / limit));
   const allPageSelected = prospects.length > 0 && prospects.every((lead) => selected.has(String(lead.id)));
@@ -303,6 +319,7 @@ export const EmailCampaignBuilder = () => {
   };
   const personalize = (value = '') => String(value).replace(/\{\{([a-z][a-z0-9_]*)\}\}/gi, (_match, key) => {
     const aliases = { org: 'business_name' };
+    if (key === 'campaign_name') return form.name || previewLead.campaign_name || `{{${key}}}`;
     return String(previewLead[aliases[key] || key] ?? previewLead.custom_fields?.[key] ?? `{{${key}}}`);
   });
 

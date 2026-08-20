@@ -1516,7 +1516,7 @@ router.get('/campaign-builder/prospects', async (req, res) => {
     values.push(limit, offset);
     const result = await db.query(
       `SELECT p.id, p.name, p.business_name, p.email, p.phone, p.audience, p.industry, p.location,
-              p.status, p.source, p.consent_source, p.custom_fields, p.tags, p.ai_score, p.created_at
+              p.status, p.source, p.channel, p.channel_pref, p.consent, p.consent_source, p.custom_fields, p.tags, p.ai_score, p.created_at
        FROM alliance_prospects p WHERE ${where.join(' AND ')}
        ORDER BY p.created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
       values
@@ -2210,7 +2210,7 @@ router.get('/whatsapp-campaigns/prospects', async (req, res) => {
     if(text(req.query.dateTo)){values.push(text(req.query.dateTo));where.push(`p.created_at < ($${values.length}::date + INTERVAL '1 day')`);}
     const limit=Math.min(Math.max(Number(req.query.limit)||20,1),5000);const offset=Math.max(Number(req.query.offset)||0,0);
     const count=await db.query(`SELECT COUNT(*)::int AS total FROM alliance_prospects p WHERE ${where.join(' AND ')}`,values);
-    const rows=await db.query(`SELECT p.id,p.name,p.business_name,p.phone,p.audience,p.industry,p.location,p.status,p.consent_source,p.created_at FROM alliance_prospects p WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT $${values.length+1} OFFSET $${values.length+2}`,[...values,limit,offset]);
+    const rows=await db.query(`SELECT p.id,p.name,p.business_name,p.phone,p.email,p.audience,p.industry,p.location,p.status,p.source,p.channel,p.channel_pref,p.consent,p.consent_source,p.ai_score,p.campaign_id,p.custom_fields,p.created_at FROM alliance_prospects p WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC LIMIT $${values.length+1} OFFSET $${values.length+2}`,[...values,limit,offset]);
     res.json({prospects:rows.rows,total:count.rows[0]?.total||0});
   }catch(error){console.error('Alliance WhatsApp prospects failed:',error);res.status(500).json({error:'Failed to load WhatsApp-eligible prospects.'});}
 });
@@ -2293,8 +2293,9 @@ router.post('/whatsapp-campaigns', async (req,res)=>{
     const template=await client.query(`SELECT id,name,language,body,status,category,header_format FROM templates WHERE id=$1`,[templateId]);
     if(!template.rowCount||String(template.rows[0].status).toLowerCase()!=='approved')throw Object.assign(new Error('Select a Meta-approved registered template.'),{status:409});
     const variableCount=Math.max(0,...[...String(template.rows[0].body).matchAll(/\{\{(\d+)\}\}/g)].map(match=>Number(match[1])));
-    if(mapping.length!==variableCount||mapping.some(field=>!['name','business_name','location','phone','email','audience','industry','status','consent_source'].includes(field)))throw Object.assign(new Error(`Map all ${variableCount} template variables before scheduling.`),{status:400});
-    let followup=null;if(followupTemplateId){const followupResult=await client.query(`SELECT id,name,language,body,status FROM templates WHERE id=$1`,[followupTemplateId]);followup=followupResult.rows[0];if(!followup||String(followup.status).toLowerCase()!=='approved')throw Object.assign(new Error('Select a Meta-approved follow-up template.'),{status:409});const count=Math.max(0,...[...String(followup.body).matchAll(/\{\{(\d+)\}\}/g)].map(match=>Number(match[1])));if(followupMapping.length!==count||followupMapping.some(field=>!['name','business_name','location','phone','email','audience','industry','status','consent_source'].includes(field)))throw Object.assign(new Error(`Map all ${count} follow-up variables.`),{status:400});}
+    const validMappingField=(field)=>/^[a-z][a-z0-9_]*$/.test(field)&&!['__proto__','constructor','prototype'].includes(field);
+    if(mapping.length!==variableCount||mapping.some(field=>!validMappingField(field)))throw Object.assign(new Error(`Map all ${variableCount} template variables before scheduling.`),{status:400});
+    let followup=null;if(followupTemplateId){const followupResult=await client.query(`SELECT id,name,language,body,status FROM templates WHERE id=$1`,[followupTemplateId]);followup=followupResult.rows[0];if(!followup||String(followup.status).toLowerCase()!=='approved')throw Object.assign(new Error('Select a Meta-approved follow-up template.'),{status:409});const count=Math.max(0,...[...String(followup.body).matchAll(/\{\{(\d+)\}\}/g)].map(match=>Number(match[1])));if(followupMapping.length!==count||followupMapping.some(field=>!validMappingField(field)))throw Object.assign(new Error(`Map all ${count} follow-up variables.`),{status:400});}
     const settings=await getAllianceWhatsAppSettings(client);
     if(!settings)throw Object.assign(new Error('Configure ALLIANCE_WA_PHONE_NUMBER_ID or an active Alliance WhatsApp number.'),{status:409});
     if(!process.env[settings.access_token_env||'ALLIANCE_WA_ACCESS_TOKEN'])throw Object.assign(new Error('Alliance WhatsApp access token is missing.'),{status:409});

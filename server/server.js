@@ -1563,12 +1563,22 @@ app.get('/api/templates/:id/campaign-sheet', async (req, res) => {
     const result = await pool.query('SELECT name, body, header, parameter_definitions FROM templates WHERE id = $1', [req.params.id]);
     if (!result.rows.length) return res.status(404).json({ error: 'Template not found' });
     const template = result.rows[0];
+    let requestedMappings = null;
+    try {
+      requestedMappings = req.query.mappings ? JSON.parse(req.query.mappings) : null;
+    } catch { requestedMappings = null; }
+    const isExcelSourced = (section, number) => {
+      if (!requestedMappings) return true;
+      return requestedMappings?.[section]?.[String(number)]?.source === 'excel_parameter';
+    };
     const headers = ['Name', 'Phone'];
     for (const number of getTemplateVariableNumbers(template.header)) {
+      if (!isExcelSourced('header', number)) continue;
       const label = template.parameter_definitions?.header?.[String(number)]?.label;
       headers.push(`Header {{${number}}}${label ? ` - ${label}` : ''}`);
     }
     for (const number of getTemplateVariableNumbers(template.body)) {
+      if (!isExcelSourced('body', number)) continue;
       const label = template.parameter_definitions?.body?.[String(number)]?.label;
       headers.push(`Body {{${number}}}${label ? ` - ${label}` : ''}`);
     }
@@ -4281,9 +4291,22 @@ app.post('/api/leads/import', auth, upload.single('file'), async (req, res) => {
     if (isCampaignBatch && req.body.template_id) {
       const templateResult = await pool.query('SELECT body, header FROM templates WHERE id = $1', [req.body.template_id]);
       if (!templateResult.rows.length) return res.status(400).json({ error: 'Selected template was not found.' });
+      let requestedMappings = {};
+      try {
+        requestedMappings = req.body.template_parameters ? JSON.parse(req.body.template_parameters) : {};
+      } catch { requestedMappings = {}; }
+      const isExcelSourced = (section, number) => {
+        const mapping = requestedMappings?.[section]?.[String(number)];
+        // No mapping info supplied (older client) — fall back to requiring every column.
+        return !requestedMappings || Object.keys(requestedMappings).length === 0 || mapping?.source === 'excel_parameter';
+      };
       const requiredColumns = [
-        ...getTemplateVariableNumbers(templateResult.rows[0].header).map((number) => `Header {{${number}}}`),
-        ...getTemplateVariableNumbers(templateResult.rows[0].body).map((number) => `Body {{${number}}}`),
+        ...getTemplateVariableNumbers(templateResult.rows[0].header)
+          .filter((number) => isExcelSourced('header', number))
+          .map((number) => `Header {{${number}}}`),
+        ...getTemplateVariableNumbers(templateResult.rows[0].body)
+          .filter((number) => isExcelSourced('body', number))
+          .map((number) => `Body {{${number}}}`),
       ];
       const headerRow = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, blankrows: false })[0] || [];
       const availableColumns = new Set(headerRow.map((value) => String(value).trim().toLowerCase()));

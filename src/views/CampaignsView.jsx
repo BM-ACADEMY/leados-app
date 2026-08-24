@@ -147,7 +147,7 @@ export const CampaignsView = () => {
   const handleDownloadTemplate = () => {
     const link = document.createElement('a');
     link.href = templateId
-      ? `${api.baseUrl}/api/templates/${encodeURIComponent(templateId)}/campaign-sheet`
+      ? `${api.baseUrl}/api/templates/${encodeURIComponent(templateId)}/campaign-sheet?mappings=${encodeURIComponent(JSON.stringify(templateParameters))}`
       : `${api.baseUrl}/api/leads/template`;
     link.download = templateId ? 'template_campaign_recipients.xlsx' : 'leados_campaign_template.xlsx';
     document.body.appendChild(link);
@@ -186,6 +186,7 @@ export const CampaignsView = () => {
         formData.append('template_id', templateId);
         formData.append('file', importFile);
         formData.append('force_source', batchId);
+        formData.append('template_parameters', JSON.stringify(templateParameters));
         
         const importRes = await api.importLeads(formData);
         if (!importRes.imported) {
@@ -353,19 +354,7 @@ export const CampaignsView = () => {
             </div>
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 10, color: C.muted, marginBottom: 5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase' }}>Target Audience Status</label>
-              <select value={targetStatus} onChange={(e) => {
-                const nextStatus = e.target.value;
-                setTargetStatus(nextStatus);
-                if (nextStatus === 'custom_csv') {
-                  setTemplateParameters((current) => Object.fromEntries(
-                    ['header', 'body'].map((section) => [section, Object.fromEntries(
-                      Object.entries(current[section] || {}).map(([number, mapping]) => [number, {
-                        ...mapping, source: 'excel_parameter', value: '', section, number: Number(number)
-                      }])
-                    )])
-                  ));
-                }
-              }} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
+              <select value={targetStatus} onChange={(e) => setTargetStatus(e.target.value)} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
                 <option value="new">New leads</option>
                 <option value="warm">Warm leads</option>
                 <option value="cold">Cold leads</option>
@@ -403,15 +392,7 @@ export const CampaignsView = () => {
                 const nextId = e.target.value;
                 const template = templates.find((item) => String(item.id) === String(nextId));
                 setTemplateId(nextId);
-                const defaults = createDefaultParameterMappings(template);
-                if (targetStatus === 'custom_csv') {
-                  for (const section of ['header', 'body']) {
-                    for (const [number, mapping] of Object.entries(defaults[section])) {
-                      defaults[section][number] = { ...mapping, source: 'excel_parameter', section, number: Number(number) };
-                    }
-                  }
-                }
-                setTemplateParameters(defaults);
+                setTemplateParameters(createDefaultParameterMappings(template));
               }} style={{ width: '100%', background: C.surface, border: '1px solid ' + C.border, borderRadius: 7, color: C.text, padding: '9px 11px', fontSize: 12, outline: 'none' }}>
                 <option value="">Select Template</option>
                 {templates

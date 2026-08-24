@@ -903,7 +903,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
   const activeLeadTypingStatus = (activeLeadId !== null && activeLeadId !== undefined) ? typingLeadIds.get(String(activeLeadId)) : null;
   const isActiveLeadTyping = !!activeLeadTypingStatus;
 
-  return (
+return (
     <div style={{ height: '100%', display: 'flex' }}>
       <style>{`@keyframes typingBounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-4px); opacity: 1; } }`}</style>
       {/* ── SIDEBAR ─────────────────────────────────── */}
@@ -1084,7 +1084,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
         })()}
 
         {/* Messages area */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: C.bg + '88' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#0b141a' }}>
           {loadingLead && localMessages.length === 0 && (
             <p style={{ textAlign: 'center', color: C.muted, fontSize: 11, marginTop: 60 }}>Loading conversation…</p>
           )}
@@ -1189,16 +1189,14 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
                     {showDateHeader && (
                       <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0 14px 0' }}>
                         <span style={{
-                          background: C.card,
-                          border: '1px solid ' + C.border,
-                          color: C.muted,
-                          fontSize: '11px',
-                          padding: '4px 10px',
-                          borderRadius: '6px',
-                          fontWeight: '600',
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.5px'
+                          background: '#182229',
+                          border: 'none',
+                          color: '#aebac1',
+                          fontSize: '12px',
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontWeight: '500',
+                          boxShadow: '0 1px 0.5px rgba(11,20,26,.13)'
                         }}>
                           {dateHeaderLabel}
                         </span>
@@ -1229,13 +1227,12 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
                     style={{
                       position: 'relative',
                       background: highlightedMessageKey === getMessageIdentity(m)
-                        ? C.accent + '55'
-                        : isLead 
-                          ? (selectedMessageIds.includes(m.id) ? C.accent + '30' : C.card) 
-                          : (selectedMessageIds.includes(m.id) ? C.accent + '40' : C.accent + '20'),
-                      border: '1px solid ' + (highlightedMessageKey === getMessageIdentity(m) ? C.accent : isLead ? C.border : C.accentDim),
-                      borderRadius: isLead ? '4px 13px 13px 13px' : '13px 4px 13px 13px',
-                      padding: '9px 13px',
+                        ? (isLead ? '#2a3942' : '#00755f')
+                        : (selectedMessageIds.includes(m.id) ? (isLead ? '#2a3942' : '#00755f') : (isLead ? '#202c33' : '#005c4b')),
+                      border: 'none',
+                      borderRadius: isLead ? '0px 8px 8px 8px' : '8px 0px 8px 8px',
+                      padding: '8px 12px 8px 12px',
+                      boxShadow: '0 1px 0.5px rgba(11,20,26,.13)',
                       transition: 'all 0.3s ease'
                     }}
                   onMouseLeave={() => { if (activeDropdownId === m.id) setActiveDropdownId(null); }}
@@ -1393,9 +1390,20 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
                         );
                       })()}
 
-                      <p style={{ fontSize: 12, color: C.text, whiteSpace: 'pre-wrap', lineHeight: 1.7, paddingRight: 10 }}>{renderMessageWithLinks(getMessageText(m))}</p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                        <p style={{ fontSize: '14.2px', color: '#e9edef', whiteSpace: 'pre-wrap', lineHeight: '19px', margin: 0, paddingRight: 6, flex: 1, minWidth: 0 }}>{renderMessageWithLinks(getMessageText(m))}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, paddingBottom: 2 }}>
+                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>{new Date(m.timestamp || m.sent_at || m.time || new Date()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          {!isLead && (
+                             <span style={{ color: (m.status === 'read' || m.status === 'seen') ? '#53bdeb' : 'rgba(255,255,255,0.6)', display: 'flex' }}>
+                               <Check size={14} style={{ marginRight: -6 }} />
+                               <Check size={14} />
+                             </span>
+                          )}
+                        </div>
+                      </div>
                       {alliance && Array.isArray(m.template_buttons) && m.template_buttons.length > 0 && (
-                        <div style={{ margin: '9px -13px -9px', borderTop: `1px solid ${C.border}` }}>
+                        <div style={{ margin: '9px -12px -8px -12px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
                           {m.template_buttons.map((button, buttonIndex) => {
                             const type = String(button.type || '').toUpperCase();
                             const label = button.text || (type === 'URL' ? 'Open link' : type === 'PHONE_NUMBER' ? 'Call' : 'Reply');
@@ -1411,7 +1419,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
                                 href={href || undefined}
                                 target={type === 'URL' ? '_blank' : undefined}
                                 rel={type === 'URL' ? 'noopener noreferrer' : undefined}
-                                style={{ minHeight: 38, padding: '7px 12px', borderTop: buttonIndex ? `1px solid ${C.border}` : 'none', color: C.green, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', cursor: href ? 'pointer' : 'default' }}
+                                style={{ minHeight: 40, padding: '10px 12px', borderTop: buttonIndex ? '1px solid rgba(255, 255, 255, 0.1)' : 'none', color: '#00a884', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 14, fontWeight: 500, textDecoration: 'none', cursor: href ? 'pointer' : 'default', background: 'transparent' }}
                               >
                                 {type === 'URL' ? <ExternalLink size={14} /> : type === 'PHONE_NUMBER' ? <Phone size={14} /> : <CornerUpLeft size={14} />}
                                 {label}
@@ -1681,8 +1689,8 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
                     ))}
                   </div>
                 )}
-                <button type="button" onClick={() => setShowAttachMenu(!showAttachMenu)} style={{ background: C.card, border: '1px solid ' + C.border, width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} title="Attach File">
-                  <Paperclip size={15} color={C.muted} />
+                <button type="button" onClick={() => setShowAttachMenu(!showAttachMenu)} style={{ background: 'transparent', border: 'none', width: 42, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} title="Attach File">
+                  <Paperclip size={24} color={'#8696a0'} />
                 </button>
               </div>
 
@@ -1698,8 +1706,8 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
                     />
                   </div>
                 )}
-                <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} style={{ background: C.card, border: '1px solid ' + C.border, width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} title="Add Emoji">
-                  <Smile size={15} color={C.muted} />
+                <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} style={{ background: 'transparent', border: 'none', width: 42, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} title="Add Emoji">
+                  <Smile size={24} color={'#8696a0'} />
                 </button>
               </div>
 
@@ -1708,37 +1716,37 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
                   type="button"
                   onClick={handleAllianceSuggestion}
                   disabled={suggestingReply || !activeLeadId}
-                  style={{ background: suggestingReply ? C.card : 'rgba(216,170,35,.12)', border: '1px solid rgba(216,170,35,.45)', width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: suggestingReply ? 'wait' : 'pointer', opacity: suggestingReply ? .65 : 1 }}
+                  style={{ background: 'transparent', border: 'none', width: 42, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: suggestingReply ? 'wait' : 'pointer', opacity: suggestingReply ? .65 : 1 }}
                   title="Generate AI reply suggestion"
                 >
-                  <Sparkles size={15} color="#e0b52f" />
+                  <Sparkles size={24} color="#e0b52f" />
                 </button>
               )}
 
               {isRecording ? (
-                <div style={{ flex: 1, background: C.card, border: '1px solid ' + C.border, borderRadius: 11, padding: '10px 13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ flex: 1, background: '#2a3942', border: 'none', borderRadius: 24, padding: '9px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'red', animation: 'pulse 1s infinite' }} />
-                    <span style={{ color: C.text, fontSize: 13 }}>Recording... {formatDuration(recordingDuration)}</span>
+                    <span style={{ color: '#d1d7db', fontSize: 14 }}>Recording... {formatDuration(recordingDuration)}</span>
                   </div>
-                  <button type="button" onClick={stopRecording} style={{ background: 'transparent', border: 'none', color: 'red', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>STOP</button>
+                  <button type="button" onClick={stopRecording} style={{ background: 'transparent', border: 'none', color: '#f15c6d', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>STOP</button>
                 </div>
               ) : (
                 <input
                   value={msg}
                   onChange={(e) => setMsg(e.target.value)}
-                  placeholder="Type manual message (overrides AI for this reply)..."
-                  style={{ flex: 1, background: C.card, border: '1px solid ' + C.border, borderRadius: 11, padding: '10px 13px', color: C.text, fontSize: 12, outline: 'none' }}
+                  placeholder="Type a message"
+                  style={{ flex: 1, background: '#2a3942', border: 'none', borderRadius: 24, padding: '9px 16px', color: '#d1d7db', fontSize: 14, outline: 'none' }}
                 />
               )}
 
               {!msg.trim() && !attachedFile && !isRecording ? (
-                <button type="button" onClick={startRecording} style={{ background: C.card, border: '1px solid ' + C.border, width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                  <Mic size={15} color={C.muted} />
+                <button type="button" onClick={startRecording} style={{ background: 'transparent', border: 'none', width: 42, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                  <Mic size={24} color={'#8696a0'} />
                 </button>
               ) : (
-                <button type="submit" disabled={sending || isRecording} style={{ background: C.accent, border: 'none', width: 42, height: 42, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', opacity: (sending || isRecording) ? 0.6 : 1 }}>
-                  <Send size={15} color='#fff' />
+                <button type="submit" disabled={sending || isRecording} style={{ background: 'transparent', border: 'none', width: 42, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', opacity: (sending || isRecording) ? 0.6 : 1 }}>
+                  <Send size={24} color={'#8696a0'} />
                 </button>
               )}
             </form>

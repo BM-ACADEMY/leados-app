@@ -737,6 +737,20 @@ class LeadOSAPI {
     return this.request(`/api/alliance/whatsapp-campaigns/${id}${query.toString() ? `?${query}` : ''}`);
   }
 
+  async updateAllianceWhatsAppFailedLeadReshare(campaignId, recipientIds, reshareStatus) {
+    return this.request(`/api/alliance/whatsapp-campaigns/${campaignId}/failed-leads/reshare`, {
+      method: 'POST',
+      body: JSON.stringify({ recipient_ids: recipientIds, reshare_status: reshareStatus }),
+    });
+  }
+
+  async retryAllianceWhatsAppFailedLeads(campaignId, recipientIds) {
+    return this.request(`/api/alliance/whatsapp-campaigns/${campaignId}/retry-failed`, {
+      method: 'POST',
+      body: JSON.stringify({ recipient_ids: recipientIds }),
+    });
+  }
+
   async createAllianceWhatsAppCampaign(payload) {
     return this.request('/api/alliance/whatsapp-campaigns', { method: 'POST', body: JSON.stringify(payload) });
   }

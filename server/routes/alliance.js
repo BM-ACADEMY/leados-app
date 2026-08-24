@@ -2276,7 +2276,7 @@ router.get('/whatsapp-campaigns/:id',async(req,res)=>{
     const offset=Math.max(Number(req.query.offset)||0,0);
     const countResult=await db.query(`SELECT COUNT(*)::int AS total FROM alliance_whatsapp_campaign_recipients r JOIN alliance_prospects p ON p.id=r.prospect_id WHERE ${where.join(' AND ')}`,values);
     values.push(limit);const limitParam=`$${values.length}`;values.push(offset);const offsetParam=`$${values.length}`;
-    const recipients=await db.query(`SELECT r.id,r.prospect_id,r.status,r.wa_msg_id,r.sent_at,r.scheduled_at,
+    const recipients=await db.query(`SELECT r.id,r.prospect_id,r.status,r.reshare_status,r.reshare_updated_at,r.wa_msg_id,r.sent_at,r.scheduled_at,
         COALESCE(NULLIF(r.error_message,'Meta reported message delivery failed without additional details.'),
           CASE WHEN r.status='failed' THEN (
             SELECT COALESCE(
@@ -2310,6 +2310,67 @@ router.get('/whatsapp-campaigns/:id',async(req,res)=>{
       WHERE ${where.join(' AND ')} ORDER BY r.id LIMIT ${limitParam} OFFSET ${offsetParam}`,values);
     res.json({campaign:campaignResult.rows[0],recipients:recipients.rows,total:countResult.rows[0].total,limit,offset});
   }catch(error){console.error('Alliance WhatsApp campaign detail failed:',error);res.status(500).json({error:'Failed to load campaign detail.'});}
+});
+
+router.post('/whatsapp-campaigns/:id/failed-leads/reshare', async (req, res) => {
+  try {
+    const recipientIds = [...new Set((req.body.recipient_ids || []).map(Number).filter(Number.isInteger))];
+    const reshareStatus = text(req.body.reshare_status);
+    const allowed = ['excluded', 'awaiting_confirmation', 'confirmed', 'reshared'];
+    if (!recipientIds.length || !allowed.includes(reshareStatus)) {
+      return res.status(400).json({ error: 'Choose failed leads and a valid re-share action.' });
+    }
+    const result = await db.query(
+      `UPDATE alliance_whatsapp_campaign_recipients
+       SET reshare_status=$1, reshare_updated_at=NOW(), reshare_updated_by=$2
+       WHERE campaign_id=$3 AND id=ANY($4::bigint[]) AND status='failed'
+       RETURNING id, reshare_status, reshare_updated_at`,
+      [reshareStatus, req.user?.id || null, req.params.id, recipientIds],
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'No failed recipients were found for this campaign.' });
+    res.json({ success: true, message: `${result.rowCount} failed lead${result.rowCount === 1 ? '' : 's'} updated.`, recipients: result.rows });
+  } catch (error) {
+    console.error('Alliance failed-lead re-share update failed:', error);
+    res.status(500).json({ error: 'Failed to update re-share status.' });
+  }
+});
+
+router.post('/whatsapp-campaigns/:id/retry-failed', async (req, res) => {
+  try {
+    const recipientIds = [...new Set((req.body.recipient_ids || []).map(Number).filter(Number.isInteger))];
+    if (!recipientIds.length) {
+      return res.status(400).json({ error: 'Choose one or more failed leads to retry.' });
+    }
+    
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE alliance_whatsapp_campaign_recipients
+         SET status='queued', error_message=NULL
+         WHERE campaign_id=$1 AND id=ANY($2::bigint[]) AND status='failed'
+         RETURNING id`,
+        [req.params.id, recipientIds],
+      );
+      if (result.rowCount) {
+        await client.query(
+          `UPDATE alliance_whatsapp_campaigns SET status='running', updated_at=NOW() WHERE id=$1`,
+          [req.params.id]
+        );
+      }
+      await client.query('COMMIT');
+      if (!result.rowCount) return res.status(404).json({ error: 'No failed recipients were updated.' });
+      res.json({ success: true, message: `${result.rowCount} failed lead${result.rowCount === 1 ? '' : 's'} queued for retry.` });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Alliance WhatsApp retry failed leads error:', error);
+    res.status(500).json({ error: 'Failed to retry failed leads.' });
+  }
 });
 
 const getAllianceWhatsAppSettings = async (queryable = db) => {

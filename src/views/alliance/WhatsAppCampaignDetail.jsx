@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Search, X } from 'lucide-react';
+import { Check, Download, Search, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../services/api.js';
 
@@ -12,6 +12,10 @@ const STATUS_CLASS = {
   read: 'int', failed: 'rep', skipped: 'rep', cancelled: 'rep',
 };
 const PAGE_SIZE = 25;
+const RESHARE_LABEL = {
+  not_started: 'Not listed', excluded: 'Excluded', awaiting_confirmation: 'Awaiting client',
+  confirmed: 'Client confirmed', reshared: 'Re-shared',
+};
 
 const formatDateTime = (value) => (value ? new Date(value).toLocaleString() : '—');
 
@@ -24,6 +28,8 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [selectedFailedIds, setSelectedFailedIds] = useState({});
+  const [reshareBusy, setReshareBusy] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -63,6 +69,54 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
   }, [onClose]);
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const selectedIds = Object.keys(selectedFailedIds).map(Number);
+  const failedOnPage = recipients.filter((recipient) => recipient.status === 'failed');
+  const toggleFailedLead = (recipient) => setSelectedFailedIds((current) => {
+    const next = { ...current };
+    if (next[recipient.id]) delete next[recipient.id]; else next[recipient.id] = recipient;
+    return next;
+  });
+  const selectAllFailedOnPage = () => setSelectedFailedIds((current) => {
+    const next = { ...current };
+    const shouldSelect = failedOnPage.some((recipient) => !next[recipient.id]);
+    failedOnPage.forEach((recipient) => { if (shouldSelect) next[recipient.id] = recipient; else delete next[recipient.id]; });
+    return next;
+  });
+  const downloadClientList = () => {
+    const escape = (value) => `"${String(value || '').replaceAll('"', '""')}"`;
+    const escapePhone = (value) => value ? `="${value}"` : '""';
+    const rows = Object.values(selectedFailedIds).map((recipient) => [escape(recipient.name), escape(recipient.business_name), escapePhone(recipient.phone), escape(recipient.audience), escape(recipient.error_message)]);
+    const csv = ['Lead,Business,Phone,Audience,Failure reason', ...rows.map((row) => row.join(','))].join('\n');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    link.download = `${campaign?.name || 'whatsapp-campaign'}-failed-leads.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+  const updateReshare = async (reshareStatus) => {
+    if (!selectedIds.length) return toast.error('Select one or more failed leads first.');
+    setReshareBusy(true);
+    try {
+      const result = await api.updateAllianceWhatsAppFailedLeadReshare(campaignId, selectedIds, reshareStatus);
+      toast.success(result.message);
+      setSelectedFailedIds({});
+      await load();
+    } catch (error) { toast.error(error.message || 'Could not update failed leads.'); }
+    finally { setReshareBusy(false); }
+  };
+
+  const retryFailedLeads = async () => {
+    if (!selectedIds.length) return toast.error('Select one or more failed leads first.');
+    setReshareBusy(true);
+    try {
+      const result = await api.retryAllianceWhatsAppFailedLeads(campaignId, selectedIds);
+      toast.success(result.message);
+      setSelectedFailedIds({});
+      setStatus('queued'); // Switch view to queued
+      await load();
+    } catch (error) { toast.error(error.message || 'Could not retry failed leads.'); }
+    finally { setReshareBusy(false); }
+  };
 
   return (
     <div className="al-wa-modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -119,10 +173,20 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
           <span>{total} lead{total === 1 ? '' : 's'}</span>
         </div>
 
+        {status === 'failed' && (
+          <div className="al-wa-detail-note" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+            <span><b>Failed-lead actions:</b></span>
+            <button type="button" className="al-btn ghost sm" disabled={reshareBusy || !selectedIds.length} onClick={() => { downloadClientList(); updateReshare('awaiting_confirmation'); }}><Download size={14} /> Download client list</button>
+            <div style={{ flexGrow: 1 }} />
+            <button type="button" className={`al-btn sm ${!selectedIds.length ? 'ghost' : ''}`} style={!selectedIds.length ? { opacity: 0.5, cursor: 'not-allowed' } : {}} disabled={reshareBusy || !selectedIds.length} onClick={retryFailedLeads}>{reshareBusy ? 'Updating…' : 'Resend Messages'}</button>
+          </div>
+        )}
+
         <div className="al-wa-detail-table-wrap">
           <table className="al-table">
             <thead>
               <tr>
+                <th>{status === 'failed' && <input type="checkbox" aria-label="Select all failed leads on this page" checked={failedOnPage.length > 0 && failedOnPage.every((recipient) => selectedFailedIds[recipient.id])} onChange={selectAllFailedOnPage} />}</th>
                 <th>Lead</th>
                 <th>Phone</th>
                 <th>Audience</th>
@@ -134,9 +198,10 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="al-empty">Loading recipients…</td></tr>
+                <tr><td colSpan={8} className="al-empty">Loading recipients…</td></tr>
               ) : recipients.map((recipient) => (
                 <tr key={recipient.id}>
+                  <td>{recipient.status === 'failed' && <input type="checkbox" aria-label={`Select ${recipient.name || recipient.business_name || 'failed lead'}`} checked={Boolean(selectedFailedIds[recipient.id])} onChange={() => toggleFailedLead(recipient)} />}</td>
                   <td><b>{recipient.name || recipient.business_name}</b><small>{recipient.business_name}</small></td>
                   <td>{recipient.phone || '—'}</td>
                   <td>{recipient.audience || '—'}</td>
@@ -155,7 +220,7 @@ export const WhatsAppCampaignDetail = ({ campaignId, onClose }) => {
                 </tr>
               ))}
               {!loading && !recipients.length && (
-                <tr><td colSpan={7} className="al-empty">No leads match this filter.</td></tr>
+                <tr><td colSpan={8} className="al-empty">No leads match this filter.</td></tr>
               )}
             </tbody>
           </table>

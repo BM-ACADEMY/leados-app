@@ -281,7 +281,7 @@ async function buildAudienceTemplateData(code) {
     audience: audience.code, industry: 'Industry', location: 'Chennai', source: ['whatsapp','both'].includes(audience.default_channel) ? 'website_form' : 'manual_research',
     channel_pref: audience.default_channel, consent: ['whatsapp','both'].includes(audience.default_channel) ? 'true' : 'false',
     consent_source: ['whatsapp','both'].includes(audience.default_channel) ? 'website_form' : '',
-    consent_at: ['whatsapp','both'].includes(audience.default_channel) ? '2026-08-20T10:30:00+05:30' : '',
+    consent_at: '',
     consent_evidence: ['whatsapp','both'].includes(audience.default_channel) ? 'form_submission_4821' : '',
     consent_scope: ['whatsapp','both'].includes(audience.default_channel) ? 'marketing' : '',
   };
@@ -620,6 +620,7 @@ router.post('/audiences', async (req, res) => {
   const fields = Array.isArray(req.body.fields) ? req.body.fields : [];
   let systemColumns;
   try { systemColumns = normalizeSystemColumns(req.body.system_columns); } catch (error) { return res.status(error.status || 400).json({ error: error.message }); }
+  if (code.length > 50) return res.status(400).json({ error: 'Audience code must be 50 characters or less.' });
   if (!/^[a-z][a-z0-9_]*$/.test(code)) return res.status(400).json({ error: 'Audience code must use lowercase letters, numbers, and underscores.' });
   if (!label) return res.status(400).json({ error: 'Audience label is required.' });
   if (!['email', 'whatsapp', 'both'].includes(defaultChannel)) return res.status(400).json({ error: 'Default channel must be email, whatsapp, or both.' });
@@ -771,8 +772,13 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       const consent = TRUTHY.has(text(valueFrom(row, ['consent', 'whatsapp_consent', 'whatsapp consent'])).toLowerCase());
       const consentSource = text(valueFrom(row, ['consent_source', 'consent source'])).toLowerCase();
       const consentAtRaw = text(valueFrom(row, ['consent_at', 'consent at']));
-      const consentAtHasTimezone = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(consentAtRaw);
-      const consentAt = consentAtHasTimezone && !Number.isNaN(Date.parse(consentAtRaw)) ? new Date(consentAtRaw) : null;
+      let consentAt = null;
+      if (consentAtRaw) {
+        const consentAtHasTimezone = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(consentAtRaw);
+        consentAt = consentAtHasTimezone && !Number.isNaN(Date.parse(consentAtRaw)) ? new Date(consentAtRaw) : null;
+      } else if (consent) {
+        consentAt = new Date();
+      }
       const consentEvidence = text(valueFrom(row, ['consent_evidence', 'consent evidence']));
       const consentScope = text(valueFrom(row, ['consent_scope', 'consent scope'])).toLowerCase();
       const leadSource = text(valueFrom(row, ['source'])) || 'file_upload';
@@ -797,7 +803,7 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       if (['whatsapp', 'both'].includes(channel) && !consent) problems.push('WhatsApp consent is required');
       if (['whatsapp', 'both'].includes(channel) && !consentSource) problems.push('consent_source is required for WhatsApp');
       if (['whatsapp', 'both'].includes(channel) && consentSource && !WHATSAPP_CONSENT_SOURCES.has(consentSource)) problems.push(`invalid consent_source "${consentSource}"; use ${[...WHATSAPP_CONSENT_SOURCES].join(', ')}`);
-      if (['whatsapp', 'both'].includes(channel) && !consentAtRaw) problems.push('consent_at is required for WhatsApp');
+      if (['whatsapp', 'both'].includes(channel) && !consentAt) problems.push('consent_at is required for WhatsApp');
       else if (consentAtRaw && !consentAt) problems.push('consent_at must be a valid date/time with timezone');
       if (['whatsapp', 'both'].includes(channel) && !consentEvidence) problems.push('consent_evidence is required for WhatsApp');
       if (['whatsapp', 'both'].includes(channel) && !CONSENT_SCOPES.has(consentScope)) problems.push('consent_scope must be marketing, service, or both');
@@ -1309,6 +1315,18 @@ router.delete('/prospects/:id', async (req, res) => {
   } catch (error) {
     console.error('Alliance prospect delete failed:', error);
     res.status(500).json({ error: 'Failed to delete prospect.' });
+  }
+});
+
+router.post('/prospects/bulk-delete', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'No prospect IDs provided.' });
+    const result = await db.query(`DELETE FROM alliance_prospects WHERE id = ANY($1::bigint[])`, [ids]);
+    res.json({ success: true, deleted: result.rowCount });
+  } catch (error) {
+    console.error('Alliance bulk delete failed:', error);
+    res.status(500).json({ error: 'Failed to delete prospects.' });
   }
 });
 

@@ -789,6 +789,7 @@ router.post('/prospects/import', upload.single('file'), async (req, res) => {
       const problems = [];
 
       for (const column of configuredSystemColumns) {
+        if (column.key === 'consent_at') continue;
         if (column.enabled && column.required && !text(valueFrom(row, [column.key]))) {
           problems.push(`${column.label} is required`);
         }

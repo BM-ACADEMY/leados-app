@@ -631,6 +631,13 @@ class LeadOSAPI {
     return this.request(`/api/alliance/prospects/${id}`, { method: 'DELETE' });
   }
 
+  async bulkDeleteAllianceProspects(ids) {
+    return this.request('/api/alliance/prospects/bulk-delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    });
+  }
+
   async repairAllianceProspectNames() {
     return this.request('/api/alliance/prospects/repair-imported-names', { method: 'POST' });
   }

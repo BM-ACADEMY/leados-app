@@ -43,6 +43,8 @@ export const LeadList = () => {
   const [editForm, setEditForm] = useState(emptyEdit);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreate);
@@ -59,6 +61,7 @@ export const LeadList = () => {
   const loadProspects = async () => {
     setLoading(true);
     setError('');
+    setSelectedIds(new Set());
     try {
       const data = await api.getAllianceProspects({
         limit: PAGE_SIZE,
@@ -186,6 +189,35 @@ export const LeadList = () => {
       setRepairing(false);
     }
   };
+  const handleBulkDelete = async () => {
+    if (!selectedIds.size) return;
+    setBulkDeleting(true);
+    try {
+      await api.bulkDeleteAllianceProspects(Array.from(selectedIds));
+      toast.success(`${selectedIds.size} prospects deleted`);
+      setSelectedIds(new Set());
+      await loadProspects();
+    } catch (err) {
+      toast.error(err.message || 'Failed to delete prospects');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const toggleSelection = (id) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+
+  const toggleAll = () => {
+    if (selectedIds.size === prospects.length && prospects.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(prospects.map((p) => p.id)));
+    }
+  };
 
   return (
     <div className="al-wrap">
@@ -208,12 +240,19 @@ export const LeadList = () => {
       </div>
 
       <div style={{ background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 12, overflowX: 'auto' }}>
+        {selectedIds.size > 0 && (
+          <div style={{ padding: '12px 24px', background: 'rgba(239, 154, 154, 0.1)', borderBottom: '1px solid var(--al-line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 14 }}>{selectedIds.size} prospect{selectedIds.size > 1 ? 's' : ''} selected</span>
+            <button className="al-btn sm" disabled={bulkDeleting} onClick={handleBulkDelete} style={{ background: '#EF9A9A', color: '#fff', border: 'none' }}>{bulkDeleting ? 'Deleting…' : 'Delete selected'}</button>
+          </div>
+        )}
         {error ? <p style={{ padding: 24, color: '#EF9A9A' }}>{error}</p> : loading ? <p style={{ padding: 24, color: 'var(--al-muted)' }}>Loading imported leads…</p> : (
           <table className="al-table" style={{ minWidth: 1750 + dynamicFields.length * 150, whiteSpace: 'nowrap' }}>
-            <thead><tr><th>Business / Contact</th><th>Email</th><th>Phone</th><th>AI Score</th><th>Audience</th><th>Industry / Location</th><th>Source</th>{dynamicFields.map((field) => <th key={field.field_key}>{field.label || field.field_key.replaceAll('_', ' ')}</th>)}<th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Actions</th></tr></thead>
+            <thead><tr><th style={{ width: 40 }}><input type="checkbox" checked={prospects.length > 0 && selectedIds.size === prospects.length} onChange={toggleAll} /></th><th>Business / Contact</th><th>Email</th><th>Phone</th><th>AI Score</th><th>Audience</th><th>Industry / Location</th><th>Source</th>{dynamicFields.map((field) => <th key={field.field_key}>{field.label || field.field_key.replaceAll('_', ' ')}</th>)}<th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Actions</th></tr></thead>
             <tbody>
               {prospects.map((prospect) => (
                 <tr key={prospect.id}>
+                  <td><input type="checkbox" checked={selectedIds.has(prospect.id)} onChange={() => toggleSelection(prospect.id)} /></td>
                   <td>{prospect.business_name} <span style={{ color: 'var(--al-muted)' }}>· {prospect.name || 'No contact name'}</span></td>
                   <td>{prospect.email || '—'}</td><td>{prospect.phone || '—'}</td>
                   <td><ScoreBar score={Number(prospect.ai_score) || 10} /></td>
@@ -229,7 +268,7 @@ export const LeadList = () => {
                   <td><div style={{ display: 'flex', gap: 6 }}><button className="al-btn ghost sm" onClick={() => openEdit(prospect)}>Edit</button><button className="al-btn ghost sm" disabled={deleting === prospect.id} onClick={() => setDeleteCandidate(prospect)} style={{ color: '#EF9A9A' }}>{deleting === prospect.id ? 'Deleting…' : 'Delete'}</button></div></td>
                 </tr>
               ))}
-              {!prospects.length && <tr><td colSpan={13 + dynamicFields.length} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
+              {!prospects.length && <tr><td colSpan={14 + dynamicFields.length} style={{ textAlign: 'center', padding: 32, color: 'var(--al-muted)' }}>No imported leads found.</td></tr>}
             </tbody>
           </table>
         )}

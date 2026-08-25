@@ -2468,6 +2468,9 @@ app.delete('/api/leads/:id', auth, async (req, res) => {
     await pool.query('DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE lead_id = $1)', [id]);
     await pool.query('DELETE FROM conversations WHERE lead_id = $1', [id]);
     await pool.query('DELETE FROM payments WHERE lead_id = $1', [id]);
+    // sales_tasks has no ON DELETE CASCADE (unlike every other lead_id FK), so it
+    // silently blocks the delete below with a 23503 violation if left out.
+    await pool.query('DELETE FROM sales_tasks WHERE lead_id = $1', [id]);
 
     const { rowCount } = await pool.query('DELETE FROM leads WHERE id = $1', [id]);
     if (rowCount === 0) return res.status(404).json({ error: 'Lead not found' });

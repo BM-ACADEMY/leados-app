@@ -83,6 +83,31 @@ function generateDomainMetrics(domain, position) {
   };
 }
 
+router.get('/history', async (req, res) => {
+  const { domain, startDate, endDate } = req.query;
+  try {
+    const params = [startDate || null, endDate || null];
+    let domainCondition = '';
+    if (domain) {
+      params.push(domain.toLowerCase());
+      domainCondition = `AND LOWER(competitors_json::text) LIKE '%' || $3 || '%'`;
+    }
+    const { rows } = await pool.query(
+      `SELECT id, keyword, competitors_json, features_json, volatility_score, scanned_at
+         FROM serp_radar_history
+        WHERE ($1::date IS NULL OR scanned_at >= $1::date)
+          AND ($2::date IS NULL OR scanned_at < ($2::date + INTERVAL '1 day'))
+          ${domainCondition}
+        ORDER BY scanned_at DESC
+        LIMIT 20`,
+      params
+    );
+    res.json({ history: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/scan', async (req, res) => {
   const { keyword, country = 'India', device = 'desktop' } = req.body;
   if (!keyword) {

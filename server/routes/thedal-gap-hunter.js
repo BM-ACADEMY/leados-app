@@ -155,6 +155,26 @@ function generateMockGapData(clientDomain, competitors) {
   return { keywords, overlapStats };
 }
 
+router.get('/history', async (req, res) => {
+  const { domain, startDate, endDate } = req.query;
+  if (!domain) return res.status(400).json({ error: 'domain is required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, client_domain, competitor_domain, results_json, scanned_at
+         FROM gap_hunter_scans
+        WHERE LOWER(client_domain) = LOWER($1)
+          AND ($2::date IS NULL OR scanned_at >= $2::date)
+          AND ($3::date IS NULL OR scanned_at < ($3::date + INTERVAL '1 day'))
+        ORDER BY scanned_at DESC
+        LIMIT 20`,
+      [domain, startDate || null, endDate || null]
+    );
+    res.json({ history: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/track', async (req, res) => {
   const { clientDomain, keywords } = req.body;
   if (!clientDomain || !keywords || !keywords.length) {

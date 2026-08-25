@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import SopModal from '../../components/common/SopModal.jsx';
 import { api } from '../../services/api.js';
-import html2pdf from 'html2pdf.js/dist/html2pdf.bundle.min.js';
+import { jsPDF } from 'jspdf';
 import { useClient } from '../../contexts/ClientContext.jsx';
 import { 
-  Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer 
+  Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip
 } from 'recharts';
 import { 
   Loader2, Play, CheckCircle2, XCircle, AlertTriangle, Globe, Activity, 
@@ -95,6 +96,7 @@ export default function OnPageAudit() {
   const [statusText, setStatusText] = useState('');
   const [error, setError] = useState('');
   const [auditData, setAuditData] = useState(null);
+  const [authorityLoading, setAuthorityLoading] = useState(false);
   
   const [activeTab, setActiveTab] = useState('onPage');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -225,6 +227,42 @@ export default function OnPageAudit() {
         url: normalizedUrl,
         clientId: activeClient.id
       });
+
+      setStatusText('Discovering authority signals...');
+      let valueSerpAuthority = null;
+      try {
+        const domain = new URL(normalizedUrl).hostname.replace(/^www\./, '');
+        const authorityResponse = await api.post('/thedal/backlinks/scan', {
+          domain,
+          provider: 'valueserp'
+        });
+        const metrics = authorityResponse.metrics || {};
+        valueSerpAuthority = {
+          score: metrics.domainAuthority || 0,
+          totalBacklinks: metrics.totalBacklinks || 0,
+          linkingRootDomains: metrics.referringDomains || 0,
+          doFollowBacklinks: metrics.dofollowRatio == null ? null : Math.round((metrics.totalBacklinks || 0) * metrics.dofollowRatio / 100),
+          toxicBacklinks: null,
+          provider: metrics.provider || 'ValueSERP',
+          fallbackReason: metrics.fallbackReason,
+          resultType: metrics.resultType,
+          discoveredPages: authorityResponse.links || [],
+          history: authorityResponse.history || [],
+          scannedAt: authorityResponse.scanned_at
+        };
+      } catch (authorityErr) {
+        console.warn('ValueSERP authority discovery failed:', authorityErr);
+        valueSerpAuthority = {
+          score: null,
+          totalBacklinks: 0,
+          linkingRootDomains: 0,
+          doFollowBacklinks: null,
+          toxicBacklinks: null,
+          provider: 'ValueSERP',
+          error: authorityErr.response?.data?.error || authorityErr.message || 'ValueSERP request failed',
+          discoveredPages: []
+        };
+      }
       
       clearInterval(progressTimer);
       setProgress(100);
@@ -248,7 +286,8 @@ export default function OnPageAudit() {
       const finalResult = {
         ...resData,
         overallScore,
-        offPage: { score: offPageScore }
+        offPage: { score: offPageScore },
+        authority: valueSerpAuthority || resData.authority
       };
 
       setAuditData(finalResult);
@@ -304,32 +343,146 @@ Target Keyword: "${keyword}"
       .catch(() => alert('Failed to copy.'));
   };
 
-  const triggerDownloadReport = () => {
-    if (!auditData || !pdfContainerRef.current) return;
-    
-    // Temporarily make it visible for html2canvas to capture
-    const el = pdfContainerRef.current;
-    const originalDisplay = el.style.display;
-    el.style.display = 'block';
-    el.style.position = 'absolute';
-    el.style.left = '-9999px';
-    el.style.top = '0';
-    
-    const opt = {
-      margin:       [15, 15, 15, 15],
-      filename:     `SEO_Audit_${getDomainKey(url)}.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
-      html2canvas:  { scale: 2, useCORS: true },
-      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  const triggerDownloadReport = async () => {
+    if (!auditData) return;
+
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    const margin = 16;
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const contentWidth = pageWidth - (margin * 2);
+    let y = margin;
+
+    const ensureSpace = (height = 10) => {
+      if (y + height <= pageHeight - margin) return;
+      pdf.addPage();
+      y = margin;
     };
 
-    html2pdf().set(opt).from(el).save().then(() => {
-      // Restore styles
-      el.style.display = originalDisplay;
-      el.style.position = '';
-      el.style.left = '';
-      el.style.top = '';
-    });
+    const addText = (text, { size = 10, bold = false, color = [17, 24, 39], gap = 2 } = {}) => {
+      pdf.setFont('helvetica', bold ? 'bold' : 'normal');
+      pdf.setFontSize(size);
+      pdf.setTextColor(...color);
+      const lines = pdf.splitTextToSize(String(text ?? ''), contentWidth);
+      const lineHeight = size * 0.42;
+      lines.forEach(line => {
+        ensureSpace(lineHeight);
+        pdf.text(line, margin, y);
+        y += lineHeight;
+      });
+      y += gap;
+    };
+
+    const addSection = (title, checks = []) => {
+      ensureSpace(16);
+      y += 3;
+      addText(title, { size: 15, bold: true, color: [30, 64, 175], gap: 3 });
+      checks.forEach(check => {
+        ensureSpace(18);
+        addText(`[${String(check.status || 'info').toUpperCase()}] ${check.name || 'Check'} (${check.points ?? 0}/${check.maxPoints ?? 0} pts)`, { bold: true, gap: 1 });
+        const needsAttention = check.status !== 'passed';
+        const finding = String(check.value ?? 'The required SEO condition was not met.').replace(/\s+/g, ' ').trim();
+        addText(`${needsAttention ? 'Issue' : 'Found'}: ${finding}`, {
+          color: needsAttention ? [185, 28, 28] : [55, 65, 81],
+          gap: 1
+        });
+        if (needsAttention && check.recommendation) {
+          const recommendation = String(check.recommendation).replace(/\s+/g, ' ').trim();
+          const shortRecommendation = recommendation.length > 220
+            ? `${recommendation.slice(0, 217).trimEnd()}...`
+            : recommendation;
+          addText(`How to solve: ${shortRecommendation}`, { color: [75, 85, 99], gap: 3 });
+        } else if (needsAttention) {
+          addText('How to solve: Review this item and update the page so it meets the stated SEO requirement.', { color: [75, 85, 99], gap: 3 });
+        } else {
+          y += 2;
+        }
+      });
+    };
+
+    const onPageScore = auditData.onPage?.score ?? 0;
+    const technicalScore = auditData.technical?.score ?? 0;
+    const offPageScore = auditData.offPage?.score ?? 0;
+    const localScore = auditData.local?.score ?? 0;
+    const overallScore = Math.round((onPageScore + technicalScore + offPageScore + localScore) / 4);
+    const scoreAction = (score, category) => {
+      const focus = {
+        overall: 'Work through the lowest-scoring section first, then rerun the audit.',
+        onPage: 'Improve titles, descriptions, headings, content, images, and internal links flagged below.',
+        technical: 'Fix crawlability, indexing, speed, security, schema, and broken-link issues flagged below.',
+        offPage: 'Complete the backlink, directory, profile, review, and authority-building checklist.',
+        local: 'Complete business details, LocalBusiness schema, maps, citations, and review signals.'
+      }[category];
+      if (score >= 90) return `Excellent. Maintain the current setup and monitor it regularly. ${focus}`;
+      if (score >= 75) return `Good, with a few improvements remaining. ${focus}`;
+      if (score >= 50) return `Needs improvement. ${focus}`;
+      return `Priority issue. ${focus}`;
+    };
+
+    const addScore = (label, score, suffix, category) => {
+      addText(`${label}: ${score}${suffix}`, { bold: true, gap: 1 });
+      addText(`What to do: ${scoreAction(score, category)}`, { color: [75, 85, 99], gap: 3 });
+    };
+
+    addText('SEO Audit Report', { size: 22, bold: true, color: [0, 0, 0], gap: 5 });
+    addText(`Website URL: ${url}`, { bold: true });
+    addText(`Target Keyword: ${keyword || 'N/A'}`);
+    addText(`Business Name: ${businessName || 'N/A'}`);
+    addText(`Location: ${city || 'N/A'}`);
+    addText(`Report Date: ${new Date().toLocaleDateString()}`, { gap: 4 });
+
+    addText('Summary Scores', { size: 15, bold: true, color: [30, 64, 175], gap: 3 });
+    addScore('Overall SEO Score', overallScore, '%', 'overall');
+    addScore('On-Page SEO Score', onPageScore, '/100', 'onPage');
+    addScore('Technical SEO Score', technicalScore, '/100', 'technical');
+    addScore('Off-Page Checklist Completion', offPageScore, '%', 'offPage');
+    addScore('Local SEO Score', localScore, '/100', 'local');
+
+    addSection('On-Page SEO Checks', auditData.onPage?.checks);
+    addSection('Technical SEO Checks', auditData.technical?.checks);
+    addSection('Local SEO Checks', auditData.local?.checks);
+
+    pdf.save(`SEO_Audit_${getDomainKey(url)}.pdf`);
+  };
+
+  const fetchLiveAuthority = async () => {
+    if (!url || authorityLoading) return;
+    setAuthorityLoading(true);
+    try {
+      const domain = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname.replace(/^www\./, '');
+      const response = await api.post('/thedal/backlinks/scan', { domain, provider: 'valueserp' });
+      const metrics = response.metrics || {};
+      setAuditData(current => ({
+        ...current,
+        authority: {
+          score: metrics.domainAuthority || 0,
+          totalBacklinks: metrics.totalBacklinks || 0,
+          linkingRootDomains: metrics.referringDomains || 0,
+          doFollowBacklinks: metrics.dofollowRatio == null ? null : Math.round((metrics.totalBacklinks || 0) * metrics.dofollowRatio / 100),
+          toxicBacklinks: null,
+          provider: metrics.provider || 'ValueSERP',
+          fallbackReason: metrics.fallbackReason,
+          resultType: metrics.resultType,
+          discoveredPages: response.links || [],
+          history: response.history || [],
+          scannedAt: response.scanned_at
+        }
+      }));
+    } catch (err) {
+      setAuditData(current => ({
+        ...current,
+        authority: {
+          score: null,
+          totalBacklinks: 0,
+          linkingRootDomains: 0,
+          provider: 'ValueSERP',
+          error: err.response?.data?.error || err.message || 'ValueSERP request failed',
+          discoveredPages: []
+        }
+      }));
+    } finally {
+      setAuthorityLoading(false);
+    }
   };
 
   const activeChecks = () => {
@@ -344,6 +497,25 @@ Target Keyword: "${keyword}"
     if (filterStatus === 'all') return true;
     return c.status === filterStatus;
   });
+
+  const authority = auditData?.authority || {};
+  const hasLiveAuthority = Boolean(authority.provider) && !authority.error;
+  const authorityScore = hasLiveAuthority ? authority.score : null;
+  const authorityPages = authority.discoveredPages || [];
+  const authorityDomainRows = Object.values(authorityPages.reduce((rows, page) => {
+    const domain = page.sourceDomain || (() => {
+      try { return new URL(page.sourceUrl).hostname.replace(/^www\./, ''); } catch { return 'Unknown'; }
+    })();
+    if (!rows[domain]) rows[domain] = { domain, links: 0, da: null };
+    rows[domain].links += 1;
+    if (Number.isFinite(Number(page.dr))) rows[domain].da = Math.max(rows[domain].da || 0, Number(page.dr));
+    return rows;
+  }, {})).sort((a, b) => (b.da ?? -1) - (a.da ?? -1) || b.links - a.links);
+  const authorityHistory = (authority.history || []).map(item => ({
+    date: new Date(item.scanned_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    domains: item.metrics?.referringDomains || 0,
+    pages: item.metrics?.totalBacklinks || 0
+  }));
 
   return (
     <div className="p-mobile" style={{ padding: '26px', overflowY: 'auto', height: '100%', background: C.bg, color: C.text, fontFamily: 'Inter, system-ui, sans-serif' }}>
@@ -619,12 +791,98 @@ Target Keyword: "${keyword}"
                         </div>
                       </div>
 
-                      {/* Tool shortcuts */}
-                      <div style={{ background: '#0d1117', border: `1px solid ${C.border}`, borderRadius: 8, padding: '16px' }}>
-                        <h4 style={{ fontSize: 14, color: '#fff', marginBottom: 12 }}>SEO Tool Audits</h4>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <a href={`https://moz.com/domain-analysis?site=${url}`} target="_blank" rel="noopener noreferrer" style={{ background: C.blue, color: '#fff', textAlign: 'center', padding: '6px', borderRadius: 4, textDecoration: 'none', fontSize: 12, fontWeight: 700 }}>Check DA on Moz</a>
-                          <a href={`https://ahrefs.com/backlink-checker/?target=${url}`} target="_blank" rel="noopener noreferrer" style={{ background: C.border, color: '#fff', textAlign: 'center', padding: '6px', borderRadius: 4, textDecoration: 'none', fontSize: 12, fontWeight: 700 }}>Backlinks on Ahrefs</a>
+                      {/* LeadOS-owned authority estimate */}
+                      <div style={{ background: '#0d1117', border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden', gridColumn: '1 / -1', color: C.text }}>
+                        <div style={{ background: 'linear-gradient(135deg, #161b22 0%, #0d1117 100%)', borderBottom: `1px solid ${C.border}`, padding: '32px 26px 62px', textAlign: 'center' }}>
+                          <div>
+                            <div style={{ color: C.blue, fontSize: 10, fontWeight: 800, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>LeadOS Search Intelligence</div>
+                            <h4 style={{ fontSize: 28, color: '#fff', margin: '0 0 8px' }}>Google Mention Discovery</h4>
+                            <div style={{ fontSize: 12, color: authority.error ? '#fca5a5' : '#cbd5e1' }}>
+                              {authority.error
+                                ? 'ValueSERP live discovery is currently unavailable'
+                                : hasLiveAuthority
+                                  ? authority.provider === 'DataForSEO'
+                                    ? 'Live backlink discovery powered by DataForSEO fallback'
+                                    : 'Live Google-indexed mention discovery powered by ValueSERP'
+                                  : 'Run a scan to discover Google-indexed mentions'}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={fetchLiveAuthority}
+                              disabled={authorityLoading || !url}
+                              style={{ marginTop: 16, border: `1px solid ${authorityLoading ? C.border : C.blue}`, borderRadius: 8, padding: '10px 20px', background: authorityLoading ? C.border : C.blue, color: '#fff', fontSize: 12, fontWeight: 800, cursor: authorityLoading ? 'wait' : 'pointer', boxShadow: authorityLoading ? 'none' : '0 6px 18px rgba(37, 99, 235, 0.25)' }}
+                            >
+                              {authorityLoading ? 'Scanning Google Results...' : hasLiveAuthority ? 'Refresh Mentions' : 'Discover Mentions'}
+                            </button>
+                            {authority.error && (
+                              <div style={{ maxWidth: 650, margin: '12px auto 0', padding: '9px 12px', borderRadius: 8, background: 'rgba(127, 29, 29, 0.45)', color: '#fecaca', fontSize: 10, lineHeight: 1.5 }}>
+                                {authority.error}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', margin: '-34px 20px 0', position: 'relative', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '18px', boxShadow: '0 10px 28px rgba(0,0,0,.22)' }}>
+                          {[
+                              ['Visibility Score', authorityScore ?? '—'],
+                              ['Source Domains', authority.linkingRootDomains || 0],
+                              ['Indexed Mentions', authority.totalBacklinks || 0],
+                            ['Data Provider', authority.error ? 'Unavailable' : authority.provider || 'Run Audit']
+                          ].map(([label, value], index) => (
+                            <div key={label} style={{ textAlign: 'center', padding: '8px 12px', borderLeft: index ? `1px solid ${C.border}` : 'none' }}>
+                              <div style={{ fontSize: typeof value === 'number' ? 34 : 18, fontWeight: 700, color: C.blue }}>{value}</div>
+                              <div style={{ fontSize: 11, color: C.muted, marginTop: 5 }}>{label}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <p style={{ margin: '13px 22px 18px', fontSize: 10, lineHeight: 1.4, color: C.muted, textAlign: 'center' }}>
+                          {authority.provider === 'DataForSEO'
+                            ? 'ValueSERP was unavailable, so LeadOS loaded live discovery data from the configured DataForSEO fallback.'
+                            : 'ValueSERP discovers Google-indexed pages that mention or reference this domain. This is visibility data, not a complete backlink index.'}
+                        </p>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, padding: '0 20px 20px' }}>
+                            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 18 }}>
+                              <h5 style={{ margin: '0 0 4px', color: '#fff', fontSize: 17 }}>Mentioning Pages</h5>
+                              <p style={{ margin: '0 0 12px', color: C.muted, fontSize: 10 }}>Google-indexed pages that mention or reference this domain.</p>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 58px', gap: 8, padding: '8px 4px', borderBottom: `1px solid ${C.border}`, color: '#c9d1d9', fontSize: 10, fontWeight: 800 }}><span>Source Page</span><span>Position</span></div>
+                              {authorityPages.slice(0, 10).map((page, index) => (
+                                <div key={`${page.sourceUrl}-${index}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 58px', gap: 8, padding: '9px 4px', borderBottom: `1px solid ${C.border}`, fontSize: 11 }}>
+                                  <a href={page.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#58a6ff', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{page.sourceTitle || page.sourceUrl}</a>
+                                  <span style={{ color: '#c9d1d9', textAlign: 'center' }}>{page.position || '—'}</span>
+                                </div>
+                              ))}
+                              {!authorityPages.length && <div style={{ padding: '26px 8px', textAlign: 'center', color: C.muted, fontSize: 11 }}>No indexed mentions discovered yet.</div>}
+                            </div>
+                            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 18, overflow: 'hidden' }}>
+                              <h5 style={{ margin: '0 0 4px', color: '#fff', fontSize: 17 }}>Mentioning Domains</h5>
+                              <p style={{ margin: '0 0 12px', color: C.muted, fontSize: 10 }}>Domains appearing most often in Google discovery results.</p>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 58px', gap: 8, padding: '8px 4px', borderBottom: `1px solid ${C.border}`, color: '#c9d1d9', fontSize: 10, fontWeight: 800 }}><span>Domain</span><span>Mentions</span></div>
+                              {authorityDomainRows.slice(0, 10).map(row => (
+                                <div key={row.domain} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 58px', gap: 8, padding: '9px 4px', borderBottom: `1px solid ${C.border}`, fontSize: 11 }}>
+                                  <span style={{ color: '#58a6ff', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.domain}</span>
+                                  <span style={{ color: '#c9d1d9', textAlign: 'center' }}>{row.links}</span>
+                                </div>
+                                ))}
+                              {!authorityDomainRows.length && <div style={{ padding: '26px 8px', textAlign: 'center', color: C.muted, fontSize: 11 }}>No mentioning domains discovered yet.</div>}
+                            </div>
+                          </div>
+                        <div style={{ margin: '0 20px 20px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 18 }}>
+                          <h5 style={{ margin: '0 0 4px', color: '#fff', fontSize: 17 }}>Mention Discovery History</h5>
+                          <p style={{ margin: '0 0 12px', color: C.muted, fontSize: 10 }}>Source domains and indexed mentions across recent scans.</p>
+                          <div style={{ height: 230 }}>
+                            {authorityHistory.length ? (
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={authorityHistory} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                                  <XAxis dataKey="date" tick={{ fill: C.muted, fontSize: 10 }} />
+                                  <YAxis allowDecimals={false} tick={{ fill: C.muted, fontSize: 10 }} />
+                                  <Tooltip contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11, color: C.text }} />
+                                  <Bar dataKey="domains" name="Source domains" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                                  <Bar dataKey="pages" name="Indexed mentions" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            ) : <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 11 }}>History appears after a successful ValueSERP scan.</div>}
+                          </div>
                         </div>
                       </div>
                     </div>

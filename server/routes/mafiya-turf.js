@@ -58,6 +58,45 @@ router.post('/keywords', async (req, res) => {
   }
 });
 
+// PUT manually update a tracked keyword and its ranking values.
+// client_id is required so a keyword cannot be edited from another active client.
+router.put('/keywords/:id', async (req, res) => {
+  const { client_id, keyword, initial_rank, current_rank, pack_status } = req.body;
+  if (!client_id || !keyword?.trim()) {
+    return res.status(400).json({ error: 'client_id and keyword are required' });
+  }
+
+  const parseRank = (value, field) => {
+    const rank = Number(value);
+    if (!Number.isInteger(rank) || rank < 1 || rank > 100) {
+      const error = new Error(`${field} must be a whole number from 1 to 100`);
+      error.status = 400;
+      throw error;
+    }
+    return rank;
+  };
+
+  try {
+    const initialRank = parseRank(initial_rank, 'Initial rank');
+    const currentRank = parseRank(current_rank, 'Current rank');
+    const packStatus = pack_status === 'In Pack' ? 'In Pack' : 'Not in Pack';
+    const result = await pool.query(
+      `UPDATE mafiya_turf_keywords
+       SET keyword = $1, initial_rank = $2, current_rank = $3,
+           pack_status = $4, last_checked = NOW()
+       WHERE id = $5 AND client_id = $6
+       RETURNING *`,
+      [keyword.trim(), initialRank, currentRank, packStatus, req.params.id, client_id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Keyword not found for this client' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    console.error('[Mafiya Turf] PUT /keywords error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // DELETE stop tracking keyword
 router.delete('/keywords/:id', async (req, res) => {
   try {
@@ -263,14 +302,14 @@ router.post('/keywords/refresh/:id', async (req, res) => {
 
 // GET PageSpeed Insights audit
 router.get('/pagespeed', async (req, res) => {
-  const { url } = req.query;
+  const { url, strategy = 'mobile' } = req.query;
   if (!url) return res.status(400).json({ error: 'URL is required' });
 
   const cleanUrl = url.startsWith('http') ? url : `https://${url}`;
   const apiKey = process.env.GOOGLE_PAGESPEED_API_KEY;
 
   try {
-    let pagespeedUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(cleanUrl)}&category=performance`;
+    let pagespeedUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(cleanUrl)}&category=performance&strategy=${strategy === 'desktop' ? 'desktop' : 'mobile'}`;
     if (apiKey) pagespeedUrl += `&key=${apiKey}`;
 
     const response = await axios.get(pagespeedUrl);
@@ -280,12 +319,19 @@ router.get('/pagespeed', async (req, res) => {
     const speedIndex = lighthouse?.audits?.['speed-index']?.displayValue || 'N/A';
     const firstContentfulPaint = lighthouse?.audits?.['first-contentful-paint']?.displayValue || 'N/A';
     const largestContentfulPaint = lighthouse?.audits?.['largest-contentful-paint']?.displayValue || 'N/A';
+    const cumulativeLayoutShift = lighthouse?.audits?.['cumulative-layout-shift']?.displayValue || 'N/A';
+    const interactionToNextPaint = response.data?.loadingExperience?.metrics?.INTERACTION_TO_NEXT_PAINT?.percentile
+      ? `${response.data.loadingExperience.metrics.INTERACTION_TO_NEXT_PAINT.percentile} ms`
+      : 'Insufficient field data';
 
     res.json({
       performance: performanceScore,
       speedIndex,
       firstContentfulPaint,
       largestContentfulPaint,
+      cumulativeLayoutShift,
+      interactionToNextPaint,
+      strategy,
     });
   } catch (err) {
     console.error('[Mafiya Turf] PageSpeed error:', err.message);

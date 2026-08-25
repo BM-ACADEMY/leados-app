@@ -366,6 +366,8 @@ async function fetchLiveBacklinks(domain, mode = 'subdomains') {
     referringDomains,
     dofollowRatio: dofollowRatio || 50,
     domainAuthority: capRank || 1,
+    provider: 'DataForSEO',
+    resultType: 'Live backlink index data'
   };
 
   // Map items to our link format
@@ -383,6 +385,7 @@ async function fetchLiveBacklinks(domain, mode = 'subdomains') {
     return {
       id: idx + 1,
       sourceUrl: item.url_from,
+      sourceDomain: item.domain_from || '',
       sourceTitle: item.page_from_title || 'Untitled Referring Page',
       anchorText: item.anchor || 'No anchor text',
       targetUrl: targetUrl,
@@ -408,27 +411,43 @@ async function fetchValueSerpBacklinks(domain) {
 
   const cleanDomain = domain.toLowerCase().replace(/^(?:https?:\/\/)?(?:www\.)?/i, "").split('/')[0];
   
-  // Search ValueSerp for pages linking to or referencing the domain
-  const response = await axios.get('https://api.valueserp.com/search', {
-    params: {
-      q: `"${cleanDomain}" -site:${cleanDomain}`,
-      api_key: apiKey,
-      num: 50
-    },
-    timeout: 12000
-  });
+  const searchValueSerp = async (query) => {
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await axios.get('https://api.valueserp.com/search', {
+          params: {
+            q: query,
+            api_key: apiKey,
+            num: 50,
+            location: 'India',
+            google_domain: 'google.co.in',
+            gl: 'in',
+            hl: 'en',
+            device: 'desktop'
+          },
+          timeout: 20000
+        });
+      } catch (err) {
+        lastError = err;
+        const status = err.response?.status;
+        if (status !== 429 && (!status || status < 500)) break;
+        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+    const status = lastError?.response?.status;
+    const providerMessage = lastError?.response?.data?.request_info?.message ||
+      lastError?.response?.data?.message || lastError?.message;
+    throw new Error(`ValueSERP request failed${status ? ` (${status})` : ''}: ${providerMessage}`);
+  };
+
+  // Search ValueSerp for pages linking to or referencing the domain.
+  const response = await searchValueSerp(`"${cleanDomain}" -site:${cleanDomain}`);
 
   const organicResults = response.data?.organic_results || [];
 
   if (organicResults.length === 0) {
-    const fallbackRes = await axios.get('https://api.valueserp.com/search', {
-      params: {
-        q: cleanDomain,
-        api_key: apiKey,
-        num: 50
-      },
-      timeout: 12000
-    });
+    const fallbackRes = await searchValueSerp(cleanDomain);
     const fallbackOrganic = fallbackRes.data?.organic_results || [];
     organicResults.push(...fallbackOrganic);
   }
@@ -439,36 +458,34 @@ async function fetchValueSerpBacklinks(domain) {
       sourceDomain = new URL(item.link).hostname.replace(/^www\./, '');
     } catch (e) {}
 
-    const isHighAuthority = /wikipedia|github|medium|forbes|nytimes|reddit|hubspot|amazon|linkedin/i.test(sourceDomain);
-    const dr = isHighAuthority ? Math.floor(Math.random() * 15) + 85 : Math.max(15, Math.min(99, 90 - (idx * 2)));
-    const ur = Math.max(10, Math.floor(dr * 0.75));
-
     return {
       id: idx + 1,
       sourceUrl: item.link,
+      sourceDomain,
       sourceTitle: item.title || `Mention on ${sourceDomain}`,
-      anchorText: item.snippet ? (item.snippet.slice(0, 45) + '...') : cleanDomain,
+      snippet: item.snippet || '',
+      anchorText: item.snippet ? (item.snippet.slice(0, 80) + '...') : cleanDomain,
       targetUrl: `https://${cleanDomain}/`,
-      type: (idx % 4 === 0) ? 'Nofollow' : 'Dofollow',
-      dr: dr,
-      ur: ur,
-      refDomains: Math.floor(Math.random() * 50) + 2,
-      linkedDomains: Math.floor(Math.random() * 30) + 5,
-      status: 'Active',
+      type: 'Unknown',
+      position: item.position || idx + 1,
+      status: 'Discovered',
       firstSeen: new Date().toISOString().split('T')[0]
     };
-  });
+  }).filter(link => link.sourceDomain !== cleanDomain);
 
-  const totalBacklinks = Math.max(links.length * 14, 120);
-  const referringDomains = Math.max(links.length, 12);
-  const dofollowCount = links.filter(l => l.type === 'Dofollow').length;
-  const dofollowRatio = links.length > 0 ? Math.round((dofollowCount / links.length) * 100) : 75;
+  const referringDomains = new Set(links.map(link => link.sourceDomain)).size;
+  const authorityEstimate = Math.min(100, Math.round(
+    (Math.log10(links.length + 1) * 18) + (Math.log10(referringDomains + 1) * 22)
+  ));
 
   const metrics = {
-    totalBacklinks,
+    totalBacklinks: links.length,
     referringDomains,
-    dofollowRatio,
-    domainAuthority: links.length > 0 ? Math.round(links.reduce((a, b) => a + b.dr, 0) / links.length) : 45
+    dofollowRatio: null,
+    domainAuthority: authorityEstimate,
+    provider: 'ValueSERP',
+    metricLabel: 'LeadOS authority estimate',
+    resultType: 'Search-discovered linking or mentioning pages'
   };
 
   return { metrics, links };
@@ -476,7 +493,7 @@ async function fetchValueSerpBacklinks(domain) {
 
 // ── POST /scan ─────────────────────────────────────────────────────────────
 router.post('/scan', async (req, res) => {
-  const { domain, mode } = req.body;
+  const { domain, mode, provider } = req.body;
   if (!domain) {
     return res.status(400).json({ error: 'Domain is required' });
   }
@@ -490,6 +507,22 @@ router.post('/scan', async (req, res) => {
       metrics = mock.metrics;
       links = mock.links;
       console.log(`Demo Mode active: Generated mock backlinks for: ${domain}`);
+    } else if (provider === 'valueserp') {
+      try {
+        const liveData = await fetchValueSerpBacklinks(domain);
+        metrics = liveData.metrics;
+        links = liveData.links;
+        console.log(`Successfully fetched live discovery data from ValueSerp for: ${domain}`);
+      } catch (valueSerpErr) {
+        console.warn(`[ValueSERP unavailable]: ${valueSerpErr.message}. Using DataForSEO fallback...`);
+        const fallbackData = await fetchLiveBacklinks(domain, mode);
+        metrics = {
+          ...fallbackData.metrics,
+          fallbackReason: valueSerpErr.message
+        };
+        links = fallbackData.links;
+        console.log(`Successfully fetched DataForSEO fallback data for: ${domain}`);
+      }
     } else {
       // 1. Try DataForSEO API first
       try {
@@ -521,10 +554,20 @@ router.post('/scan', async (req, res) => {
       [domain, JSON.stringify(metrics), JSON.stringify(links)]
     );
 
+    const { rows: historyRows } = await pool.query(
+      `SELECT metrics, scanned_at
+         FROM backlink_tracker_history
+        WHERE domain = $1
+        ORDER BY scanned_at DESC
+        LIMIT 12`,
+      [domain]
+    );
+
     return res.json({
       domain,
       metrics,
       links,
+      history: historyRows.reverse(),
       scanned_at: new Date().toISOString()
     });
 
@@ -537,8 +580,29 @@ router.post('/scan', async (req, res) => {
 // ── GET /history ────────────────────────────────────────────────────────────
 router.get('/history', async (req, res) => {
   try {
+    const { domain, startDate, endDate } = req.query;
+    const conditions = [];
+    const params = [];
+    if (domain) {
+      params.push(domain.toLowerCase().replace(/^(?:https?:\/\/)?(?:www\.)?/i, '').split('/')[0]);
+      conditions.push(`LOWER(REGEXP_REPLACE(domain, '^www\\.', '')) = $${params.length}`);
+    }
+    if (startDate) {
+      params.push(startDate);
+      conditions.push(`scanned_at >= $${params.length}::date`);
+    }
+    if (endDate) {
+      params.push(endDate);
+      conditions.push(`scanned_at < ($${params.length}::date + INTERVAL '1 day')`);
+    }
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const { rows } = await pool.query(
-      `SELECT id, domain, metrics, scanned_at FROM backlink_tracker_history ORDER BY scanned_at DESC LIMIT 20`
+      `SELECT id, domain, metrics, links, scanned_at
+         FROM backlink_tracker_history
+         ${whereClause}
+        ORDER BY scanned_at DESC
+        LIMIT 20`,
+      params
     );
     return res.json({ history: rows });
   } catch (err) {

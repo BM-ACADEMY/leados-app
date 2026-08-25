@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -6,16 +7,21 @@ import { C } from '../../constants/theme.js';
 import { 
   Loader2, TrendingUp, TrendingDown, Minus, RefreshCw, 
   Trash2, Plus, Globe, Type, Send, Trophy, MapPin, 
-  ArrowUpRight, ArrowDownRight, AlertTriangle, Zap, Shield, Sparkles
+  ArrowUpRight, ArrowDownRight, AlertTriangle, Zap, Shield, Sparkles,
+  Pencil, Save, X
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useClient } from '../../contexts/ClientContext.jsx';
 
 export default function KeywordTracking() {
-  const [clients, setClients] = useState([]);
-  const [activeClient, setActiveClient] = useState(null);
+  const { activeClient } = useClient();
+  const keywordClientId = activeClient?.gmb_client_id;
   const [keywords, setKeywords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshingId, setRefreshingId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
   
   // PageSpeed Audit State
   const [pagespeed, setPagespeed] = useState(null);
@@ -34,27 +40,7 @@ export default function KeywordTracking() {
 
   const modalRef = useRef(null);
 
-  // 1. Fetch GMB Clients list
-  const fetchClients = async () => {
-    try {
-      const token = localStorage.getItem('leados_token');
-      const { data } = await axios.get(`${API_URL}/api/mafiya/clients`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setClients(data);
-      if (data.length > 0) {
-        setActiveClient(data[0]); // Default to first client
-      } else {
-        setLoading(false);
-      }
-    } catch (err) {
-      console.error('Fetch clients error:', err);
-      toast.error('Failed to load GMB clients');
-      setLoading(false);
-    }
-  };
-
-  // 2. Fetch keywords for active client
+  // Fetch keywords for the GMB record mapped to the selected Thedal client.
   const fetchKeywords = async (clientId) => {
     if (!clientId) return;
     try {
@@ -106,17 +92,16 @@ export default function KeywordTracking() {
   };
 
   useEffect(() => {
-    fetchClients();
-  }, []);
-
-  useEffect(() => {
-    if (activeClient) {
+    if (activeClient && keywordClientId) {
       setLoading(true);
-      fetchKeywords(activeClient.id);
-      runPageSpeedAudit(activeClient.website_url || activeClient.business_name);
-      fetchAiSuggestions(activeClient.id, targetLocation);
+      fetchKeywords(keywordClientId);
+      runPageSpeedAudit(activeClient.website_url || activeClient.website || activeClient.domain || activeClient.business_name);
+      fetchAiSuggestions(keywordClientId, targetLocation);
+    } else {
+      setKeywords([]);
+      setLoading(false);
     }
-  }, [activeClient]);
+  }, [activeClient, keywordClientId]);
 
   // Handle Add Keyword
   const handleAddKeyword = async (e) => {
@@ -131,7 +116,7 @@ export default function KeywordTracking() {
     try {
       const token = localStorage.getItem('leados_token');
       const { data: saved } = await axios.post(`${API_URL}/api/mafiya/turf/keywords`, {
-        client_id: activeClient.id,
+        client_id: keywordClientId,
         keyword: newKeyword
       }, {
         headers: { Authorization: `Bearer ${token}` }
@@ -184,6 +169,41 @@ export default function KeywordTracking() {
     }
   };
 
+  const startEditing = (keyword) => {
+    setEditingId(keyword.id);
+    setEditForm({
+      keyword: keyword.keyword || '',
+      initial_rank: keyword.initial_rank || 100,
+      current_rank: keyword.current_rank || 100,
+      pack_status: keyword.pack_status === 'In Pack' ? 'In Pack' : 'Not in Pack'
+    });
+  };
+
+  const handleSaveEdit = async (id) => {
+    if (!editForm?.keyword.trim()) return toast.error('Keyword is required');
+    setSavingEdit(true);
+    try {
+      const token = localStorage.getItem('leados_token');
+      const { data: updated } = await axios.put(`${API_URL}/api/mafiya/turf/keywords/${id}`, {
+        ...editForm,
+        client_id: keywordClientId
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      setKeywords(current => current.map(item => item.id === id ? updated : item));
+      setEditingId(null);
+      setEditForm(null);
+      toast.success('Keyword values updated');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update keyword');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const editInputStyle = {
+    width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 7,
+    border: `1px solid ${C.border}`, background: C.background, color: '#fff', fontSize: 13
+  };
+
   // Close modal on outside click
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -209,7 +229,7 @@ export default function KeywordTracking() {
     return k.current_rank > k.previous_rank;
   }).length;
 
-  if (loading && clients.length > 0) {
+  if (loading && keywordClientId) {
     return (
       <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: C.background }}>
         <Loader2 size={32} color={C.accent} className="spin" />
@@ -217,12 +237,12 @@ export default function KeywordTracking() {
     );
   }
 
-  if (clients.length === 0) {
+  if (!activeClient || !keywordClientId) {
     return (
       <div style={{ padding: 40, color: C.text, height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: C.background }}>
         <Shield size={48} style={{ opacity: 0.15, marginBottom: 16 }} color="#fff" />
-        <h2 style={{ fontSize: 20, color: '#fff', marginBottom: 8 }}>No Clients Configured</h2>
-        <p style={{ color: C.muted, textAlign: 'center', maxWidth: 400 }}>Please onboard GMB clients in the Mafiya OS section first to start tracking keywords.</p>
+        <h2 style={{ fontSize: 20, color: '#fff', marginBottom: 8 }}>{activeClient ? 'Keyword Tracking Not Connected' : 'Select a Client'}</h2>
+        <p style={{ color: C.muted, textAlign: 'center', maxWidth: 440 }}>{activeClient ? `${activeClient.business_name || activeClient.domain} is not mapped to a GMB Keyword Tracking client. Connect its GMB client record in Client Onboarding first.` : 'Select an Active Client from the Thedal sidebar to view keyword rankings.'}</p>
       </div>
     );
   }
@@ -263,35 +283,22 @@ export default function KeywordTracking() {
           </p>
         </div>
 
-        {/* Dropdown & Add Keyword Button */}
+        {/* Direct keyword entry for the selected shared client */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <select
-            value={activeClient?.id || ''}
-            onChange={(e) => {
-              const selected = clients.find(c => c.id === parseInt(e.target.value, 10));
-              if (selected) setActiveClient(selected);
-            }}
-            style={{ 
-              background: '#0f172a', 
-              border: `1px solid ${C.border}`, 
-              borderRadius: 8, 
-              padding: '8px 16px', 
-              color: '#e2e8f0', 
-              fontSize: 13, 
-              outline: 'none', 
-              cursor: 'pointer',
-              height: 38
-            }}
-          >
-            {clients.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.business_name}
-              </option>
-            ))}
-          </select>
+          <div style={{ minWidth: 280 }}>
+            <label htmlFor="new-tracking-keyword" style={{ display: 'block', color: C.muted, fontSize: 9, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 5 }}>
+              New keyword for {activeClient.business_name || activeClient.domain}
+            </label>
+            <input id="new-tracking-keyword" type="text" value={newKeyword}
+              onChange={event => { setNewKeyword(event.target.value); setFormError(''); }}
+              onKeyDown={event => { if (event.key === 'Enter') handleAddKeyword(event); }}
+              placeholder="Type a keyword to track" disabled={adding}
+              style={{ width: '100%', boxSizing: 'border-box', background: '#0f172a', border: `1px solid ${formError ? '#ef4444' : C.border}`, borderRadius: 8, padding: '10px 13px', color: '#fff', fontSize: 13, outline: 'none', pointerEvents: 'auto', userSelect: 'text', cursor: 'text' }} />
+          </div>
 
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={handleAddKeyword}
+            disabled={adding}
             style={{
               background: 'linear-gradient(135deg, #f97316, #ea580c)',
               color: '#fff',
@@ -300,7 +307,8 @@ export default function KeywordTracking() {
               padding: '0 16px',
               fontSize: 13,
               fontWeight: 700,
-              cursor: 'pointer',
+              cursor: adding ? 'not-allowed' : 'pointer',
+              opacity: adding ? 0.7 : 1,
               display: 'flex',
               alignItems: 'center',
               gap: 6,
@@ -308,7 +316,7 @@ export default function KeywordTracking() {
               boxShadow: '0 4px 12px rgba(249,115,22,0.2)'
             }}
           >
-            <Plus size={16} /> Add Keyword
+            <Plus size={16} /> {adding ? 'Adding...' : 'Add Keyword'}
           </button>
         </div>
       </div>
@@ -376,18 +384,23 @@ export default function KeywordTracking() {
             <tbody>
               {keywords.map(kw => {
                 const diff = (kw.previous_rank !== null && kw.current_rank !== null) ? kw.previous_rank - kw.current_rank : 0;
+                const isEditing = editingId === kw.id;
                 
                 return (
                   <tr key={kw.id} style={{ borderBottom: `1px solid ${C.border}50` }}>
-                    <td style={{ padding: '18px 24px', fontSize: 14, fontWeight: 600, color: '#fff' }}>{kw.keyword}</td>
-                    <td style={{ padding: '18px 24px', fontSize: 13, color: C.muted, textAlign: 'center' }}>{kw.initial_rank}</td>
+                    <td style={{ padding: '18px 24px', fontSize: 14, fontWeight: 600, color: '#fff' }}>
+                      {isEditing ? <input value={editForm.keyword} onChange={e => setEditForm({ ...editForm, keyword: e.target.value })} style={editInputStyle} /> : kw.keyword}
+                    </td>
+                    <td style={{ padding: '18px 24px', fontSize: 13, color: C.muted, textAlign: 'center' }}>
+                      {isEditing ? <input type="number" min="1" max="100" value={editForm.initial_rank} onChange={e => setEditForm({ ...editForm, initial_rank: e.target.value })} style={{ ...editInputStyle, width: 76, textAlign: 'center' }} /> : kw.initial_rank}
+                    </td>
                     <td style={{ padding: '18px 24px', fontSize: 15, fontWeight: 800, color: kw.current_rank <= 3 ? '#10b981' : '#f59e0b', textAlign: 'center' }}>
-                      {kw.current_rank || '100+'}
+                      {isEditing ? <input type="number" min="1" max="100" value={editForm.current_rank} onChange={e => setEditForm({ ...editForm, current_rank: e.target.value })} style={{ ...editInputStyle, width: 76, textAlign: 'center' }} /> : (kw.current_rank >= 100 ? '100+' : kw.current_rank)}
                     </td>
                     <td style={{ padding: '18px 24px', textAlign: 'center' }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: kw.pack_status === 'In Pack' ? '#10b981' : '#ef4444', background: kw.pack_status === 'In Pack' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', padding: '3px 10px', borderRadius: 20 }}>
+                      {isEditing ? <select value={editForm.pack_status} onChange={e => setEditForm({ ...editForm, pack_status: e.target.value })} style={{ ...editInputStyle, width: 120 }}><option>In Pack</option><option>Not in Pack</option></select> : <span style={{ fontSize: 10, fontWeight: 700, color: kw.pack_status === 'In Pack' ? '#10b981' : '#ef4444', background: kw.pack_status === 'In Pack' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', padding: '3px 10px', borderRadius: 20 }}>
                         {kw.pack_status}
-                      </span>
+                      </span>}
                     </td>
                     <td style={{ padding: '18px 24px', textAlign: 'center' }}>
                       {diff > 0 && <span style={{ color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, fontWeight: 600 }}><TrendingUp size={14} /> +{diff}</span>}
@@ -396,6 +409,10 @@ export default function KeywordTracking() {
                     </td>
                     <td style={{ padding: '18px 24px', textAlign: 'right' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                        {isEditing ? <>
+                          <button onClick={() => handleSaveEdit(kw.id)} disabled={savingEdit} title="Save changes" style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 8, padding: 6, cursor: savingEdit ? 'not-allowed' : 'pointer', color: '#10b981' }}><Save size={14} /></button>
+                          <button onClick={() => { setEditingId(null); setEditForm(null); }} disabled={savingEdit} title="Cancel editing" style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}`, borderRadius: 8, padding: 6, cursor: 'pointer', color: C.muted }}><X size={14} /></button>
+                        </> : <button onClick={() => startEditing(kw)} aria-label={`Edit ${kw.keyword}`} title="Edit keyword and ranking values" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8, padding: 6, cursor: 'pointer', color: '#60a5fa' }}><Pencil size={14} /></button>}
                         <button
                           onClick={() => handleRefresh(kw.id)}
                           disabled={refreshingId === kw.id}
@@ -424,9 +441,9 @@ export default function KeywordTracking() {
       </div>
 
       {/* ═══ Add Keyword Modal ═══ */}
-      {showAddModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-          <div ref={modalRef} style={{ background: C.surface, width: '100%', maxWidth: 520, borderRadius: 16, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)' }}>
+      {showAddModal && createPortal(
+        <div onMouseDown={() => setShowAddModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2147483647, pointerEvents: 'auto' }}>
+          <div ref={modalRef} onMouseDown={event => event.stopPropagation()} style={{ position: 'relative', zIndex: 1, pointerEvents: 'auto', background: C.surface, width: '100%', maxWidth: 520, borderRadius: 16, border: `1px solid ${C.border}`, overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)' }}>
             
             {/* Modal Header */}
             <div style={{ padding: '20px 24px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -440,11 +457,12 @@ export default function KeywordTracking() {
               <div>
                 <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Keyword *</label>
                 <input
+                  autoFocus
                   type="text"
                   placeholder="e.g. digital skills course Pondicherry"
                   value={newKeyword}
                   onChange={(e) => setNewKeyword(e.target.value)}
-                  style={{ width: '100%', background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none' }}
+                  style={{ width: '100%', boxSizing: 'border-box', pointerEvents: 'auto', userSelect: 'text', background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none' }}
                 />
               </div>
 
@@ -459,13 +477,13 @@ export default function KeywordTracking() {
                     placeholder="e.g. Guntur"
                     value={targetLocation}
                     onChange={(e) => setTargetLocation(e.target.value)}
-                    onBlur={() => fetchAiSuggestions(activeClient.id, targetLocation)}
-                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), fetchAiSuggestions(activeClient.id, targetLocation))}
+                    onBlur={() => fetchAiSuggestions(keywordClientId, targetLocation)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), fetchAiSuggestions(keywordClientId, targetLocation))}
                     style={{ flex: 1, background: '#090f1a', border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none' }}
                   />
                   <button
                     type="button"
-                    onClick={() => fetchAiSuggestions(activeClient.id, targetLocation)}
+                    onClick={() => fetchAiSuggestions(keywordClientId, targetLocation)}
                     disabled={aiLoading}
                     style={{
                       background: 'rgba(255,255,255,0.04)',
@@ -561,7 +579,8 @@ export default function KeywordTracking() {
             </form>
 
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </div>

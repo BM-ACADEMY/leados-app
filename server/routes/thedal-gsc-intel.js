@@ -3,16 +3,48 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
+const axios = require('axios');
+const https = require('https');
 
 const tokensFile = path.join(__dirname, '../data/gsc_tokens.json');
+const inspectionHistoryFile = path.join(__dirname, '../data/gsc_inspection_history.json');
 
 // Ensure token file exists
 if (!fs.existsSync(tokensFile)) {
   fs.writeFileSync(tokensFile, JSON.stringify({}), 'utf8');
 }
+if (!fs.existsSync(inspectionHistoryFile)) fs.writeFileSync(inspectionHistoryFile, JSON.stringify([]), 'utf8');
 
 const getTokens = () => JSON.parse(fs.readFileSync(tokensFile, 'utf8'));
 const saveTokens = (data) => fs.writeFileSync(tokensFile, JSON.stringify(data, null, 2), 'utf8');
+const getInspectionHistory = () => JSON.parse(fs.readFileSync(inspectionHistoryFile, 'utf8'));
+const saveInspectionHistory = data => fs.writeFileSync(inspectionHistoryFile, JSON.stringify(data.slice(-500), null, 2), 'utf8');
+
+const getAuthorizedClient = (clientId = 'default') => {
+  const tokens = getTokens();
+  const clientTokens = tokens[clientId];
+  if (!clientTokens?.refresh_token) {
+    const error = new Error('Google Search Console is not connected');
+    error.status = 401;
+    throw error;
+  }
+  const client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_CALLBACK_GSCINTEL
+  );
+  client.setCredentials(clientTokens);
+  return client;
+};
+
+const sendGoogleError = (res, error) => {
+  const status = error.status || error.code || 500;
+  if (status === 401) return res.status(401).json({ error: 'Google Search Console is not connected. Please reconnect.' });
+  if (status === 403) return res.status(403).json({ error: 'This Google account does not have permission for that property or action.' });
+  if (status === 429) return res.status(429).json({ error: 'Google Search Console quota exceeded. Please try again later.' });
+  console.error('[GSC API]', error.message || error);
+  return res.status(500).json({ error: error.message || 'Google Search Console request failed' });
+};
 
 // Initialize OAuth2 client
 const port = process.env.PORT || 3600;
@@ -32,10 +64,23 @@ router.get('/status', (req, res) => {
   }
 
   if (tokens[clientId] && tokens[clientId].refresh_token) {
-    return res.json({ isVerified: true });
+    return res.json({ isVerified: true, connectedEmail: tokens[clientId].connected_email || null });
   }
 
   res.json({ isVerified: false });
+});
+
+// Remove a saved GSC connection so the user can choose another Google account.
+router.delete('/connection', (req, res) => {
+  const { clientId = 'default' } = req.query;
+  const tokens = getTokens();
+
+  if (tokens[clientId]) {
+    delete tokens[clientId];
+    saveTokens(tokens);
+  }
+
+  res.json({ success: true, isVerified: false });
 });
 
 // 2. Generate Google OAuth URL
@@ -48,9 +93,13 @@ router.get('/auth/google', (req, res) => {
 
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline', // Critical for getting refresh token
-    scope: ['https://www.googleapis.com/auth/webmasters.readonly'],
+    scope: [
+      'https://www.googleapis.com/auth/webmasters',
+      'https://www.googleapis.com/auth/userinfo.email',
+      'openid'
+    ],
     state: clientId, // Pass client ID to callback
-    prompt: 'consent' // Force consent to ensure we always get a refresh token on first connect
+    prompt: 'select_account consent' // Always show the account chooser and request a refresh token
   });
 
   res.redirect(url);
@@ -71,8 +120,12 @@ router.get('/auth/callback', async (req, res) => {
     } else if (allTokens[clientId]) {
       // If we already had a refresh token, just update access token
       allTokens[clientId].access_token = tokens.access_token;
-      saveTokens(allTokens);
     }
+
+    oauth2Client.setCredentials(allTokens[clientId]);
+    const profile = await google.oauth2({ version: 'v2', auth: oauth2Client }).userinfo.get().catch(() => ({ data: {} }));
+    allTokens[clientId].connected_email = profile.data.email || allTokens[clientId].connected_email || null;
+    saveTokens(allTokens);
 
     // Redirect back to frontend
     const frontendUrl = process.env.VITE_FRONTEND_URL || 'http://localhost:5173';
@@ -83,10 +136,120 @@ router.get('/auth/callback', async (req, res) => {
   }
 });
 
+// Official GSC properties available to the connected Google account.
+router.get('/properties', async (req, res) => {
+  try {
+    const auth = getAuthorizedClient(req.query.clientId);
+    const response = await google.searchconsole({ version: 'v1', auth }).sites.list();
+    res.json({ properties: (response.data.siteEntry || []).map(item => ({ siteUrl: item.siteUrl, permissionLevel: item.permissionLevel })) });
+  } catch (error) { sendGoogleError(res, error); }
+});
+
+// Inspect the version of a URL currently held in Google's index.
+router.post('/inspect', async (req, res) => {
+  const { clientId = 'default', siteUrl, inspectionUrl, languageCode = 'en-US' } = req.body;
+  if (!siteUrl || !inspectionUrl) return res.status(400).json({ error: 'siteUrl and inspectionUrl are required' });
+  try {
+    const auth = getAuthorizedClient(clientId);
+    const response = await google.searchconsole({ version: 'v1', auth }).urlInspection.index.inspect({
+      requestBody: { siteUrl, inspectionUrl, languageCode }
+    });
+    const result = { inspectionUrl, inspectedAt: new Date().toISOString(), ...response.data.inspectionResult };
+    const history = getInspectionHistory();
+    history.push({ clientId, siteUrl, ...result });
+    saveInspectionHistory(history);
+    res.json(result);
+  } catch (error) { sendGoogleError(res, error); }
+});
+
+router.get('/inspect/history', (req, res) => {
+  const { clientId = 'default', siteUrl } = req.query;
+  const history = getInspectionHistory().filter(item => item.clientId === clientId && (!siteUrl || item.siteUrl === siteUrl)).slice(-100).reverse();
+  res.json({ history });
+});
+
+router.post('/inspect/queue', async (req, res) => {
+  const { clientId = 'default', siteUrl, urls = [] } = req.body;
+  if (!siteUrl || !Array.isArray(urls) || !urls.length) return res.status(400).json({ error: 'siteUrl and urls are required' });
+  if (urls.length > 20) return res.status(400).json({ error: 'Inspect up to 20 URLs per batch' });
+  try {
+    const auth = getAuthorizedClient(clientId);
+    const service = google.searchconsole({ version: 'v1', auth });
+    const results = [];
+    for (const inspectionUrl of urls) {
+      try {
+        const response = await service.urlInspection.index.inspect({ requestBody: { siteUrl, inspectionUrl, languageCode: 'en-US' } });
+        results.push({ inspectionUrl, inspectedAt: new Date().toISOString(), ...response.data.inspectionResult });
+      } catch (error) { results.push({ inspectionUrl, error: error.message }); }
+    }
+    const history = getInspectionHistory();
+    results.filter(item => !item.error).forEach(item => history.push({ clientId, siteUrl, ...item }));
+    saveInspectionHistory(history);
+    res.json({ results });
+  } catch (error) { sendGoogleError(res, error); }
+});
+
+router.get('/sitemaps', async (req, res) => {
+  const { clientId = 'default', siteUrl } = req.query;
+  if (!siteUrl) return res.status(400).json({ error: 'siteUrl is required' });
+  try {
+    const auth = getAuthorizedClient(clientId);
+    const response = await google.searchconsole({ version: 'v1', auth }).sitemaps.list({ siteUrl });
+    res.json({ sitemaps: response.data.sitemap || [] });
+  } catch (error) { sendGoogleError(res, error); }
+});
+
+router.post('/sitemaps', async (req, res) => {
+  const { clientId = 'default', siteUrl, feedpath } = req.body;
+  if (!siteUrl || !feedpath) return res.status(400).json({ error: 'siteUrl and feedpath are required' });
+  try {
+    const auth = getAuthorizedClient(clientId);
+    await google.searchconsole({ version: 'v1', auth }).sitemaps.submit({ siteUrl, feedpath });
+    res.json({ success: true });
+  } catch (error) { sendGoogleError(res, error); }
+});
+
+router.delete('/sitemaps', async (req, res) => {
+  const { clientId = 'default', siteUrl, feedpath } = req.query;
+  if (!siteUrl || !feedpath) return res.status(400).json({ error: 'siteUrl and feedpath are required' });
+  try {
+    const auth = getAuthorizedClient(clientId);
+    await google.searchconsole({ version: 'v1', auth }).sitemaps.delete({ siteUrl, feedpath });
+    res.json({ success: true });
+  } catch (error) { sendGoogleError(res, error); }
+});
+
+router.get('/sitemap-urls', async (req, res) => {
+  const { siteUrl, feedpath } = req.query;
+  if (!siteUrl || !feedpath) return res.status(400).json({ error: 'siteUrl and feedpath are required' });
+  try {
+    const propertyHost = siteUrl.replace('sc-domain:', '').replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '');
+    const feed = new URL(feedpath);
+    const feedHost = feed.hostname.replace(/^www\./, '');
+    if (feed.protocol !== 'https:' || (feedHost !== propertyHost && !feedHost.endsWith(`.${propertyHost}`))) return res.status(400).json({ error: 'Sitemap must be HTTPS and belong to the selected property' });
+    const response = await axios.get(feed.href, { timeout: 15000, maxContentLength: 5_000_000, responseType: 'text' });
+    const urls = [...String(response.data).matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi)].map(match => match[1].trim()).filter(url => !url.endsWith('.xml')).slice(0, 500);
+    res.json({ feedpath, urls, truncated: urls.length === 500 });
+  } catch (error) { res.status(502).json({ error: `Could not download sitemap: ${error.message}` }); }
+});
+
+router.get('/technical-audit', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  try {
+    const target = new URL(url.startsWith('http') ? url : `https://${url}`);
+    const response = await axios.get(target.href, { timeout: 15000, maxRedirects: 8, maxContentLength: 2_000_000, httpsAgent: new https.Agent({ rejectUnauthorized: true }) });
+    const html = String(response.data || '');
+    const canonical = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)/i)?.[1] || html.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical/i)?.[1] || null;
+    const robots = html.match(/<meta[^>]+name=["']robots["'][^>]+content=["']([^"']+)/i)?.[1] || null;
+    res.json({ requestedUrl: target.href, finalUrl: response.request?.res?.responseUrl || target.href, status: response.status, https: (response.request?.res?.responseUrl || target.href).startsWith('https://'), redirected: (response.request?.res?.responseUrl || target.href) !== target.href, canonical, robots, certificateValid: true });
+  } catch (error) { res.json({ requestedUrl: url, status: error.response?.status || null, https: false, certificateValid: !String(error.message).toLowerCase().includes('certificate'), error: error.message }); }
+});
+
 // 4. Fetch Live Data from GSC
 router.get('/', async (req, res) => {
   const isDemo = req.headers['x-data-mode'] === 'demo';
-  const { clientId = 'default', days = '28Days', device = 'All', country = 'All', siteUrl, startDate: customStart, endDate: customEnd } = req.query;
+  const { clientId = 'default', days = '28Days', device = 'All', country = 'All', searchType = 'web', queryFilter = '', queryOperator = 'includingRegex', siteUrl, startDate: customStart, endDate: customEnd } = req.query;
 
   if (!siteUrl) {
     return res.status(400).json({ error: 'siteUrl is required (e.g., https://bmtechx.in/)' });
@@ -166,6 +329,7 @@ router.get('/', async (req, res) => {
     if (country !== 'All') {
       filters.push({ dimension: 'country', operator: 'equals', expression: country.toLowerCase() });
     }
+    if (queryFilter) filters.push({ dimension: 'query', operator: queryOperator, expression: queryFilter });
 
     if (filters.length > 0) {
       dimensionFilterGroups.push({ filters });
@@ -181,7 +345,7 @@ router.get('/', async (req, res) => {
       // 1. Try to Fetch Aggregated Metrics with primary URL
       metricsReq = await searchconsole.searchanalytics.query({
         siteUrl: activeSiteUrl,
-        requestBody: { startDate, endDate, dimensions: [], dimensionFilterGroups, dataState: 'all' }
+        requestBody: { startDate, endDate, dimensions: [], dimensionFilterGroups, dataState: 'all', type: searchType }
       });
     } catch (err) {
       if (err.code === 403 && fallbackSiteUrl) {
@@ -189,7 +353,7 @@ router.get('/', async (req, res) => {
         try {
           metricsReq = await searchconsole.searchanalytics.query({
             siteUrl: fallbackSiteUrl,
-            requestBody: { startDate, endDate, dimensions: [], dimensionFilterGroups, dataState: 'all' }
+            requestBody: { startDate, endDate, dimensions: [], dimensionFilterGroups, dataState: 'all', type: searchType }
           });
           activeSiteUrl = fallbackSiteUrl; // Keep this for the queries fetch below
         } catch (fallbackErr) {
@@ -204,6 +368,21 @@ router.get('/', async (req, res) => {
       ? metricsReq.data.rows[0]
       : { clicks: 0, impressions: 0, ctr: 0, position: 0 };
 
+    const periodDays = Math.max(1, Math.round((new Date(endDate) - new Date(startDate)) / 86400000) + 1);
+    const previousEnd = new Date(startDate);
+    previousEnd.setDate(previousEnd.getDate() - 1);
+    const previousStart = new Date(previousEnd);
+    previousStart.setDate(previousStart.getDate() - periodDays + 1);
+    let previous = { clicks: 0, impressions: 0, ctr: 0, position: 0 };
+    try {
+      const previousReq = await searchconsole.searchanalytics.query({
+        siteUrl: activeSiteUrl,
+        requestBody: { startDate: previousStart.toISOString().split('T')[0], endDate: previousEnd.toISOString().split('T')[0], dimensions: [], dimensionFilterGroups, dataState: 'final', type: searchType }
+      });
+      previous = previousReq.data.rows?.[0] || previous;
+    } catch (comparisonError) { console.warn('[GSC] Comparison unavailable:', comparisonError.message); }
+    const change = (current, prior) => prior ? +(((current - prior) / prior) * 100).toFixed(1) : 0;
+
     // 2. Fetch Query Level Data (Top 100 queries)
     const queriesReq = await searchconsole.searchanalytics.query({
       siteUrl: activeSiteUrl,
@@ -213,6 +392,7 @@ router.get('/', async (req, res) => {
         dimensions: ['query'],
         dimensionFilterGroups,
         dataState: 'all',
+        type: searchType,
         rowLimit: 100
       }
     });
@@ -235,6 +415,7 @@ router.get('/', async (req, res) => {
         dimensions: ['page'],
         dimensionFilterGroups,
         dataState: 'all',
+        type: searchType,
         rowLimit: 100
       }
     });
@@ -258,6 +439,7 @@ router.get('/', async (req, res) => {
           endDate,
           dimensions: ['country'],
           dataState: 'all',
+          type: searchType,
           rowLimit: 50
         }
       });
@@ -281,6 +463,7 @@ router.get('/', async (req, res) => {
           dimensions: ['date'],
           dimensionFilterGroups,
           dataState: 'all',
+          type: searchType,
           rowLimit: 90
         }
       });
@@ -305,6 +488,7 @@ router.get('/', async (req, res) => {
           endDate,
           dimensions: ['device'],
           dataState: 'all',
+          type: searchType,
           rowLimit: 5
         }
       });
@@ -317,6 +501,15 @@ router.get('/', async (req, res) => {
       console.error('Failed to fetch GSC devices list', dErr);
     }
 
+    let searchAppearances = [];
+    try {
+      const appearanceReq = await searchconsole.searchanalytics.query({
+        siteUrl: activeSiteUrl,
+        requestBody: { startDate, endDate, dimensions: ['searchAppearance'], dimensionFilterGroups, dataState: 'all', type: searchType, rowLimit: 100 }
+      });
+      searchAppearances = (appearanceReq.data.rows || []).map(row => ({ appearance: row.keys?.[0] || 'Unknown', clicks: row.clicks, impressions: row.impressions, ctr: +(row.ctr * 100).toFixed(2), position: +row.position.toFixed(1) }));
+    } catch (appearanceError) { console.warn('[GSC] Search appearance unavailable:', appearanceError.message); }
+
     // Send payload matching the exact UI structure we built
     res.json({
       isVerified: true,
@@ -328,8 +521,10 @@ router.get('/', async (req, res) => {
         impressions: totals.impressions,
         ctr: (totals.ctr * 100).toFixed(2),
         position: totals.position.toFixed(1),
-        trends: { clicks: 0, impressions: 0, ctr: 0, position: 0 } // Trends require fetching previous period data, skipping for performance
+        trends: { clicks: change(totals.clicks, previous.clicks), impressions: change(totals.impressions, previous.impressions), ctr: change(totals.ctr, previous.ctr), position: change(totals.position, previous.position) }
       },
+      previousMetrics: previous,
+      searchAppearances,
       queries,
       topQueries: queries,
       topPages: pages,
@@ -341,6 +536,15 @@ router.get('/', async (req, res) => {
 
   } catch (error) {
     const errorMsg = error.message || '';
+    if (error.code === 403 && (errorMsg.includes('has not been used in project') || errorMsg.includes('it is disabled') || errorMsg.includes('accessNotConfigured'))) {
+      const projectId = errorMsg.match(/project\s+(\d+)/i)?.[1] || null;
+      console.log(`[GSC API] Search Console API disabled${projectId ? ` for project ${projectId}` : ''}`);
+      return res.status(403).json({
+        error: `Search Console API is disabled${projectId ? ` in Google Cloud project ${projectId}` : ''}. Enable it in Google Cloud Console, wait a few minutes, then retry.`,
+        code: 'SEARCH_CONSOLE_API_DISABLED',
+        projectId
+      });
+    }
     if (error.code === 400 || errorMsg.includes('invalid_grant')) {
       console.log(`[GSC API] invalid_grant (token revoked/invalid) for ${siteUrl}`);
       return res.status(200).json({ error: 'Google Account connection has expired. Please reconnect.', isVerified: false });

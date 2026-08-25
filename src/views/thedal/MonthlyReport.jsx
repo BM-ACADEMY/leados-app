@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import SopModal from '../../components/common/SopModal.jsx';
 import html2pdf from 'html2pdf.js/dist/html2pdf.bundle.min.js';
 import { C } from '../../constants/theme.js';
@@ -32,17 +32,99 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+function CustomDatePicker({ value, onChange, min, max, label }) {
+  const [open, setOpen] = useState(false);
+  const [viewDate, setViewDate] = useState(() => value ? new Date(`${value}T00:00:00`) : new Date());
+  const pickerRef = useRef(null);
+
+  useEffect(() => {
+    if (value) setViewDate(new Date(`${value}T00:00:00`));
+  }, [value]);
+
+  useEffect(() => {
+    const closePicker = (event) => {
+      if (pickerRef.current && !pickerRef.current.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', closePicker);
+    return () => document.removeEventListener('mousedown', closePicker);
+  }, []);
+
+  const toIsoDate = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  const displayValue = value ? value.split('-').reverse().join('-') : 'Select date';
+  const monthStart = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(1 - monthStart.getDay());
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + index);
+    return date;
+  });
+  const todayIso = toIsoDate(new Date());
+
+  return (
+    <div ref={pickerRef} style={{ position: 'relative', minWidth: 0 }}>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 7, color: C.muted, fontSize: 11, fontWeight: 700 }}>
+        {label}
+        <button type="button" onClick={() => setOpen(current => !current)} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.2)', border: `1px solid ${open ? C.accent : C.border}`, color: '#fff', padding: '12px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+          <span>{displayValue}</span><Calendar size={14} color={C.muted} />
+        </button>
+      </label>
+      {open && (
+        <div style={{ position: 'absolute', zIndex: 1000, top: 'calc(100% + 6px)', left: 0, width: 280, padding: 14, background: '#161b22', border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: '0 18px 45px rgba(0,0,0,0.5)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <strong style={{ color: '#fff', fontSize: 13 }}>{viewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</strong>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" aria-label="Previous month" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))} style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${C.border}`, background: '#0d1117', color: '#fff', cursor: 'pointer' }}>‹</button>
+              <button type="button" aria-label="Next month" onClick={() => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1))} style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${C.border}`, background: '#0d1117', color: '#fff', cursor: 'pointer' }}>›</button>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, marginBottom: 4 }}>
+            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => <div key={day} style={{ textAlign: 'center', color: C.muted, fontSize: 10, fontWeight: 800, padding: 5 }}>{day}</div>)}
+            {days.map(date => {
+              const iso = toIsoDate(date);
+              const outsideMonth = date.getMonth() !== viewDate.getMonth();
+              const disabled = (min && iso < min) || (max && iso > max);
+              const selected = iso === value;
+              const today = iso === todayIso;
+              return (
+                <button key={iso} type="button" disabled={disabled} onClick={() => { onChange(iso); setOpen(false); }} style={{ height: 30, borderRadius: 6, border: today && !selected ? `1px solid ${C.accent}` : '1px solid transparent', background: selected ? C.accent : 'transparent', color: disabled ? '#484f58' : outsideMonth ? '#6e7681' : '#fff', fontSize: 11, fontWeight: selected ? 800 : 600, cursor: disabled ? 'not-allowed' : 'pointer' }}>
+                  {date.getDate()}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
+            <button type="button" onClick={() => { onChange(''); setOpen(false); }} style={{ border: 0, background: 'transparent', color: C.muted, fontSize: 11, cursor: 'pointer' }}>Clear</button>
+            <button type="button" disabled={(min && todayIso < min) || (max && todayIso > max)} onClick={() => { onChange(todayIso); setViewDate(new Date()); setOpen(false); }} style={{ border: 0, background: 'transparent', color: C.accent, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Today</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MonthlyReport() {
   const { activeClient } = useClient();
   const [generating, setGenerating] = useState(false);
-  const [reportMonth, setReportMonth] = useState('June 2026');
+  const [startDate, setStartDate] = useState(() => {
+    const date = new Date();
+    date.setDate(1);
+    return date.toLocaleDateString('en-CA');
+  });
+  const [endDate, setEndDate] = useState(() => new Date().toLocaleDateString('en-CA'));
+  const reportPeriod = startDate && endDate
+    ? `${new Date(`${startDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} – ${new Date(`${endDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+    : 'Custom date range';
   
   // Real Data State
   const [reportData, setReportData] = useState({
     keywords: [],
-    localSeo: null,
     gsc: null,
-    citations: null,
     audit: null,
     backlinks: null,
     serp: null,
@@ -55,11 +137,9 @@ export default function MonthlyReport() {
   // Module selection state
   const [modules, setModules] = useState({
     keywordTracking: true,
-    localSeo: true,
     gscIntel: true,
     onPageAudit: true,
     backlinkTracker: true,
-    citations: false,
     serpRadar: false,
     gapHunter: false,
     competitorSpy: false,
@@ -72,40 +152,110 @@ export default function MonthlyReport() {
     const fetchPreviewData = async () => {
       setReportData(prev => ({ ...prev, loading: true }));
       try {
-        const clientDomain = activeClient.domain || activeClient.website || '';
+        const clientDomain = activeClient.domain || activeClient.website || activeClient.website_url || '';
         const clientName = activeClient.business_name || '';
+        const cleanDomain = clientDomain.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0].toLowerCase();
 
         const results = await Promise.allSettled([
-          api.get('/thedal/keywordtracking'),
-          api.get(`/thedal/localseobridge/data?name=${encodeURIComponent(clientName)}`),
-          api.get(`/thedal/gscintel?siteUrl=${encodeURIComponent(clientDomain)}`),
-          api.get('/thedal/citations/history'),
-          Promise.resolve(null),
-          api.get('/thedal/backlinks/history'),
+          activeClient.gmb_client_id
+            ? api.get(`/mafiya/turf/keywords?clientId=${encodeURIComponent(activeClient.gmb_client_id)}`)
+            : Promise.resolve([]),
+          api.get(`/thedal/gscintel?clientId=${encodeURIComponent(activeClient.id)}&siteUrl=${encodeURIComponent(clientDomain)}&startDate=${startDate}&endDate=${endDate}`),
+          api.get(`/thedal/seo-audit/saved?clientId=${encodeURIComponent(activeClient.id)}`),
+          api.get(`/thedal/backlinks/history?domain=${encodeURIComponent(cleanDomain)}&startDate=${startDate}&endDate=${endDate}`),
           api.get('/thedal/competitorspy/history'),
-          api.get('/thedal/schemalibrary')
+          api.get('/thedal/schemalibrary'),
+          api.get(`/thedal/serpradar/history?domain=${encodeURIComponent(cleanDomain)}&startDate=${startDate}&endDate=${endDate}`),
+          api.get(`/thedal/gaphunter/history?domain=${encodeURIComponent(cleanDomain)}&startDate=${startDate}&endDate=${endDate}`)
         ]);
         
         const kwRes = results[0].status === 'fulfilled' ? results[0].value : { items: [] };
-        const localRes = results[1].status === 'fulfilled' ? results[1].value : null;
-        const gscRes = results[2].status === 'fulfilled' ? results[2].value : null;
-        const citationRes = results[3].status === 'fulfilled' ? results[3].value : null;
-        const auditRes = results[4].status === 'fulfilled' ? results[4].value : null;
-        const backlinkRes = results[5].status === 'fulfilled' ? results[5].value : null;
-        const compRes = results[6].status === 'fulfilled' ? results[6].value : null;
-        const schemaRes = results[7].status === 'fulfilled' ? results[7].value : { items: [] };
+        const gscRes = results[1].status === 'fulfilled' ? results[1].value : null;
+        const auditSavedRes = results[2].status === 'fulfilled' ? results[2].value : null;
+        const backlinkRes = results[3].status === 'fulfilled' ? results[3].value : null;
+        const compRes = results[4].status === 'fulfilled' ? results[4].value : null;
+        const schemaRes = results[5].status === 'fulfilled' ? results[5].value : { items: [] };
+        const serpRes = results[6].status === 'fulfilled' ? results[6].value : null;
+        const gapRes = results[7].status === 'fulfilled' ? results[7].value : null;
+
+        const filterHistoryByPeriod = (response) => {
+          if (!response || !Array.isArray(response.history)) return response;
+          const rangeStart = new Date(`${startDate}T00:00:00`).getTime();
+          const rangeEnd = new Date(`${endDate}T23:59:59.999`).getTime();
+          const history = response.history.filter(item => {
+            const rawDate = item.scanned_at || item.created_at || item.updated_at || item.date;
+            if (!rawDate) return true;
+            const timestamp = new Date(rawDate).getTime();
+            return Number.isFinite(timestamp) && timestamp >= rangeStart && timestamp <= rangeEnd;
+          });
+          return {
+            ...response,
+            history
+          };
+        };
+
+        const scopedBacklinks = filterHistoryByPeriod(backlinkRes);
+        if (scopedBacklinks?.history) {
+          scopedBacklinks.history = scopedBacklinks.history.filter(item =>
+            !cleanDomain || String(item.domain || '').replace(/^www\./i, '').toLowerCase() === cleanDomain
+          );
+        }
+        const scopedCompetitors = filterHistoryByPeriod(compRes);
+        if (scopedCompetitors?.history) {
+          scopedCompetitors.history = scopedCompetitors.history.filter(item => {
+            const query = String(item.query || '').toLowerCase();
+            return query.includes(cleanDomain) || query.includes(clientName.toLowerCase());
+          });
+        }
+        const schemaItems = schemaRes?.items || [];
+        const scopedSchema = schemaItems.filter(item => {
+          const target = String(item.url || item.target_url || item.domain || item.website || '').toLowerCase();
+          return target && (!cleanDomain || target.includes(cleanDomain));
+        });
+        const rawKeywords = Array.isArray(kwRes) ? kwRes : (kwRes?.items || kwRes?.keywords || []);
+        const rangeStart = new Date(`${startDate}T00:00:00`).getTime();
+        const rangeEnd = new Date(`${endDate}T23:59:59.999`).getTime();
+        // A tracked keyword remains part of the client's report even when its latest
+        // check falls outside the selected period. The date range describes ranking
+        // activity, not whether the keyword is still being tracked.
+        const scopedKeywords = rawKeywords.map(item => {
+          const rawDate = item.last_checked || item.updated_at || item.created_at;
+          const timestamp = rawDate ? new Date(rawDate).getTime() : null;
+          return {
+            ...item,
+            initialRank: item.initialRank ?? item.initial_rank,
+            currentRank: item.currentRank ?? item.current_rank,
+            previousRank: item.previousRank ?? item.previous_rank,
+            packStatus: item.packStatus ?? item.pack_status,
+            lastChecked: item.lastChecked ?? item.last_checked,
+            checkedInPeriod: timestamp === null || (Number.isFinite(timestamp) && timestamp >= rangeStart && timestamp <= rangeEnd)
+          };
+        });
+        const auditTimestamp = auditSavedRes?.updatedAt ? new Date(auditSavedRes.updatedAt).getTime() : null;
+        const savedAudit = auditSavedRes?.saved && (!auditTimestamp || (auditTimestamp >= rangeStart && auditTimestamp <= rangeEnd))
+          ? auditSavedRes.auditData
+          : null;
+        const auditScores = savedAudit
+          ? [savedAudit.onPage?.score, savedAudit.technical?.score, savedAudit.local?.score].filter(score => Number.isFinite(Number(score)))
+          : [];
+        const scopedAudit = savedAudit ? {
+          ...savedAudit,
+          overallScore: Number(savedAudit.overallScore) > 0
+            ? Number(savedAudit.overallScore)
+            : auditScores.length
+              ? Math.round(auditScores.reduce((sum, score) => sum + Number(score), 0) / auditScores.length)
+              : 0
+        } : null;
 
         setReportData({
-          keywords: kwRes?.items || [],
-          localSeo: localRes,
+          keywords: scopedKeywords,
           gsc: gscRes,
-          citations: citationRes,
-          audit: auditRes,
-          backlinks: backlinkRes,
-          competitor: compRes,
-          serp: null,
-          gap: null, 
-          schema: schemaRes?.items || [],
+          audit: scopedAudit,
+          backlinks: scopedBacklinks,
+          competitor: scopedCompetitors,
+          serp: serpRes,
+          gap: gapRes,
+          schema: scopedSchema,
           loading: false
         });
       } catch (err) {
@@ -115,7 +265,7 @@ export default function MonthlyReport() {
     };
     
     fetchPreviewData();
-  }, [activeClient]);
+  }, [activeClient, startDate, endDate]);
   const toggleModule = (key) => {
     setModules(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -123,6 +273,10 @@ export default function MonthlyReport() {
   const handleGenerate = () => {
     if (!activeClient) {
       toast.error('Please select a client first.');
+      return;
+    }
+    if (!startDate || !endDate || startDate > endDate) {
+      toast.error('Please select a valid start and end date.');
       return;
     }
     
@@ -134,7 +288,7 @@ export default function MonthlyReport() {
       
       const opt = {
         margin:       [15, 10, 15, 10],
-        filename:     `${activeClient.business_name || 'Client'}_SEO_Report.pdf`,
+        filename:     `${activeClient.business_name || 'Client'}_SEO_Report_${startDate}_to_${endDate}.pdf`,
         image:        { type: 'jpeg', quality: 0.98 },
         html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
         jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -207,7 +361,7 @@ export default function MonthlyReport() {
             <span style={{ color: '#3b82f6', fontWeight: 600 }}>{activeClient.domain || activeClient.website || 'N/A'}</span>
             
             <span style={{ color: '#64748b', fontWeight: 600 }}>Period:</span>
-            <span style={{ color: '#0f172a', fontWeight: 700 }}>{reportMonth}</span>
+            <span style={{ color: '#0f172a', fontWeight: 700 }}>{reportPeriod}</span>
             
             <span style={{ color: '#64748b', fontWeight: 600 }}>Generated:</span>
             <span style={{ color: '#0f172a' }}>{new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
@@ -216,7 +370,7 @@ export default function MonthlyReport() {
           <div style={{ borderLeft: '4px solid #3b82f6', paddingLeft: 16, marginTop: 12 }}>
             <h4 style={{ color: '#0f172a', margin: '0 0 8px 0', fontSize: 16, fontWeight: 700 }}>Executive Brief</h4>
             <p style={{ color: '#475569', margin: 0, fontSize: 14, lineHeight: 1.6 }}>
-              This comprehensive report summarizes the performance, keyword rankings, local visibility, and technical SEO health of your website. Our continuous search engine optimization campaign aims to build search authority, increase organic search impressions and clicks, and improve user engagement. The details below reflect our current progress, wins, and key optimization areas for the current month.
+              This report summarizes keyword rankings, Google Search Console performance, technical SEO health, backlinks, competitor intelligence, and advanced SEO activity for the selected custom date range.
             </p>
           </div>
         </div>
@@ -243,23 +397,21 @@ export default function MonthlyReport() {
     const gscImpressions = reportData.gsc?.metrics?.impressions || 0;
     const gscCtr = gscImpressions > 0 ? (gscClicks / gscImpressions) * 100 : 0;
     
-    // Calculate a nice SEO health index
-    let derivedScore = 80;
-    if (totalKws > 0) {
-      derivedScore += Math.min(10, (rankImproved / totalKws) * 10);
-    }
-    if (gscCtr > 0) {
-      derivedScore += Math.min(10, (gscCtr / 5) * 10);
-    }
-    if (reportData.audit?.overallScore) {
-      derivedScore = (derivedScore + reportData.audit.overallScore) / 2;
-    }
-    derivedScore = Math.max(50, Math.min(99, Math.round(derivedScore)));
+    // Derive the score only from live modules that returned data.
+    const scoreInputs = [];
+    if (totalKws > 0) scoreInputs.push((rankImproved / totalKws) * 100);
+    if (gscImpressions > 0) scoreInputs.push(Math.min(100, (gscCtr / 5) * 100));
+    if (Number.isFinite(Number(reportData.audit?.overallScore))) scoreInputs.push(Number(reportData.audit.overallScore));
+    const derivedScore = scoreInputs.length
+      ? Math.round(scoreInputs.reduce((sum, score) => sum + score, 0) / scoreInputs.length)
+      : 0;
 
     // Determine health level label & color
-    let healthLabel = 'Excellent';
+    let healthLabel = scoreInputs.length ? 'Excellent' : 'No Data';
     let healthColor = '#16a34a';
-    if (derivedScore < 70) {
+    if (!scoreInputs.length) {
+      healthColor = '#94a3b8';
+    } else if (derivedScore < 70) {
       healthLabel = 'Needs Work';
       healthColor = '#ef4444';
     } else if (derivedScore < 85) {
@@ -276,7 +428,7 @@ export default function MonthlyReport() {
           <h2 style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontFamily: "'Syne', sans-serif" }}>
             <Activity size={24} color="#3b82f6" /> Executive SEO Score Card
           </h2>
-          <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>{reportMonth}</span>
+          <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>{reportPeriod}</span>
         </div>
 
         {/* Main Score Block */}
@@ -301,7 +453,7 @@ export default function MonthlyReport() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 12 }}>
-            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Monthly Performance Summary</h3>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Selected-Period Performance Summary</h3>
             <p style={{ margin: 0, fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
               Your overall SEO health is index-rated at <strong>{derivedScore}/100</strong>. This score combines technical accessibility, keywords search rank gains, GSC engagement, and off-page domain authority indicators. 
             </p>
@@ -322,12 +474,11 @@ export default function MonthlyReport() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
           <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: 20 }}>
             <h4 style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 700, color: '#166534', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <CheckCircle size={16} color="#16a34a" /> Major Wins This Month
+              <CheckCircle size={16} color="#16a34a" /> Major Wins This Period
             </h4>
             <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13, color: '#14532d' }}>
               {totalKws > 0 && <li><strong>Keyword Gains:</strong> {rankImproved} ranking keywords improved their organic search positions.</li>}
               {gscClicks > 0 && <li><strong>Search Clicks:</strong> Organic impressions reached {gscImpressions.toLocaleString()} showing healthy index exposure.</li>}
-              {reportData.localSeo?.business && <li><strong>NAP Sync:</strong> Local Business Profile reviews display an average rating of {reportData.localSeo.business.rating} stars.</li>}
               <li><strong>Visibility:</strong> Search presence is active across targeted geographic regions and mobile query segments.</li>
             </ul>
           </div>
@@ -338,7 +489,6 @@ export default function MonthlyReport() {
             </h4>
             <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13, color: '#1e3a8a' }}>
               <li><strong>Technical Audit:</strong> Address warnings and structure schema markup on top traffic pages.</li>
-              <li><strong>Local Visibility:</strong> Increase Google Business Profile updates and customer review replies.</li>
               <li><strong>Domain Authority:</strong> Secure high-quality dofollow backlink profile referrals.</li>
               <li><strong>Query Gaps:</strong> Target high-opportunity search terms showing high impressions but low click-through.</li>
             </ul>
@@ -353,9 +503,7 @@ export default function MonthlyReport() {
               { label: 'Keyword Rankings', active: modules.keywordTracking },
               { label: 'Search Console Intel', active: modules.gscIntel },
               { label: 'On-Page Audit', active: modules.onPageAudit },
-              { label: 'Local SEO & Reviews', active: modules.localSeo },
               { label: 'Backlink Tracker', active: modules.backlinkTracker },
-              { label: 'Local Citations', active: modules.citations },
               { label: 'Competitor Spy', active: modules.competitorSpy },
               { label: 'Schema Library', active: modules.schemaLibrary },
               { label: 'SERP Radar & Gap Hunter', active: modules.serpRadar || modules.gapHunter },
@@ -394,6 +542,7 @@ export default function MonthlyReport() {
     
     const page1Count = keywords.filter(k => k.currentRank !== null && k.currentRank <= 10).length;
     const improvedCount = keywords.filter(k => k.previousRank && k.currentRank && k.currentRank < k.previousRank).length;
+    const uncheckedInPeriodCount = keywords.filter(k => k.checkedInPeriod === false).length;
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24, height: '100%', flex: 1, minHeight: '230mm' }}>
@@ -423,6 +572,12 @@ export default function MonthlyReport() {
             <span style={{ fontSize: 24, fontWeight: 800, color: '#16a34a', marginTop: 4, display: 'block' }}>{improvedCount}</span>
           </div>
         </div>
+
+        {uncheckedInPeriodCount > 0 && (
+          <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', color: '#92400e', fontSize: 12 }}>
+            {uncheckedInPeriodCount} tracked keyword{uncheckedInPeriodCount === 1 ? '' : 's'} had no ranking check during {reportPeriod}. Their latest saved status is shown below; refresh them in Keyword Tracking to record current positions.
+          </div>
+        )}
 
         {/* Keywords Table */}
         <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
@@ -862,15 +1017,11 @@ export default function MonthlyReport() {
     const metrics = latestBacklink.metrics || { totalBacklinks: 0, referringDomains: 0, dofollowRatio: 0, domainAuthority: 0 };
     const links = latestBacklink.links || [];
 
-    // citations history
-    const latestCitation = reportData.citations?.history?.[0] || {};
-    const citMetrics = latestCitation.metrics || { total: 45, matched: 42, unmatched: 3 };
-
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24, height: '100%', flex: 1, minHeight: '230mm' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #f1f5f9', paddingBottom: 16 }}>
           <h2 style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontFamily: "'Syne', sans-serif" }}>
-            <LinkIcon size={24} color="#eab308" /> Off-Page SEO: Backlinks & Citations
+            <LinkIcon size={24} color="#eab308" /> Off-Page SEO: Backlink Profile
           </h2>
           <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Domain Authority</span>
         </div>
@@ -955,37 +1106,6 @@ export default function MonthlyReport() {
           </div>
         </div>
 
-        {/* Citations Profile */}
-        {modules.citations && (
-          <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 20 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, color: '#475569', textTransform: 'uppercase', marginBottom: 12, letterSpacing: '0.5px' }}>Local Citations Synchronization</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: 20, background: '#f8fafc', border: '1px solid #e2e8f0', padding: 16, borderRadius: 8 }}>
-              <div style={{ borderRight: '1px solid #e2e8f0', paddingRight: 16, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, paddingBottom: 6 }}>
-                  <span style={{ color: '#475569', fontWeight: 600 }}>Total Directories:</span>
-                  <span style={{ fontWeight: 700, color: '#0f172a' }}>{citMetrics.total || 45}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, paddingBottom: 6 }}>
-                  <span style={{ color: '#16a34a', fontWeight: 600 }}>NAP Matched:</span>
-                  <span style={{ fontWeight: 700, color: '#16a34a' }}>{citMetrics.matched || 42}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                  <span style={{ color: '#ef4444', fontWeight: 600 }}>NAP Issues:</span>
-                  <span style={{ fontWeight: 700, color: '#ef4444' }}>{citMetrics.unmatched || 3}</span>
-                </div>
-              </div>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 6 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#16a34a', fontWeight: 700 }}>
-                  <span style={{ background: '#f0fdf4', padding: '2px 8px', borderRadius: 4 }}>Active Directory Sync</span>
-                </div>
-                <p style={{ margin: 0, fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>
-                  We actively monitor and sync listings on Yelp, YellowPages, Bing Local, TripAdvisor, and 40+ other key business directories. NAP discrepancies are automatically queued for resolution to preserve local map ranks.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -993,6 +1113,8 @@ export default function MonthlyReport() {
   const renderCompetitorOpsSection = () => {
     const competitorHistory = reportData.competitor?.history || [];
     const schemaItems = reportData.schema || [];
+    const serpHistory = reportData.serp?.history || [];
+    const gapHistory = reportData.gap?.history || [];
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24, height: '100%', flex: 1, minHeight: '230mm' }}>
@@ -1097,6 +1219,32 @@ export default function MonthlyReport() {
           </div>
         )}
 
+        {modules.serpRadar && (
+          <div>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: '#475569', textTransform: 'uppercase', marginBottom: 10 }}>SERP Radar Scans</h3>
+            {serpHistory.length ? serpHistory.slice(0, 5).map(scan => (
+              <div key={scan.id} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 120px', gap: 10, padding: '9px 12px', borderBottom: '1px solid #e2e8f0', fontSize: 11 }}>
+                <span style={{ color: '#0f172a', fontWeight: 700 }}>{scan.keyword}</span>
+                <span style={{ color: '#475569' }}>Volatility: {Number(scan.volatility_score || 0).toFixed(1)}</span>
+                <span style={{ color: '#64748b', textAlign: 'right' }}>{new Date(scan.scanned_at).toLocaleDateString()}</span>
+              </div>
+            )) : <div style={{ padding: 14, color: '#64748b', fontSize: 12 }}>No SERP Radar scans for this client and date range.</div>}
+          </div>
+        )}
+
+        {modules.gapHunter && (
+          <div>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: '#475569', textTransform: 'uppercase', marginBottom: 10 }}>Gap Hunter Scans</h3>
+            {gapHistory.length ? gapHistory.slice(0, 5).map(scan => (
+              <div key={scan.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 90px', gap: 10, padding: '9px 12px', borderBottom: '1px solid #e2e8f0', fontSize: 11 }}>
+                <span style={{ color: '#0f172a', fontWeight: 700 }}>{scan.client_domain}</span>
+                <span style={{ color: '#475569' }}>{scan.competitor_domain}</span>
+                <span style={{ color: '#64748b', textAlign: 'right' }}>{Array.isArray(scan.results_json) ? scan.results_json.length : 0} gaps</span>
+              </div>
+            )) : <div style={{ padding: 14, color: '#64748b', fontSize: 12 }}>No Gap Hunter scans for this client and date range.</div>}
+          </div>
+        )}
+
         {/* Operational Notes for Gap / Serp */}
         {(modules.serpRadar || modules.gapHunter) && (
           <div style={{ marginTop: 'auto', borderTop: '1px solid #f1f5f9', paddingTop: 20 }}>
@@ -1117,8 +1265,7 @@ export default function MonthlyReport() {
   if (modules.keywordTracking) activeSections.push({ id: 'keywords', title: 'Keyword Rankings Analysis', render: renderKeywordsSection });
   if (modules.gscIntel) activeSections.push({ id: 'gsc', title: 'Google Search Console Analytics', render: renderGscSection });
   if (modules.onPageAudit) activeSections.push({ id: 'audit', title: 'On-Page SEO Technical Audit', render: renderAuditSection });
-  if (modules.localSeo) activeSections.push({ id: 'localSeo', title: 'Local SEO & Google Profile', render: renderLocalSeoSection });
-  if (modules.backlinkTracker || modules.citations) activeSections.push({ id: 'backlinks', title: 'Off-Page SEO: Backlinks & Citations', render: renderBacklinksSection });
+  if (modules.backlinkTracker) activeSections.push({ id: 'backlinks', title: 'Off-Page SEO: Backlink Profile', render: renderBacklinksSection });
   if (modules.competitorSpy || modules.schemaLibrary || modules.serpRadar || modules.gapHunter) {
     activeSections.push({ id: 'competitor_ops', title: 'Competitor Intel & Advanced SEO', render: renderCompetitorOpsSection });
   }
@@ -1128,8 +1275,8 @@ export default function MonthlyReport() {
       {/* HEADER */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }} className="no-print">
         <div>
-          <h1 style={{ fontSize: 32, fontWeight: 800, color: '#fff', margin: 0, fontFamily: "'Syne', sans-serif" }}>Monthly PDF Report</h1>
-          <p style={{ color: C.muted, fontSize: 15, marginTop: 6 }}>Generate beautiful, branded performance reports for <strong style={{ color: '#e2e8f0' }}>{activeClient.business_name}</strong>.</p>
+          <h1 style={{ fontSize: 32, fontWeight: 800, color: '#fff', margin: 0, fontFamily: "'Syne', sans-serif" }}>SEO Performance Report</h1>
+          <p style={{ color: C.muted, fontSize: 15, marginTop: 6 }}>Generate a client-scoped report for <strong style={{ color: '#e2e8f0' }}>{activeClient.business_name}</strong> using the selected date range.</p>
         </div>
         <button onClick={() => toast('White-label report settings will be available in the next release.', { icon: '⚙️' })} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: '#e2e8f0', padding: '10px 16px', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, transition: 'all 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>
           <Settings size={16} /> Report Settings
@@ -1145,12 +1292,12 @@ export default function MonthlyReport() {
               <Calendar size={20} color={C.accent} /> Report Period
             </h2>
             
-            <div style={{ display: 'flex', gap: 16, marginBottom: 32 }}>
-              <select value={reportMonth} onChange={(e) => setReportMonth(e.target.value)} style={{ background: 'rgba(0,0,0,0.2)', border: `1px solid ${C.border}`, color: '#fff', padding: '12px 16px', borderRadius: 8, fontSize: 15, flex: 1, outline: 'none', cursor: 'pointer' }}>
-                <option value="June 2026">June 2026</option>
-                <option value="May 2026">May 2026</option>
-                <option value="April 2026">April 2026</option>
-              </select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 32 }}>
+              <CustomDatePicker label="START DATE" value={startDate} max={endDate || undefined} onChange={setStartDate} />
+              <CustomDatePicker label="END DATE" value={endDate} min={startDate || undefined} onChange={setEndDate} />
+              <div style={{ gridColumn: '1 / -1', padding: '9px 11px', borderRadius: 7, background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', color: '#93c5fd', fontSize: 11 }}>
+                Selected period: {reportPeriod}
+              </div>
             </div>
 
             <h2 style={{ fontSize: 18, fontWeight: 700, color: '#fff', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1162,9 +1309,7 @@ export default function MonthlyReport() {
                 { key: 'keywordTracking', label: 'Keyword Rankings', icon: <BarChart2 size={16} />, color: '#3b82f6' },
                 { key: 'gscIntel', label: 'GSC Search Intel', icon: <Search size={16} />, color: '#a855f7' },
                 { key: 'onPageAudit', label: 'On-Page Audit', icon: <Activity size={16} />, color: '#ef4444' },
-                { key: 'localSeo', label: 'Local SEO & Reviews', icon: <MapPin size={16} />, color: '#10b981' },
                 { key: 'backlinkTracker', label: 'Backlink Profile', icon: <LinkIcon size={16} />, color: '#eab308' },
-                { key: 'citations', label: 'Local Citations', icon: <Link2 size={16} />, color: '#f97316' },
                 { key: 'serpRadar', label: 'SERP Radar', icon: <Radar size={16} />, color: '#0ea5e9' },
                 { key: 'gapHunter', label: 'Gap Hunter', icon: <Target size={16} />, color: '#8b5cf6' },
                 { key: 'schemaLibrary', label: 'Schema Library', icon: <Code size={16} />, color: '#ec4899' },

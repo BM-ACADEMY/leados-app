@@ -23,13 +23,36 @@ export default function RankDropAlert() {
   const [noteText, setNoteText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const { activeClient } = useClient();
+  const [rankDomain, setRankDomain] = useState('');
+  const [rankKeywords, setRankKeywords] = useState('');
+  const [rankChecking, setRankChecking] = useState(false);
+  const [rankResult, setRankResult] = useState(null);
+
+  useEffect(() => {
+    const website = activeClient?.website_url || activeClient?.website || activeClient?.domain || '';
+    setRankDomain(String(website).replace(/^https?:\/\//, '').replace(/\/$/, ''));
+    setRankResult(null);
+  }, [activeClient]);
+
+  const checkDomainRank = async (event) => {
+    event?.preventDefault();
+    if (!rankDomain.trim()) return toast.error('Enter a domain name');
+    setRankChecking(true); setRankResult(null);
+    try {
+      const keywordList = rankKeywords.split(/[,\n]/).map(k => k.trim()).filter(Boolean).slice(0, 5);
+      setRankResult(await api.post('/thedal/rankdropalert/check-rank', { domain: rankDomain.trim(), keywords: keywordList, trackingClientId: activeClient?.gmb_client_id || null, thedalClientId: activeClient?.id || null }));
+    }
+    catch (error) { toast.error(error.message || 'Rank check failed'); }
+    finally { setRankChecking(false); }
+  };
 
   const fetchAlerts = useCallback(async () => {
     if (!activeClient) return;
     setLoading(true);
     try {
       const clientParam = encodeURIComponent(activeClient.business_name || activeClient.client_name);
-      const res = await api.get(`/thedal/rankdropalert?client=${clientParam}&client_id=${activeClient.id}`);
+      const trackingClientId = activeClient.gmb_client_id || '';
+      const res = await api.get(`/thedal/rankdropalert?client=${clientParam}&client_id=${activeClient.id}&tracking_client_id=${trackingClientId}`);
       if (res) setData(res);
     } catch (err) {
       console.error('Failed to load alerts', err);
@@ -87,7 +110,7 @@ export default function RankDropAlert() {
 
   if (!activeClient) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', background: C.background, color: C.muted }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', background: C.bg, color: C.muted }}>
         <ShieldAlert size={48} style={{ opacity: 0.2, marginBottom: 16 }} />
         <p>Please select a client from the sidebar to view Rank Drop Alerts.</p>
       </div>
@@ -96,7 +119,7 @@ export default function RankDropAlert() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', background: C.background }}>
+      <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', background: C.bg }}>
         <Loader2 size={32} color={C.accent} className="spin" />
       </div>
     );
@@ -104,6 +127,14 @@ export default function RankDropAlert() {
 
   const summary = data?.summary || { total_alerts: 0, critical_drops: 0, total_traffic_risk: 0 };
   const allAlerts = data?.alerts || [];
+  const tracking = data?.tracking;
+  const trackingGuidance = !activeClient.gmb_client_id
+    ? 'Keyword Tracking is not mapped to this client. Map a GMB client first.'
+    : tracking?.tracked_keywords === 0
+      ? 'No tracked keywords found. Add keywords in Keyword Tracking first.'
+      : tracking?.comparable_keywords === 0
+        ? 'Rank monitoring needs two checks. Refresh the tracked keywords again later to create a comparison.'
+        : null;
   const filteredAlerts = filterTab === 'all' ? allAlerts : allAlerts.filter(a => a.severity === filterTab);
 
   const tabs = [
@@ -114,7 +145,7 @@ export default function RankDropAlert() {
   ];
 
   return (
-    <div style={{ padding: 30, color: C.text, height: '100%', overflowY: 'auto', background: C.background }}>
+    <div style={{ padding: 30, color: C.text, height: '100%', overflowY: 'auto', background: C.bg }}>
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 30 }}>
@@ -133,6 +164,51 @@ export default function RankDropAlert() {
           {showHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
       </div>
+
+      <form onSubmit={checkDomainRank} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 18, marginBottom: 24, boxShadow: 'inset 3px 0 0 rgba(249,115,22,.85)' }}>
+        <div style={{ marginBottom: 13 }}><h3 style={{ margin: 0, color: C.text, fontSize: 15, fontWeight: 700 }}>Domain Rank Drop Check</h3><p style={{ margin: '5px 0 0', color: C.muted, fontSize: 12, lineHeight: 1.5 }}>Leave keywords blank to compare positions already tracked for a CRM client. Or type up to 5 keywords to live-check <strong>any</strong> domain — including ones with no Keyword Tracking record — and we'll save each check so the next one can detect a drop.</p></div>
+        <div className="grid-responsive" style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr) auto', gap: 10 }}>
+          <div>
+            <label htmlFor="rank-drop-domain" style={{ display: 'block', color: C.muted, fontSize: 9, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 5 }}>Website domain</label>
+            <input id="rank-drop-domain" value={rankDomain} onChange={event => setRankDomain(event.target.value)} placeholder="e.g. bmtechx.in" style={{ width: '100%', boxSizing: 'border-box', background: '#0f172a', color: C.text, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 13px', fontSize: 13, lineHeight: '20px', outline: 'none' }} />
+          </div>
+          <button type="submit" disabled={rankChecking} style={{ alignSelf: 'end', minHeight: 42, background: 'linear-gradient(135deg, #f97316, #ea580c)', color: '#fff', border: 0, borderRadius: 8, padding: '10px 18px', fontSize: 13, fontWeight: 700, cursor: rankChecking ? 'wait' : 'pointer', opacity: rankChecking ? 0.7 : 1 }}>{rankChecking ? 'Checking...' : 'Check domain'}</button>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label htmlFor="rank-drop-keywords" style={{ display: 'block', color: C.muted, fontSize: 9, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 5 }}>Keywords to check (optional, comma separated, up to 5)</label>
+          <input id="rank-drop-keywords" value={rankKeywords} onChange={event => setRankKeywords(event.target.value)} placeholder="e.g. best exporters directory, b2b marketplace india" style={{ width: '100%', boxSizing: 'border-box', background: '#0f172a', color: C.text, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 13px', fontSize: 13, lineHeight: '20px', outline: 'none' }} />
+        </div>
+        {rankResult && <div style={{ marginTop: 14 }}>
+          {rankResult.mappingCorrected && <div style={{ padding: '10px 12px', marginBottom: 10, borderRadius: 8, background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.3)', color: '#93c5fd', fontSize: 12 }}>Using the selected client's mapped domain <b>{rankResult.domain}</b>. You entered {rankResult.requestedDomain}.</div>}
+
+          {rankResult.mode === 'live-check' && rankResult.results?.length > 0 && <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+            {rankResult.results.map(r => <div key={r.keyword} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}` }}>
+              <span style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>{r.keyword}</span>
+              <span style={{ color: C.muted, fontSize: 12 }}>
+                {r.isNew
+                  ? <>Live position now: <b style={{ color: '#fff' }}>{r.found ? `#${r.newRank}` : 'not in top 100'}</b> <span style={{ opacity: 0.7 }}>(first check — saved for next time)</span></>
+                  : <>Position: <b style={{ color: '#fff' }}>{r.oldRank ? `#${r.oldRank}` : 'not in top 100'}</b> {'→'} <b style={{ color: r.hasDrop ? '#f87171' : '#4ade80' }}>{r.found ? `#${r.newRank}` : 'not in top 100'}</b></>}
+              </span>
+            </div>)}
+          </div>}
+
+          {rankResult.trackedKeywords === 0 ? <div style={{ padding: 14, borderRadius: 9, background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.3)' }}><b style={{ color: '#fbbf24' }}>{rankResult.noMatchingClient ? 'No matching client for this domain' : rankResult.setupRequired ? 'Keyword Tracking setup required' : 'No tracked keywords found'}</b><div style={{ color: C.muted, marginTop: 5 }}>{rankResult.setupMessage || 'Add keywords for this domain in Keyword Tracking, run the first rank check, then run another check later to create a comparison.'}</div></div>
+            : rankResult.comparableKeywords === 0 ? <div style={{ padding: 14, borderRadius: 9, background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.3)' }}><b style={{ color: '#fbbf24' }}>First check recorded</b><div style={{ color: C.muted, marginTop: 5 }}>{rankResult.mode === 'live-check' ? `Saved the current live position for ${rankResult.trackedKeywords} keyword(s) above. Run this same domain + keyword(s) again later (after real ranking movement) to see a drop here.` : `${rankResult.trackedKeywords} keyword(s) are tracked, but each keyword needs a previous and current position. Refresh Keyword Tracking again later.`}</div></div>
+              : !rankResult.hasDrop ? <div style={{ padding: 14, borderRadius: 9, background: 'rgba(34,197,94,.08)', border: '1px solid rgba(34,197,94,.3)' }}><b style={{ color: '#4ade80', fontSize: 17 }}>No rank drop detected</b><div style={{ color: C.muted, marginTop: 5 }}>Compared {rankResult.comparableKeywords} keyword(s) for {rankResult.domain}. All are stable or improved since the previous check.</div></div>
+                : <div style={{ display: 'grid', gap: 12 }}>
+                  <div style={{ padding: 14, borderRadius: 9, background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.3)' }}><b style={{ color: '#f87171', fontSize: 17 }}>{rankResult.drops.length} rank drop(s) detected</b><div style={{ color: C.muted, marginTop: 5 }}>Compared {rankResult.comparableKeywords} tracked keyword(s) for {rankResult.domain}. Review the affected keywords below.</div></div>
+                  {rankResult.drops.map(drop => <div key={drop.keyword} style={{ background: C.bg, border: `1px solid ${SEVERITY_CONFIG[drop.severity]?.border || C.border}`, borderRadius: 10, padding: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}><b style={{ color: '#fff' }}>{drop.keyword}</b><span style={{ color: SEVERITY_CONFIG[drop.severity]?.color || '#f59e0b', fontWeight: 700 }}>Position {drop.oldRank ?? 'N/A'} to {drop.found === false ? 'not in top 100' : drop.newRank} (down {drop.dropAmount})</span></div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 18, marginTop: 12 }}>
+                      <div><b style={{ color: '#fbbf24', fontSize: 12 }}>Possible reasons (not confirmed by Google)</b><ul style={{ color: C.muted, margin: '7px 0 0', paddingLeft: 18, fontSize: 12, lineHeight: 1.6 }}>{drop.possibleReasons.map(reason => <li key={reason}>{reason}</li>)}</ul></div>
+                      <div><b style={{ color: '#60a5fa', fontSize: 12 }}>Recommended solution</b><ol style={{ color: C.muted, margin: '7px 0 0', paddingLeft: 18, fontSize: 12, lineHeight: 1.6 }}>{drop.solutions.map(solution => <li key={solution}>{solution}</li>)}</ol></div>
+                    </div>
+                    {drop.lastChecked && <div style={{ color: C.muted, fontSize: 11, marginTop: 9 }}>Last rank check: {new Date(drop.lastChecked).toLocaleString()}</div>}
+                  </div>)}
+                </div>}
+          <div style={{ color: C.muted, fontSize: 11, marginTop: 8 }}>Analysis checked {new Date(rankResult.checkedAt).toLocaleString()}. A drop is detected only when the current numeric position is worse than the previous position.</div>
+        </div>}
+      </form>
 
       {/* Summary Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 28 }}>
@@ -272,7 +348,8 @@ export default function RankDropAlert() {
               <tr>
                 <td colSpan={6} style={{ padding: '50px 20px', textAlign: 'center', color: C.muted }}>
                   <ShieldAlert size={32} style={{ marginBottom: 12, opacity: 0.2, display: 'block', margin: '0 auto 12px' }} />
-                  {filterTab === 'all' ? 'No rank drops detected. Looking good! 🎉' : `No ${filterTab} alerts at the moment.`}
+                  {filterTab === 'all' ? (trackingGuidance || 'No rank drops detected. Looking good! 🎉') : `No ${filterTab} alerts at the moment.`}
+                  {filterTab === 'all' && tracking && <div style={{ fontSize: 12, marginTop: 8 }}>Tracking {tracking.tracked_keywords} keywords · {tracking.comparable_keywords} have two rank checks.</div>}
                 </td>
               </tr>
             )}

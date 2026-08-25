@@ -26,6 +26,22 @@ async function ensureUpdatedAtColumn() {
 router.get('/', async (req, res) => {
   try {
     await ensureUpdatedAtColumn();
+    // Keep Thedal clients connected to their GMB/Keyword Tracking record when
+    // both records use the same website domain. Existing explicit mappings win.
+    try {
+      await pool.query(`
+        UPDATE thedal_clients AS tc
+           SET gmb_client_id = mgc.id,
+               updated_at = NOW()
+          FROM mafiya_gmb_clients AS mgc
+         WHERE tc.gmb_client_id IS NULL
+           AND NULLIF(TRIM(tc.domain), '') IS NOT NULL
+           AND LOWER(REGEXP_REPLACE(REGEXP_REPLACE(tc.domain, '^https?://(www\\.)?', ''), '/.*$', '')) =
+               LOWER(REGEXP_REPLACE(REGEXP_REPLACE(mgc.website_url, '^https?://(www\\.)?', ''), '/.*$', ''))
+      `);
+    } catch (mappingErr) {
+      console.warn('Unable to auto-map Thedal clients to GMB clients:', mappingErr.message);
+    }
     const result = await pool.query('SELECT * FROM thedal_clients ORDER BY created_at DESC');
     const clients = result.rows;
 

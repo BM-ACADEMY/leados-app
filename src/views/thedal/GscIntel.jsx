@@ -8,6 +8,7 @@ import {
 import { LineChart, Loader2, Search, Globe, Smartphone, Calendar, CheckCircle2, AlertCircle, MousePointerClick, Eye, Target, TrendingUp, TrendingDown, RefreshCw, Zap } from 'lucide-react';
 import { api } from '../../services/api.js';
 import toast from 'react-hot-toast';
+import GscWorkspace, { GscSectionNav } from './GscWorkspace.jsx';
 
 export default function GscIntel() {
   const [data, setData] = useState(null);
@@ -21,6 +22,8 @@ export default function GscIntel() {
   const [dateRange, setDateRange] = useState('28Days');
   const [device, setDevice] = useState('All');
   const [country, setCountry] = useState('All');
+  const [searchType, setSearchType] = useState('web');
+  const [queryRegex, setQueryRegex] = useState('');
   const [activeTab, setActiveTab] = useState('topQueries');
   const [showDateModal, setShowDateModal] = useState(false);
   const [startDate, setStartDate] = useState('');
@@ -41,6 +44,7 @@ export default function GscIntel() {
   const [sortDirection, setSortDirection] = useState('desc');
   const [tablePage, setTablePage] = useState(1);
   const [activeDropdown, setActiveDropdown] = useState(null); // 'date' | 'device' | 'country' | 'addFilter' | null
+  const [gscSection, setGscSection] = useState('overview');
 
   useEffect(() => {
     const handleOutsideClick = () => {
@@ -94,7 +98,9 @@ export default function GscIntel() {
         clientId: 'default',
         siteUrl,
         device,
-        country
+        country,
+        searchType,
+        ...(queryRegex && { queryFilter: queryRegex, queryOperator: 'includingRegex' })
       };
 
       if (dateRange === 'Custom' && startDate && endDate) {
@@ -125,6 +131,17 @@ export default function GscIntel() {
     }
   };
 
+  const reconnectGoogle = async () => {
+    try {
+      await api.delete('/thedal/gscintel/connection?clientId=default');
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3600';
+      window.location.href = `${apiUrl}/api/thedal/gscintel/auth/google?clientId=default`;
+    } catch (err) {
+      console.error('Failed to reset Google connection', err);
+      toast.error(err.message || 'Could not reset the Google connection');
+    }
+  };
+
   useEffect(() => {
     if (selectedClient) {
       if (dateRange === 'Custom') {
@@ -135,12 +152,12 @@ export default function GscIntel() {
         fetchData();
       }
     }
-  }, [selectedClient, dateRange, device, country, propertyType, startDate, endDate]);
+  }, [selectedClient, dateRange, device, country, searchType, propertyType, startDate, endDate]);
 
   // Reset page index on sorting, filtering, or tab changes
   useEffect(() => {
     setTablePage(1);
-  }, [activeTab, searchTerm, sortField, sortDirection, selectedClient, dateRange, device, country, propertyType, startDate, endDate]);
+  }, [activeTab, searchTerm, sortField, sortDirection, selectedClient, dateRange, device, country, searchType, propertyType, startDate, endDate]);
 
   const handlePushToPage1 = async (query) => {
     const toastId = toast.loading(`Mapping keyword "${query}"...`);
@@ -179,6 +196,8 @@ export default function GscIntel() {
     currentTableData = queries
       .filter(q => parseFloat(q.position) >= 11 && parseFloat(q.position) <= 20)
       .sort((a, b) => b.impressions - a.impressions);
+  } else if (activeTab === 'searchAppearance') {
+    currentTableData = data?.searchAppearances || [];
   }
 
   // Handle Sort Toggle
@@ -196,7 +215,7 @@ export default function GscIntel() {
   if (searchTerm.trim()) {
     const s = searchTerm.toLowerCase();
     processedTableData = processedTableData.filter(item => {
-      const text = (item.query || item.page || '').toLowerCase();
+      const text = (item.query || item.page || item.appearance || '').toLowerCase();
       return text.includes(s);
     });
   }
@@ -304,6 +323,23 @@ export default function GscIntel() {
     }
   };
 
+  const exportPerformanceCsv = () => {
+    const rows = activeTab === 'topPages' ? (data?.pages || []) : activeTab === 'searchAppearance' ? (data?.searchAppearances || []) : (data?.queries || []);
+    if (!rows.length) return toast.error('No rows to export');
+    const columns = [...new Set(rows.flatMap(row => Object.keys(row)))];
+    const csv = [columns.join(','), ...rows.map(row => columns.map(key => `"${String(row[key] ?? '').replaceAll('"', '""')}"`).join(','))].join('\n');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    link.download = `gsc-${activeTab}-${selectedClient}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const activeSiteUrl = propertyType === 'sc-domain' ? `sc-domain:${selectedClient}` : `https://${selectedClient}/`;
+  if (gscSection !== 'performance') {
+    return <GscWorkspace active={gscSection} onChange={setGscSection} siteUrl={activeSiteUrl} domain={selectedClient} performanceData={data} onSync={fetchData} />;
+  }
+
   return (
     <div className="p-mobile" style={{ padding: '26px', color: C.text, height: '100%', overflowY: 'auto', background: C.bg }}>
       
@@ -335,11 +371,27 @@ export default function GscIntel() {
             <option value="sc-domain">Domain (sc-domain:)</option>
             <option value="url-prefix">URL-Prefix (https://.../)</option>
           </select>
+          <select
+            value={searchType}
+            onChange={(e) => setSearchType(e.target.value)}
+            style={{ background: C.surface, border: `1px solid ${C.border}`, color: '#fff', padding: '10px 16px', borderRadius: 8, fontSize: 14, outline: 'none', cursor: 'pointer' }}
+          >
+            <option value="web">Web</option>
+            <option value="image">Image</option>
+            <option value="video">Video</option>
+            <option value="news">Search News tab</option>
+            <option value="discover">Discover</option>
+            <option value="googleNews">Google News</option>
+          </select>
+          <input value={queryRegex} onChange={e => setQueryRegex(e.target.value)} placeholder="Query regex filter" title="Google RE2 regular expression; applied when Sync Data is clicked" style={{ background: C.surface, border: `1px solid ${C.border}`, color: '#fff', padding: '10px 12px', borderRadius: 8, width: 170 }} />
           <button onClick={fetchData} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
             <RefreshCw size={16} /> Sync Data
           </button>
+          <button onClick={exportPerformanceCsv} style={{ background: C.surface, color: '#fff', border: `1px solid ${C.border}`, padding: '10px 16px', borderRadius: 8, cursor: 'pointer' }}>Export CSV</button>
         </div>
       </div>
+
+      <GscSectionNav active={gscSection} onChange={setGscSection} />
 
       {/* GSC STYLE PERFORMANCE FILTER BAR */}
       <div style={{ background: 'rgba(255,255,255,0.01)', border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 20px', marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -797,10 +849,20 @@ export default function GscIntel() {
         <div style={{ background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: 12, padding: 40, textAlign: 'center', marginBottom: 24 }}>
           <AlertCircle size={48} color="#ef4444" style={{ margin: '0 auto 20px' }} />
           <h2 style={{ fontSize: 22, color: '#fff', margin: '0 0 10px 0' }}>
-            {errorMsg.includes('Access Denied') ? 'Permission Required' : 'API Error'}
+            {errorMsg.includes('Access Denied') ? 'Permission Required' : errorMsg.includes('Search Console API is disabled') ? 'API Setup Required' : 'API Error'}
           </h2>
           
-          {errorMsg.includes('Access Denied') ? (
+          {errorMsg.includes('Search Console API is disabled') ? (
+            <div style={{ textAlign: 'left', maxWidth: 600, margin: '0 auto 30px', background: 'rgba(0,0,0,0.2)', padding: 24, borderRadius: 12, border: `1px solid ${C.border}` }}>
+              <p style={{ color: '#fff', fontSize: 15, marginTop: 0 }}>OAuth is connected, but the Search Console API is disabled for this Google Cloud project.</p>
+              <ol style={{ color: C.muted, paddingLeft: 20, lineHeight: 1.8, fontSize: 14 }}>
+                <li>Open the Google Cloud API Library using the same project as your OAuth client.</li>
+                <li>Enable <strong>Google Search Console API</strong>.</li>
+                <li>Wait a few minutes for Google to apply the change, then click Retry Request.</li>
+              </ol>
+              <a href="https://console.cloud.google.com/apis/library/searchconsole.googleapis.com" target="_blank" rel="noreferrer" style={{ color: '#60a5fa', fontSize: 14 }}>Open Search Console API in Google Cloud</a>
+            </div>
+          ) : errorMsg.includes('Access Denied') ? (
             <div style={{ textAlign: 'left', maxWidth: 600, margin: '0 auto 30px', background: 'rgba(0,0,0,0.2)', padding: 24, borderRadius: 12, border: `1px solid ${C.border}` }}>
               <p style={{ color: '#fff', fontSize: 15, marginTop: 0, marginBottom: 16 }}>
                 Google blocked this request because your connected account doesn't have access to this website. To fix this instantly:
@@ -817,7 +879,14 @@ export default function GscIntel() {
             <p style={{ color: C.muted, maxWidth: 600, margin: '0 auto 30px', lineHeight: 1.6 }}>{errorMsg}</p>
           )}
 
-          <button onClick={fetchData} style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>Retry Request</button>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <button onClick={fetchData} style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>Retry Request</button>
+            {errorMsg.includes('Access Denied') && (
+              <button onClick={reconnectGoogle} style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>
+                Connect with another Google account
+              </button>
+            )}
+          </div>
         </div>
       ) : data && !data.isVerified ? (
         <div style={{ background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: 12, padding: 40, textAlign: 'center' }}>
@@ -1025,10 +1094,11 @@ export default function GscIntel() {
             <>
               {/* TABS */}
               <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-                {['topQueries', 'topPages', 'quickWins'].map((tab) => {
+                {['topQueries', 'topPages', 'searchAppearance', 'quickWins'].map((tab) => {
                   const tabLabels = {
                     'topQueries': 'Top Queries',
                     'topPages': 'Top Pages',
+                    'searchAppearance': 'Search Appearance',
                     'quickWins': 'Quick Wins ⚡'
                   };
                   return (
@@ -1057,7 +1127,7 @@ export default function GscIntel() {
               <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
                 <div style={{ padding: '20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} className="flex-responsive gap-mobile">
                   <h3 style={{ margin: 0, fontSize: 16, color: '#fff', fontWeight: 600 }}>
-                    {activeTab === 'topQueries' ? 'Top Search Queries' : activeTab === 'topPages' ? 'Top Pages' : 'Quick Wins (Page 2 Keywords)'}
+                    {activeTab === 'topQueries' ? 'Top Search Queries' : activeTab === 'topPages' ? 'Top Pages' : activeTab === 'searchAppearance' ? 'Search Appearance' : 'Quick Wins (Page 2 Keywords)'}
                   </h3>
                   <div style={{ display: 'flex', border: `1px solid ${C.border}`, borderRadius: 8, background: '#0a0e14', overflow: 'hidden', width: 260 }}>
                     <div style={{ padding: '8px 12px', color: C.muted, display: 'flex', alignItems: 'center' }}><Search size={14} /></div>
@@ -1065,7 +1135,7 @@ export default function GscIntel() {
                       type="text" 
                       value={searchTerm} 
                       onChange={(e) => setSearchTerm(e.target.value)} 
-                      placeholder={activeTab === 'topPages' ? "Filter URLs..." : "Filter keywords..."} 
+                      placeholder={activeTab === 'topPages' ? "Filter URLs..." : activeTab === 'searchAppearance' ? "Filter appearances..." : "Filter keywords..."}
                       style={{ width: '100%', border: 'none', background: 'transparent', color: '#fff', outline: 'none', padding: '6px 8px', fontSize: 13 }}
                     />
                   </div>
@@ -1103,8 +1173,8 @@ export default function GscIntel() {
                       ) : (
                         currentTableItems.map((item, idx) => (
                           <tr key={idx} style={{ borderBottom: `1px solid ${C.border}55`, transition: 'background 0.2s', ':hover': { background: 'rgba(255,255,255,0.02)' } }}>
-                            <td style={{ padding: '16px 20px', fontSize: 14, color: '#e2e8f0', fontWeight: 500, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.page || item.query}>
-                              {item.page || item.query}
+                            <td style={{ padding: '16px 20px', fontSize: 14, color: '#e2e8f0', fontWeight: 500, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.page || item.query || item.appearance}>
+                              {item.page || item.query || item.appearance}
                             </td>
                             <td style={{ padding: '16px 20px', fontSize: 14, color: '#93c5fd', textAlign: 'right', fontWeight: 600 }}>{item.clicks.toLocaleString()}</td>
                             <td style={{ padding: '16px 20px', fontSize: 14, color: C.muted, textAlign: 'right' }}>{item.impressions.toLocaleString()}</td>

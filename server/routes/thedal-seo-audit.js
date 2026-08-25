@@ -43,7 +43,8 @@ router.get('/saved', async (req, res) => {
       saved: true,
       url: rows[0].url,
       auditData: rows[0].audit_data,
-      offPageChecklist: rows[0].off_page_checklist
+      offPageChecklist: rows[0].off_page_checklist,
+      updatedAt: rows[0].updated_at
     });
   } catch (err) {
     console.error('Error fetching saved audit:', err);
@@ -1293,6 +1294,42 @@ router.post('/', async (req, res) => {
     }
 
     // ─── OVERALL RESPONSE PAYLOAD ──────────────────────────────────
+    // Internal authority estimate based only on LeadOS-owned audit and recorded
+    // backlink data. This is not Moz's proprietary Domain Authority metric.
+    let authorityBacklinks = { total: 0, rootDomains: 0, doFollow: 0, toxic: 0 };
+    if (clientId) {
+      try {
+        const { rows } = await pool.query(
+          `SELECT COUNT(*)::int AS total,
+                  COUNT(DISTINCT source_domain)::int AS root_domains,
+                  COUNT(*) FILTER (WHERE LOWER(link_type) = 'dofollow')::int AS do_follow,
+                  COUNT(*) FILTER (WHERE is_toxic = true)::int AS toxic
+             FROM thedal_backlinks
+            WHERE client_id = $1`,
+          [clientId]
+        );
+        authorityBacklinks = {
+          total: rows[0]?.total || 0,
+          rootDomains: rows[0]?.root_domains || 0,
+          doFollow: rows[0]?.do_follow || 0,
+          toxic: rows[0]?.toxic || 0
+        };
+      } catch (authorityErr) {
+        console.warn('Authority backlink metrics unavailable:', authorityErr.message);
+      }
+    }
+    const backlinkBreadth = Math.min(30, Math.round(Math.log10(authorityBacklinks.rootDomains + 1) * 15));
+    const backlinkQuality = authorityBacklinks.total
+      ? Math.round((authorityBacklinks.doFollow / authorityBacklinks.total) * 10)
+      : 0;
+    const toxicityPenalty = authorityBacklinks.total
+      ? Math.round((authorityBacklinks.toxic / authorityBacklinks.total) * 20)
+      : 0;
+    const authorityScore = Math.max(0, Math.min(100, Math.round(
+      (onPageScore * 0.2) + (technicalScore * 0.25) + (localScore * 0.15) +
+      backlinkBreadth + backlinkQuality - toxicityPenalty
+    )));
+
     const payload = {
       url: targetUrl,
       inferredKeyword: inferredKw,
@@ -1302,6 +1339,14 @@ router.post('/', async (req, res) => {
       onPage: { score: onPageScore, checks: opChecks },
       technical: { score: technicalScore, checks: techChecks },
       local: { score: localScore, checks: localChecks },
+      authority: {
+        score: authorityScore,
+        totalBacklinks: authorityBacklinks.total,
+        linkingRootDomains: authorityBacklinks.rootDomains,
+        doFollowBacklinks: authorityBacklinks.doFollow,
+        toxicBacklinks: authorityBacklinks.toxic,
+        source: 'LeadOS audit and recorded backlink data'
+      },
       serp: {
         title: title || 'Title tag missing',
         description: metaDescription || 'No description found. Add a meta description tag.'

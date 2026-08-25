@@ -183,8 +183,11 @@ async function claimDueTouch() {
     if (stopReason) {
       const retryable = ['campaign_not_running', 'sender_not_active', 'sender_daily_cap_reached'].includes(stopReason);
       await client.query(
-        `UPDATE alliance_touches SET status = $1, error_message = $2,
-                scheduled_at = CASE WHEN $1 = 'scheduled' THEN NOW() + INTERVAL '5 minutes' ELSE scheduled_at END
+        // $1 is cast explicitly both places it's used — otherwise Postgres infers a
+        // different type for the same parameter at each site (varchar from the column
+        // assignment, text from the bare literal comparison) and errors 42P08.
+        `UPDATE alliance_touches SET status = $1::varchar, error_message = $2,
+                scheduled_at = CASE WHEN $1::varchar = 'scheduled' THEN NOW() + INTERVAL '5 minutes' ELSE scheduled_at END
          WHERE id = $3`,
         [retryable ? 'scheduled' : 'cancelled', stopReason, touch.id]
       );

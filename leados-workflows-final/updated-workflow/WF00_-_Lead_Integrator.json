@@ -257,6 +257,54 @@
         260,
         0
       ]
+    },
+    {
+      "parameters": {
+        "path": "new-lead",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "new-lead-welcome-webhook-id",
+      "name": "New Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        820
+      ],
+      "webhookId": "c2f6a9de-7b1d-4e2a-9c3f-9a1e5d0b6f21"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v19.0/{{ $json.body.phone_number_id }}/messages",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.body.wa_access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $json.body.phone, type: 'template', template: { name: 'common_welcome_message', language: { code: 'en' } } }) }}",
+        "options": {}
+      },
+      "id": "send-welcome-template-id-1234",
+      "name": "Send Welcome Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        820
+      ]
     }
   ],
   "connections": {
@@ -385,6 +433,17 @@
         [
           {
             "node": "Respond to Meta Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Send Welcome Template",
             "type": "main",
             "index": 0
           }

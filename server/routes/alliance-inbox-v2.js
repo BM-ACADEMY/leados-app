@@ -286,7 +286,7 @@ function createAllianceInboxRouter({ auth, io }) {
               if (saved.rowCount) {
                 await client.query(
                   `UPDATE alliance_inbox_conversations SET unread_count = unread_count + 1, last_message = $1,
-                   last_message_at = $2, last_inbound_at = $2, updated_at = NOW() WHERE id = $3`,
+                   last_message_at = $2, last_inbound_at = $2, ai_nudge_count = 0, updated_at = NOW() WHERE id = $3`,
                   [content, saved.rows[0].sent_at, conversation.id]
                 );
                 if (contact.prospect_id) {

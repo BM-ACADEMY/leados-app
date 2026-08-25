@@ -1028,6 +1028,7 @@ const createAllianceAutomationRouter = require('./routes/alliance-automation');
 const { startAllianceEmailWorker } = require('./services/alliance-email-worker');
 const { startAllianceEmailReplyPoller } = require('./services/alliance-email-replies');
 const { startAllianceWhatsAppCampaignWorker } = require('./services/alliance-whatsapp-campaign-worker');
+const { startAllianceAiNudgeWorker } = require('./services/alliance-ai-nudge-worker');
 const pipelineRoutes = require('./routes/pipeline');
 const analyzeRoutes = require('./routes/analyze');
 const contentOsRoutes = require('./routes/contentos');
@@ -2397,16 +2398,25 @@ app.post('/api/leads', auth, async (req, res) => {
       RETURNING *
     `, [name, phone, source || 'Manual', leadOSBrand.id, interest || '', assigned_to || null]);
 
-    // Trigger n8n webhook for new leads to send welcome template
+    // Trigger n8n webhook for new leads to send welcome template.
+    // Prefer this brand's own WhatsApp credentials (kept current via the
+    // integrations/reconnect flow) over the static .env pair, which can go
+    // stale — matches the lookup already done for bulk import (see /api/leads/import).
     if (process.env.N8N_NEW_LEAD_WEBHOOK_URL) {
-      axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
-        lead_id: rows[0].id,
-        name: rows[0].name,
-        phone: rows[0].phone,
-        client_id: rows[0].client_id,
-        phone_number_id: process.env.WA_PHONE_NUMBER_ID,
-        wa_access_token: process.env.META_PAGE_ACCESS_TOKEN
-      }).catch(e => console.error('[n8n Webhook Error]', e.message));
+      pool.query('SELECT phone_number_id, wa_access_token FROM clients WHERE id = $1', [rows[0].client_id])
+        .then(clientRes => {
+          const phoneNumberId = clientRes.rows[0]?.phone_number_id || process.env.WA_PHONE_NUMBER_ID;
+          const waAccessToken = clientRes.rows[0]?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+          return axios.post(process.env.N8N_NEW_LEAD_WEBHOOK_URL, {
+            lead_id: rows[0].id,
+            name: rows[0].name,
+            phone: rows[0].phone,
+            client_id: rows[0].client_id,
+            phone_number_id: phoneNumberId,
+            wa_access_token: waAccessToken
+          });
+        })
+        .catch(e => console.error('[n8n Webhook Error]', e.message));
     }
 
     evaluateLeadBrandAndSchedule(rows[0].id).catch(console.error);
@@ -5567,6 +5577,9 @@ httpServer.listen(PORT, () => {
   });
   startAllianceWhatsAppCampaignWorker(io).catch((error) => {
     console.error('[Startup] Alliance WhatsApp campaign worker failed:', error.message);
+  });
+  startAllianceAiNudgeWorker(io).catch((error) => {
+    console.error('[Startup] Alliance AI nudge worker failed:', error.message);
   });
 
   // Start campaign message queue processor

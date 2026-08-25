@@ -2391,12 +2391,16 @@ app.post('/api/leads', auth, async (req, res) => {
     const { name, phone, source, interest, assigned_to } = req.body;
     const leadOSBrand = await getLeadOSBrand(pool);
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone required' });
+    // Strip formatting (spaces/dashes/parens) so this matches the digits-only format
+    // every phone-matching query in the app expects. Does not add/assume a country code.
+    const normalizedPhone = String(phone).replace(/\D/g, '');
+    if (!normalizedPhone) return res.status(400).json({ error: 'Enter a valid phone number' });
 
     const { rows } = await pool.query(`
       INSERT INTO leads (name, phone, source, client_id, interest, assigned_to, status, score, created_at)
       VALUES ($1, $2, $3, $4, $5, $6, 'new', 0, NOW())
       RETURNING *
-    `, [name, phone, source || 'Manual', leadOSBrand.id, interest || '', assigned_to || null]);
+    `, [name, normalizedPhone, source || 'Manual', leadOSBrand.id, interest || '', assigned_to || null]);
 
     // Trigger n8n webhook for new leads to send welcome template.
     // Prefer this brand's own WhatsApp credentials (kept current via the
@@ -2436,7 +2440,7 @@ app.patch('/api/leads/:id', auth, async (req, res) => {
     const params = [];
 
     if (name !== undefined) { params.push(name); updates.push(`name = $${params.length}`); }
-    if (phone !== undefined) { params.push(phone); updates.push(`phone = $${params.length}`); }
+    if (phone !== undefined) { params.push(String(phone).replace(/\D/g, '')); updates.push(`phone = $${params.length}`); }
     if (email !== undefined) { params.push(email); updates.push(`email = $${params.length}`); }
     if (status !== undefined) { params.push(status); updates.push(`status = $${params.length}`); }
     if (score !== undefined) { params.push(score); updates.push(`score = $${params.length}`); }
@@ -2631,7 +2635,10 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
     );
 
     const waMessageId = waRes.data.messages?.[0]?.id;
-    const phone = lead.phone?.replace(/\D/g, '');
+    // Same normalization the inbound webhook uses (server.js ~2991) — conversations.phone
+    // must always be the last 10 digits, or a lead whose phone has a country-code prefix
+    // gets a second, orphaned conversations row the next time they message in.
+    const phone = lead.phone?.replace(/\D/g, '').slice(-10);
 
     // Upsert the conversation thread (unique per phone+tenant)
     const convRes = await pool.query(`

@@ -68,25 +68,30 @@ export const useLead = (id) => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState(null);
+  const fetchRequestIdRef = useRef(0);
 
   const limit = 100;
 
   const fetchLead = async () => {
     if (!id) return;
+    // Switching contacts quickly starts a second fetch before the first
+    // resolves; without this guard whichever response lands last wins,
+    // so an older contact's data can silently overwrite the one just clicked.
+    const requestId = ++fetchRequestIdRef.current;
     setLoading(true);
     setError(null);
     try {
       const data = await api.getLead(id);
-      setLead(data.lead);
-      
-      // Fetch initial messages
       const msgData = await api.getMessages(id, limit, 0);
+      if (requestId !== fetchRequestIdRef.current) return;
+      setLead(data.lead);
       setConversations(msgData.messages || []);
       setHasMore((msgData.messages || []).length === limit);
     } catch (err) {
+      if (requestId !== fetchRequestIdRef.current) return;
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (requestId === fetchRequestIdRef.current) setLoading(false);
     }
   };
 
@@ -164,21 +169,27 @@ export const useAllianceLead = (id) => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState(null);
+  const fetchRequestIdRef = useRef(0);
 
   const fetchLead = async () => {
     if (!id) return;
+    // Same stale-response race as useLead above — guard against an older
+    // contact's response landing after a newer one and overwriting it.
+    const requestId = ++fetchRequestIdRef.current;
     setLoading(true);
     setError(null);
     try {
       const data = await api.request(`/api/alliance-inbox/contacts/${id}`);
-      setLead(data.lead);
       const messages = await api.request(`/api/alliance-inbox/contacts/${id}/messages?limit=100&offset=0`);
+      if (requestId !== fetchRequestIdRef.current) return;
+      setLead(data.lead);
       setConversations(messages.messages || []);
       setHasMore((messages.messages || []).length === 100);
     } catch (err) {
+      if (requestId !== fetchRequestIdRef.current) return;
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (requestId === fetchRequestIdRef.current) setLoading(false);
     }
   };
 

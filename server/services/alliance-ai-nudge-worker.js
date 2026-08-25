@@ -11,9 +11,10 @@ let processing = false;
 
 const ENABLED = String(process.env.ALLIANCE_AI_NUDGE_ENABLED || '').toLowerCase() === 'true';
 // WhatsApp only allows free-form text within 24h of the contact's last reply, so a nudge
-// is only attempted while that session window is still open. Quiet window/cap/poll cadence
-// are env-tunable so this can run fast for testing and slower (a few hours) in production.
-const QUIET_MINUTES = Math.max(Number(process.env.ALLIANCE_AI_NUDGE_QUIET_MINUTES) || 240, 1);
+// is only attempted while that session window is still open. There is no fixed quiet
+// window here: each contact's threshold comes from their own campaign's "first reminder
+// after" setting (alliance_whatsapp_campaigns.followup_delay_minutes/_days) — the exact
+// same delay already used for that campaign's template-based follow-up.
 const MAX_NUDGES = Math.max(Number(process.env.ALLIANCE_AI_NUDGE_MAX) || 2, 0);
 const POLL_SECONDS = Math.max(Number(process.env.ALLIANCE_AI_NUDGE_POLL_SECONDS) || 60, 15);
 
@@ -27,27 +28,37 @@ async function configuredSender() {
 
 // Claims (and immediately marks) one quiet, previously-replied conversation that hasn't
 // been nudged since its latest inbound message, so a slow AI+send call never double-fires.
+// The quiet threshold itself is per-contact: whatever "first reminder after" delay is set
+// on the most recent WhatsApp campaign that messaged this prospect.
 async function claimDueNudge() {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     const due = await client.query(
       `SELECT cv.id AS conversation_id, cv.contact_id, cv.last_inbound_at, cv.ai_nudge_count,
-              ic.phone, ic.name, ic.prospect_id, p.audience, p.business_name, p.status
+              ic.phone, ic.name, ic.prospect_id, p.audience, p.business_name, p.status,
+              COALESCE(camp.delay_minutes, 5760) AS quiet_minutes
        FROM alliance_inbox_conversations cv
        JOIN alliance_inbox_contacts ic ON ic.id = cv.contact_id
        LEFT JOIN alliance_prospects p ON p.id = ic.prospect_id
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(NULLIF(c.followup_delay_minutes,0), GREATEST(COALESCE(c.followup_delay_days,4),1)*1440)::int AS delay_minutes
+         FROM alliance_whatsapp_campaign_recipients r
+         JOIN alliance_whatsapp_campaigns c ON c.id = r.campaign_id
+         WHERE r.prospect_id = ic.prospect_id
+         ORDER BY COALESCE(r.sent_at,r.created_at) DESC LIMIT 1
+       ) camp ON TRUE
        WHERE cv.last_inbound_at IS NOT NULL
          AND cv.last_inbound_at > NOW() - INTERVAL '24 hours'
-         AND cv.last_inbound_at <= NOW() - ($1 * INTERVAL '1 minute')
+         AND cv.last_inbound_at <= NOW() - (COALESCE(camp.delay_minutes,5760) * INTERVAL '1 minute')
          AND (cv.last_ai_nudge_at IS NULL OR cv.last_ai_nudge_at < cv.last_inbound_at)
-         AND cv.ai_nudge_count < $2
+         AND cv.ai_nudge_count < $1
          AND ic.prospect_id IS NOT NULL
          AND (p.status IS NULL OR p.status NOT IN ('converted','closed','not_interested','unsubscribed'))
          AND (p.suppressed IS NULL OR p.suppressed = FALSE)
        ORDER BY cv.last_inbound_at
        FOR UPDATE OF cv SKIP LOCKED LIMIT 1`,
-      [QUIET_MINUTES, MAX_NUDGES]
+      [MAX_NUDGES]
     );
     if (!due.rowCount) { await client.query('COMMIT'); return null; }
     const row = due.rows[0];
@@ -144,7 +155,7 @@ async function startAllianceAiNudgeWorker(io) {
     interval = setInterval(() => processAllianceAiNudges(io).catch(console.error), POLL_SECONDS * 1000);
     interval.unref?.();
   }
-  console.log(`[Alliance AI nudge] enabled — quiet=${QUIET_MINUTES}min, max=${MAX_NUDGES}, poll=${POLL_SECONDS}s`);
+  console.log(`[Alliance AI nudge] enabled — quiet window follows each contact's own campaign delay, max=${MAX_NUDGES}, poll=${POLL_SECONDS}s`);
 }
 
 module.exports = { startAllianceAiNudgeWorker, processAllianceAiNudges };

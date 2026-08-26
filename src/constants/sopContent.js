@@ -167,21 +167,67 @@ export const SOP_CONTENT = {
       'Prioritise "failed" and "warning" items from the On-Page checks first — they have the most impact.',
     ],
   },
-  '/thedal/content-factory': {
-    title: 'Content Factory',
+  '/thedal/content-factory#blog-drafts': {
+    title: 'Content Factory — Blog Drafts',
     icon: '✍️',
-    overview: 'AI-powered content generation tool. Create SEO-optimised blog posts, meta descriptions, landing page copy, and more using Gemini AI.',
+    overview: 'Generates a complete, publication-ready SEO blog post from a single target keyword — tag pill, lead paragraph, sub-sectioned blocks, an optional comparison table, a callout, an FAQ accordion and a closing CTA, all in one AI call.',
     steps: [
-      { step: 1, title: 'Select Content Type', desc: 'Choose what you want to create: Blog Post, Meta Description, Product Description, FAQ, or Landing Page Copy.' },
-      { step: 2, title: 'Enter Topic & Keyword', desc: 'Input the main topic and the primary keyword you want the content to target.' },
-      { step: 3, title: 'Set Tone & Length', desc: 'Choose the writing tone (professional, casual, authoritative) and approximate word count.' },
-      { step: 4, title: 'Generate Content', desc: 'Click "Generate" and the AI will produce a fully structured, SEO-ready draft.' },
-      { step: 5, title: 'Review & Edit', desc: 'Always review and humanise the AI-generated content before publishing — add specific data, client quotes, or local details.' },
+      { step: 1, title: 'Enter Target Keyword', desc: 'The one keyword this post should rank for, e.g. "hire digital marketing staff" — everything the AI writes is built around this.' },
+      { step: 2, title: 'Set Language, Word Count & Tone', desc: 'Language Style (English / Tamil / Tanglish), target Word Count, and Tone of Voice (professional, friendly, academic, sales-oriented).' },
+      { step: 3, title: 'Generate Post', desc: 'Click "Generate Post." The AI writes title, meta description, and the full structured body in one pass.' },
+      { step: 4, title: 'Review the Preview', desc: 'The result panel shows title, meta description, word count, reading time, and the rendered HTML — check it before using it live.' },
+      { step: 5, title: 'Find It in Saved Drafts', desc: 'Every generation is auto-saved as a Draft in the calendar list on the right. Change its status (Draft / Scheduled / Published) from the dropdown there.' },
     ],
     tips: [
-      'Use Gap Hunter keywords as input for content topics — maximum strategic value.',
-      'Don\'t publish AI content without human review — Google devalues pure AI content.',
-      'Include the primary keyword naturally in the first paragraph and H1.',
+      'Always review AI content before publishing — check facts, local details, and that no invented statistics or fake examples slipped in.',
+      'A comparison table only appears when it\'s genuinely relevant to the topic — its absence is expected, not a bug.',
+      'Use Gap Hunter or Keyword Tracking keywords as the target keyword here for maximum strategic value.',
+    ],
+  },
+  '/thedal/content-factory#meta-rewriter': {
+    title: 'Content Factory — Meta Rewriter',
+    icon: '🪄',
+    overview: 'Fixes an EXISTING page\'s search-result snippet — not a blog generator. Rewrites a page\'s title and meta description to be more click-worthy and keyword-optimized, with length checks so nothing gets cut off in Google.',
+    steps: [
+      { step: 1, title: 'Paste the Page URL', desc: 'The real, already-live page you want to improve, e.g. https://example.com/services/root-canal.' },
+      { step: 2, title: 'Paste Current Title & Meta Description', desc: 'Copy the page\'s existing <title> and meta description exactly as they are now, so the AI has a starting point to improve on.' },
+      { step: 3, title: 'Enter Target Keyword', desc: 'The keyword this page should rank for — the AI works it into the new title and description.' },
+      { step: 4, title: 'Optimize Meta Tags', desc: 'Click "Optimize Meta Tags." Get back a new title (~50-60 chars) and meta description (~150-160 chars), plus a one-line explanation of what changed and why.' },
+    ],
+    tips: [
+      'This tool only rewrites metadata — it does not touch the page\'s actual body content.',
+      'Use it on pages that already rank but have a weak or generic snippet in search results, not brand-new pages.',
+    ],
+  },
+  '/thedal/content-factory#topic-ideas': {
+    title: 'Content Factory — Topic Ideas',
+    icon: '💡',
+    overview: 'A content-planning brainstorm tool, not a writer. Live-crawls the selected client\'s actual website (homepage + a few internal pages) and returns blog title ideas grounded in what the business genuinely offers — feed these into Blog Drafts next.',
+    steps: [
+      { step: 1, title: 'Pick a Target Month', desc: 'Which month these ideas are being planned for — shown on each generated topic.' },
+      { step: 2, title: 'Click Get Topic Ideas', desc: 'The AI first crawls the client\'s live domain (up to ~4 pages, skipping login/legal pages), then generates ideas grounded in that real content plus any tracked SEO keywords.' },
+      { step: 3, title: 'Check the "Grounded in..." Badge', desc: 'A green badge confirms how many live pages were actually crawled. An amber badge means the site couldn\'t be reached and ideas fell back to the stored business profile instead — treat those more skeptically.' },
+      { step: 4, title: 'Read "Based on"', desc: 'Each idea card shows which real page or service it was grounded in — use this to sanity-check the idea is actually relevant before writing it.' },
+      { step: 5, title: 'Take a Title into Blog Drafts', desc: 'Copy a promising title/keyword pair over to the Blog Drafts tab to generate the full post.' },
+    ],
+    tips: [
+      'If every idea looks generic, check the site-analyzed badge first — it likely means the crawl failed and it\'s working off the stored category only.',
+      'Ideas referencing "Based on" a page not actually relevant to a blog post are still worth a manual read before discarding.',
+    ],
+  },
+  '/thedal/content-factory#schema-library': {
+    title: 'Content Factory — Schema Library',
+    icon: '</>',
+    overview: 'Generates JSON-LD structured data — the invisible markup search engines use for rich results (star ratings, FAQ dropdowns, business info in Search). This produces SEO markup, not visible page content.',
+    steps: [
+      { step: 1, title: 'Pick a Schema Type', desc: 'LocalBusiness, FAQPage, BreadcrumbList, Product, Organization, or Article — pick the one matching the page you\'re adding markup to.' },
+      { step: 2, title: 'Generate Schema', desc: 'Click "Generate." The template is pre-filled using the client\'s real business name, domain, and location from their profile.' },
+      { step: 3, title: 'Copy and Paste', desc: 'Copy the resulting JSON and paste it inside a <script type="application/ld+json"> tag in the target page\'s <head>.' },
+      { step: 4, title: 'Fill In Placeholders', desc: 'FAQPage and similar templates include placeholder answers ("Add your answer here.") — replace these with real content before publishing.' },
+    ],
+    tips: [
+      'Never publish a placeholder answer as-is — Google can penalize structured data that doesn\'t match the visible page content.',
+      'Validate the output in Google\'s Rich Results Test before deploying to production.',
     ],
   },
   '/thedal': {

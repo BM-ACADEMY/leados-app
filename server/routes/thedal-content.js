@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
+const cheerio = require('cheerio');
 const openRouter = require('../services/openrouter');
 const { Pool } = require('pg');
 
@@ -40,6 +42,265 @@ const parseAIJson = (text) => {
   return JSON.parse(cleaned.trim());
 };
 
+const escapeHtml = (str) => String(str || '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Renders the AI's structured blog sections into one self-contained HTML string
+// (inline styles, no <style> tag) so it's safe to paste into any CMS body field
+// and still carries the standard content-marketing elements: tag pill, lead
+// paragraph, sub-sectioned blocks, comparison table, callout, FAQ, CTA.
+function composeBlogHtml(s, client, { skipTagPill = false } = {}) {
+  const brand = client.business_name || client.domain || 'us';
+  const phoneDigits = String(client.phone || '').replace(/\D/g, '');
+  const ctaHref = phoneDigits ? `https://wa.me/${phoneDigits}` : '#contact';
+
+  // The full-page composer renders its own tag pill above the <h1>, in the
+  // right reading order — skip this one there so it doesn't appear twice.
+  const tagPill = (s.tagPill && !skipTagPill) ? `<span style="display:inline-flex;align-items:center;gap:6px;background:#eef2ff;border:1px solid #c7d2fe;color:#4f46e5;font-size:12px;font-weight:700;letter-spacing:.08em;padding:6px 14px;border-radius:100px;margin-bottom:16px;">${escapeHtml(s.tagPill.toUpperCase())}</span>` : '';
+
+  const lead = s.leadParagraph ? `<p style="font-size:17px;color:#374151;margin:0 0 16px;font-weight:500;">${escapeHtml(s.leadParagraph)}</p>` : '';
+  const intro = (Array.isArray(s.intro) ? s.intro : [s.intro].filter(Boolean)).map((p) => `<p style="margin:0 0 16px;color:#374151;">${escapeHtml(p)}</p>`).join('');
+
+  const blocksHtml = (s.blocks || []).map((b) => `
+    <div style="margin-top:44px;">
+      <h2 style="font-size:22px;font-weight:700;color:#111827;margin:0 0 16px;line-height:1.3;">${escapeHtml(b.heading)}</h2>
+      ${b.intro ? `<p style="margin:0 0 20px;color:#374151;">${escapeHtml(b.intro)}</p>` : ''}
+      ${(b.subsections || []).map((sub) => `
+        <div style="margin-bottom:18px;">
+          <h3 style="font-size:16px;font-weight:700;color:#1e1b4b;margin:0 0 6px;">${escapeHtml(sub.heading)}</h3>
+          <p style="margin:0;color:#374151;font-size:15px;">${escapeHtml(sub.text)}</p>
+        </div>`).join('')}
+    </div>`).join('');
+
+  const table = (s.comparisonTable?.rows?.length && s.comparisonTable?.columns?.length) ? `
+    <div style="overflow-x:auto;margin:24px 0;border:1px solid #e5e7eb;border-radius:14px;">
+      <table style="width:100%;min-width:480px;border-collapse:collapse;background:#fff;">
+        <thead><tr>${s.comparisonTable.columns.map((c) => `<th style="padding:11px 16px;background:#312e81;color:#fff;text-align:left;font-size:13px;">${escapeHtml(c)}</th>`).join('')}</tr></thead>
+        <tbody>${s.comparisonTable.rows.map((row) => `<tr>${row.map((cell, i) => `<td style="padding:11px 16px;border-bottom:1px solid #e5e7eb;font-size:14px;color:${i === row.length - 1 ? '#1e1b4b;font-weight:700' : '#6b7280'};">${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>` : '';
+
+  const callout = s.callout?.text ? `
+    <div style="background:#fef9c3;border-left:4px solid #eab308;border-radius:10px;padding:18px 22px;margin:24px 0;color:#713f12;font-size:15px;">
+      ${s.callout.label ? `<strong>${escapeHtml(s.callout.label)}:</strong> ` : ''}${escapeHtml(s.callout.text)}
+    </div>` : '';
+
+  const conclusion = s.conclusion ? `
+    <div style="margin-top:44px;">
+      <h2 style="font-size:22px;font-weight:700;color:#111827;margin:0 0 16px;">Conclusion</h2>
+      <p style="margin:0;color:#374151;">${escapeHtml(s.conclusion)}</p>
+    </div>` : '';
+
+  const faqHtml = (s.faqs || []).length ? `
+    <div style="margin-top:44px;">
+      <h2 style="font-size:22px;font-weight:700;color:#111827;margin:0 0 20px;">Frequently Asked Questions</h2>
+      ${s.faqs.map((f) => `
+        <details style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 20px;margin-bottom:10px;">
+          <summary style="font-weight:600;color:#1e1b4b;font-size:15px;cursor:pointer;">${escapeHtml(f.question)}</summary>
+          <p style="margin:12px 0 0;color:#6b7280;font-size:14px;">${escapeHtml(f.answer)}</p>
+        </details>`).join('')}
+    </div>` : '';
+
+  const bottomCta = `
+    <div style="position:relative;overflow:hidden;background:linear-gradient(120deg,#1e1b4b 0%,#4338ca 60%,#7c3aed 130%);border-radius:20px;padding:36px 32px;margin-top:44px;text-align:center;">
+      <h2 style="color:#fff;font-size:22px;margin:0 0 10px;">${escapeHtml(s.ctaHeading || `Ready to get started with ${brand}?`)}</h2>
+      <a href="${ctaHref}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:10px;background:#facc15;color:#1e1b4b;font-weight:700;font-size:14px;padding:13px 28px;border-radius:100px;text-decoration:none;">${escapeHtml(s.ctaLabel || `Contact ${brand}`)}</a>
+    </div>`;
+
+  return `${tagPill}${lead}${intro}${blocksHtml}${table}${callout}${conclusion}${faqHtml}${bottomCta}`;
+}
+
+// Wraps composeBlogHtml's body content in a complete, standalone, downloadable
+// HTML document — real <title>/meta tags, a JSON-LD <script>, self-contained
+// CSS (no build step, no external framework), breadcrumb, hero placeholder,
+// meta row and a brand sidebar — everything a page needs, not just the body.
+function composeFullBlogPage({ structured, bodyHtml, client, jsonLd, slug, overrides = {} }) {
+  const brand = client.business_name || client.domain || 'Us';
+  const domain = client.domain || '';
+  const initial = (brand[0] || 'B').toUpperCase();
+  const dateLabel = overrides.dateLabel || new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+  const phoneDigits = String(client.phone || '').replace(/\D/g, '');
+  const waHref = phoneDigits ? `https://wa.me/${phoneDigits}` : '#contact';
+  // Everything below is a placeholder by default — no real hero image, no real
+  // byline, sidebar text just reused from elsewhere. `overrides` lets the
+  // frontend swap in something real (typed manually or AI-suggested) before
+  // download, instead of shipping these as permanent hardcoded filler.
+  const authorName = overrides.authorName?.trim() || `${brand} Team`;
+  const sidebarBlurb = overrides.sidebarBlurb?.trim() || structured.leadParagraph || `${brand} — ${domain}`;
+  const ctaHeading = overrides.ctaHeading?.trim() || 'Need help with this?';
+  const ctaText = overrides.ctaText?.trim() || `Chat with ${brand} directly and get moving today.`;
+  const heroImageHtml = overrides.heroImageUrl?.trim()
+    ? `<img src="${escapeHtml(overrides.heroImageUrl.trim())}" alt="${escapeHtml(structured.title)}" style="width:100%;height:100%;object-fit:cover;" />`
+    : 'Add a hero image here (1600&times;800 recommended)';
+
+  const css = `
+    .cf-blog { background:#f9fafb; color:#111827; font-family:'Inter',-apple-system,Segoe UI,Roboto,sans-serif; line-height:1.7; font-size:16px; }
+    .cf-blog * { box-sizing:border-box; }
+    .cf-blog h1, .cf-blog h2, .cf-blog h3 { font-family:'Fraunces',Georgia,serif; font-weight:700; color:#111827; line-height:1.25; margin:0; word-break:break-word; }
+    .cf-blog a { color:#4f46e5; text-decoration:none; }
+    .cf-blog a:hover { text-decoration:underline; }
+    .cf-blog img { max-width:100%; display:block; }
+    .cf-blog .page { max-width:1200px; width:100%; margin:0 auto; padding:56px 40px 80px; display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:46px; }
+    .cf-blog .breadcrumb { font-size:13px; color:#6b7280; margin-bottom:16px; display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+    .cf-blog .breadcrumb .current { color:#111827; font-weight:600; }
+    .cf-blog .tag-pill { display:inline-flex; align-items:center; gap:6px; background:#eef2ff; border:1px solid #c7d2fe; color:#4f46e5; font-size:11px; font-weight:700; letter-spacing:.08em; padding:6px 14px; border-radius:100px; margin-bottom:16px; }
+    .cf-blog article h1 { font-size:2.1rem; max-width:720px; margin-bottom:18px; }
+    .cf-blog .meta-row { display:flex; gap:22px; align-items:center; color:#6b7280; font-size:14px; padding-bottom:20px; border-bottom:1px solid #e5e7eb; margin-bottom:26px; flex-wrap:wrap; }
+    .cf-blog .hero-image { width:100%; height:280px; border-radius:20px; margin-bottom:8px; border:1px solid #e5e7eb; background:linear-gradient(135deg,#eef2ff,#f3e8ff); display:flex; align-items:center; justify-content:center; color:#818cf8; font-size:13px; font-weight:600; overflow:hidden; }
+    .cf-blog article > p { margin:0 0 16px; color:#374151; font-size:16px; }
+    .cf-blog .cf-blog-body { margin-top:26px; }
+    .cf-blog aside { align-self:start; position:sticky; top:24px; display:flex; flex-direction:column; gap:20px; }
+    .cf-blog .side-card { background:#fff; border:1px solid #f3f4f6; border-radius:24px; padding:28px; box-shadow:0 1px 8px rgba(0,0,0,.04); }
+    .cf-blog .eyebrow-mini { font-size:11px; letter-spacing:.1em; color:#9ca3af; font-weight:700; margin-bottom:16px; display:block; text-transform:uppercase; }
+    .cf-blog .brand-row { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+    .cf-blog .brand-logo { width:48px; height:48px; border-radius:50%; background:#1e1b4b; display:flex; align-items:center; justify-content:center; color:#facc15; font-family:'Fraunces',Georgia,serif; font-weight:800; font-size:18px; flex-shrink:0; }
+    .cf-blog .side-card p { font-size:14px; color:#6b7280; margin:0; line-height:1.65; }
+    .cf-blog .cta-card { background:#f0fdf4; border:1px solid #bbf7d0; }
+    .cf-blog .cta-card h3 { color:#166534; font-size:16px; margin-bottom:8px; }
+    .cf-blog .wa-btn { display:flex; align-items:center; justify-content:center; gap:8px; background:#16a34a; color:#fff; font-weight:700; font-size:14px; padding:14px; border-radius:12px; text-decoration:none; margin-top:14px; }
+    .cf-blog .wa-btn:hover { text-decoration:none; background:#15803d; }
+    @media (max-width:880px) { .cf-blog .page { grid-template-columns:1fr; padding:40px 20px 50px; } .cf-blog aside { position:static; } }
+  `.replace(/\n\s+/g, '\n').trim();
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(structured.title)}</title>
+<meta name="description" content="${escapeHtml(structured.metaDescription)}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700;9..144,800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+${jsonLd}
+<style>${css}</style>
+</head>
+<body>
+<div class="cf-blog">
+  <div class="page">
+    <article>
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/">Home</a> &rsaquo; <a href="/blog">Blog</a> &rsaquo; <span class="current">${escapeHtml(structured.title)}</span>
+      </nav>
+      ${structured.tagPill ? `<span class="tag-pill">${escapeHtml(structured.tagPill.toUpperCase())}</span>` : ''}
+      <h1>${escapeHtml(structured.title)}</h1>
+      <div class="meta-row"><span>${escapeHtml(authorName)}</span><span>${dateLabel}</span></div>
+      <div class="hero-image">${heroImageHtml}</div>
+      <div class="cf-blog-body">
+        ${bodyHtml}
+      </div>
+    </article>
+    <aside>
+      <div class="side-card">
+        <span class="eyebrow-mini">About ${escapeHtml(brand)}</span>
+        <div class="brand-row"><div class="brand-logo">${escapeHtml(initial)}</div><strong>${escapeHtml(brand)}</strong></div>
+        <p>${escapeHtml(sidebarBlurb)}</p>
+      </div>
+      <div class="side-card cta-card">
+        <h3>${escapeHtml(ctaHeading)}</h3>
+        <p>${escapeHtml(ctaText)}</p>
+        <a href="${waHref}" class="wa-btn" target="_blank" rel="noopener noreferrer">Connect on WhatsApp</a>
+      </div>
+    </aside>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
+const CRAWL_UA = 'Mozilla/5.0 (compatible; LeadOSContentBot/1.0; +https://leados-app.abmgroups.org)';
+
+async function fetchPage(url) {
+  const response = await axios.get(url, {
+    timeout: 10000,
+    maxRedirects: 5,
+    headers: { 'User-Agent': CRAWL_UA, Accept: 'text/html,application/xhtml+xml' },
+    validateStatus: (status) => status < 500,
+  });
+  if (response.status >= 400) throw new Error(`HTTP ${response.status}`);
+  return response.data;
+}
+
+// Fetches the client's real website (homepage + a handful of internal pages)
+// so downstream prompts are grounded in what the business actually offers,
+// not just its stored category label. Never throws — callers get null on
+// failure and should fall back to the client's stored profile fields.
+async function crawlClientWebsite(domain) {
+  if (!domain) return null;
+  const baseUrl = /^https?:\/\//i.test(domain) ? domain : `https://${domain}`;
+  let origin;
+  try { origin = new URL(baseUrl).origin; } catch { return null; }
+
+  try {
+    const homeHtml = await fetchPage(origin);
+    const $ = cheerio.load(homeHtml);
+    $('script, style, noscript, svg').remove();
+
+    const homepageTitle = $('title').first().text().trim();
+    const homepageMeta = $('meta[name="description" i]').attr('content')?.trim() || '';
+    const homepageText = $('body').text().replace(/\s+/g, ' ').trim().slice(0, 2500);
+
+    // Best-effort brand facts pulled straight from the homepage markup —
+    // used to prefill Organization/LocalBusiness schema fields for real.
+    let logoUrl = null;
+    const logoImg = $('header img, nav img, img[class*="logo" i], img[alt*="logo" i], img[src*="logo" i]').first();
+    if (logoImg.attr('src')) {
+      try { logoUrl = new URL(logoImg.attr('src'), origin).href; } catch { /* leave null */ }
+    }
+    const socialLinks = [];
+    $('a[href]').each((_, el) => {
+      const href = $(el).attr('href') || '';
+      if (/(facebook|instagram|linkedin|twitter|x\.com|youtube)\.com/i.test(href) && !socialLinks.includes(href)) socialLinks.push(href);
+    });
+    const phoneMatch = homepageText.match(/(?:\+?91[\s-]?)?[6-9]\d{9}\b/);
+    const phone = phoneMatch ? phoneMatch[0] : null;
+    const addressText = $('address').first().text().replace(/\s+/g, ' ').trim() || null;
+
+    // Discover internal page links from the homepage nav/body.
+    const seen = new Set([`${origin}/`]);
+    const internalLinks = [];
+    $('a[href]').each((_, el) => {
+      if (internalLinks.length >= 25) return;
+      const href = $(el).attr('href') || '';
+      if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) return;
+      let abs;
+      try { abs = new URL(href, origin).href; } catch { return; }
+      if (!abs.startsWith(origin)) return;
+      if (/\.(jpg|jpeg|png|gif|svg|pdf|zip|css|js|webp|ico)$/i.test(abs)) return;
+      const clean = abs.split('#')[0];
+      if (seen.has(clean)) return;
+      seen.add(clean);
+      internalLinks.push({ url: clean, label: $(el).text().replace(/\s+/g, ' ').trim().slice(0, 60) });
+    });
+
+    // Visit a handful of the most content-relevant-looking internal pages
+    // (skip legal/account boilerplate) to build a richer picture of the business.
+    const skip = /(privacy|terms|cookie|login|signin|signup|cart|checkout)/i;
+    const candidates = internalLinks.filter((l) => !skip.test(l.url)).slice(0, 5);
+    const pages = [{ url: `${origin}/`, title: homepageTitle, text: homepageText }];
+    for (const link of candidates) {
+      if (pages.length >= 4) break;
+      try {
+        const html = await fetchPage(link.url);
+        const $$ = cheerio.load(html);
+        $$('script, style, noscript, svg').remove();
+        const title = $$('title').first().text().trim() || link.label;
+        const text = $$('body').text().replace(/\s+/g, ' ').trim().slice(0, 1200);
+        if (text) pages.push({ url: link.url, title, text });
+      } catch { /* skip pages that fail to load */ }
+    }
+
+    return {
+      origin, homepageTitle, homepageMeta, pages,
+      logoUrl, socialLinks: socialLinks.slice(0, 6), phone, addressText,
+      discoveredLinks: internalLinks.slice(0, 15).map((l) => l.label || l.url).filter(Boolean),
+    };
+  } catch (err) {
+    console.warn(`[Content Factory] Site crawl failed for ${origin}:`, err.message);
+    return null;
+  }
+}
+
 // GET content list for calendar
 router.get('/:clientId', async (req, res) => {
   const { clientId } = req.params;
@@ -66,7 +327,26 @@ router.get('/:clientId/:id', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM thedal_content WHERE id = $1 AND client_id = $2', [id, clientId]);
     if (result.rowCount === 0) return res.status(404).json({ error: 'Content not found' });
-    res.json({ content: result.rows[0] });
+    const row = result.rows[0];
+
+    // Reconstruct the full-page preview/download on demand from what's already
+    // saved — no AI call, no separate storage needed. Lets every existing
+    // draft (including ones saved before this feature existed) get the same
+    // live preview + ZIP download as a freshly generated post.
+    let fullPageHtml = null;
+    let jsonLd = null;
+    if (row.content_type === 'blog_post' && row.body) {
+      const clientRes = await pool.query('SELECT * FROM thedal_clients WHERE id = $1', [clientId]);
+      const client = clientRes.rows[0];
+      if (client) {
+        const structured = { title: row.title, metaDescription: row.meta_description, leadParagraph: row.meta_description };
+        const jsonLdObj = buildSchemaObject('Article', { headline: row.title, authorName: `${client.business_name || client.domain} Team`, datePublished: new Date(row.created_at || Date.now()).toISOString().slice(0, 10) }, client);
+        jsonLd = `<script type="application/ld+json">\n${JSON.stringify(jsonLdObj, null, 2)}\n</script>`;
+        fullPageHtml = composeFullBlogPage({ structured, bodyHtml: row.body, client, jsonLd, slug: row.slug });
+      }
+    }
+
+    res.json({ content: { ...row, fullPageHtml, jsonLd } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -85,30 +365,43 @@ router.post('/:clientId/generate-blog', async (req, res) => {
     const client = clientRes.rows[0];
 
     const useDemoMode = req.headers['x-data-mode'] === 'demo' || !openRouter.isConfigured;
-    if (useDemoMode) {
-      const aiRes = {
-        title: `${keyword.toUpperCase()} - The Definitive Guide`,
-        metaDescription: `Read our comprehensive guide about ${keyword}. Find everything you need to know, tips, and step-by-step instructions.`,
-        slug: keyword.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-        content: `
-          <h2>Introduction to ${keyword}</h2>
-          <p>This is a simulated blog post for the keyword "${keyword}". In a live setup, Gemini generates an SEO-optimized blog copy targeting this keyword directly.</p>
-          <h2>Key Benefits of ${keyword}</h2>
-          <ul>
-            <li>Higher ranking and visibility</li>
-            <li>Increased traffic from organic search</li>
-            <li>Better user engagement</li>
-          </ul>
-          <h2>Conclusion</h2>
-          <p>Start optimizing your content now to reap the benefits of good SEO.</p>
-        `,
-        wordCount: parseInt(wordCount) || 800,
-        readingTime: `${Math.round((parseInt(wordCount) || 800) / 200)} min read`,
-        focusKeyword: keyword,
-        secondaryKeywords: [`${keyword} tips`, `${keyword} guide`]
-      };
+    const brand = client.business_name || client.domain || 'Us';
+    const slug = keyword.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-      // Save to Postgres
+    if (useDemoMode) {
+      const structured = {
+        title: `${keyword} — The Complete Guide for ${client.location || 'Pondicherry'} Businesses`,
+        metaDescription: `Looking for ${keyword}? This guide covers what to focus on, common mistakes to avoid, and how ${brand} can help — with a clear next step.`,
+        tagPill: 'GUIDE',
+        leadParagraph: `This is a simulated post for "${keyword}", showing every structural section the live generator produces: a lead paragraph, sub-sectioned blocks, a comparison table, a callout, an FAQ accordion and a closing CTA.`,
+        intro: [`Every good post on this topic needs to answer one question first: why does "${keyword}" matter to the reader right now, and what should they do next?`],
+        blocks: [
+          { heading: `Why ${keyword} Matters`, intro: 'Explain the reader\'s problem and why solving it well pays off.', subsections: [
+            { heading: 'Reason one', text: 'A concrete, specific benefit — not a generic claim.' },
+            { heading: 'Reason two', text: 'A second concrete benefit that differentiates a good answer from a shallow one.' },
+          ] },
+          { heading: `What To Look For`, intro: 'Give the reader a practical checklist, not just theory.', subsections: [
+            { heading: 'Checklist item one', text: 'Specific, actionable guidance.' },
+            { heading: 'Checklist item two', text: 'Specific, actionable guidance.' },
+          ] },
+        ],
+        comparisonTable: { columns: ['Feature', 'Doing it yourself', `Through ${brand}`], rows: [['Speed', 'Slower', 'Faster'], ['Expertise', 'Limited', 'Specialist']] },
+        callout: { label: 'Real example', text: `A ${client.location || 'Pondicherry'} business solved this exact problem by working with ${brand} and saw a measurable result within weeks.` },
+        conclusion: `Getting "${keyword}" right comes down to focus and the right partner. ${brand} can help you get there faster.`,
+        faqs: [
+          { question: `What should I focus on first for ${keyword}?`, answer: 'Start with the fundamentals before optimizing details.' },
+          { question: 'What mistakes should I avoid?', answer: 'Avoid generic claims with no specific, checkable detail behind them.' },
+        ],
+        ctaHeading: `Ready to get started with ${keyword}?`,
+        ctaLabel: `Talk to ${brand}`,
+      };
+      const content = composeBlogHtml(structured, client);
+      const wc = parseInt(wordCount) || 800;
+      const jsonLdObj = buildSchemaObject('Article', { headline: structured.title, authorName: `${brand} Team`, datePublished: new Date().toISOString().slice(0, 10) }, client);
+      const jsonLd = `<script type="application/ld+json">\n${JSON.stringify(jsonLdObj, null, 2)}\n</script>`;
+      const fullPageHtml = composeFullBlogPage({ structured, bodyHtml: composeBlogHtml(structured, client, { skipTagPill: true }), client, jsonLd, slug });
+      const aiRes = { title: structured.title, metaDescription: structured.metaDescription, slug, content, jsonLd, fullPageHtml, wordCount: wc, readingTime: `${Math.round(wc / 200)} min read`, focusKeyword: keyword, secondaryKeywords: [`${keyword} tips`, `${keyword} guide`] };
+
       const insertRes = await pool.query(
         `INSERT INTO thedal_content (client_id, content_type, title, body, target_keyword, status, language, word_count, meta_description, slug)
          VALUES ($1, 'blog_post', $2, $3, $4, 'draft', $5, $6, $7, $8) RETURNING id`,
@@ -124,53 +417,131 @@ router.post('/:clientId/generate-blog', async (req, res) => {
       ? 'Write in Tanglish — Tamil words romanized in English, mixed with English. Natural conversational tone as spoken in Tamil Nadu.'
       : 'Write in clear, professional Indian English.';
 
-    const prompt = `You are an SEO content writer for the client "${client.business_name || client.domain}", located in "${client.location || 'Pondicherry'}".
+    const prompt = `You are a senior content-marketing writer producing a publication-ready blog post for "${brand}", located in "${client.location || 'Pondicherry'}".
     Business Category: "${client.business_category || 'Business'}"
     Target keyword: "${keyword}"
     Language style: ${langInstruction}
     Tone: ${tone}
     Target word count: ${wordCount} words
 
-    Write a complete, SEO-optimized blog post. Include:
-    1. Title (with keyword, 50–60 chars)
-    2. Meta description (with keyword, 150–160 chars)
-    3. Introduction (hook the reader in 2–3 sentences)
-    4. 3–4 main sections with H2 headings (include keyword variations)
-    5. Bullet points or numbered lists where relevant
-    6. Local references to Tamil Nadu / Pondicherry where natural
-    7. Conclusion with clear CTA (call or WhatsApp ${client.business_name || client.domain})
-    8. FAQ section (3 questions with answers)
+    Structure this like a real published blog post, not a flat list of headings. Every section below must earn its place — do not pad with generic filler:
+    1. title: 50-60 chars, includes the keyword.
+    2. metaDescription: 150-160 chars, includes the keyword, states a clear reason to click.
+    3. tagPill: ONE short category label (2-3 words, e.g. "HIRING GUIDE", "HOW-TO", "LOCAL SEO").
+    4. leadParagraph: 2-3 sentences that hook the reader and state exactly what they'll get from reading — this is the most important paragraph, make it earn attention.
+    5. intro: 1-2 short paragraphs (array of strings) giving context before the first heading.
+    6. blocks: 3-4 objects, each { heading (H2, includes a keyword variation), intro (1-2 sentences), subsections: 2-4 objects { heading (H3), text (2-3 sentences, specific and concrete — never a vague generic claim) } }. Each block must cover a genuinely distinct angle (e.g. why it matters, what to look for, where to find it, mistakes to avoid) — never repeat the same point across blocks.
+    7. comparisonTable: OPTIONAL — include ONLY if a real comparison is natural for this topic (e.g. DIY vs done-for-you, Option A vs Option B). Shape: { columns: [3-4 strings], rows: [[cells...], ...] }. Omit entirely (use null) if forcing a table would feel artificial.
+    8. callout: ONE realistic, specific example/case-study/stat relevant to ${client.location || 'Pondicherry'} or Tamil Nadu that illustrates the point — { label, text }. Never invent a named person, a specific company name, or a precise statistic that isn't clearly presented as illustrative.
+    9. conclusion: 2-3 sentences that summarize the core decision the reader should make — no new information.
+    10. faqs: 4-5 objects { question, answer }, answering real objections/questions a reader would have, not restating the blocks.
+    11. ctaHeading + ctaLabel: for the closing call-to-action, referencing ${brand}.
 
-    Return ONLY a valid JSON object. Do NOT wrap it in markdown code blocks like \`\`\`json. The JSON object must have exactly these keys:
+    Return ONLY a valid JSON object, no markdown code fences. Keys exactly:
     {
-      "title": "...",
-      "metaDescription": "...",
-      "slug": "url-friendly-slug",
-      "content": "full HTML content with h2, p, ul, ol tags",
-      "wordCount": 800,
-      "readingTime": "5 min read",
-      "focusKeyword": "${keyword}",
-      "secondaryKeywords": ["...", "..."]
+      "title": "...", "metaDescription": "...",
+      "tagPill": "...", "leadParagraph": "...", "intro": ["..."],
+      "blocks": [{ "heading": "...", "intro": "...", "subsections": [{ "heading": "...", "text": "..." }] }],
+      "comparisonTable": { "columns": ["..."], "rows": [["..."]] } | null,
+      "callout": { "label": "...", "text": "..." },
+      "conclusion": "...", "faqs": [{ "question": "...", "answer": "..." }],
+      "ctaHeading": "...", "ctaLabel": "...",
+      "wordCount": ${wordCount}, "readingTime": "X min read",
+      "focusKeyword": "${keyword}", "secondaryKeywords": ["...", "..."]
     }`;
 
     const response = await openRouter.models.generateContent({
       model: openRouter.DEFAULT_MODEL,
       contents: prompt,
+      config: { responseMimeType: 'application/json' },
     });
 
-    const aiRes = parseAIJson(response.text);
+    const structured = parseAIJson(response.text);
+    const content = composeBlogHtml(structured, client);
+    const jsonLdObj = buildSchemaObject('Article', { headline: structured.title, authorName: `${brand} Team`, datePublished: new Date().toISOString().slice(0, 10) }, client);
+    const jsonLd = `<script type="application/ld+json">\n${JSON.stringify(jsonLdObj, null, 2)}\n</script>`;
+    const fullPageHtml = composeFullBlogPage({ structured, bodyHtml: composeBlogHtml(structured, client, { skipTagPill: true }), client, jsonLd, slug });
+    const aiRes = {
+      title: structured.title,
+      metaDescription: structured.metaDescription,
+      slug,
+      content,
+      jsonLd,
+      fullPageHtml,
+      wordCount: structured.wordCount || wordCount,
+      readingTime: structured.readingTime || `${Math.round((structured.wordCount || wordCount) / 200)} min read`,
+      focusKeyword: structured.focusKeyword || keyword,
+      secondaryKeywords: structured.secondaryKeywords || [],
+    };
 
     // Save to Postgres
     const insertRes = await pool.query(
       `INSERT INTO thedal_content (client_id, content_type, title, body, target_keyword, status, language, word_count, meta_description, slug)
        VALUES ($1, 'blog_post', $2, $3, $4, 'draft', $5, $6, $7, $8) RETURNING id`,
-      [clientId, aiRes.title, aiRes.content, keyword, language, aiRes.wordCount || wordCount, aiRes.metaDescription, aiRes.slug]
+      [clientId, aiRes.title, aiRes.content, keyword, language, aiRes.wordCount, aiRes.metaDescription, aiRes.slug]
     );
 
     res.json({ post: { ...aiRes, id: insertRes.rows[0].id } });
   } catch (err) {
     console.error('Failed to generate blog post:', err);
     res.status(500).json({ error: err.message || 'AI blog post generation failed' });
+  }
+});
+
+// POST /:clientId/suggest-sidebar-blurb — writes a short, fresh "about this
+// business" blurb for the preview sidebar, tailored to the specific post
+// topic instead of reusing the lead paragraph verbatim.
+router.post('/:clientId/suggest-sidebar-blurb', async (req, res) => {
+  const { clientId } = req.params;
+  const { title, keyword } = req.body;
+  try {
+    const clientRes = await pool.query('SELECT * FROM thedal_clients WHERE id = $1', [clientId]);
+    if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
+    const client = clientRes.rows[0];
+    const brand = client.business_name || client.domain || 'This business';
+
+    if (!openRouter.isConfigured) {
+      return res.json({ blurb: `${brand} helps local businesses with ${client.business_category || 'their goals'} — reach out to learn how "${title || keyword}" applies to you.` });
+    }
+
+    const prompt = `Write ONE short (2 sentences max, under 240 characters), warm "about us" blurb for a sidebar card on a blog post titled "${title || keyword}".
+Business: ${brand}, category: ${client.business_category || 'Business'}, location: ${client.location || 'Pondicherry'}.
+It should connect the business to THIS specific post's topic, not be generic boilerplate. Return ONLY the blurb text, no quotes, no markdown.`;
+    const response = await openRouter.models.generateContent({ model: openRouter.DEFAULT_MODEL, contents: prompt });
+    const blurb = String(response.text || '').trim().replace(/^["']|["']$/g, '');
+    res.json({ blurb: blurb || `${brand} — reach out to learn more about "${title || keyword}".` });
+  } catch (err) {
+    console.error('Failed to suggest sidebar blurb:', err);
+    res.status(500).json({ error: err.message || 'Failed to suggest blurb' });
+  }
+});
+
+// POST /:clientId/render-preview — recomposes the full page with the given
+// overrides (hero image, author, sidebar blurb, CTA text) applied. No AI call
+// for the main content — cheap and instant, used by the editable preview.
+router.post('/:clientId/render-preview', async (req, res) => {
+  const { clientId } = req.params;
+  const { title, metaDescription, leadParagraph, tagPill, bodyHtml, slug, createdAt, overrides } = req.body;
+  if (!title || !bodyHtml) return res.status(400).json({ error: 'title and bodyHtml are required' });
+  try {
+    const clientRes = await pool.query('SELECT * FROM thedal_clients WHERE id = $1', [clientId]);
+    if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
+    const client = clientRes.rows[0];
+
+    const structured = { title, metaDescription, leadParagraph, tagPill };
+    const jsonLdObj = buildSchemaObject('Article', {
+      headline: title,
+      authorName: overrides?.authorName || `${client.business_name || client.domain} Team`,
+      datePublished: new Date(createdAt || Date.now()).toISOString().slice(0, 10),
+      imageUrl: overrides?.heroImageUrl || undefined,
+    }, client);
+    const jsonLd = `<script type="application/ld+json">\n${JSON.stringify(jsonLdObj, null, 2)}\n</script>`;
+    const fullPageHtml = composeFullBlogPage({ structured, bodyHtml, client, jsonLd, slug, overrides: overrides || {} });
+
+    res.json({ fullPageHtml, jsonLd });
+  } catch (err) {
+    console.error('Failed to render preview:', err);
+    res.status(500).json({ error: err.message || 'Failed to render preview' });
   }
 });
 
@@ -260,22 +631,37 @@ router.post('/:clientId/topic-ideas', async (req, res) => {
       return res.json({ ideas: { topics } });
     }
 
-    // Grab some tracked keywords to feed the prompt
+    // Grab some tracked keywords, and — the primary signal — crawl the
+    // client's actual live website so ideas are grounded in what the
+    // business genuinely offers, not just its stored category label.
     const kwRes = await pool.query('SELECT keyword FROM thedal_keywords WHERE client_id = $1 LIMIT 10', [clientId]);
-    const topKeywords = kwRes.rows.map(k => k.keyword).join(', ') || 'dental clinic';
+    const topKeywords = kwRes.rows.map(k => k.keyword).join(', ');
+    const site = await crawlClientWebsite(client.domain);
 
-    const prompt = `Generate ${count} SEO blog post ideas for ${client.business_name || client.domain} (${client.business_category || 'Business'}) in ${client.location || 'Pondicherry'}.
+    const siteContext = site
+      ? `LIVE WEBSITE CONTENT — this is what was actually found on ${site.origin} just now. Base every idea on services/products/topics that genuinely appear here; do not invent offerings the site doesn't mention.
+    Homepage title: ${site.homepageTitle || '(none)'}
+    Homepage meta description: ${site.homepageMeta || '(none)'}
+    Pages crawled: ${site.pages.map(p => `\n      - ${p.title || p.url} (${p.url}): ${p.text.slice(0, 500)}`).join('')}
+    Other pages found on the site (not crawled): ${site.discoveredLinks.join(', ') || '(none)'}`
+      : `Could not reach the client's live website (${client.domain || 'no domain on file'}) just now — base ideas on the stored business profile instead: category "${client.business_category || 'Business'}"${topKeywords ? `, tracked keywords: ${topKeywords}` : ''}.`;
 
-    Top ranking keywords: ${topKeywords}
+    const prompt = `Generate ${count} SEO blog post ideas for ${client.business_name || client.domain}, located in ${client.location || 'Pondicherry'}.
+
+    ${siteContext}
+    ${topKeywords ? `\nTracked SEO keywords for this client: ${topKeywords}` : ''}
     Month: ${month}
 
+    Every idea must be something this SPECIFIC business could credibly publish given what's actually on their site above — not generic industry advice that could apply to any business in this category.
+
     For each idea return:
-    - title (compelling, click-worthy)
+    - title (compelling, click-worthy, references a real offering/page found on the site where possible)
     - targetKeyword (primary keyword)
     - intent (informational/transactional/navigational)
     - estimatedTraffic (high/medium/low)
     - contentType (how-to/listicle/guide/comparison/local)
     - priority (1-${count})
+    - basedOn (which page or offering from the site context this idea is grounded in, one short phrase)
 
     Return ONLY a valid JSON object. Do NOT wrap it in markdown code blocks like \`\`\`json. The JSON object must have exactly this structure:
     {
@@ -286,7 +672,8 @@ router.post('/:clientId/topic-ideas', async (req, res) => {
           "intent": "...",
           "estimatedTraffic": "...",
           "contentType": "...",
-          "priority": 1
+          "priority": 1,
+          "basedOn": "..."
         },
         ...
       ]
@@ -295,94 +682,169 @@ router.post('/:clientId/topic-ideas', async (req, res) => {
     const response = await openRouter.models.generateContent({
       model: openRouter.DEFAULT_MODEL,
       contents: prompt,
+      config: { responseMimeType: 'application/json' },
     });
 
     const aiRes = parseAIJson(response.text);
-    res.json({ ideas: aiRes });
+    res.json({ ideas: aiRes, siteAnalyzed: site ? { origin: site.origin, pagesCrawled: site.pages.length } : null });
   } catch (err) {
     console.error('Failed to get topic ideas:', err);
     res.status(500).json({ error: err.message || 'AI topic ideas generation failed' });
   }
 });
 
-// POST schema generation
-router.post('/:clientId/schema', async (req, res) => {
+// Asks the AI to pull only REAL, literally-present facts out of the crawled
+// site text for schema types that need unstructured content (Q&A, pricing,
+// article info) — deterministic extraction (regex/DOM) can't do this well.
+async function extractSchemaDataWithAI(schemaType, site) {
+  if (!openRouter.isConfigured || !site?.pages?.length) return null;
+  const allText = site.pages.map((p) => `### ${p.title || p.url} (${p.url})\n${p.text}`).join('\n\n').slice(0, 6000);
+  let instruction;
+  if (schemaType === 'FAQPage') {
+    instruction = 'Extract REAL frequently-asked-question pairs that literally appear in this website content. Return {"faqs":[{"question":"...","answer":"..."}]}. If none genuinely appear, return {"faqs":[]}. Never invent a question or answer not present in the text.';
+  } else if (schemaType === 'Product') {
+    instruction = 'Find a REAL priced product or service package mentioned in this website content (name + price if stated). Return {"name":"...","description":"...","price":"..."}. If no real price is mentioned anywhere, return {"name":null,"description":null,"price":null}. Never invent a price.';
+  } else if (schemaType === 'Article') {
+    instruction = 'This is a business website. If any page below is clearly a blog/article/news post (not a service page), extract its headline and, if explicitly stated, author and publish date. Return {"headline":"...","authorName":"...","datePublished":"YYYY-MM-DD"}. If no article-like page exists, return {"headline":null,"authorName":null,"datePublished":null}. Never invent a date or author.';
+  } else {
+    return null;
+  }
+  try {
+    const response = await openRouter.models.generateContent({
+      model: openRouter.DEFAULT_MODEL,
+      contents: `${instruction}\n\nWEBSITE CONTENT:\n${allText}`,
+      config: { responseMimeType: 'application/json' },
+    });
+    return parseAIJson(response.text);
+  } catch (err) {
+    console.warn('[Content Factory] Schema AI extraction failed:', err.message);
+    return null;
+  }
+}
+
+// POST /:clientId/schema/prefill — auto-fill option: crawl the live site and
+// return best-effort real values per schema field. Anything not confidently
+// found is left blank for the user to fill in manually (never guessed).
+router.post('/:clientId/schema/prefill', async (req, res) => {
   const { clientId } = req.params;
   const { schemaType } = req.body;
+  if (!schemaType) return res.status(400).json({ error: 'schemaType is required' });
+
+  try {
+    const clientRes = await pool.query('SELECT * FROM thedal_clients WHERE id = $1', [clientId]);
+    if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
+    const client = clientRes.rows[0];
+    const site = await crawlClientWebsite(client.domain);
+
+    let data = {};
+    let foundFields = [];
+
+    if (schemaType === 'LocalBusiness') {
+      data = { name: client.business_name || '', streetAddress: site?.addressText || '', addressLocality: client.location || '', addressRegion: '', postalCode: '', telephone: site?.phone || '', priceRange: '' };
+      foundFields = ['name', client.location && 'addressLocality', site?.addressText && 'streetAddress', site?.phone && 'telephone'].filter(Boolean);
+    } else if (schemaType === 'Organization') {
+      data = { name: client.business_name || '', logoUrl: site?.logoUrl || '', socialLinks: (site?.socialLinks || []).join('\n') };
+      foundFields = ['name', site?.logoUrl && 'logoUrl', site?.socialLinks?.length && 'socialLinks'].filter(Boolean);
+    } else if (schemaType === 'BreadcrumbList') {
+      const crumbs = [{ name: 'Home', url: site?.origin ? `${site.origin}/` : `https://${client.domain}/` }];
+      (site?.pages || []).slice(1, 3).forEach((p) => crumbs.push({ name: p.title || p.url, url: p.url }));
+      data = { crumbs };
+      foundFields = (site?.pages?.length || 0) > 1 ? ['crumbs'] : [];
+    } else if (['FAQPage', 'Product', 'Article'].includes(schemaType)) {
+      const extracted = await extractSchemaDataWithAI(schemaType, site);
+      if (schemaType === 'FAQPage') {
+        data = { faqs: extracted?.faqs?.length ? extracted.faqs : [{ question: '', answer: '' }] };
+        foundFields = extracted?.faqs?.length ? ['faqs'] : [];
+      } else if (schemaType === 'Product') {
+        data = { name: extracted?.name || '', description: extracted?.description || '', price: extracted?.price || '', availability: 'InStock' };
+        foundFields = ['name', 'description', 'price'].filter((k) => extracted?.[k]);
+      } else {
+        data = { headline: extracted?.headline || '', authorName: extracted?.authorName || client.client_name || '', datePublished: extracted?.datePublished || '', imageUrl: site?.logoUrl || '' };
+        foundFields = ['headline', 'datePublished'].filter((k) => extracted?.[k]);
+      }
+    } else {
+      return res.status(400).json({ error: 'Unsupported schema type' });
+    }
+
+    res.json({ data, foundFields, siteAnalyzed: site ? { origin: site.origin, pagesCrawled: site.pages.length } : null });
+  } catch (err) {
+    console.error('Failed to prefill schema:', err);
+    res.status(500).json({ error: err.message || 'Prefill failed' });
+  }
+});
+
+// Builds the final JSON-LD strictly from confirmed field data (whether that
+// data came from the auto-fill crawl or was typed in manually) — no silent
+// internal guessing left in this function at all.
+function buildSchemaObject(schemaType, data, client) {
+  const domain = client.domain;
+  const brand = client.business_name || domain;
+  switch (schemaType) {
+    case 'LocalBusiness':
+      return {
+        '@context': 'https://schema.org', '@type': 'LocalBusiness',
+        name: data.name || brand,
+        url: `https://${domain}`,
+        address: { '@type': 'PostalAddress', streetAddress: data.streetAddress || undefined, addressLocality: data.addressLocality || client.location || '', addressRegion: data.addressRegion || undefined, postalCode: data.postalCode || undefined, addressCountry: 'IN' },
+        ...(data.telephone ? { telephone: data.telephone } : {}),
+        ...(data.priceRange ? { priceRange: data.priceRange } : {}),
+        areaServed: data.addressLocality || client.location || '',
+      };
+    case 'FAQPage':
+      return {
+        '@context': 'https://schema.org', '@type': 'FAQPage',
+        mainEntity: (data.faqs || []).filter((f) => f.question && f.answer).map((f) => ({ '@type': 'Question', name: f.question, acceptedAnswer: { '@type': 'Answer', text: f.answer } })),
+      };
+    case 'BreadcrumbList':
+      return {
+        '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+        itemListElement: (data.crumbs || []).filter((c) => c.name && c.url).map((c, i) => ({ '@type': 'ListItem', position: i + 1, name: c.name, item: c.url })),
+      };
+    case 'Product':
+      return {
+        '@context': 'https://schema.org', '@type': 'Product',
+        name: data.name || `${brand} Service`,
+        description: data.description || '',
+        offers: { '@type': 'Offer', priceCurrency: 'INR', price: data.price || '', availability: `https://schema.org/${data.availability || 'InStock'}` },
+      };
+    case 'Organization':
+      return {
+        '@context': 'https://schema.org', '@type': 'Organization',
+        name: data.name || brand,
+        url: `https://${domain}`,
+        ...(data.logoUrl ? { logo: data.logoUrl } : {}),
+        ...(data.socialLinks ? { sameAs: String(data.socialLinks).split('\n').map((s) => s.trim()).filter(Boolean) } : {}),
+      };
+    case 'Article':
+      return {
+        '@context': 'https://schema.org', '@type': 'Article',
+        headline: data.headline || '',
+        author: { '@type': 'Person', name: data.authorName || client.client_name || 'Admin' },
+        publisher: { '@type': 'Organization', name: brand, ...(data.imageUrl ? { logo: { '@type': 'ImageObject', url: data.imageUrl } } : {}) },
+        datePublished: data.datePublished || new Date().toISOString().slice(0, 10),
+        ...(data.imageUrl ? { image: data.imageUrl } : {}),
+      };
+    default:
+      return null;
+  }
+}
+
+// POST schema generation — builds strictly from the caller-supplied `data`
+// (confirmed via the auto-fill-then-edit or fully-manual form on the frontend).
+router.post('/:clientId/schema', async (req, res) => {
+  const { clientId } = req.params;
+  const { schemaType, data } = req.body;
+  if (!schemaType) return res.status(400).json({ error: 'schemaType is required' });
 
   try {
     const clientRes = await pool.query('SELECT * FROM thedal_clients WHERE id = $1', [clientId]);
     if (clientRes.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
     const client = clientRes.rows[0];
 
-    const schemaTemplates = {
-      LocalBusiness: {
-        '@context': 'https://schema.org',
-        '@type': 'LocalBusiness',
-        name: client.business_name || client.domain,
-        url: `https://${client.domain}`,
-        address: { '@type': 'PostalAddress', addressLocality: client.location || 'Pondicherry', addressRegion: 'Tamil Nadu', addressCountry: 'IN' },
-        areaServed: client.location || 'Pondicherry',
-      },
-      FAQPage: {
-        '@context': 'https://schema.org',
-        '@type': 'FAQPage',
-        mainEntity: [
-          { '@type': 'Question', name: `What services does ${client.business_name || client.domain} offer?`, acceptedAnswer: { '@type': 'Answer', text: 'Add your answer here.' } },
-          { '@type': 'Question', name: `Where is ${client.business_name || client.domain} located?`, acceptedAnswer: { '@type': 'Answer', text: `We are located in ${client.location || 'Pondicherry'}.` } },
-        ],
-      },
-      BreadcrumbList: {
-        '@context': 'https://schema.org',
-        '@type': 'BreadcrumbList',
-        itemListElement: [
-          { '@type': 'ListItem', position: 1, name: 'Home', item: `https://${client.domain}` },
-          { '@type': 'ListItem', position: 2, name: 'Services', item: `https://${client.domain}/services` },
-        ],
-      },
-      Product: {
-        '@context': 'https://schema.org',
-        '@type': 'Product',
-        name: `${client.business_name || client.domain} Service`,
-        description: `Premium services offered by ${client.business_name || client.domain}`,
-        offers: {
-          '@type': 'Offer',
-          priceCurrency: 'INR',
-          price: '999',
-          availability: 'https://schema.org/InStock'
-        }
-      },
-      Organization: {
-        '@context': 'https://schema.org',
-        '@type': 'Organization',
-        name: client.business_name || client.domain,
-        url: `https://${client.domain}`,
-        logo: `https://${client.domain}/logo.png`
-      },
-      Article: {
-        '@context': 'https://schema.org',
-        '@type': 'Article',
-        headline: `Latest insights from ${client.business_name || client.domain}`,
-        author: {
-          '@type': 'Person',
-          name: client.client_name || 'Admin'
-        },
-        publisher: {
-          '@type': 'Organization',
-          name: client.business_name || client.domain,
-          logo: {
-            '@type': 'ImageObject',
-            url: `https://${client.domain}/logo.png`
-          }
-        },
-        datePublished: new Date().toISOString().slice(0, 10)
-      }
-    };
-
-    const schemaObj = schemaTemplates[schemaType] || schemaTemplates.LocalBusiness;
+    const schemaObj = buildSchemaObject(schemaType, data || {}, client);
+    if (!schemaObj) return res.status(400).json({ error: 'Unsupported schema type' });
     const jsonLd = `<script type="application/ld+json">\n${JSON.stringify(schemaObj, null, 2)}\n</script>`;
-    
-    // Optional: save to schema library DB
+
     await pool.query(
       `INSERT INTO thedal_schema_library (client_id, schema_type, schema_json, is_deployed)
        VALUES ($1, $2, $3, false) ON CONFLICT DO NOTHING`,

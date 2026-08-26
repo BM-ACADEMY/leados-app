@@ -4,10 +4,13 @@ import { BookOpen, X, ChevronRight, CheckCircle2, Lightbulb, AlertCircle } from 
 import { C } from '../../constants/theme.js';
 import { getSopForPath } from '../../constants/sopContent.js';
 
-export default function SopModal() {
+// sopKey lets a page override which SOP entry to show — e.g. a page with
+// multiple tabs (Content Factory) passes a per-tab key instead of relying on
+// the route, since switching tabs there doesn't change location.pathname.
+export default function SopModal({ sopKey } = {}) {
   const [open, setOpen] = useState(false);
   const location = useLocation();
-  const sop = getSopForPath(location.pathname);
+  const sop = getSopForPath(sopKey || location.pathname);
 
   // Close on Escape key
   useEffect(() => {

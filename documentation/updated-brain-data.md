@@ -2559,6 +2559,12 @@ Service Name: Google Analytics & Search Console Setup
 Plan Name: Analytics Setup Plan
 Status: Active
 
+Service 21:
+Service ID: BMTECHX021
+Service Name: Ecommerce Website
+Plan Name: Standard (25 Products) | Starter (10 Products)
+Status: Active
+
 ==================================================
 PART 3 — INDIVIDUAL SERVICE RECORD
 ==================================================

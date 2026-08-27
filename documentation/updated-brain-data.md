@@ -8710,6 +8710,384 @@ Human Escalation Conditions:
 - Enterprise analytics requirements
 - Custom implementation requests
 
+===========================================
+SERVICE DETAILS
+===========================================
+
+Service ID:
+BMTECHX021
+
+Service Name:
+Ecommerce Website
+
+Plan Name:
+Standard (25 Products) | Starter (10 Products)
+
+Category:
+Website Development / Ecommerce
+
+Status:
+Active
+
+Alternative Names:
+- Online Store
+- Ecommerce Website
+- Web Store
+- Online Shop
+- Website (Ad-referral: "₹9,999 online store demo")
+
+===========================================
+OVERVIEW
+===========================================
+
+Short Description:
+A ready-to-launch ecommerce website built on BM TechX's own platform, delivered in 7 working days with domain, hosting, payment gateway integration, and admin panel included.
+
+Suitable For:
+Businesses wanting to sell online without high agency costs or monthly platform fees — retail, textiles, food, jewellery, and general product sellers.
+
+Main Customer Problem Solved:
+No online presence to sell products; high cost/time of traditional website agencies or recurring Shopify-type monthly fees.
+
+Key Benefits:
+- Store live in 7 working days
+- One-time payment, no monthly platform fee
+- WhatsApp order button + order alerts to owner
+- Cash on Delivery + Razorpay payment gateway
+- GST invoices, Google Analytics, Search Console, sitemap
+
+Unique Selling Points:
+- Pre-built platform = fast (7 days) and low cost (₹9,999) vs agencies (₹40,000–₹60,000, 45 days)
+- No recurring monthly fee unlike Shopify (₹2,000+/month)
+- 30-min Tamil training + recorded video
+- Free domain + hosting + SSL for 1 year
+
+Expected Business Outcome:
+A functional, mobile-ready online store enabling the client to start taking orders online quickly.
+
+===========================================
+PRICING
+===========================================
+
+Setup Fee:
+Not Applicable (one-time project fee)
+
+Monthly Fee:
+Not Applicable (one-time; not a subscription)
+
+One-Time Fee:
+₹9,999 (Standard – up to 25 products)
+₹6,999 (Starter – up to 10 products)
+
+GST Included:
+Not Specified
+
+Minimum Contract:
+Not Applicable (one-time project)
+
+Advance Required:
+Full ₹9,999 preferred; ₹4,999 advance + ₹5,000 before launch also accepted
+
+Payment Schedule:
+One-time (full payment or advance + balance before launch)
+
+Current Offer:
+Not Specified
+
+Offer Expiry Date:
+Not Specified
+
+Renewal (Year 2 onward):
+₹3,999/year Care Plan — includes domain, hosting, SSL, security updates, backups, and 2 hrs content changes.
+(Must be mentioned proactively in the first pricing message — never let client discover it at month 11.)
+
+Customisation Pricing Ladder (add-ons, outside the ₹9,999):
+- Tier 1: Colours, fonts, logo, banners, homepage layout order, product card style — Included Free (changeable anytime from own panel)
+- Tier 2: Designer-made banners, custom brand palette, extra page — ₹2,999–₹4,999
+- Tier 3: Completely new custom layout — ₹19,999
+- Tier 4: Bespoke design, custom features, custom checkout flow — From ₹50,000 (separate project)
+
+Payment Gateway Charges:
+~2% + GST, charged by Razorpay directly to the client (not by BM TechX)
+
+===========================================
+SERVICE FEATURES
+===========================================
+
+Services Included:
+- Up to 25 products uploaded by BM TechX (Standard plan)
+- Domain (.in/.com) free for 1 year
+- Hosting + SSL free for 1 year
+- Payment gateway integration (client's own Razorpay account)
+- Cash on Delivery option
+- WhatsApp order button
+- Order alerts to owner's WhatsApp + email
+- 8 pages including all 4 policy pages
+- GST invoices
+- Google Analytics + Search Console + sitemap setup
+- Admin panel access
+- 30-minute Tamil training + recorded video
+- 1 revision round
+- 15 days post-launch support
+
+Services Not Included:
+- Tier 3/4 custom design and features (quoted separately)
+- Mobile app
+- Ongoing SEO / Google page-1 ranking (quoted separately)
+- Discounts below listed price
+- Faster-than-7-working-day delivery
+
+Monthly Deliverables:
+Not Applicable — one-time delivery project (Care Plan renewal from year 2 covers maintenance only, no new monthly content)
+
+Platforms Covered:
+- BM TechX ecommerce platform (own store subdomain/domain)
+- Razorpay payment gateway
+- Google Analytics / Search Console
+
+Keywords Included:
+Not Applicable (basic on-page setup for indexing only — titles, sitemap, Search Console; not full SEO)
+
+Profile Optimization Included:
+Not Applicable
+
+Google Posts Per Month:
+Not Applicable
+
+Review Management Included:
+No
+
+Competitor Analysis Included:
+No
+
+Local SEO Included:
+No (basic technical setup only — titles, sitemap, Search Console; ranking/SEO quoted separately)
+
+Citation Building Included:
+No
+
+Q&A Optimization Included:
+No
+
+Priority Support Included:
+No (15 days post-launch support included; ongoing support via ₹3,999/year Care Plan)
+
+===========================================
+CONTENT DETAILS
+===========================================
+
+Content Quantity:
+8 pages total (incl. all 4 policy pages) + up to 25 product listings (Standard) / 10 (Starter)
+
+Reels Per Month:
+Not Applicable
+
+Posts Per Month:
+Not Applicable
+
+Stories Per Month:
+Not Applicable
+
+Content Shoots Included:
+No
+
+Ad Creatives Included:
+No
+
+===========================================
+ADVERTISEMENT
+===========================================
+
+Ad Spend Included:
+No
+
+Recommended Ad Budget:
+Not Applicable
+(Ads/SEO offered as post-launch upsell — day 15 of follow-up ladder)
+
+===========================================
+TIMELINE
+===========================================
+
+Setup Timeline:
+Intake form completion required before the 7-day timeline starts (not from payment date)
+
+Expected Delivery Timeline:
+7 working days from intake completion
+
+Expected Initial Results:
+Store live on subdomain within minutes of Razorpay webhook confirmation (provisioning); full store with content live within 7 working days of complete intake
+
+Reporting Frequency:
+Not Specified
+
+Review Meeting Frequency:
+Not Specified
+
+Revision Limit:
+1 revision round included
+
+===========================================
+CLIENT REQUIREMENTS
+===========================================
+
+Client Must Provide (Intake):
+- Logo
+- Product photos
+- Product list with prices
+- GST number
+- Business address
+
+Business Name:
+Client to Provide
+
+Business Address:
+Client to Provide
+
+Business Category:
+Client to Provide (used to route demo link — textiles/food/jewellery/general)
+
+Business Photos:
+Client to Provide
+
+GST Number:
+Client to Provide (asked during qualification)
+
+Razorpay Account:
+Client's own account required for gateway integration
+
+===========================================
+OWNERSHIP
+===========================================
+
+Domain Owner:
+Free for 1st year (client's, renews via ₹3,999/year Care Plan from year 2)
+
+Hosting Owner:
+Free for 1st year (included; renews via Care Plan from year 2)
+
+Hosting Period:
+1 year free, then annual renewal via Care Plan
+
+Hosting Renewal Cost:
+₹3,999/year (Care Plan — includes domain, hosting, SSL, security updates, backups, 2 hrs content changes)
+
+Website Maintenance Included:
+15 days post-launch support only; ongoing maintenance via ₹3,999/year Care Plan
+
+===========================================
+RESULTS & DISCLAIMERS
+===========================================
+
+Results Guarantee:
+No guaranteed Google page-1 rankings or guaranteed sales. Built to be found (titles, sitemap, Search Console) but ranking above established sellers needs ongoing SEO, quoted separately.
+
+Approved Results Disclaimer:
+Store is built for functionality and findability; ranking and sales outcomes depend on ongoing SEO/marketing efforts not included in this one-time fee.
+
+===========================================
+POLICIES
+===========================================
+
+Cancellation Policy:
+Work/intake begins only after payment is confirmed. Incomplete intake is auto-chased at day 2, 4, 7; at day 14 the store is parked and slot released.
+
+Refund Policy:
+No refund policy is promised or agreed within this offer; not to be promised without agreement.
+
+Late Payment Policy:
+Not Specified
+
+Service Pause Policy:
+Intake incomplete beyond day 14 → store build paused, slot released, client notified.
+
+===========================================
+LINKS
+===========================================
+
+Demo Store Links (by category):
+- Textiles, sarees, clothing, boutique → meenakshisilks.bmstore.in
+- Food, snacks, spices, sweets, groceries → annafoods.bmstore.in
+- Jewellery, accessories, general retail, others → srigoldjewels.bmstore.in
+
+Portfolio URL:
+Not Specified
+
+Case Study URL:
+Not Specified
+
+Proposal URL:
+Not Specified
+
+Booking URL:
+Not Applicable (calls offered only if HOT lead requests one)
+
+===========================================
+FAQ
+===========================================
+
+Question 1:
+Is ₹9,999 a monthly fee?
+
+Answer:
+No, it is a one-time payment. From year 2, an optional ₹3,999/year Care Plan covers domain, hosting, SSL, security, backups, and 2 hours of content changes.
+
+Question 2:
+How fast will my store be ready?
+
+Answer:
+7 working days, counted from when the client's intake form (logo, product photos, product list, GST number, address) is complete — not from the date of payment.
+
+Question 3:
+Can I customise the design?
+
+Answer:
+Colours, fonts, logo, banners, homepage layout order, and product card style are included free and changeable anytime from the client's own panel. Designer-made banners/custom palette/extra page cost ₹2,999–₹4,999. A completely new custom layout is ₹19,999. Fully bespoke design/features/checkout is a separate project from ₹50,000.
+
+Question 4:
+Will my store rank on Google?
+
+Answer:
+It's built to be found (titles, sitemap, Search Console set up), but ranking above established sellers needs ongoing SEO, which is quoted separately. No page-1 guarantee is given.
+
+Question 5:
+Why is it so cheap compared to other agencies?
+
+Answer:
+The platform is built once and each store is set up on it, which is why delivery is 7 days at ₹9,999 instead of ~45 days at ₹40,000–₹60,000 charged by traditional agencies.
+
+===========================================
+SALES
+===========================================
+
+Recommended Next Question (Demo Delivery):
+Send the category-matched live demo link + 60-second video, then ask which part they liked — the design or the WhatsApp order button.
+
+Cross Sell Opportunity:
+Website SEO, Social Media Management, Meta Ads, Google Ads (offered as post-launch upsell, e.g. day 15 of follow-up ladder).
+
+Lead Scoring:
+- HOT: products ready + start within 2 weeks + has/will get GST, or asks about payment → notify sales within 10 minutes
+- WARM: interested, no timeline, price-only enquiry, "will check with partner" → demo + follow-up sequence, no human needed
+- COLD: student, job seeker, wants free, franchise/reseller enquiry, no product yet → send brochure, tag, close politely
+
+Human Escalation Conditions:
+- Lead asks for a payment link, invoice, or bank details
+- Lead asks for anything in Tier 3 or 4 of the customisation ladder
+- Lead disputes price or asks for a discount twice
+- Existing client with a complaint
+- Question the KB doesn't cover
+- Lead visibly frustrated or repeats same question a 3rd time
+
+Follow-Up Ladder (Pre-Purchase):
+Day +1: did they open the demo · +3: case study · +7: slots remaining this month · +14: single-question ask on what's holding them back · +30: move to monthly broadcast. Never delete a lead.
+
+Follow-Up Ladder (Post-Launch):
+Day 7: review request · Day 15: ads/SEO upsell · Day 30: referral offer (₹1,000 or 3 months Care Plan) · Month 10: renewal reminder.
+
+Internal Notes:
+Standard Plan (₹9,999 / 25 products) is the default recommendation. Starter (₹6,999 / 10 products) is offered as the alternative when a client asks for a discount — never discount the fixed price itself. Never quote below ₹9,999, never promise custom design/features/mobile app within ₹9,999, never promise faster than 7 working days, never promise Google page-1 ranking or guaranteed sales, never start work before payment is confirmed. Every ad-sourced lead must store its ctwa_clid against the lead record for attribution.
+
 ==================================================
 PART 5 — GENERAL POLICIES
 ==================================================

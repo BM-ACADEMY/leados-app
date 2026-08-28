@@ -956,7 +956,15 @@ router.post('/kb/search', async (req, res) => {
     let resolvedHistory = lead_id
       ? await getRecentChatHistory(lead_id)
       : normalizeChatHistory(chat_history);
-    const targetBrand = brand || 'ABM Groups';
+    let targetBrand = brand || 'ABM Groups';
+    const normalizedTargetBrandInitial = String(targetBrand).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (normalizedTargetBrandInitial === 'abmgroups') {
+      const lastUserMsg = query || (resolvedHistory.length ? resolvedHistory[resolvedHistory.length - 1].text : '');
+      const detected = detectExplicitBrand(lastUserMsg);
+      if (detected) {
+        targetBrand = detected;
+      }
+    }
     const normalizedTargetBrand = String(targetBrand).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     const isBmAcademy = normalizedTargetBrand === 'bmacademy';
     const isBmTechx = ['bmtechx', 'growwithkamar'].includes(normalizedTargetBrand);
@@ -1204,7 +1212,15 @@ router.post('/ai/response', async (req, res) => {
     // itself: the model reports back which Course ID(s) it resolved to, and
     // the exact URL for those IDs is substituted in below from the approved
     // catalog, so a lead can never receive a link the model typed/invented.
-    const isBmAcademy = String(persistedBrand || '').trim().toLowerCase() === 'bm academy';
+    let effectiveBrand = persistedBrand || 'ABM Groups';
+    if (effectiveBrand === 'ABM Groups') {
+      const detected = detectExplicitBrand(effectiveMessage);
+      if (detected) {
+        effectiveBrand = detected;
+      }
+    }
+    const isBmAcademy = String(effectiveBrand || '').trim().toLowerCase() === 'bm academy';
+    const isBmTechx = ['bmtechx', 'growwithkamar'].includes(String(effectiveBrand || '').trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
     const courseCatalog = isBmAcademy ? await loadBmAcademyCatalog() : [];
     const bmAcademyCourseIndex = isBmAcademy
       ? courseCatalog.map((course) => `${course.id} | ${course.name}`).join('\n')
@@ -1220,9 +1236,9 @@ router.post('/ai/response', async (req, res) => {
       - REQUIRED RESPONSE LANGUAGE FOR THIS TURN: ${responseLanguageTarget}
       - Current date/time: ${new Date().toISOString()}. Scheduling timezone: ${googleCalendar.TIME_ZONE}.
       - Reply in the same language the lead's current message is written in, regardless of what language earlier turns used. Judge this by the actual words used, not the script: Tamil/Hindi words typed in English letters (Tanglish/Hinglish, e.g. "eppo course start pannuvinga", "kitna fees hai") are that language, not English — reply in that same romanized Tanglish/Hinglish, not in English and not by switching to Tamil/Devanagari script. If the message is written in native Tamil/Hindi script, reply in that same native script. If the message mixes languages, mirror that mix rather than picking one.
-      - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${persistedBrand}".
+      - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${effectiveBrand}".
       - Address the contact naturally by first name ("${firstName || 'there'}") when useful, but do not repeat their name in every sentence.
-      - The brand is sticky. Stay with "${persistedBrand}" unless the current message explicitly names or clearly keywords another ABM brand.
+      - The brand is sticky. Stay with "${effectiveBrand}" unless the current message explicitly names or clearly keywords another ABM brand.
       - "Digital marketing" alone never switches brands. Under BM Academy it means the course; under BM TechX it means the service.
       - Academy learning signals: course, class, syllabus, batch, fees, training, placement, certification.
       - TechX service signals: marketing service/agency, run ads, business growth, website, branding service, lead generation, GMB or SEO service.
@@ -1431,11 +1447,11 @@ router.post('/ai/response', async (req, res) => {
     // message. This protects against provider context loss or stale executions.
     const returnedGreeting = /^(hey|hi|hello|vanakkam)\b[^?!.]*(how can i help|what can i help)/i.test(String(ai_reply).trim());
     if (!isSimpleGreeting && returnedGreeting) {
-      ai_reply = persistedBrand === 'BM TechX'
+      ai_reply = effectiveBrand === 'BM TechX'
         ? 'Yes, BM TechX provides website development and related digital services. What type of website or web-development support do you need?'
         : 'I have your previous messages and will continue from that topic. What specific detail would you like next?';
     }
-    res.json({ ...req.body, brand: persistedBrand, ai_reply });
+    res.json({ ...req.body, brand: effectiveBrand, ai_reply });
   } catch (err) {
     // Keep the WhatsApp workflow moving when every AI model is temporarily
     // slow/unavailable. HTTP 200 prevents an nginx/n8n 504 failure.

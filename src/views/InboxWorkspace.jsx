@@ -37,8 +37,8 @@ const formatBytes = (bytes) => {
 const getNameColor = (name) => {
   if (!name) return '#e91e63';
   const colors = [
-    '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', 
-    '#2196f3', '#03a9f4', '#00bcd4', '#009688', 
+    '#e91e63', '#9c27b0', '#673ab7', '#3f51b5',
+    '#2196f3', '#03a9f4', '#00bcd4', '#009688',
     '#4caf50', '#8bc34a', '#ff9800', '#ff5722'
   ];
   let hash = 0;
@@ -525,7 +525,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
       setAllianceDraftSource('human');
 
       // If window was closed, backend sent a template to reopen it silently.
-      // We must remove the optimistic message because WhatsApp API STRICTLY blocks 
+      // We must remove the optimistic message because WhatsApp API STRICTLY blocks
       // arbitrary media/text outside the 24-hour window. The server never sent the video/text to Meta.
       if (sentMsg?.window_closed) {
         setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
@@ -542,7 +542,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
     } catch (err) {
       // On error, remove the optimistic message
       setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
-      
+
       const errorData = err.response?.data;
       toast.error(errorData?.reason === 'window_closed'
         ? (errorData?.error || 'The 24-hour WhatsApp window is closed. The approved reopen template could not be sent.')
@@ -741,7 +741,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
   const chatImages = localMessages.filter(m => m.type === 'image' && m.media_url && !deletedForMeIds.includes(m.id));
 
   const getMessageText = (m) => m.content || m.message || m.text || '';
-  
+
   const renderMessageWithLinks = (text) => {
     if (!text) return null;
     const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -973,7 +973,7 @@ return (
       {/* ── CHAT PANEL ──────────────────────────────── */}
       <div className={!showChatOnMobile ? 'hide-mobile' : 'w-full-mobile'} style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '13px 18px', borderBottom: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div 
+          <div
             style={{ display: 'flex', alignItems: 'center', gap: 11, cursor: 'pointer' }}
             onClick={() => {
               setShowContactInfoPanel(true);
@@ -1202,7 +1202,7 @@ return (
                         </span>
                       </div>
                     )}
-                    
+
               <div
                 id={`msg-${getMessageIdentity(m) || i}`}
                 key={getMessageIdentity(m) || i}
@@ -1361,7 +1361,7 @@ return (
 
                       {m.media_url && (() => {
                         let fullMediaUrl = m.media_url.startsWith('http') ? m.media_url : `${SOCKET_URL}${m.media_url}`;
-                        
+
                         // Proxy WhatsApp Graph API media URLs
                         if (fullMediaUrl.includes('graph.facebook.com')) {
                           const mediaId = fullMediaUrl.split('/').pop();
@@ -1371,10 +1371,10 @@ return (
                         return (
                           <div style={{ marginBottom: 6 }}>
                             {m.type === 'image' ? (
-                              <img 
-                                src={fullMediaUrl} 
-                                style={{ maxWidth: '100%', borderRadius: 6, minHeight: 100, backgroundColor: C.bg, cursor: 'pointer' }} 
-                                alt="attachment" 
+                              <img
+                                src={fullMediaUrl}
+                                style={{ maxWidth: '100%', borderRadius: 6, minHeight: 100, backgroundColor: C.bg, cursor: 'pointer' }}
+                                alt="attachment"
                                 onClick={() => {
                                   const idx = chatImages.findIndex(img => img.id === m.id);
                                   if (idx !== -1) {
@@ -1579,7 +1579,7 @@ return (
                 )}
               </div>
             </div>
-            
+
                   </div>
                 );
               }}
@@ -1801,8 +1801,8 @@ return (
                   </div>
                 ) : (() => {
                   const query = messageSearchQuery.trim().toLowerCase();
-                  const results = localMessages.filter(m => 
-                    !m.is_deleted && 
+                  const results = localMessages.filter(m =>
+                    !m.is_deleted &&
                     !m.id?.toString().startsWith('optimistic-') &&
                     (m.content || '').toLowerCase().includes(query)
                   );
@@ -1818,7 +1818,7 @@ return (
                   const highlightText = (text, q) => {
                     if (!q) return text;
                     const parts = text.split(new RegExp(`(${q})`, 'gi'));
-                    return parts.map((part, idx) => 
+                    return parts.map((part, idx) =>
                       part.toLowerCase() === q.toLowerCase()
                         ? <span key={idx} style={{ background: '#eab308', color: '#000', padding: '0 2px', borderRadius: 2, fontWeight: 600 }}>{part}</span>
                         : part
@@ -1874,12 +1874,12 @@ return (
                   </button>
                   <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>Contact info</span>
                 </div>
-                <button 
-                  onClick={() => { 
-                    setEditContactData({ ...activeObj }); 
-                    setShowEditContactModal(true); 
-                  }} 
-                  style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: 0, display: 'flex' }} 
+                <button
+                  onClick={() => {
+                    setEditContactData({ ...activeObj });
+                    setShowEditContactModal(true);
+                  }}
+                  style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', padding: 0, display: 'flex' }}
                   title="Edit Contact"
                 >
                   <Edit2 size={18} />
@@ -1917,7 +1917,7 @@ return (
                     </div>
                     <span style={{ fontSize: 12, color: C.text }}>Video</span>
                   </a>
-                  <button 
+                  <button
                     onClick={() => {
                       setShowContactInfoPanel(false);
                       setShowMessageSearchPanel(true);
@@ -1936,17 +1936,17 @@ return (
               {/* SalesOS Lead Details Section */}
               <div style={{ padding: '16px 18px', borderBottom: '1px solid ' + C.border }}>
                 <h3 style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 600, color: C.text }}>SalesOS Details</h3>
-                
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                   <span style={{ color: C.muted, fontSize: 13 }}>Lead Score</span>
                   <span style={{ color: C.text, fontSize: 13, fontWeight: 600, color: (activeObj?.score > 50) ? '#10b981' : C.text }}>{activeObj?.score || 0}</span>
                 </div>
-                
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                   <span style={{ color: C.muted, fontSize: 13 }}>Stage</span>
                   <span style={{ color: C.text, fontSize: 12, fontWeight: 500, padding: '2px 8px', background: C.bg, borderRadius: 12, border: '1px solid ' + C.border }}>{activeObj?.stage || 'NEW'}</span>
                 </div>
-                
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                   <span style={{ color: C.muted, fontSize: 13 }}>Owner</span>
                   <span style={{ color: C.text, fontSize: 13, fontWeight: 500 }}>{activeObj?.owner || 'AI Bot'}</span>
@@ -1987,13 +1987,13 @@ return (
             <div style={{ background: C.card, padding: 24, borderRadius: 12, width: 340, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', border: '1px solid ' + C.border }}>
               <h3 style={{ margin: '0 0 10px 0', color: C.text, fontSize: 18, fontWeight: 600 }}>Delete Message?</h3>
               <p style={{ margin: '0 0 20px 0', color: C.muted, fontSize: 14, lineHeight: 1.5 }}>
-                {isMsgLead 
+                {isMsgLead
                   ? 'This message will be hidden from your chat view. The contact will still be able to see it.'
                   : 'Choose whether you want to delete this message only for yourself or for everyone.'}
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {!isMsgLead && (
-                  <button 
+                  <button
                     onClick={async () => {
                       try {
                         await inboxApi.deleteMessage(deleteModalMsg.id);
@@ -2001,23 +2001,23 @@ return (
                       } catch (e) {
                         alert("Failed to delete for everyone");
                       }
-                    }} 
+                    }}
                     style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: C.red || '#ef4444', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 14 }}
                   >
                     Delete for everyone
                   </button>
                 )}
-                <button 
+                <button
                   onClick={() => {
                     hideMessageForMe(deleteModalMsg.id);
                     setDeleteModalMsg(null);
-                  }} 
+                  }}
                   style={{ padding: '10px 16px', borderRadius: 8, border: '1px solid ' + C.border, background: isMsgLead ? (C.red || '#ef4444') : 'transparent', color: isMsgLead ? '#fff' : C.text, cursor: 'pointer', fontWeight: 500, fontSize: 14 }}
                 >
                   Delete for me
                 </button>
-                <button 
-                  onClick={() => setDeleteModalMsg(null)} 
+                <button
+                  onClick={() => setDeleteModalMsg(null)}
                   style={{ padding: '10px 16px', borderRadius: 8, border: 'none', background: 'transparent', color: C.muted, cursor: 'pointer', fontWeight: 500, fontSize: 14 }}
                 >
                   Cancel
@@ -2142,7 +2142,7 @@ return (
       {/* Lightbox Modal */}
       {zoomedImageIndex !== null && chatImages[zoomedImageIndex] && (() => {
         const currentImgUrl = chatImages[zoomedImageIndex].media_url.startsWith('http') ? chatImages[zoomedImageIndex].media_url : `${SOCKET_URL}${chatImages[zoomedImageIndex].media_url}`;
-        
+
         return (
           <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.95)', zIndex: 9999, display: 'flex', flexDirection: 'column', userSelect: 'none' }}>
             {/* Top Toolbar */}
@@ -2180,11 +2180,11 @@ return (
 
               {/* Image */}
               <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: lightboxZoomLevel > 1 ? 'auto' : 'hidden' }}>
-                <img 
+                <img
                   src={currentImgUrl}
-                  style={{ 
-                    maxHeight: lightboxZoomLevel > 1 ? 'none' : '90%', 
-                    maxWidth: lightboxZoomLevel > 1 ? 'none' : '90%', 
+                  style={{
+                    maxHeight: lightboxZoomLevel > 1 ? 'none' : '90%',
+                    maxWidth: lightboxZoomLevel > 1 ? 'none' : '90%',
                     transform: `scale(${lightboxZoomLevel})`,
                     transformOrigin: 'center center',
                     transition: lightboxZoomLevel === 1 ? 'transform 0.2s ease-out' : 'none',
@@ -2205,7 +2205,7 @@ return (
             {/* Thumbnails Gallery (Bottom) */}
             <div style={{ height: 100, background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '0 24px', overflowX: 'auto' }}>
               {chatImages.map((img, idx) => (
-                <div 
+                <div
                   key={img.id}
                   onClick={() => { setZoomedImageIndex(idx); setLightboxZoomLevel(1); }}
                   style={{
@@ -2220,10 +2220,10 @@ return (
                     flexShrink: 0
                   }}
                 >
-                  <img 
-                    src={img.media_url.startsWith('http') ? img.media_url : `${SOCKET_URL}${img.media_url}`} 
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                    alt="Thumbnail" 
+                  <img
+                    src={img.media_url.startsWith('http') ? img.media_url : `${SOCKET_URL}${img.media_url}`}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    alt="Thumbnail"
                   />
                 </div>
               ))}

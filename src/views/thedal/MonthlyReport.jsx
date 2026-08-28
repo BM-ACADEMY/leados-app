@@ -135,15 +135,20 @@ export default function MonthlyReport() {
   });
   
   // Module selection state
+  // All eight default on — a "Monthly Report" should be comprehensive by
+  // default. Previously four of these defaulted off, so their entire section
+  // silently never rendered unless the user happened to notice and enable
+  // the toggle first, which read as "the report is broken / data is missing"
+  // rather than "this module was opted out."
   const [modules, setModules] = useState({
     keywordTracking: true,
     gscIntel: true,
     onPageAudit: true,
     backlinkTracker: true,
-    serpRadar: false,
-    gapHunter: false,
-    competitorSpy: false,
-    schemaLibrary: false
+    serpRadar: true,
+    gapHunter: true,
+    competitorSpy: true,
+    schemaLibrary: true
   });
   // Fetch real data for preview
   useEffect(() => {
@@ -153,7 +158,6 @@ export default function MonthlyReport() {
       setReportData(prev => ({ ...prev, loading: true }));
       try {
         const clientDomain = activeClient.domain || activeClient.website || activeClient.website_url || '';
-        const clientName = activeClient.business_name || '';
         const cleanDomain = clientDomain.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0].toLowerCase();
 
         const results = await Promise.allSettled([
@@ -163,9 +167,9 @@ export default function MonthlyReport() {
           api.get(`/thedal/gscintel?clientId=${encodeURIComponent(activeClient.id)}&siteUrl=${encodeURIComponent(clientDomain)}&startDate=${startDate}&endDate=${endDate}`),
           api.get(`/thedal/seo-audit/saved?clientId=${encodeURIComponent(activeClient.id)}`),
           api.get(`/thedal/backlinks/history?domain=${encodeURIComponent(cleanDomain)}&startDate=${startDate}&endDate=${endDate}`),
-          api.get('/thedal/competitorspy/history'),
-          api.get('/thedal/schemalibrary'),
-          api.get(`/thedal/serpradar/history?domain=${encodeURIComponent(cleanDomain)}&startDate=${startDate}&endDate=${endDate}`),
+          api.get(`/thedal/competitorspy/history?clientId=${encodeURIComponent(activeClient.id)}`),
+          api.get(`/thedal/content/${encodeURIComponent(activeClient.id)}/schemas`),
+          api.get(`/thedal/serpradar/history?clientId=${encodeURIComponent(activeClient.id)}&startDate=${startDate}&endDate=${endDate}`),
           api.get(`/thedal/gaphunter/history?domain=${encodeURIComponent(cleanDomain)}&startDate=${startDate}&endDate=${endDate}`)
         ]);
         
@@ -200,18 +204,18 @@ export default function MonthlyReport() {
             !cleanDomain || String(item.domain || '').replace(/^www\./i, '').toLowerCase() === cleanDomain
           );
         }
+        // Already scoped to this client server-side (by client_id, via the
+        // ?clientId= query param) — no more guessing relevance from query text.
         const scopedCompetitors = filterHistoryByPeriod(compRes);
-        if (scopedCompetitors?.history) {
-          scopedCompetitors.history = scopedCompetitors.history.filter(item => {
-            const query = String(item.query || '').toLowerCase();
-            return query.includes(cleanDomain) || query.includes(clientName.toLowerCase());
-          });
-        }
-        const schemaItems = schemaRes?.items || [];
-        const scopedSchema = schemaItems.filter(item => {
-          const target = String(item.url || item.target_url || item.domain || item.website || '').toLowerCase();
-          return target && (!cleanDomain || target.includes(cleanDomain));
-        });
+        // Already scoped to this client server-side (by client_id, not a
+        // fragile URL/domain text match) — map its real columns to the
+        // shape the report table expects.
+        const scopedSchema = (schemaRes?.items || []).map(item => ({
+          title: `${item.schema_type || 'Schema'} — ${item.target_page || 'No page assigned'}`,
+          schema_type: item.schema_type,
+          page_url: item.target_page,
+          status: item.is_deployed ? 'active' : 'draft',
+        }));
         const rawKeywords = Array.isArray(kwRes) ? kwRes : (kwRes?.items || kwRes?.keywords || []);
         const rangeStart = new Date(`${startDate}T00:00:00`).getTime();
         const rangeEnd = new Date(`${endDate}T23:59:59.999`).getTime();
@@ -231,10 +235,13 @@ export default function MonthlyReport() {
             checkedInPeriod: timestamp === null || (Number.isFinite(timestamp) && timestamp >= rangeStart && timestamp <= rangeEnd)
           };
         });
+        // An audit is a current-state snapshot, not a per-period activity log —
+        // like tracked keywords, it should stay visible even when its last-run
+        // date falls outside the selected range, just flagged as stale rather
+        // than hidden entirely (hiding it read as "no audit was ever run").
         const auditTimestamp = auditSavedRes?.updatedAt ? new Date(auditSavedRes.updatedAt).getTime() : null;
-        const savedAudit = auditSavedRes?.saved && (!auditTimestamp || (auditTimestamp >= rangeStart && auditTimestamp <= rangeEnd))
-          ? auditSavedRes.auditData
-          : null;
+        const savedAudit = auditSavedRes?.saved ? auditSavedRes.auditData : null;
+        const auditOutsidePeriod = !!(savedAudit && auditTimestamp && (auditTimestamp < rangeStart || auditTimestamp > rangeEnd));
         const auditScores = savedAudit
           ? [savedAudit.onPage?.score, savedAudit.technical?.score, savedAudit.local?.score].filter(score => Number.isFinite(Number(score)))
           : [];
@@ -244,7 +251,9 @@ export default function MonthlyReport() {
             ? Number(savedAudit.overallScore)
             : auditScores.length
               ? Math.round(auditScores.reduce((sum, score) => sum + Number(score), 0) / auditScores.length)
-              : 0
+              : 0,
+          outsidePeriod: auditOutsidePeriod,
+          lastRunAt: auditSavedRes?.updatedAt || null,
         } : null;
 
         setReportData({
@@ -682,6 +691,38 @@ export default function MonthlyReport() {
 
   const renderGscSection = () => {
     const gsc = reportData.gsc || {};
+
+    // gscintel never errors when the client isn't connected — it returns
+    // { isVerified: false } with 200 OK — so without this check the section
+    // just silently rendered "No data available" everywhere, indistinguishable
+    // from a connected client with genuinely zero organic traffic.
+    if (gsc.isVerified === false || gsc.error) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, height: '100%', flex: 1, minHeight: '230mm' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #f1f5f9', paddingBottom: 16 }}>
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontFamily: "'Syne', sans-serif" }}>
+              <Search size={24} color="#a855f7" /> Google Search Console Analytics
+            </h2>
+            <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Organic Search Intel</span>
+          </div>
+          <div style={{ background: '#faf5ff', border: '1px solid #e9d5ff', padding: '30px 24px', borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ background: '#a855f7', color: '#ffffff', width: 40, height: 40, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h4 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#581c87' }}>Google Search Console Not Connected</h4>
+                <p style={{ margin: '4px 0 0 0', fontSize: 13, color: '#6b21a8' }}>{activeClient.business_name} has no authorized Search Console account on file.</p>
+              </div>
+            </div>
+            <div style={{ borderLeft: '3px solid #a855f7', paddingLeft: 16, fontSize: 13, color: '#6b21a8', lineHeight: 1.6 }}>
+              <strong>To populate this section:</strong> Open the <strong>GSC Search Intel</strong> module, connect this client's Google Search Console account via the "Authenticate with Google" button, then re-generate this PDF.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     const metrics = gsc.metrics || {};
     const clicks = metrics.clicks || 0;
     const impressions = metrics.impressions || 0;
@@ -704,6 +745,10 @@ export default function MonthlyReport() {
             <Search size={24} color="#a855f7" /> Google Search Console Analytics
           </h2>
           <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Organic Search Intel</span>
+        </div>
+
+        <div style={{ fontSize: 11, color: '#7e22ce', background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 6, padding: '6px 10px' }}>
+          Live Search Console data for the exact selected period: {reportPeriod}.
         </div>
 
         {/* Metrics Grid */}
@@ -853,6 +898,13 @@ export default function MonthlyReport() {
           </h2>
           <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Technical Diagnostics</span>
         </div>
+
+        {audit.outsidePeriod && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#92400e' }}>
+            <AlertTriangle size={14} />
+            This is the most recent saved audit{audit.lastRunAt ? ` (run ${new Date(audit.lastRunAt).toLocaleDateString()})` : ''}, from outside the selected period {reportPeriod}. Re-run the audit to get results scoped to this window.
+          </div>
+        )}
 
         {/* Health Score Overview */}
         <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: 24, background: '#fef2f2', border: '1px solid #fecaca', padding: 24, borderRadius: 12 }}>
@@ -1026,6 +1078,13 @@ export default function MonthlyReport() {
           <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Domain Authority</span>
         </div>
 
+        {!reportData.backlinks?.history?.length && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fefce8', border: '1px solid #fef08a', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#854d0e' }}>
+            <AlertTriangle size={14} />
+            No backlink scan ran within {reportPeriod} for this domain — this reflects scan activity for the period, not a persisted profile. Run a fresh scan in Backlink Tracker, or widen the date range to include your last scan.
+          </div>
+        )}
+
         {/* Backlink Metrics Grid */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16 }}>
           <div style={{ background: '#fefce8', border: '1px solid #fef08a', borderRadius: 8, padding: 16 }}>
@@ -1123,6 +1182,10 @@ export default function MonthlyReport() {
             <Crosshair size={24} color="#f43f5e" /> Advanced SEO Operations
           </h2>
           <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Competitors & Schema</span>
+        </div>
+
+        <div style={{ fontSize: 11, color: '#64748b', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, padding: '6px 10px' }}>
+          Competitor Spy, SERP Radar, and Gap Hunter below show scans that ran within {reportPeriod}. Schema Library always shows every schema saved for this client — it isn't scoped to a date range, and "Draft" means it hasn't been marked deployed to a live page yet.
         </div>
 
         {/* Competitor Spy details */}

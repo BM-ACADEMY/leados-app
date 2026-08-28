@@ -11,6 +11,15 @@ const pool = new Pool({
   password: process.env.DB_PASS || 'LeadOS_DB@2026',
 });
 
+// Scans were never tied to a client. Consumers (like the Monthly Report)
+// guessed relevance by checking whether the client's domain appeared inside
+// competitors_json — but that column holds the actual top-ranking SERP
+// results for the keyword, which by design often does NOT include the
+// client's own domain (that's the whole point of tracking rank volatility).
+// Nullable so pre-existing rows stay valid.
+pool.query(`ALTER TABLE serp_radar_history ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES thedal_clients(id) ON DELETE CASCADE`)
+  .catch((err) => console.error('Failed to add client_id to serp_radar_history:', err.message));
+
 // Helper to generate consistent, realistic authority metrics for domains
 function generateDomainMetrics(domain, position) {
   let hash = 0;
@@ -84,20 +93,26 @@ function generateDomainMetrics(domain, position) {
 }
 
 router.get('/history', async (req, res) => {
-  const { domain, startDate, endDate } = req.query;
+  const { domain, clientId, startDate, endDate } = req.query;
   try {
     const params = [startDate || null, endDate || null];
-    let domainCondition = '';
-    if (domain) {
+    // Prefer real client_id scoping over the old domain-text-match, which
+    // unreliably assumed the client's own domain would appear among the
+    // tracked keyword's SERP competitors.
+    let scopeCondition = '';
+    if (clientId) {
+      params.push(clientId);
+      scopeCondition = `AND client_id = $3`;
+    } else if (domain) {
       params.push(domain.toLowerCase());
-      domainCondition = `AND LOWER(competitors_json::text) LIKE '%' || $3 || '%'`;
+      scopeCondition = `AND LOWER(competitors_json::text) LIKE '%' || $3 || '%'`;
     }
     const { rows } = await pool.query(
       `SELECT id, keyword, competitors_json, features_json, volatility_score, scanned_at
          FROM serp_radar_history
         WHERE ($1::date IS NULL OR scanned_at >= $1::date)
           AND ($2::date IS NULL OR scanned_at < ($2::date + INTERVAL '1 day'))
-          ${domainCondition}
+          ${scopeCondition}
         ORDER BY scanned_at DESC
         LIMIT 20`,
       params
@@ -109,7 +124,7 @@ router.get('/history', async (req, res) => {
 });
 
 router.post('/scan', async (req, res) => {
-  const { keyword, country = 'India', device = 'desktop' } = req.body;
+  const { keyword, country = 'India', device = 'desktop', clientId = null } = req.body;
   if (!keyword) {
     return res.status(400).json({ error: 'Keyword is required' });
   }
@@ -444,9 +459,9 @@ router.post('/scan', async (req, res) => {
 
     // 8. Save Snapshot to Database
     await pool.query(`
-      INSERT INTO serp_radar_history (keyword, competitors_json, features_json, volatility_score)
-      VALUES ($1, $2, $3, $4)
-    `, [keyword, JSON.stringify(currentCompetitors), JSON.stringify(features), volatilityScore]);
+      INSERT INTO serp_radar_history (keyword, competitors_json, features_json, volatility_score, client_id)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [keyword, JSON.stringify(currentCompetitors), JSON.stringify(features), volatilityScore, clientId]);
 
     // 9. Extract answer box / People Also Ask for Snapshot
     const answerBox = data.answer_box ? {

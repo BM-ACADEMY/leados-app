@@ -21,6 +21,7 @@ const initDb = async () => {
     await pool.query(`ALTER TABLE thedal_content ADD COLUMN IF NOT EXISTS word_count INTEGER`);
     await pool.query(`ALTER TABLE thedal_content ADD COLUMN IF NOT EXISTS meta_description TEXT`);
     await pool.query(`ALTER TABLE thedal_content ADD COLUMN IF NOT EXISTS slug VARCHAR(255)`);
+    await pool.query(`ALTER TABLE thedal_content ADD COLUMN IF NOT EXISTS overrides JSONB DEFAULT '{}'::jsonb`);
     await pool.query(`ALTER TABLE thedal_clients ADD COLUMN IF NOT EXISTS location VARCHAR(255) DEFAULT 'Pondicherry'`);
   } catch (err) {
     console.error('Failed to run content migrations:', err);
@@ -61,29 +62,50 @@ function composeBlogHtml(s, client, { skipTagPill = false } = {}) {
   const lead = s.leadParagraph ? `<p style="font-size:17px;color:#374151;margin:0 0 16px;font-weight:500;">${escapeHtml(s.leadParagraph)}</p>` : '';
   const intro = (Array.isArray(s.intro) ? s.intro : [s.intro].filter(Boolean)).map((p) => `<p style="margin:0 0 16px;color:#374151;">${escapeHtml(p)}</p>`).join('');
 
-  const blocksHtml = (s.blocks || []).map((b) => `
+  // A comparison table or example callout, when present, belongs to whichever
+  // specific block the AI attached it to — rendered inside that block, after
+  // its subsections and before its CTA, the same way a real published article
+  // ties a table/example to the section it's actually about instead of
+  // dumping both in a generic zone at the end of the post.
+  const renderTable = (t) => (t?.rows?.length && t?.columns?.length) ? `
+    <div style="overflow-x:auto;margin:20px 0;border:1px solid #e5e7eb;border-radius:14px;">
+      <table style="width:100%;min-width:480px;border-collapse:collapse;background:#fff;">
+        <thead><tr>${t.columns.map((c) => `<th style="padding:11px 16px;background:#312e81;color:#fff;text-align:left;font-size:13px;">${escapeHtml(c)}</th>`).join('')}</tr></thead>
+        <tbody>${t.rows.map((row) => `<tr>${row.map((cell, i) => `<td style="padding:11px 16px;border-bottom:1px solid #e5e7eb;font-size:14px;color:${i === row.length - 1 ? '#1e1b4b;font-weight:700' : '#6b7280'};">${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>` : '';
+
+  const renderCallout = (c) => c?.text ? `
+    <div style="background:#fef9c3;border-left:4px solid #eab308;border-radius:10px;padding:18px 22px;margin:20px 0;color:#713f12;font-size:15px;">
+      ${c.label ? `<strong>${escapeHtml(c.label)}:</strong> ` : ''}${escapeHtml(c.text)}
+    </div>` : '';
+
+  // Each block gets its own placeholder image slot (click-to-upload in the
+  // editor — see data-block-image handling on the frontend) and a short,
+  // block-specific CTA button, matching the section-by-section rhythm of a
+  // real published article rather than one image + one CTA for the whole post.
+  const blocksHtml = (s.blocks || []).map((b, i) => `
     <div style="margin-top:44px;">
       <h2 style="font-size:22px;font-weight:700;color:#111827;margin:0 0 16px;line-height:1.3;">${escapeHtml(b.heading)}</h2>
+      <div data-block-image="${i}" style="width:100%;height:220px;border-radius:16px;margin:0 0 20px;border:1px solid #e5e7eb;background:linear-gradient(135deg,#eef2ff,#f3e8ff);display:flex;align-items:center;justify-content:center;color:#818cf8;font-size:13px;font-weight:600;overflow:hidden;text-align:center;padding:12px;">Add an image for this section (1200&times;600 recommended)</div>
       ${b.intro ? `<p style="margin:0 0 20px;color:#374151;">${escapeHtml(b.intro)}</p>` : ''}
       ${(b.subsections || []).map((sub) => `
         <div style="margin-bottom:18px;">
           <h3 style="font-size:16px;font-weight:700;color:#1e1b4b;margin:0 0 6px;">${escapeHtml(sub.heading)}</h3>
           <p style="margin:0;color:#374151;font-size:15px;">${escapeHtml(sub.text)}</p>
         </div>`).join('')}
+      ${renderTable(b.table)}
+      ${renderCallout(b.callout)}
+      <div data-block-cta="${i}" style="text-align:center;margin-top:24px;">
+        <a href="${ctaHref}" target="_blank" rel="noopener noreferrer" style="display:inline-block;min-width:80px;min-height:1em;background:#4338ca;color:#fff;font-weight:700;font-size:13px;padding:12px 28px;border-radius:100px;text-decoration:none;">${escapeHtml(b.ctaLabel || `Talk to ${brand}`)}</a>
+      </div>
     </div>`).join('');
 
-  const table = (s.comparisonTable?.rows?.length && s.comparisonTable?.columns?.length) ? `
-    <div style="overflow-x:auto;margin:24px 0;border:1px solid #e5e7eb;border-radius:14px;">
-      <table style="width:100%;min-width:480px;border-collapse:collapse;background:#fff;">
-        <thead><tr>${s.comparisonTable.columns.map((c) => `<th style="padding:11px 16px;background:#312e81;color:#fff;text-align:left;font-size:13px;">${escapeHtml(c)}</th>`).join('')}</tr></thead>
-        <tbody>${s.comparisonTable.rows.map((row) => `<tr>${row.map((cell, i) => `<td style="padding:11px 16px;border-bottom:1px solid #e5e7eb;font-size:14px;color:${i === row.length - 1 ? '#1e1b4b;font-weight:700' : '#6b7280'};">${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
-      </table>
-    </div>` : '';
-
-  const callout = s.callout?.text ? `
-    <div style="background:#fef9c3;border-left:4px solid #eab308;border-radius:10px;padding:18px 22px;margin:24px 0;color:#713f12;font-size:15px;">
-      ${s.callout.label ? `<strong>${escapeHtml(s.callout.label)}:</strong> ` : ''}${escapeHtml(s.callout.text)}
-    </div>` : '';
+  // Legacy top-level comparisonTable/callout — kept only so drafts saved
+  // before this change (which never attached these to a block) still render
+  // exactly as they did when composed.
+  const table = renderTable(s.comparisonTable);
+  const callout = renderCallout(s.callout);
 
   const conclusion = s.conclusion ? `
     <div style="margin-top:44px;">
@@ -132,6 +154,12 @@ function composeFullBlogPage({ structured, bodyHtml, client, jsonLd, slug, overr
   const heroImageHtml = overrides.heroImageUrl?.trim()
     ? `<img src="${escapeHtml(overrides.heroImageUrl.trim())}" alt="${escapeHtml(structured.title)}" style="width:100%;height:100%;object-fit:cover;" />`
     : 'Add a hero image here (1600&times;800 recommended)';
+  const toHashtag = (w) => `#${String(w).replace(/[^a-zA-Z0-9]/g, '')}`;
+  const defaultHashtags = [structured.tagPill, brand].filter(Boolean).join(' ').split(/\s+/).filter((w) => w.length > 1).map(toHashtag);
+  const hashtags = (overrides.hashtags?.trim()
+    ? overrides.hashtags.trim().split(/[,\s]+/).filter(Boolean).map((h) => (h.startsWith('#') ? h : toHashtag(h)))
+    : defaultHashtags
+  ).slice(0, 6);
 
   const css = `
     .cf-blog { background:#f9fafb; color:#111827; font-family:'Inter',-apple-system,Segoe UI,Roboto,sans-serif; line-height:1.7; font-size:16px; }
@@ -155,11 +183,15 @@ function composeFullBlogPage({ structured, bodyHtml, client, jsonLd, slug, overr
     .cf-blog .brand-row { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
     .cf-blog .brand-logo { width:48px; height:48px; border-radius:50%; background:#1e1b4b; display:flex; align-items:center; justify-content:center; color:#facc15; font-family:'Fraunces',Georgia,serif; font-weight:800; font-size:18px; flex-shrink:0; }
     .cf-blog .side-card p { font-size:14px; color:#6b7280; margin:0; line-height:1.65; }
+    .cf-blog .hashtags { display:flex; flex-wrap:wrap; gap:6px; margin-top:14px; }
+    .cf-blog .hashtag { font-size:11px; font-weight:600; color:#4f46e5; background:#eef2ff; padding:3px 9px; border-radius:100px; }
     .cf-blog .cta-card { background:#f0fdf4; border:1px solid #bbf7d0; }
     .cf-blog .cta-card h3 { color:#166534; font-size:16px; margin-bottom:8px; }
     .cf-blog .wa-btn { display:flex; align-items:center; justify-content:center; gap:8px; background:#16a34a; color:#fff; font-weight:700; font-size:14px; padding:14px; border-radius:12px; text-decoration:none; margin-top:14px; }
     .cf-blog .wa-btn:hover { text-decoration:none; background:#15803d; }
     @media (max-width:880px) { .cf-blog .page { grid-template-columns:1fr; padding:40px 20px 50px; } .cf-blog aside { position:static; } }
+    .cf-blog [data-field] { border-radius:8px; transition:outline .15s ease, background-color .15s ease; }
+    .cf-blog [data-field]:hover { outline:2px dashed #818cf8; outline-offset:3px; cursor:pointer; background:rgba(99,102,241,.06); }
   `.replace(/\n\s+/g, '\n').trim();
 
   return `<!DOCTYPE html>
@@ -183,10 +215,10 @@ ${jsonLd}
         <a href="/">Home</a> &rsaquo; <a href="/blog">Blog</a> &rsaquo; <span class="current">${escapeHtml(structured.title)}</span>
       </nav>
       ${structured.tagPill ? `<span class="tag-pill">${escapeHtml(structured.tagPill.toUpperCase())}</span>` : ''}
-      <h1>${escapeHtml(structured.title)}</h1>
-      <div class="meta-row"><span>${escapeHtml(authorName)}</span><span>${dateLabel}</span></div>
-      <div class="hero-image">${heroImageHtml}</div>
-      <div class="cf-blog-body">
+      <h1 data-field="title">${escapeHtml(structured.title)}</h1>
+      <div class="meta-row"><span data-field="author">${escapeHtml(authorName)}</span><span data-field="date">${dateLabel}</span></div>
+      <div class="hero-image" data-field="hero">${heroImageHtml}</div>
+      <div class="cf-blog-body" data-field="body">
         ${bodyHtml}
       </div>
     </article>
@@ -194,11 +226,12 @@ ${jsonLd}
       <div class="side-card">
         <span class="eyebrow-mini">About ${escapeHtml(brand)}</span>
         <div class="brand-row"><div class="brand-logo">${escapeHtml(initial)}</div><strong>${escapeHtml(brand)}</strong></div>
-        <p>${escapeHtml(sidebarBlurb)}</p>
+        <p data-field="blurb">${escapeHtml(sidebarBlurb)}</p>
+        ${hashtags.length ? `<div class="hashtags" data-field="hashtags">${hashtags.map((h) => `<span class="hashtag">${escapeHtml(h)}</span>`).join('')}</div>` : ''}
       </div>
       <div class="side-card cta-card">
-        <h3>${escapeHtml(ctaHeading)}</h3>
-        <p>${escapeHtml(ctaText)}</p>
+        <h3 data-field="ctaHeading">${escapeHtml(ctaHeading)}</h3>
+        <p data-field="ctaText">${escapeHtml(ctaText)}</p>
         <a href="${waHref}" class="wa-btn" target="_blank" rel="noopener noreferrer">Connect on WhatsApp</a>
       </div>
     </aside>
@@ -321,6 +354,28 @@ router.get('/:clientId', async (req, res) => {
   }
 });
 
+// GET schemas saved for a client — thedal_schema_library was write-only until
+// now (rows were inserted by /:clientId/schema below but nothing ever read
+// them back), so anything generated here was invisible everywhere else,
+// including the Monthly Report's Schema Library section.
+//
+// Registered ahead of the generic /:clientId/:id route below — Express
+// matches routes in registration order, and /:clientId/:id would otherwise
+// greedily match "schemas" as :id and crash trying to use it as an integer.
+router.get('/:clientId/schemas', async (req, res) => {
+  const { clientId } = req.params;
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, schema_type, schema_json, target_page, is_deployed, created_at FROM thedal_schema_library WHERE client_id = $1 ORDER BY created_at DESC',
+      [clientId]
+    );
+    res.json({ items: rows });
+  } catch (err) {
+    console.error('Failed to fetch saved schemas:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch saved schemas' });
+  }
+});
+
 // GET specific content item
 router.get('/:clientId/:id', async (req, res) => {
   const { clientId, id } = req.params;
@@ -339,10 +394,16 @@ router.get('/:clientId/:id', async (req, res) => {
       const clientRes = await pool.query('SELECT * FROM thedal_clients WHERE id = $1', [clientId]);
       const client = clientRes.rows[0];
       if (client) {
+        const overrides = row.overrides || {};
         const structured = { title: row.title, metaDescription: row.meta_description, leadParagraph: row.meta_description };
-        const jsonLdObj = buildSchemaObject('Article', { headline: row.title, authorName: `${client.business_name || client.domain} Team`, datePublished: new Date(row.created_at || Date.now()).toISOString().slice(0, 10) }, client);
+        const jsonLdObj = buildSchemaObject('Article', {
+          headline: row.title,
+          authorName: overrides.authorName || `${client.business_name || client.domain} Team`,
+          datePublished: new Date(overrides.postDate || row.created_at || Date.now()).toISOString().slice(0, 10),
+          imageUrl: overrides.heroImageUrl || undefined,
+        }, client);
         jsonLd = `<script type="application/ld+json">\n${JSON.stringify(jsonLdObj, null, 2)}\n</script>`;
-        fullPageHtml = composeFullBlogPage({ structured, bodyHtml: row.body, client, jsonLd, slug: row.slug });
+        fullPageHtml = composeFullBlogPage({ structured, bodyHtml: row.body, client, jsonLd, slug: row.slug, overrides });
       }
     }
 
@@ -376,17 +437,18 @@ router.post('/:clientId/generate-blog', async (req, res) => {
         leadParagraph: `This is a simulated post for "${keyword}", showing every structural section the live generator produces: a lead paragraph, sub-sectioned blocks, a comparison table, a callout, an FAQ accordion and a closing CTA.`,
         intro: [`Every good post on this topic needs to answer one question first: why does "${keyword}" matter to the reader right now, and what should they do next?`],
         blocks: [
-          { heading: `Why ${keyword} Matters`, intro: 'Explain the reader\'s problem and why solving it well pays off.', subsections: [
+          { heading: `Why ${keyword} Matters`, intro: 'Explain the reader\'s problem and why solving it well pays off.', ctaLabel: 'Get Started Today', subsections: [
             { heading: 'Reason one', text: 'A concrete, specific benefit — not a generic claim.' },
             { heading: 'Reason two', text: 'A second concrete benefit that differentiates a good answer from a shallow one.' },
           ] },
-          { heading: `What To Look For`, intro: 'Give the reader a practical checklist, not just theory.', subsections: [
+          { heading: `What To Look For`, intro: 'Give the reader a practical checklist, not just theory.', ctaLabel: `Talk to ${brand}`, subsections: [
             { heading: 'Checklist item one', text: 'Specific, actionable guidance.' },
             { heading: 'Checklist item two', text: 'Specific, actionable guidance.' },
-          ] },
+          ], table: { columns: ['Feature', 'Doing it yourself', `Through ${brand}`], rows: [['Speed', 'Slower', 'Faster'], ['Expertise', 'Limited', 'Specialist']] } },
+          { heading: `Mistakes To Avoid`, intro: 'Cover the pitfalls that trip up most people on this topic.', ctaLabel: 'See The Checklist', subsections: [
+            { heading: 'Pitfall one', text: 'A specific, avoidable mistake and why it costs more than it seems.' },
+          ], callout: { label: 'Real example', text: `A ${client.location || 'Pondicherry'} business solved this exact problem by working with ${brand} and saw a measurable result within weeks.` } },
         ],
-        comparisonTable: { columns: ['Feature', 'Doing it yourself', `Through ${brand}`], rows: [['Speed', 'Slower', 'Faster'], ['Expertise', 'Limited', 'Specialist']] },
-        callout: { label: 'Real example', text: `A ${client.location || 'Pondicherry'} business solved this exact problem by working with ${brand} and saw a measurable result within weeks.` },
         conclusion: `Getting "${keyword}" right comes down to focus and the right partner. ${brand} can help you get there faster.`,
         faqs: [
           { question: `What should I focus on first for ${keyword}?`, answer: 'Start with the fundamentals before optimizing details.' },
@@ -430,9 +492,9 @@ router.post('/:clientId/generate-blog', async (req, res) => {
     3. tagPill: ONE short category label (2-3 words, e.g. "HIRING GUIDE", "HOW-TO", "LOCAL SEO").
     4. leadParagraph: 2-3 sentences that hook the reader and state exactly what they'll get from reading — this is the most important paragraph, make it earn attention.
     5. intro: 1-2 short paragraphs (array of strings) giving context before the first heading.
-    6. blocks: 3-4 objects, each { heading (H2, includes a keyword variation), intro (1-2 sentences), subsections: 2-4 objects { heading (H3), text (2-3 sentences, specific and concrete — never a vague generic claim) } }. Each block must cover a genuinely distinct angle (e.g. why it matters, what to look for, where to find it, mistakes to avoid) — never repeat the same point across blocks.
-    7. comparisonTable: OPTIONAL — include ONLY if a real comparison is natural for this topic (e.g. DIY vs done-for-you, Option A vs Option B). Shape: { columns: [3-4 strings], rows: [[cells...], ...] }. Omit entirely (use null) if forcing a table would feel artificial.
-    8. callout: ONE realistic, specific example/case-study/stat relevant to ${client.location || 'Pondicherry'} or Tamil Nadu that illustrates the point — { label, text }. Never invent a named person, a specific company name, or a precise statistic that isn't clearly presented as illustrative.
+    6. blocks: 3-4 objects, each { heading (H2, includes a keyword variation), intro (1-2 sentences), ctaLabel (a short, 2-4 word action button specific to THIS section's topic, e.g. "Start Hiring Today", "See The Checklist" — never generic like "Click Here"), subsections: 2-4 objects { heading (H3), text (2-3 sentences, specific and concrete — never a vague generic claim) } }. Each block must cover a genuinely distinct angle (e.g. why it matters, what to look for, where to find it, mistakes to avoid) — never repeat the same point across blocks.
+    7. table: OPTIONAL, attached to AT MOST ONE block — whichever block a real comparison naturally belongs to (e.g. DIY vs done-for-you, Option A vs Option B). Add it as that block's own "table" field: { columns: [3-4 strings], rows: [[cells...], ...] }. Every other block omits "table" entirely. Skip it altogether across all blocks if forcing a comparison would feel artificial for this topic.
+    8. callout: OPTIONAL, attached to AT MOST ONE block — whichever block a realistic, specific example/case-study/stat relevant to ${client.location || 'Pondicherry'} or Tamil Nadu would best illustrate. Add it as that block's own "callout" field: { label, text }. Every other block omits "callout". Never invent a named person, a specific company name, or a precise statistic that isn't clearly presented as illustrative.
     9. conclusion: 2-3 sentences that summarize the core decision the reader should make — no new information.
     10. faqs: 4-5 objects { question, answer }, answering real objections/questions a reader would have, not restating the blocks.
     11. ctaHeading + ctaLabel: for the closing call-to-action, referencing ${brand}.
@@ -441,14 +503,13 @@ router.post('/:clientId/generate-blog', async (req, res) => {
     {
       "title": "...", "metaDescription": "...",
       "tagPill": "...", "leadParagraph": "...", "intro": ["..."],
-      "blocks": [{ "heading": "...", "intro": "...", "subsections": [{ "heading": "...", "text": "..." }] }],
-      "comparisonTable": { "columns": ["..."], "rows": [["..."]] } | null,
-      "callout": { "label": "...", "text": "..." },
+      "blocks": [{ "heading": "...", "intro": "...", "ctaLabel": "...", "subsections": [{ "heading": "...", "text": "..." }], "table": { "columns": ["..."], "rows": [["..."]] }, "callout": { "label": "...", "text": "..." } }],
       "conclusion": "...", "faqs": [{ "question": "...", "answer": "..." }],
       "ctaHeading": "...", "ctaLabel": "...",
       "wordCount": ${wordCount}, "readingTime": "X min read",
       "focusKeyword": "${keyword}", "secondaryKeywords": ["...", "..."]
-    }`;
+    }
+    Only ONE block total should carry "table", only ONE block total should carry "callout" (can be the same or different blocks) — every other block omits both keys entirely.`;
 
     const response = await openRouter.models.generateContent({
       model: openRouter.DEFAULT_MODEL,
@@ -521,7 +582,7 @@ It should connect the business to THIS specific post's topic, not be generic boi
 // for the main content — cheap and instant, used by the editable preview.
 router.post('/:clientId/render-preview', async (req, res) => {
   const { clientId } = req.params;
-  const { title, metaDescription, leadParagraph, tagPill, bodyHtml, slug, createdAt, overrides } = req.body;
+  const { id, title, metaDescription, leadParagraph, tagPill, bodyHtml, slug, createdAt, overrides } = req.body;
   if (!title || !bodyHtml) return res.status(400).json({ error: 'title and bodyHtml are required' });
   try {
     const clientRes = await pool.query('SELECT * FROM thedal_clients WHERE id = $1', [clientId]);
@@ -538,7 +599,20 @@ router.post('/:clientId/render-preview', async (req, res) => {
     const jsonLd = `<script type="application/ld+json">\n${JSON.stringify(jsonLdObj, null, 2)}\n</script>`;
     const fullPageHtml = composeFullBlogPage({ structured, bodyHtml, client, jsonLd, slug, overrides: overrides || {} });
 
-    res.json({ fullPageHtml, jsonLd });
+    // Persist every edit made in the editor (title, body, meta, hero image,
+    // author, date, sidebar blurb, CTA, hashtags) — without this, "Update
+    // Preview" only ever changed what was on screen, so a refresh (or
+    // reopening the draft later) silently threw all of it away.
+    let saved = false;
+    if (id) {
+      const updateRes = await pool.query(
+        `UPDATE thedal_content SET title = $1, body = $2, meta_description = $3, overrides = $4 WHERE id = $5 AND client_id = $6`,
+        [title, bodyHtml, metaDescription, JSON.stringify(overrides || {}), id, clientId]
+      );
+      saved = updateRes.rowCount > 0;
+    }
+
+    res.json({ fullPageHtml, jsonLd, saved });
   } catch (err) {
     console.error('Failed to render preview:', err);
     res.status(500).json({ error: err.message || 'Failed to render preview' });

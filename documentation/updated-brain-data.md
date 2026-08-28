@@ -49,7 +49,7 @@ PART 2 — COMPLETE COURSE LIST
 List every active course and tier.
 
 Course 1: BMA-BC-001 
-Course Name: SMM Creator boothcamp 
+Course Name: SMM Creator bootcamp 
 Tier: – NIL
 Active/Inactive: Active 
 
@@ -104,7 +104,7 @@ Tier: NIL
 Active/Inactive: Active 
 
 Course 12 : BMA-CWWD-008
-Course Name: Wordpress wed design professional
+Course Name: Wordpress web design professional
 Tier: NIL
 Active/Inactive: Active 
 
@@ -464,7 +464,7 @@ Last Verified Date: YYYY-MM-DD
 
 4. Course ID:BMA-BC-004
 Course Name: Web design basic bootcamp 
-Parent Course: Wed design 
+Parent Course: Web design 
 Tier: NIL
 Category: Non coding
 Status: active
@@ -1514,7 +1514,7 @@ Information Verified By:
 Last Verified Date: YYYY-MM-DD
 
 15. Course ID: BMA-CWWD-008
-Course Name: Wordpress wed design professional
+Course Name: Wordpress web design professional
 Parent Course: Web design
 Tier: NIL
 Category: Web design

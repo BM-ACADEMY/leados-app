@@ -8710,7 +8710,6 @@ Website Development, Website SEO, Google Business Profile SEO, Google Ads Manage
 Human Escalation Conditions:
 - GA4 migration
 - Google Tag Manager setup
-- E-commerce tracking
 - Conversion tracking
 - Custom event tracking
 - Enterprise analytics requirements
@@ -8724,7 +8723,7 @@ Service ID:
 BMTECHX021
 
 Service Name:
-Ecommerce Website
+₹9,999 Online Store (Ecommerce Website)
 
 Plan Name:
 Standard (25 Products) | Starter (10 Products)
@@ -8783,7 +8782,6 @@ Not Applicable (one-time; not a subscription)
 
 One-Time Fee:
 ₹9,999 (Standard – up to 25 products)
-₹6,999 (Starter – up to 10 products)
 
 GST Included:
 Not Specified
@@ -8951,7 +8949,7 @@ Business Address:
 Client to Provide
 
 Business Category:
-Client to Provide (used to route demo link — textiles/food/jewellery/general)
+Client to Provide
 
 Business Photos:
 Client to Provide
@@ -9011,10 +9009,8 @@ Intake incomplete beyond day 14 → store build paused, slot released, client no
 LINKS
 ===========================================
 
-Demo Store Links (by category):
-- Textiles, sarees, clothing, boutique → meenakshisilks.bmstore.in
-- Food, snacks, spices, sweets, groceries → annafoods.bmstore.in
-- Jewellery, accessories, general retail, others → srigoldjewels.bmstore.in
+Demo:
+No demo link is shared. If a lead asks for the demo, respond: "Please share your availability, and we can connect on a call."
 
 Portfolio URL:
 Not Specified
@@ -9062,12 +9058,18 @@ Why is it so cheap compared to other agencies?
 Answer:
 The platform is built once and each store is set up on it, which is why delivery is 7 days at ₹9,999 instead of ~45 days at ₹40,000–₹60,000 charged by traditional agencies.
 
+Question 6:
+Can I see a demo of the store?
+
+Answer:
+Please share your availability, and we can connect on a call.
+
 ===========================================
 SALES
 ===========================================
 
-Recommended Next Question (Demo Delivery):
-Send the category-matched live demo link + 60-second video, then ask which part they liked — the design or the WhatsApp order button.
+Recommended Next Question (Demo Request):
+If a lead asks to see a demo, reply: "Please share your availability, and we can connect on a call." Capture the date/time, name, and number, confirm back, and trigger the booking action.
 
 Cross Sell Opportunity:
 Website SEO, Social Media Management, Meta Ads, Google Ads (offered as post-launch upsell, e.g. day 15 of follow-up ladder).
@@ -9086,7 +9088,7 @@ Human Escalation Conditions:
 - Lead visibly frustrated or repeats same question a 3rd time
 
 Follow-Up Ladder (Pre-Purchase):
-Day +1: did they open the demo · +3: case study · +7: slots remaining this month · +14: single-question ask on what's holding them back · +30: move to monthly broadcast. Never delete a lead.
+Day +1: did they book/attend the call · +3: case study · +7: slots remaining this month · +14: single-question ask on what's holding them back · +30: move to monthly broadcast. Never delete a lead.
 
 Follow-Up Ladder (Post-Launch):
 Day 7: review request · Day 15: ads/SEO upsell · Day 30: referral offer (₹1,000 or 3 months Care Plan) · Month 10: renewal reminder.

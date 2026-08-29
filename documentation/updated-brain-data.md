@@ -9010,7 +9010,7 @@ LINKS
 ===========================================
 
 Demo:
-No demo link is shared directly. If a lead asks for the demo, first explain what is included in the ₹9,999 package (1-year free domain, 1-year free hosting + SSL, Cash on Delivery + Razorpay integration, WhatsApp order button + alerts to owner, up to 25 products uploaded, live in 7 days, and no monthly platform fees). Then ask for their availability to connect on a call to see the live demo.
+No demo link is shared directly. If a lead asks for the demo, first explain what is included in the ₹9,999 package (1-year free domain, 1-year free hosting + SSL, Cash on Delivery + Razorpay integration, WhatsApp order button + alerts to owner, up to 25 products uploaded, live in 7 days, and no monthly platform fees). Then ask: "Would you prefer an online video meeting via Google Meet or a normal phone call?"
 
 Portfolio URL:
 Not Specified
@@ -9062,14 +9062,14 @@ Question 6:
 Can I see a demo of the store?
 
 Answer:
-First list the ₹9,999 package inclusions (1-year free domain, 1-year free hosting + SSL, payment gateway, WhatsApp orders, up to 25 products, live in 7 days, no monthly fees) to pitch the value, and then ask the user to share their availability to connect on a call to see the live store demo.
+First list the ₹9,999 package inclusions (1-year free domain, 1-year free hosting + SSL, payment gateway, WhatsApp orders, up to 25 products, live in 7 days, no monthly fees) to pitch the value, and then ask the user: "Would you prefer an online video meeting via Google Meet or a normal phone call?"
 
 ===========================================
 SALES
 ===========================================
 
 Recommended Next Question (Demo Request):
-If a lead asks to see a demo, first pitch/explain what is included in the ₹9,999 package (domain, hosting, payment integration, WhatsApp ordering, up to 25 products, no monthly fees). Then ask: "Please share your availability, and we can connect on a call."
+If a lead asks to see a demo, first pitch/explain what is included in the ₹9,999 package (domain, hosting, payment integration, WhatsApp ordering, up to 25 products, no monthly fees). Then ask: "Would you prefer an online video meeting via Google Meet or a normal phone call?"
 Call Type Handling:
 - If the lead asks for a Google Meet, video call, or screen-share: run the Google Calendar booking automation (collect email, name, time, and generate Google Meet link).
 - If the lead asks for a normal phone call or voice call (or says "normal call", "phone call", "call me"): share the contact number "80725 03693" and ask them to call us directly on this number, or ask for their preferred time so we can call them back.

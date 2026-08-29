@@ -287,7 +287,19 @@ async function buildAudienceTemplateData(code) {
   };
   const samples = (Array.isArray(audience.template_samples) && audience.template_samples.length ? audience.template_samples : [generic]).slice(0, 2);
   const rows = samples.map((sample) => {
-    const values = { ...generic, ...sample, audience: audience.code };
+    const values = {
+      ...generic,
+      ...sample,
+      audience: audience.code,
+      channel_pref: audience.default_channel,
+      consent: ['whatsapp','both'].includes(audience.default_channel) ? 'true' : 'false',
+      source: ['whatsapp','both'].includes(audience.default_channel)
+        ? (['whatsapp','both'].includes(sample.channel_pref) && sample.source && !/(scrap|purchas|directory|research)/i.test(sample.source) ? sample.source : 'website_form')
+        : (sample.source || 'manual_research'),
+      consent_source: ['whatsapp','both'].includes(audience.default_channel) ? (sample.consent_source || 'website_form') : '',
+      consent_evidence: ['whatsapp','both'].includes(audience.default_channel) ? (sample.consent_evidence || 'form_submission_4821') : '',
+      consent_scope: ['whatsapp','both'].includes(audience.default_channel) ? (sample.consent_scope || 'marketing') : '',
+    };
     audience.fields.forEach((field) => { values[field.field_key] = sample[field.field_key] ?? field.sample_value ?? ''; });
     const row = {};
     enabledSystemColumns.forEach((column) => { row[column.label] = values[column.key] ?? ''; });

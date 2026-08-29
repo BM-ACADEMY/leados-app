@@ -297,6 +297,23 @@ const detectExplicitBrand = (message = '') => {
   return BRAND_KEYWORDS.find(({ pattern }) => pattern.test(message))?.name || null;
 };
 
+const resolveActiveBrand = (message = '', history = [], defaultBrand = 'ABM Groups') => {
+  const detected = detectExplicitBrand(message);
+  if (detected) return detected;
+  if (Array.isArray(history)) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const turn = history[i];
+      const role = turn.role || (turn.direction === 'inbound' ? 'user' : 'assistant');
+      if (role === 'user') {
+        const txt = turn.text || turn.content || turn.message || '';
+        const histDetected = detectExplicitBrand(txt);
+        if (histDetected) return histDetected;
+      }
+    }
+  }
+  return defaultBrand;
+};
+
 // Last-resort brand identification: only reached once keyword matching,
 // phone-number lock, and phone_number_id lookup have all failed to find a
 // brand. ABM Groups is deliberately excluded as a candidate — it is the
@@ -959,11 +976,7 @@ router.post('/kb/search', async (req, res) => {
     let targetBrand = brand || 'ABM Groups';
     const normalizedTargetBrandInitial = String(targetBrand).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     if (normalizedTargetBrandInitial === 'abmgroups') {
-      const lastUserMsg = query || (resolvedHistory.length ? resolvedHistory[resolvedHistory.length - 1].text : '');
-      const detected = detectExplicitBrand(lastUserMsg);
-      if (detected) {
-        targetBrand = detected;
-      }
+      targetBrand = resolveActiveBrand(query, resolvedHistory, targetBrand);
     }
     const normalizedTargetBrand = String(targetBrand).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     const isBmAcademy = normalizedTargetBrand === 'bmacademy';
@@ -1214,10 +1227,7 @@ router.post('/ai/response', async (req, res) => {
     // catalog, so a lead can never receive a link the model typed/invented.
     let effectiveBrand = persistedBrand || 'ABM Groups';
     if (effectiveBrand === 'ABM Groups') {
-      const detected = detectExplicitBrand(effectiveMessage);
-      if (detected) {
-        effectiveBrand = detected;
-      }
+      effectiveBrand = resolveActiveBrand(effectiveMessage, resolvedHistory, effectiveBrand);
     }
     const isBmAcademy = String(effectiveBrand || '').trim().toLowerCase() === 'bm academy';
     const isBmTechx = ['bmtechx', 'growwithkamar'].includes(String(effectiveBrand || '').trim().toLowerCase().replace(/[^a-z0-9]/g, ''));

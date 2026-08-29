@@ -1244,7 +1244,7 @@ router.post('/ai/response', async (req, res) => {
     const prompt = `AI BRAIN SYSTEM INSTRUCTIONS (editable in LeadOS):\n${system_instructions || DEFAULT_BOT_BEHAVIOR}\n\n
       NON-NEGOTIABLE ORCHESTRATION RULES:
       - REQUIRED RESPONSE LANGUAGE FOR THIS TURN: ${responseLanguageTarget}
-      - Current date/time: ${new Date().toISOString()}. Scheduling timezone: ${googleCalendar.TIME_ZONE}.
+      - Current date/time: ${new Date().toLocaleString('en-US', { timeZone: googleCalendar.TIME_ZONE })} (Local time in ${googleCalendar.TIME_ZONE}). Scheduling timezone: ${googleCalendar.TIME_ZONE}.
       - Reply in the same language the lead's current message is written in, regardless of what language earlier turns used. Judge this by the actual words used, not the script: Tamil/Hindi words typed in English letters (Tanglish/Hinglish, e.g. "eppo course start pannuvinga", "kitna fees hai") are that language, not English — reply in that same romanized Tanglish/Hinglish, not in English and not by switching to Tamil/Devanagari script. If the message is written in native Tamil/Hindi script, reply in that same native script. If the message mixes languages, mirror that mix rather than picking one.
       - Current contact name: "${leadName || 'unknown'}". Current locked brand: "${effectiveBrand}".
       - Address the contact naturally by first name ("${firstName || 'there'}") when useful, but do not repeat their name in every sentence.
@@ -1293,7 +1293,7 @@ router.post('/ai/response', async (req, res) => {
         "reply": "your generated reply message following the behavior specs",
         "extracted_name": "John Doe", (or null if the user has not provided their name)
         "extracted_email": "john@example.com", (or null if unavailable)
-        "extracted_booking_time": "2026-07-25T16:00:00Z" (or null if the user has not provided a preferred date/time for a call),
+        "extracted_booking_time": "YYYY-MM-DDTHH:mm:ss±HH:MM" (ISO format with correct timezone offset for scheduling timezone ${googleCalendar.TIME_ZONE}, e.g. 2026-07-25T16:00:00+05:30, or null if the user has not provided a preferred date/time for a call),
         "cancel_meeting": false (true ONLY if the lead is clearly asking to cancel/call off their already-booked meeting)${isBmAcademy ? `,
         "syllabus_course_ids": ["BMA-CFSD-010"] (array of Course IDs from the BM ACADEMY COURSE ID INDEX the lead wants a syllabus for; empty array [] if this message isn't a syllabus request or no course is identified yet)` : ''}
       }

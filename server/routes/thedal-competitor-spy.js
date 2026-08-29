@@ -22,6 +22,11 @@ const ensureTable = async () => {
       scanned_at TIMESTAMP DEFAULT NOW()
     )
   `);
+  // Scans were never tied to a client — every consumer (like the Monthly
+  // Report) had to guess relevance by string-matching the client's domain
+  // or business name against the free-text search query, which missed any
+  // scan phrased differently. Nullable so older, pre-existing rows stay valid.
+  await pool.query(`ALTER TABLE competitor_spy_history ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES thedal_clients(id) ON DELETE CASCADE`);
 };
 ensureTable().catch(console.error);
 
@@ -93,6 +98,7 @@ router.post('/scan', async (req, res) => {
     keyword,
     location,
     clientGmbName,
+    clientId    = null,
     language    = 'en',
     resultCount = 20,
   } = req.body;
@@ -125,8 +131,8 @@ router.post('/scan', async (req, res) => {
     const clientPosition = clientEntry ? clientEntry.rank : null;
 
     pool.query(
-      `INSERT INTO competitor_spy_history (query, location, results_json, scanned_at) VALUES ($1, $2, $3, NOW())`,
-      [keyword, location, JSON.stringify(competitors)]
+      `INSERT INTO competitor_spy_history (query, location, results_json, client_id, scanned_at) VALUES ($1, $2, $3, $4, NOW())`,
+      [keyword, location, JSON.stringify(competitors), clientId]
     ).catch(e => console.error('History save error:', e.message));
 
     return res.json({
@@ -225,8 +231,8 @@ router.post('/scan', async (req, res) => {
     const clientPosition = clientEntry ? clientEntry.rank : null;
 
     pool.query(
-      `INSERT INTO competitor_spy_history (query, location, results_json, scanned_at) VALUES ($1, $2, $3, NOW())`,
-      [keyword, location, JSON.stringify(competitors)]
+      `INSERT INTO competitor_spy_history (query, location, results_json, client_id, scanned_at) VALUES ($1, $2, $3, $4, NOW())`,
+      [keyword, location, JSON.stringify(competitors), clientId]
     ).catch(e => console.error('History save error:', e.message));
 
     return res.json({
@@ -248,10 +254,16 @@ router.post('/scan', async (req, res) => {
 // ── GET /history ────────────────────────────────────────────────────────────
 
 router.get('/history', async (req, res) => {
+  const { clientId } = req.query;
   try {
-    const { rows } = await pool.query(
-      `SELECT id, query, location, scanned_at FROM competitor_spy_history ORDER BY scanned_at DESC LIMIT 20`
-    );
+    const { rows } = clientId
+      ? await pool.query(
+          `SELECT id, query, location, scanned_at FROM competitor_spy_history WHERE client_id = $1 ORDER BY scanned_at DESC LIMIT 20`,
+          [clientId]
+        )
+      : await pool.query(
+          `SELECT id, query, location, scanned_at FROM competitor_spy_history ORDER BY scanned_at DESC LIMIT 20`
+        );
     return res.json({ history: rows });
   } catch (err) {
     return res.status(500).json({ error: err.message });

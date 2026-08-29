@@ -282,6 +282,8 @@ function generateMockBacklinks(domain) {
     referringDomains: referringDomains,
     dofollowRatio: dofollowRatio,
     domainAuthority: domainAuthority,
+    provider: 'Simulated',
+    resultType: 'Generated example data — not a real scan'
   };
 
   return { metrics, links };
@@ -581,6 +583,8 @@ router.post('/scan', async (req, res) => {
 router.get('/history', async (req, res) => {
   try {
     const { domain, startDate, endDate } = req.query;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
     const conditions = [];
     const params = [];
     if (domain) {
@@ -596,15 +600,16 @@ router.get('/history', async (req, res) => {
       conditions.push(`scanned_at < ($${params.length}::date + INTERVAL '1 day')`);
     }
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const countResult = await pool.query(`SELECT COUNT(*)::int AS total FROM backlink_tracker_history ${whereClause}`, params);
     const { rows } = await pool.query(
       `SELECT id, domain, metrics, links, scanned_at
          FROM backlink_tracker_history
          ${whereClause}
         ORDER BY scanned_at DESC
-        LIMIT 20`,
-      params
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
-    return res.json({ history: rows });
+    return res.json({ history: rows, total: countResult.rows[0].total, limit, offset });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

@@ -182,13 +182,19 @@ export default function RankDropAlert() {
           {rankResult.mappingCorrected && <div style={{ padding: '10px 12px', marginBottom: 10, borderRadius: 8, background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.3)', color: '#93c5fd', fontSize: 12 }}>Using the selected client's mapped domain <b>{rankResult.domain}</b>. You entered {rankResult.requestedDomain}.</div>}
 
           {rankResult.mode === 'live-check' && rankResult.results?.length > 0 && <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-            {rankResult.results.map(r => <div key={r.keyword} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}` }}>
-              <span style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>{r.keyword}</span>
-              <span style={{ color: C.muted, fontSize: 12 }}>
-                {r.isNew
-                  ? <>Live position now: <b style={{ color: '#fff' }}>{r.found ? `#${r.newRank}` : 'not in top 100'}</b> <span style={{ opacity: 0.7 }}>(first check — saved for next time)</span></>
-                  : <>Position: <b style={{ color: '#fff' }}>{r.oldRank ? `#${r.oldRank}` : 'not in top 100'}</b> {'→'} <b style={{ color: r.hasDrop ? '#f87171' : '#4ade80' }}>{r.found ? `#${r.newRank}` : 'not in top 100'}</b></>}
-              </span>
+            {rankResult.results.map(r => <div key={r.keyword} style={{ padding: 14, borderRadius: 9, background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>{r.keyword}</span>
+                <span style={{ color: C.muted, fontSize: 12 }}>
+                  {r.isNew
+                    ? <>Live position now: <b style={{ color: '#fff' }}>{r.found ? `#${r.newRank}` : 'not in top 100'}</b> <span style={{ opacity: 0.7 }}>(first check — saved for next time)</span></>
+                    : <>Position: <b style={{ color: '#fff' }}>{r.oldRank ? `#${r.oldRank}` : 'not in top 100'}</b> {'→'} <b style={{ color: r.hasDrop ? '#f87171' : '#4ade80' }}>{r.found ? `#${r.newRank}` : 'not in top 100'}</b></>}
+                </span>
+              </div>
+              {(r.rankReasons?.length > 0 || r.rankSuggestions?.length > 0) && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 18, marginTop: 12 }}>
+                <div><b style={{ color: '#fbbf24', fontSize: 12 }}>Why it's at this position</b><ul style={{ color: C.muted, margin: '7px 0 0', paddingLeft: 18, fontSize: 12, lineHeight: 1.6 }}>{r.rankReasons.map(reason => <li key={reason}>{reason}</li>)}</ul></div>
+                <div><b style={{ color: '#60a5fa', fontSize: 12 }}>How to move toward #1-2</b><ol style={{ color: C.muted, margin: '7px 0 0', paddingLeft: 18, fontSize: 12, lineHeight: 1.6 }}>{r.rankSuggestions.map(suggestion => <li key={suggestion}>{suggestion}</li>)}</ol></div>
+              </div>}
             </div>)}
           </div>}
 

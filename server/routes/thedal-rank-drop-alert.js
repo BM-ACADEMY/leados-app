@@ -156,6 +156,59 @@ function describeDrop(oldRank, newRank) {
   return { severity, possibleReasons, solutions };
 }
 
+// Standing advice for the CURRENT position — shown for every checked keyword,
+// not just ones that dropped, so a first-time or stable check still tells you
+// why it's ranking where it is and what would move it toward #1-2.
+function describeCurrentPosition(rank, found) {
+  if (!found || rank == null) {
+    return {
+      rankReasons: [
+        'This page does not appear in the first 100 organic results for this keyword.',
+        'It may not exist yet, may not be indexed, may not target this exact phrase, or is heavily outranked by stronger competitors.'
+      ],
+      rankSuggestions: [
+        'Confirm a page actually targets this keyword; create one if it does not exist.',
+        'Check indexing status in GSC URL Inspection and request indexing if needed.',
+        'Use the exact keyword phrase in the title, H1 and first paragraph.',
+        'Build topical depth: cover related subtopics, add FAQs, data, or media.',
+        'Earn a few relevant backlinks and internal links pointing to this page.'
+      ]
+    };
+  }
+  if (rank <= 3) {
+    return {
+      rankReasons: ['Already in the top 3 for this keyword — strong relevance and authority signals for this term.'],
+      rankSuggestions: [
+        'Keep the content fresh and accurate to defend the position.',
+        'Monitor competitors moving into the top 3 and respond if they add depth you lack.',
+        'Continue earning quality backlinks; do not let the link profile stagnate.'
+      ]
+    };
+  }
+  if (rank <= 10) {
+    return {
+      rankReasons: [`On page 1 at position #${rank}, but not yet top 3 — competitors above it likely have deeper content, more authority, or better on-page relevance.`],
+      rankSuggestions: [
+        'Expand the page to cover the topic more thoroughly than the top 3 results.',
+        'Match the exact search intent (informational vs transactional) shown by the current top 3.',
+        'Improve page speed and Core Web Vitals.',
+        'Earn a few additional relevant, high-quality backlinks.',
+        'Strengthen internal linking from related pages on the site.'
+      ]
+    };
+  }
+  return {
+    rankReasons: [`At position #${rank} — on page 2 or later. The page is likely thinner or less authoritative than the results ranking above it.`],
+    rankSuggestions: [
+      "Rewrite the page to directly and thoroughly answer this exact keyword's intent.",
+      'Add unique value competitors lack: original data, examples, FAQs, or media.',
+      'Build topical authority with supporting content linking back to this page.',
+      'Earn relevant backlinks and citations for this page specifically.',
+      'Verify technical health: indexing, canonical tags, mobile usability, page speed.'
+    ]
+  };
+}
+
 async function fetchOrganicResults(keyword, location) {
   const valueSerpKey = process.env.VALUESERP_API_KEY;
   const serperKey = process.env.SERPER_API_KEY || process.env.SERP_API_KEY;
@@ -399,7 +452,8 @@ router.post('/check-rank', async (req, res) => {
           keyword: kw, newRank: currentRank, found,
           resultUrl: match?.link || null, resultTitle: match?.title || null,
           isNew: !previous, oldRank: previous?.rank ?? null, previousCheckedAt: previous?.checked_at ?? null,
-          hasDrop: false
+          hasDrop: false,
+          ...describeCurrentPosition(currentRank, found)
         };
 
         if (previous) {
@@ -470,7 +524,7 @@ router.post('/check-rank', async (req, res) => {
             domain: hostname,
             requestedDomain: hostname,
             noMatchingClient: true,
-            setupMessage: `No tracked client matches "${hostname}". The client currently selected in the sidebar is mapped to ${sidebarHostname || sidebarClient.website_url}. Select the correct client from the sidebar, or fix that client's website URL in Clients if it's wrong.`,
+            setupMessage: `No tracked client matches "${hostname}". The client currently selected in the sidebar is mapped to ${sidebarHostname || sidebarClient.website_url}. To check THIS domain anyway, add at least one keyword in the "Keywords to check" box above and try again — that runs a live check on any domain, no CRM record needed. Otherwise, select the correct client from the sidebar, or fix that client's website URL in Clients if it's wrong.`,
             trackedKeywords: 0,
             comparableKeywords: 0,
             stableKeywords: 0,
@@ -489,7 +543,7 @@ router.post('/check-rank', async (req, res) => {
           domain: hostname,
           requestedDomain: hostname,
           setupRequired: true,
-          setupMessage: `This client is not connected to Keyword Tracking. Correct the website domain (${storedDomain}), connect it to a Keyword Tracking client, add keywords, and complete at least two rank checks.`,
+          setupMessage: `This client is not connected to Keyword Tracking. To check "${hostname}" right now anyway, add at least one keyword in the "Keywords to check" box above and try again — that runs a live check on any domain, no CRM record needed. To fix it properly instead, correct the website domain (${storedDomain}), connect it to a Keyword Tracking client, add keywords there, and complete at least two rank checks.`,
           trackedKeywords: 0,
           comparableKeywords: 0,
           stableKeywords: 0,

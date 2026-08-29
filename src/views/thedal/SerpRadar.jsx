@@ -8,9 +8,11 @@ import {
   ExternalLink, BarChart3, HelpCircle, Monitor 
 } from 'lucide-react';
 import { api } from '../../services/api.js';
+import { useClient } from '../../contexts/ClientContext.jsx';
 import toast from 'react-hot-toast';
 
 export default function SerpRadar() {
+  const { activeClient } = useClient();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
@@ -62,10 +64,11 @@ export default function SerpRadar() {
     }
     
     try {
-      const res = await api.post('/thedal/serpradar/scan', { 
+      const res = await api.post('/thedal/serpradar/scan', {
         keyword: keyword.trim(),
         country,
-        device
+        device,
+        clientId: activeClient?.id || null
       });
       if (res) {
         setData(res);
@@ -177,6 +180,11 @@ export default function SerpRadar() {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h1 style={{ fontSize: 28, fontWeight: 800, color: '#e2e8f0', margin: 0, fontFamily: "'Syne', sans-serif" }}>SERP Radar</h1><SopModal /></div>
           <p style={{ color: C.muted, fontSize: 14, marginTop: 4 }}>Google search competitor evaluation and keyword intelligence.</p>
+          <p style={{ color: activeClient ? C.muted : '#f87171', fontSize: 12, marginTop: 4 }}>
+            {activeClient
+              ? <>Scans will be saved under <strong style={{ color: C.accent }}>{activeClient.business_name || activeClient.domain}</strong>, so they show up in that client's Monthly Report.</>
+              : 'No active client selected — this scan will be saved unassigned and won\'t appear in any client\'s Monthly Report.'}
+          </p>
         </div>
 
         {/* Live Search Inputs Bar */}

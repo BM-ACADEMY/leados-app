@@ -8,6 +8,7 @@ import {
   Building2, Images, X, ChevronLeft, ChevronRight, User
 } from 'lucide-react';
 import { api } from '../../services/api.js';
+import { useClient } from '../../contexts/ClientContext.jsx';
 
 // ── Sub-components ─────────────────────────────────────────────────────────
 
@@ -490,6 +491,7 @@ const CompetitorCard = ({ comp, isExpanded, onToggle, location }) => {
 // ── Main Page ───────────────────────────────────────────────────────────────
 
 export default function CompetitorSpy() {
+  const { activeClient } = useClient();
   const [keyword, setKeyword]         = useState('');
   const [location, setLocation]       = useState('');
   const [clientName, setClientName]   = useState('');
@@ -505,12 +507,13 @@ export default function CompetitorSpy() {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const res = await api.get('/thedal/competitorspy/history');
+        const qs = activeClient?.id ? `?clientId=${encodeURIComponent(activeClient.id)}` : '';
+        const res = await api.get(`/thedal/competitorspy/history${qs}`);
         setHistory(res.data?.history || []);
       } catch (_) {}
     };
     fetchHistory();
-  }, [data]);
+  }, [data, activeClient?.id]);
 
   const handleScan = async () => {
     if (!keyword.trim() || !location.trim()) {
@@ -527,6 +530,7 @@ export default function CompetitorSpy() {
         keyword:      keyword.trim(),
         location:     location.trim(),
         clientGmbName: clientName.trim() || undefined,
+        clientId:     activeClient?.id || null,
         language,
         resultCount,
       });
@@ -557,6 +561,11 @@ export default function CompetitorSpy() {
           </h1>
           <p style={{ color: C.muted, fontSize: 14, marginTop: 6 }}>
             Reveal what your client's Google Maps competitors are doing — ratings, reviews, photos, and weak spots.
+          </p>
+          <p style={{ color: activeClient ? C.muted : '#f87171', fontSize: 12, marginTop: 4 }}>
+            {activeClient
+              ? <>Scans will be saved under <strong style={{ color: C.accent }}>{activeClient.business_name || activeClient.domain}</strong>, so they show up in that client's Monthly Report.</>
+              : 'No active client selected — this scan will be saved unassigned and won\'t appear in any client\'s Monthly Report.'}
           </p>
         </div>
         <button onClick={() => setShowHistory(h => !h)} style={{

@@ -54,19 +54,21 @@ export default function BacklinkTracker() {
   const [data, setData] = useState(null);
   const [compData, setCompData] = useState(null);
   const [history, setHistory] = useState([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
   const [tracked, setTracked] = useState([]);
   const [error, setError] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [activeTab, setActiveTab] = useState('primary'); // 'primary' or 'competitor'
   const [sidebarTab, setSidebarTab] = useState('history'); // 'history' or 'tracked'
   const [isTracking, setIsTracking] = useState(false);
-  
+
   const itemsPerPage = 10;
+  const historyPerPage = 10;
 
   const abortControllerRef = React.useRef(null);
 
   useEffect(() => {
-    fetchHistory();
     fetchTracked();
     return () => {
       if (abortControllerRef.current) {
@@ -74,6 +76,10 @@ export default function BacklinkTracker() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    fetchHistory(historyPage);
+  }, [historyPage]);
 
   useEffect(() => {
     if (data && tracked.some(t => t.domain === data.domain)) {
@@ -105,10 +111,12 @@ export default function BacklinkTracker() {
     setDomain(inputVal);
   };
 
-  const fetchHistory = async () => {
+  const fetchHistory = async (page = historyPage) => {
     try {
-      const res = await api.get('/thedal/backlinks/history');
+      const offset = (page - 1) * historyPerPage;
+      const res = await api.get(`/thedal/backlinks/history?limit=${historyPerPage}&offset=${offset}`);
       if (res.history) setHistory(res.history);
+      setHistoryTotal(res.total || 0);
     } catch (err) { console.error(err); }
   };
 
@@ -165,7 +173,7 @@ export default function BacklinkTracker() {
       if (res2) setCompData(res2);
       
       setCurrentPage(1);
-      fetchHistory(); 
+      if (historyPage === 1) fetchHistory(1); else setHistoryPage(1);
     } catch (err) {
       if (err.name === 'AbortError') return;
       setError(err.response?.data?.error || err.message || 'Failed to analyze backlinks.');
@@ -409,12 +417,18 @@ export default function BacklinkTracker() {
             </div>
           </div>
 
+          {activeMetrics?.provider && (
+            <div style={{ marginBottom: 14, display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 20, color: activeMetrics.provider === 'DataForSEO' ? '#34d399' : '#fbbf24', background: activeMetrics.provider === 'DataForSEO' ? 'rgba(52,211,153,0.1)' : 'rgba(251,191,36,0.1)', border: `1px solid ${activeMetrics.provider === 'DataForSEO' ? 'rgba(52,211,153,0.3)' : 'rgba(251,191,36,0.3)'}` }} title={activeMetrics.fallbackReason ? `Primary provider unavailable: ${activeMetrics.fallbackReason}` : undefined}>
+              Data source: {activeMetrics.provider}{activeMetrics.provider !== 'DataForSEO' && ' (fallback — verify before acting on these links)'}
+            </div>
+          )}
+
           {/* Metrics */}
           {activeMetrics && (
             <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 30 }}>
               <MetricCard title="Total Backlinks" value={activeMetrics.totalBacklinks?.toLocaleString()} compValue={compMetrics?.totalBacklinks?.toLocaleString()} icon={LinkIcon} color="#3b82f6" />
               <MetricCard title="Referring Domains" value={activeMetrics.referringDomains?.toLocaleString()} compValue={compMetrics?.referringDomains?.toLocaleString()} icon={Globe} color="#8b5cf6" />
-              <MetricCard title="Dofollow Ratio" value={`${activeMetrics.dofollowRatio}%`} compValue={compMetrics ? `${compMetrics.dofollowRatio}%` : undefined} icon={PieChart} color="#10b981" />
+              <MetricCard title="Dofollow Ratio" value={activeMetrics.dofollowRatio != null ? `${activeMetrics.dofollowRatio}%` : 'N/A'} compValue={compMetrics?.dofollowRatio != null ? `${compMetrics.dofollowRatio}%` : undefined} icon={PieChart} color="#10b981" />
               <MetricCard title="Domain Rating (DR)" value={activeMetrics.domainAuthority} compValue={compMetrics?.domainAuthority} icon={Shield} color="#f59e0b" />
             </div>
           )}
@@ -617,6 +631,18 @@ export default function BacklinkTracker() {
               {sidebarTab === 'history' && history.length === 0 && <div style={{ padding: 30, textAlign: 'center', color: C.muted }}>No recent scans.</div>}
               {sidebarTab === 'tracked' && tracked.length === 0 && <div style={{ padding: 30, textAlign: 'center', color: C.muted }}>No domains monitored yet.</div>}
             </div>
+
+            {sidebarTab === 'history' && historyTotal > historyPerPage && (
+              <div style={{ padding: '12px 16px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: C.muted, fontSize: 11 }}>
+                  {Math.min((historyPage - 1) * historyPerPage + 1, historyTotal)}–{Math.min(historyPage * historyPerPage, historyTotal)} of {historyTotal}
+                </span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => setHistoryPage(p => Math.max(1, p - 1))} disabled={historyPage === 1} style={{ padding: '4px 10px', fontSize: 12, background: historyPage === 1 ? 'rgba(15,23,42,0.4)' : C.surface, border: `1px solid ${C.border}`, borderRadius: 6, color: historyPage === 1 ? C.muted : '#f8fafc', cursor: historyPage === 1 ? 'not-allowed' : 'pointer' }}>Prev</button>
+                  <button onClick={() => setHistoryPage(p => Math.min(Math.ceil(historyTotal / historyPerPage), p + 1))} disabled={historyPage >= Math.ceil(historyTotal / historyPerPage)} style={{ padding: '4px 10px', fontSize: 12, background: historyPage >= Math.ceil(historyTotal / historyPerPage) ? 'rgba(15,23,42,0.4)' : C.surface, border: `1px solid ${C.border}`, borderRadius: 6, color: historyPage >= Math.ceil(historyTotal / historyPerPage) ? C.muted : '#f8fafc', cursor: historyPage >= Math.ceil(historyTotal / historyPerPage) ? 'not-allowed' : 'pointer' }}>Next</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

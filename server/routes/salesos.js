@@ -1259,7 +1259,9 @@ router.post('/ai/response', async (req, res) => {
       - Resolve follow-up phrases such as "this course", "that course", "it", "details", "fees", "duration", and "the syllabus" to the most recently selected course/topic in chat history.
       - If a course was identified earlier, keep it as the active course until the user explicitly selects a different course. Do not ask "which course?" again for a follow-up about that active course.
       - If the user asks a FAQ (like contact number, timings, or fees) mid-booking, provide the answer inline and immediately resume the booking flow. Do not reset the conversation or ask for information again.
-      - For meeting requests collect name, mobile number, email, preferred date, and preferred time one missing field at a time. Do not say the meeting is confirmed; Calendar automation decides that after this response.
+      - When a lead requests a call, meeting, or demo, you MUST ask: "Would you prefer an online video meeting via Google Meet or a normal phone call?"
+      - If they choose Google Meet (video meeting): Proceed with Google Calendar booking (collect date, time, name, and email one field at a time). Only ask for email if they choose Google Meet.
+      - If they choose a normal phone call: Do NOT ask for email and do NOT trigger calendar booking. Directly reply with the contact number "80725 03693" and tell them to call us directly, or ask for their preferred time so we can call them back.
       - If the lead gave a date in an earlier message and now gives only a time (or vice versa), combine them from chat history into one extracted_booking_time instead of asking for the date again.
       - Send exactly one concise WhatsApp reply for this user message.
       - Never claim a booking, calendar entry, reminder, or handoff succeeded unless the corresponding workflow result confirms it.

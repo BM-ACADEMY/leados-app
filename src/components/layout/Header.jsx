@@ -3,6 +3,14 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, Bell, X, FileText, Menu } from 'lucide-react';
 import { C } from '../../constants/theme.js';
 
+// Header-scoped palette — matches the sidebar's indigo/purple accent so the
+// two chrome pieces read as one system. Kept local like the sidebar's SB.
+const HB = {
+  accent: '#7c6cf6',
+  card: '#1a1f33',
+  border: '#2a3050',
+};
+
 const LABELS = {
   dashboard: 'Dashboard',
   leads: 'Lead Management',
@@ -136,20 +144,20 @@ export const Header = ({user, onMenuClick}) => {
 
   return (
     <>
-      <div style={{height:54,background:C.surface,borderBottom:'1px solid '+C.border,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 16px',flexShrink:0}}>
-        <div style={{display: 'flex', alignItems: 'center', gap: 12}}>
+      <div style={{height:60,background:C.surface,borderBottom:'1px solid '+C.border,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 24px',flexShrink:0,gap:16}}>
+        <div style={{display: 'flex', alignItems: 'center', gap: 12, minWidth:0}}>
           <button className="show-mobile" onClick={onMenuClick} style={{background:'transparent',border:'none',color:C.muted, display: 'none'}}>
             <Menu size={20} />
           </button>
-          <div>
-            <span style={{fontFamily:"'Syne',sans-serif",fontSize:14,fontWeight:700,color:C.text}}>{activeLabel}</span>
-            <span className="hide-mobile" style={{color:C.dim,fontSize:12,marginLeft:7}}>- LeadOS by BM TechX</span>
+          <div style={{display:'flex',alignItems:'baseline',gap:8,minWidth:0}}>
+            <span style={{fontFamily:"'Syne',sans-serif",fontSize:16,fontWeight:700,color:C.text,whiteSpace:'nowrap'}}>{activeLabel}</span>
+            <span className="hide-mobile" style={{color:C.dim,fontSize:12,whiteSpace:'nowrap'}}>LeadOS by BM TechX</span>
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
           {/* Data Mode Select */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: C.card, border: '1px solid ' + C.border, borderRadius: 7, padding: '4px 8px' }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Mode:</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: HB.card, border: '1px solid ' + HB.border, borderRadius: 8, padding: '6px 10px' }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Mode</span>
             <select
               value={dataMode}
               onChange={(e) => handleDataModeChange(e.target.value)}
@@ -161,7 +169,7 @@ export const Header = ({user, onMenuClick}) => {
                 fontWeight: 800,
                 outline: 'none',
                 cursor: 'pointer',
-                padding: '2px 4px'
+                padding: 0
               }}
             >
               <option value="live" style={{ background: C.surface, color: '#10b981' }}>🟢 Live API</option>
@@ -169,24 +177,26 @@ export const Header = ({user, onMenuClick}) => {
             </select>
           </div>
 
-          <div 
-            onClick={() => setSearchOpen(true)} 
-            style={{display:'flex',alignItems:'center',gap:7,background:C.card,border:'1px solid '+C.border,borderRadius:7,padding:'6px 11px', cursor:'pointer', transition: 'border-color 0.2s'}}
-            onMouseEnter={e => e.currentTarget.style.borderColor = C.accent}
-            onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
+          <div
+            onClick={() => setSearchOpen(true)}
+            className="hide-mobile"
+            style={{display:'flex',alignItems:'center',gap:8,background:HB.card,border:'1px solid '+HB.border,borderRadius:8,padding:'8px 12px', cursor:'pointer', transition: 'border-color 0.2s', width:190}}
+            onMouseEnter={e => e.currentTarget.style.borderColor = HB.accent}
+            onMouseLeave={e => e.currentTarget.style.borderColor = HB.border}
           >
             <Search size={14} color={C.muted} />
-            <span className="hide-mobile" style={{color:C.muted,fontSize:11,width:140,display:'inline-block'}}>Quick search... (Ctrl+K)</span>
+            <span style={{color:C.muted,fontSize:11.5,whiteSpace:'nowrap'}}>Quick search...</span>
+            <span style={{marginLeft:'auto',color:C.dim,fontSize:10,fontWeight:600,background:C.surface,border:'1px solid '+HB.border,borderRadius:4,padding:'1px 5px'}}>⌘K</span>
           </div>
-          <button className="hide-mobile" style={{position:'relative',width:34,height:34,borderRadius:7,background:C.card,border:'1px solid '+C.border,display:'flex',alignItems:'center',justifyContent:'center', cursor:'pointer'}}>
-            <Bell size={14} color={C.muted} />
-            <div style={{position:'absolute',top:7,right:7,width:6,height:6,borderRadius:'50%',background:C.accent}} />
+          <button className="hide-mobile" style={{position:'relative',width:36,height:36,borderRadius:8,background:HB.card,border:'1px solid '+HB.border,display:'flex',alignItems:'center',justifyContent:'center', cursor:'pointer',flexShrink:0}}>
+            <Bell size={15} color={C.muted} />
+            <div style={{position:'absolute',top:8,right:8,width:6,height:6,borderRadius:'50%',background:HB.accent,boxShadow:'0 0 0 2px '+HB.card}} />
           </button>
-          <div style={{display:'flex',alignItems:'center',gap:7,background:C.card,border:'1px solid '+C.border,borderRadius:7,padding:'5px 11px'}}>
-            <div style={{width:22,height:22,borderRadius:'50%',background:'linear-gradient(135deg,'+C.accent+',#ea580c)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:800,color:'#fff'}}>{initial}</div>
-            <div className="hide-mobile">
-              <p style={{fontSize:10,fontWeight:600,color:C.text}}>{nameLabel}</p>
-              <p style={{fontSize:8,color:C.muted}}>{roleLabel}</p>
+          <div style={{display:'flex',alignItems:'center',gap:9,background:HB.card,border:'1px solid '+HB.border,borderRadius:8,padding:'6px 12px 6px 6px'}}>
+            <div style={{width:28,height:28,borderRadius:'50%',background:HB.accent,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:800,color:'#fff',flexShrink:0}}>{initial}</div>
+            <div className="hide-mobile" style={{lineHeight:1.3}}>
+              <p style={{fontSize:11.5,fontWeight:600,color:C.text,whiteSpace:'nowrap'}}>{nameLabel}</p>
+              <p style={{fontSize:9.5,color:C.muted,whiteSpace:'nowrap'}}>{roleLabel}</p>
             </div>
           </div>
         </div>

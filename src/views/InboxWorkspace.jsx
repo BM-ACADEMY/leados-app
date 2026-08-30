@@ -944,9 +944,11 @@ return (
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: C.accent + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: C.accent, flexShrink: 0 }}>
-                    {l.name[0]}
-                  </div>
+                  <img
+                    src={`https://ui-avatars.com/api/?name=${encodeURIComponent(l.name || 'User')}&background=0d5c4f&color=fff&size=100&rounded=true`}
+                    alt={l.name}
+                    style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }}
+                  />
                   <div>
                     <p style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{l.name}</p>
                     <p style={{ fontSize: 9, color: C.muted }}>{l.brand_name || l.brand || 'Manual'}</p>
@@ -955,7 +957,7 @@ return (
                 <div style={{ textAlign: 'right' }}>
                   <p style={{ fontSize: 9, color: C.dim }}>{l.last_contact ? new Date(l.last_contact).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}</p>
                   {Number(l.unread || 0) > 0 && (
-                    <div style={{ marginTop: 4, background: C.accent, color: '#fff', fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 10, display: 'inline-block' }}>
+                    <div style={{ marginTop: 4, background: C.accent, color: '#fff', fontSize: 9, fontWeight: 700, width: 18, height: 18, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContext: 'center', justifyContent: 'center' }}>
                       {Number(l.unread)}
                     </div>
                   )}
@@ -983,9 +985,11 @@ return (
             <button className="show-mobile" onClick={(e) => { e.stopPropagation(); setShowChatOnMobile(false); }} style={{ background: 'transparent', border: 'none', color: C.muted, display: 'none' }}>
               <ChevronLeft size={20} />
             </button>
-            <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.accent + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: C.accent }}>
-              {activeObj?.name?.[0]}
-            </div>
+            <img
+              src={`https://ui-avatars.com/api/?name=${encodeURIComponent(activeObj?.name || 'User')}&background=0d5c4f&color=fff&size=100&rounded=true`}
+              alt={activeObj?.name}
+              style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }}
+            />
             <div>
               <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{activeObj?.name}</p>
               <p style={{ fontSize: 9, color: C.green }}>AI Agent Active - {activeObj?.brand_name || activeObj?.brand || 'Manual'}</p>
@@ -1084,17 +1088,29 @@ return (
         })()}
 
         {/* Messages area */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#0b141a' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#0b2123', position: 'relative' }}>
+          {/* WhatsApp wallpaper overlay */}
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundImage: 'url("/chat-bg.png")',
+            backgroundRepeat: 'repeat',
+            backgroundSize: '450px',
+            opacity: 0.5,
+            pointerEvents: 'none',
+            zIndex: 0
+          }} />
+
           {loadingLead && localMessages.length === 0 && (
-            <p style={{ textAlign: 'center', color: C.muted, fontSize: 11, marginTop: 60 }}>Loading conversation…</p>
+            <p style={{ textAlign: 'center', color: C.muted, fontSize: 11, marginTop: 60, zIndex: 1 }}>Loading conversation…</p>
           )}
           {!loadingLead && localMessages.length === 0 && (
-            <p style={{ textAlign: 'center', color: C.muted, fontSize: 11, marginTop: 60 }}>No messages yet. Start the conversation!</p>
+            <p style={{ textAlign: 'center', color: C.muted, fontSize: 11, marginTop: 60, zIndex: 1 }}>No messages yet. Start the conversation!</p>
           )}
           {filteredMessages.length > 0 && (
             <Virtuoso
               ref={messageListRef}
-              style={{ flex: 1 }}
+              style={{ flex: 1, zIndex: 1, background: 'transparent' }}
               data={filteredMessages}
               computeItemKey={(_, message) => getMessageIdentity(message) || `message-${_}`}
               firstItemIndex={messageFirstItemIndex}
@@ -1246,9 +1262,9 @@ return (
                     <div style={{ position: 'absolute', top: 5, right: 5, zIndex: 10 }}>
                       <button
                         onClick={(e) => { e.stopPropagation(); setActiveDropdownId(activeDropdownId === m.id ? null : m.id); }}
-                        style={{ background: isLead ? C.card : C.accent + '20', border: 'none', cursor: 'pointer', padding: 2, borderRadius: 4, display: 'flex' }}
+                        style={{ background: 'rgba(11, 20, 26, 0.7)', border: 'none', cursor: 'pointer', padding: 2, borderRadius: 4, display: 'flex' }}
                       >
-                        <ChevronDown size={14} color={C.muted} />
+                        <ChevronDown size={14} color="#e9edef" />
                       </button>
 
                       {activeDropdownId === m.id && (
@@ -1390,17 +1406,42 @@ return (
                         );
                       })()}
 
-                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-                        <p style={{ fontSize: '14.2px', color: '#e9edef', whiteSpace: 'pre-wrap', lineHeight: '19px', margin: 0, paddingRight: 6, flex: 1, minWidth: 0 }}>{renderMessageWithLinks(getMessageText(m))}</p>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, paddingBottom: 2 }}>
-                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>{new Date(m.timestamp || m.sent_at || m.time || new Date()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          {!isLead && (
-                             <span style={{ color: (m.status === 'read' || m.status === 'seen') ? '#53bdeb' : 'rgba(255,255,255,0.6)', display: 'flex' }}>
-                               <Check size={14} style={{ marginRight: -6 }} />
-                               <Check size={14} />
-                             </span>
+                      <div style={{ display: 'block', minWidth: '70px', position: 'relative' }}>
+                        <span style={{ fontSize: '14.2px', color: '#e9edef', whiteSpace: 'pre-wrap', lineHeight: '19px', wordBreak: 'break-word' }}>
+                          {renderMessageWithLinks(getMessageText(m))}
+                        </span>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          float: 'right',
+                          margin: '6px 0 -4px 8px',
+                          position: 'relative',
+                          top: 2,
+                          userSelect: 'none'
+                        }}>
+                          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>
+                            {isSending ? 'sending…' : new Date(m.timestamp || m.sent_at || m.time || new Date())
+                              .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
+                              .toLowerCase()}
+                          </span>
+                          {!isLead && !isSending && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                              {m.status === 'failed' ? (
+                                <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 'bold' }}>✕</span>
+                              ) : m.status === 'sent' ? (
+                                <Check size={13} style={{ color: 'rgba(255,255,255,0.5)' }} />
+                              ) : (
+                                <span style={{ color: (m.status === 'read' || m.status === 'seen') ? '#53bdeb' : 'rgba(255,255,255,0.5)', display: 'inline-flex' }}>
+                                  <Check size={13} style={{ marginRight: -6 }} />
+                                  <Check size={13} />
+                                </span>
+                              )}
+                            </span>
                           )}
-                        </div>
+                        </span>
+                        {/* Clear float to prevent collapse */}
+                        <div style={{ clear: 'both' }} />
                       </div>
                       {alliance && Array.isArray(m.template_buttons) && m.template_buttons.length > 0 && (
                         <div style={{ margin: '9px -12px -8px -12px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
@@ -1431,15 +1472,11 @@ return (
                     </>
                   )}
 
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, marginTop: 4 }}>
-                    {m.is_starred && <Star size={11} fill={C.muted} color={C.muted} style={{ opacity: 0.8 }} />}
-                    <p style={{ fontSize: 9, color: C.muted }}>{isSending ? 'Sending…' : getMessageTime(m)}</p>
-                    {!isLead && m.status && !isSending && (
-                      <span style={{ fontSize: 8, color: m.status === 'read' ? C.blue : m.status === 'delivered' ? C.green : m.status === 'window_closed' ? '#ff9800' : C.muted }}>
-                        {m.status === 'read' ? '✓✓' : m.status === 'delivered' ? '✓✓' : m.status === 'sent' ? '✓' : m.status === 'failed' ? '✗' : m.status === 'window_closed' ? '🔒' : ''}
-                      </span>
-                    )}
-                  </div>
+                  {m.is_starred && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4, paddingRight: 4 }}>
+                      <Star size={11} fill={C.muted} color={C.muted} style={{ opacity: 0.8 }} />
+                    </div>
+                  )}
 
                   {/* Reaction Bubbles */}
                   {m.reactions && Object.keys(m.reactions).length > 0 && (

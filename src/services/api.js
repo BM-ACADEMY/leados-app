@@ -1185,6 +1185,11 @@ export const allianceInboxApi = {
   unpinMessage(id) { return api.request(`/api/alliance-inbox/messages/${id}/pin`, { method: 'PUT', body: JSON.stringify({ unpin: true }) }); },
   toggleStarMessage(id, is_starred) { return api.request(`/api/alliance-inbox/messages/${id}/star`, { method: 'PUT', body: JSON.stringify({ is_starred }) }); },
   reactToMessage(id, emoji, action = 'add') { return api.request(`/api/alliance-inbox/messages/${id}/react`, { method: 'PUT', body: JSON.stringify({ emoji, action }) }); },
+  getTags() { return api.request('/api/alliance-inbox/tags'); },
+  createTag(name, color) { return api.request('/api/alliance-inbox/tags', { method: 'POST', body: JSON.stringify({ name, color }) }); },
+  deleteTag(id) { return api.request(`/api/alliance-inbox/tags/${id}`, { method: 'DELETE' }); },
+  assignTag(contactId, tagId) { return api.request(`/api/alliance-inbox/contacts/${contactId}/tags`, { method: 'POST', body: JSON.stringify({ tagId }) }); },
+  removeTag(contactId, tagId) { return api.request(`/api/alliance-inbox/contacts/${contactId}/tags/${tagId}`, { method: 'DELETE' }); },
   put() { return Promise.resolve({ success: true }); },
   uploadMedia(formData, onProgress) {
     const token = localStorage.getItem('leados_token');

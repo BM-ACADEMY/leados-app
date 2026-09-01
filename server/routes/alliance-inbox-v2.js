@@ -337,6 +337,57 @@ function createAllianceInboxRouter({ auth, io }) {
 
   router.use(auth);
 
+  router.get('/tags', async (req, res) => {
+    try {
+      const result = await db.query(`SELECT id, name, color FROM alliance_inbox_tags ORDER BY name ASC`);
+      res.json(result.rows);
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to fetch tags' });
+    }
+  });
+
+  router.post('/tags', async (req, res) => {
+    try {
+      const { name, color } = req.body;
+      if (!name) return res.status(400).json({ error: 'Tag name is required.' });
+      const result = await db.query(
+        `INSERT INTO alliance_inbox_tags (name, color) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET color = EXCLUDED.color RETURNING *`,
+        [name.trim(), color || '#00a884']
+      );
+      res.json(result.rows[0]);
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to create tag' });
+    }
+  });
+
+  router.delete('/tags/:id', async (req, res) => {
+    try {
+      await db.query(`DELETE FROM alliance_inbox_tags WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to delete tag' });
+    }
+  });
+
+  router.post('/contacts/:id/tags', async (req, res) => {
+    try {
+      const { tagId } = req.body;
+      await db.query(`INSERT INTO alliance_contact_tags (contact_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [req.params.id, tagId]);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to assign tag' });
+    }
+  });
+
+  router.delete('/contacts/:id/tags/:tagId', async (req, res) => {
+    try {
+      await db.query(`DELETE FROM alliance_contact_tags WHERE contact_id = $1 AND tag_id = $2`, [req.params.id, req.params.tagId]);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to remove tag' });
+    }
+  });
+
   router.get('/contacts', async (req, res) => {
     await syncImportedProspects();
     setImmediate(() => processQueuedAllianceWelcomes(io).catch((error) => {
@@ -350,7 +401,13 @@ function createAllianceInboxRouter({ auth, io }) {
               COALESCE(p.ai_score,10) AS score,
               cv.last_message AS last, cv.last_message AS last_msg, cv.last_message_at AS time,
               cv.unread_count AS unread, cv.last_inbound_at, cv.welcome_status,
-              cv.welcome_template_name, cv.welcome_wa_msg_id, cv.welcome_sent_at, cv.welcome_error
+              cv.welcome_template_name, cv.welcome_wa_msg_id, cv.welcome_sent_at, cv.welcome_error,
+              (
+                SELECT COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'color', t.color)), '[]')
+                FROM alliance_contact_tags ct
+                JOIN alliance_inbox_tags t ON t.id = ct.tag_id
+                WHERE ct.contact_id = c.id
+              ) AS tags
        FROM alliance_inbox_contacts c
        JOIN alliance_inbox_conversations cv ON cv.contact_id = c.id
        LEFT JOIN alliance_prospects p ON p.id = c.prospect_id
@@ -365,7 +422,13 @@ function createAllianceInboxRouter({ auth, io }) {
   router.get('/contacts/:id', async (req, res) => {
     const result = await db.query(
       `SELECT c.*, COALESCE(p.ai_score,10) AS score, cv.last_inbound_at, cv.welcome_status, cv.welcome_template_name,
-              cv.welcome_wa_msg_id, cv.welcome_sent_at, cv.welcome_error
+              cv.welcome_wa_msg_id, cv.welcome_sent_at, cv.welcome_error,
+              (
+                SELECT COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'color', t.color)), '[]')
+                FROM alliance_contact_tags ct
+                JOIN alliance_inbox_tags t ON t.id = ct.tag_id
+                WHERE ct.contact_id = c.id
+              ) AS tags
        FROM alliance_inbox_contacts c
        JOIN alliance_inbox_conversations cv ON cv.contact_id = c.id
        LEFT JOIN alliance_prospects p ON p.id = c.prospect_id

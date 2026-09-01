@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
-import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut, Phone, Video, User, Sparkles, ExternalLink } from 'lucide-react';
+import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut, Phone, Video, User, Sparkles, ExternalLink, Plus, Tag } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 import { io as socketIO } from 'socket.io-client';
 import { C } from '../constants/theme.js';
@@ -163,8 +163,36 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
       setShowChatOnMobile(true);
       // Clean up location state so refreshing doesn't keep forcing it if user selected someone else
       window.history.replaceState({}, document.title)
+      window.history.replaceState({}, document.title)
     }
   }, [location.state?.leadId, activeLeadId]);
+
+  const [availableTags, setAvailableTags] = useState([]);
+  const [showTagMenu, setShowTagMenu] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagColor, setNewTagColor] = useState('#00a884');
+  const [tagUpdateTick, setTagUpdateTick] = useState(0); // For optimistic UI updates
+
+  const tagMenuRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (tagMenuRef.current && !tagMenuRef.current.contains(event.target)) {
+        setShowTagMenu(false);
+      }
+    };
+    if (showTagMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showTagMenu]);
+
+  useEffect(() => {
+    if (alliance) {
+      allianceInboxApi.getTags().then(tags => setAvailableTags(tags)).catch(console.error);
+    }
+  }, [alliance]);
+  
   const [attachedFile, setAttachedFile] = useState(null);
   const [hoveredMessage, setHoveredMessage] = useState(null);
   const [activeDropdownId, setActiveDropdownId] = useState(null);
@@ -994,8 +1022,19 @@ return (
               style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }}
             />
             <div>
-              <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{activeObj?.name}</p>
-              <p style={{ fontSize: 9, color: C.green }}>AI Agent Active - {activeObj?.brand_name || activeObj?.brand || 'Manual'}</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: C.text, margin: 0 }}>{activeObj?.name}</p>
+                {activeObj?.tags && activeObj.tags.length > 0 && (
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {activeObj.tags.map(tag => (
+                      <span key={tag.id} style={{ fontSize: 10, fontWeight: 600, color: tag.color, background: tag.color + '22', border: '1px solid ' + tag.color + '44', padding: '2px 6px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <Tag size={10} /> {tag.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <p style={{ fontSize: 9, color: C.green, margin: 0, marginTop: 4 }}>AI Agent Active - {activeObj?.brand_name || activeObj?.brand || 'Manual'}</p>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
@@ -2044,6 +2083,114 @@ return (
                   <span style={{ color: C.muted, fontSize: 13 }}>Objections</span>
                   <span style={{ color: C.text, fontSize: 13, fontWeight: 500, maxWidth: '60%', textAlign: 'right' }}>{activeObj?.objections || 'None'}</span>
                 </div>
+
+                {/* --- TAGS SECTION --- */}
+                {alliance && (
+                  <div style={{ marginTop: 20, borderTop: '1px solid ' + C.border, paddingTop: 16, paddingBottom: showTagMenu ? 260 : 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <span style={{ color: C.text, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Tag size={14} style={{ color: C.muted }} /> Tags
+
+                      </span>
+                      <div ref={tagMenuRef} style={{ position: 'relative' }}>
+                        <button onClick={() => setShowTagMenu(!showTagMenu)} style={{ background: 'transparent', border: 'none', color: C.accent, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                          <Plus size={14} /> Add Tag
+                        </button>
+                        {showTagMenu && (
+                          <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 8, width: 220, background: C.card, border: '1px solid ' + C.border, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', zIndex: 100, padding: 10 }}>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>Select Tag</div>
+                            <div style={{ maxHeight: 150, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                              {(availableTags || []).length === 0 && <div style={{ fontSize: 12, color: C.muted, fontStyle: 'italic' }}>No tags yet.</div>}
+                              {(availableTags || []).filter(t => !(activeObj?.tags || []).find(at => at.id === t.id)).map(tag => (
+                                <div key={tag.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', width: '100%', gap: 8 }}>
+                                  <button onClick={async () => {
+                                    // Optimistic UI Update
+                                    if (!activeObj.tags) activeObj.tags = [];
+                                    activeObj.tags.push(tag);
+                                    setTagUpdateTick(t => t + 1);
+                                    setShowTagMenu(false);
+                                    
+                                    try {
+                                      await allianceInboxApi.assignTag(activeObj.id, tag.id);
+                                      refetchLeadsList(); // refresh the list to show tags in sidebar
+                                    } catch(e) { console.error(e); }
+                                  }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', flex: 1 }}>
+                                    <Tag size={12} style={{ color: tag.color }} />
+                                    <span style={{ fontSize: 13, color: C.text }}>{tag.name}</span>
+                                  </button>
+                                  <button onClick={async () => {
+                                    if(window.confirm(`Are you sure you want to permanently delete the "${tag.name}" tag from the workspace?`)) {
+                                      try {
+                                        await allianceInboxApi.deleteTag(tag.id);
+                                        setAvailableTags(tags => tags.filter(t => t.id !== tag.id));
+                                        refetchLeadsList(); // update sidebar tags if any were removed
+                                      } catch(e) { console.error(e); }
+                                    }
+                                  }} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Delete tag">
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ borderTop: '1px solid ' + C.border, paddingTop: 10 }}>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginBottom: 8, textTransform: 'uppercase' }}>Create New Tag</div>
+                              <input value={newTagName} onChange={e => setNewTagName(e.target.value)} placeholder="Tag name..." style={{ width: '100%', background: C.bg, border: '1px solid ' + C.border, padding: '6px 8px', borderRadius: 4, color: C.text, fontSize: 12, marginBottom: 8, outline: 'none' }} />
+                              <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                                {['#e11d48', '#2563eb', '#16a34a', '#ca8a04', '#9333ea', '#0891b2', '#ea580c', '#475569'].map(c => (
+                                  <div key={c} onClick={() => setNewTagColor(c)} style={{ width: 16, height: 16, borderRadius: '50%', background: c, cursor: 'pointer', border: newTagColor === c ? '2px solid #fff' : '2px solid transparent', boxShadow: newTagColor === c ? '0 0 0 1px ' + c : 'none' }}></div>
+                                ))}
+                              </div>
+                              <button disabled={!newTagName.trim()} onClick={async () => {
+                                try {
+                                  const newTag = await allianceInboxApi.createTag(newTagName, newTagColor);
+                                  setAvailableTags([...(availableTags || []), newTag]);
+                                  
+                                  // Optimistic assignment
+                                  if (!activeObj.tags) activeObj.tags = [];
+                                  activeObj.tags.push(newTag);
+                                  setTagUpdateTick(t => t + 1);
+                                  
+                                  setNewTagName('');
+                                  setShowTagMenu(false);
+                                  
+                                  // Background assign & fetch
+                                  await allianceInboxApi.assignTag(activeObj.id, newTag.id);
+                                  refetchLeadsList();
+                                } catch(e) { console.error(e); }
+                              }} style={{ width: '100%', background: C.accent, color: '#fff', border: 'none', padding: '6px', borderRadius: 4, fontSize: 12, fontWeight: 600, cursor: newTagName.trim() ? 'pointer' : 'not-allowed', opacity: newTagName.trim() ? 1 : 0.5 }}>
+                                Create & Assign
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {(!activeObj?.tags || activeObj.tags.length === 0) && (
+                        <div style={{ fontSize: 12, color: C.dim, fontStyle: 'italic' }}>No tags assigned</div>
+                      )}
+                      {(activeObj?.tags || []).map(tag => (
+                        <div key={tag.id} style={{ display: 'flex', alignItems: 'center', gap: 6, background: tag.color + '22', border: '1px solid ' + tag.color + '44', padding: '4px 8px', borderRadius: 12 }}>
+                          <Tag size={12} style={{ color: tag.color }} />
+                          <span style={{ fontSize: 11, fontWeight: 600, color: tag.color }}>{tag.name}</span>
+                          <X size={12} style={{ color: tag.color, cursor: 'pointer', opacity: 0.7 }} onClick={async () => {
+                            // Optimistic removal
+                            if (activeObj.tags) {
+                              activeObj.tags = activeObj.tags.filter(t => t.id !== tag.id);
+                              setTagUpdateTick(t => t + 1);
+                            }
+                            try {
+                              await allianceInboxApi.removeTag(activeObj.id, tag.id);
+                              refetchLeadsList();
+                            } catch(e) { console.error(e); }
+                          }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* --- END TAGS SECTION --- */}
               </div>
 
 

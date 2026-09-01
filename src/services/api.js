@@ -601,6 +601,43 @@ class LeadOSAPI {
     return this.request(`/api/alliance/prospects${query ? `?${query}` : ''}`);
   }
 
+  async exportAllianceProspects(params = {}) {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '')
+    ).toString();
+    const url = `/api/alliance/prospects/export${query ? `?${query}` : ''}`;
+    
+    const response = await fetch(`${API_URL}${url}`, {
+      headers: {
+        'Authorization': this.token ? `Bearer ${this.token}` : '',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to export prospects');
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    // Extract filename from Content-Disposition header if available
+    const disposition = response.headers.get('Content-Disposition');
+    let filename = 'Prospects_Export.xlsx';
+    if (disposition && disposition.indexOf('filename=') !== -1) {
+      const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+      const matches = filenameRegex.exec(disposition);
+      if (matches != null && matches[1]) { 
+        filename = matches[1].replace(/['"]/g, '');
+      }
+    }
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+
   async getAllianceAnalytics() {
     return this.request(`/api/alliance/analytics?_=${Date.now()}`);
   }
@@ -635,6 +672,19 @@ class LeadOSAPI {
     return this.request('/api/alliance/prospects/bulk-delete', {
       method: 'POST',
       body: JSON.stringify({ ids }),
+    });
+  }
+
+  async assignProspectTag(prospectId, tagId) {
+    return this.request(`/api/alliance/prospects/${prospectId}/tags`, {
+      method: 'POST',
+      body: JSON.stringify({ tagId }),
+    });
+  }
+
+  async removeProspectTag(prospectId, tagId) {
+    return this.request(`/api/alliance/prospects/${prospectId}/tags/${tagId}`, {
+      method: 'DELETE',
     });
   }
 

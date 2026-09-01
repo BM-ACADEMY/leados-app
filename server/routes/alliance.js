@@ -985,6 +985,19 @@ router.get('/prospects', async (req, res) => {
   if (req.query.channel && ['email', 'whatsapp'].includes(req.query.channel)) {
     add(`p.channel IN (?, 'both')`, req.query.channel);
   }
+  if (req.query.tag) {
+    values.push(req.query.tag);
+    where.push(`(
+      EXISTS (
+        SELECT 1 FROM alliance_prospect_tags apt
+        WHERE apt.prospect_id = p.id AND apt.tag_id = $${values.length}
+      ) OR EXISTS (
+        SELECT 1 FROM alliance_contact_tags act
+        JOIN alliance_inbox_contacts c ON c.id = act.contact_id
+        WHERE c.prospect_id = p.id AND act.tag_id = $${values.length}
+      )
+    )`);
+  }
   if (req.query.search) {
     values.push(req.query.search);
     const searchParam = `$${values.length}`;
@@ -1014,7 +1027,8 @@ router.get('/prospects', async (req, res) => {
       `SELECT p.id, p.name, p.business_name, p.location, p.industry, p.audience, p.channel,
               p.status, p.current_touch, p.ai_score, p.email, p.phone, p.source,
               p.consent, p.consent_source, p.custom_fields, p.updated_at,
-              p.campaign_id, linked_campaigns.campaign_name, p.created_at
+              p.campaign_id, linked_campaigns.campaign_name, p.created_at,
+              prospect_tags.tags
        FROM alliance_prospects p
        LEFT JOIN LATERAL (
          SELECT STRING_AGG(DISTINCT linked.name, ', ' ORDER BY linked.name) AS campaign_name
@@ -1024,6 +1038,17 @@ router.get('/prospects', async (req, res) => {
            WHERE linked_cp.prospect_id = p.id AND linked_cp.campaign_id = linked.id
          )
        ) linked_campaigns ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'color', t.color)), '[]'::json) AS tags
+         FROM (
+           SELECT tag_id FROM alliance_prospect_tags WHERE prospect_id = p.id
+           UNION
+           SELECT act.tag_id FROM alliance_contact_tags act
+           JOIN alliance_inbox_contacts c ON c.id = act.contact_id
+           WHERE c.prospect_id = p.id
+         ) combined_tags
+         JOIN alliance_inbox_tags t ON combined_tags.tag_id = t.id
+       ) prospect_tags ON TRUE
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY p.created_at DESC
        LIMIT ${limitParam} OFFSET ${offsetParam}`,
@@ -1033,6 +1058,114 @@ router.get('/prospects', async (req, res) => {
   } catch (error) {
     console.error('Alliance prospect list failed:', error);
     res.status(500).json({ error: 'Failed to load AllianceOS prospects.' });
+  }
+});
+
+router.get('/prospects/export', async (req, res) => {
+  const values = [];
+  const where = [];
+  const add = (sql, value) => { values.push(value); where.push(sql.replace('?', `$${values.length}`)); };
+  if (req.query.audience) add('p.audience = ?', req.query.audience);
+  const campaignName = text(req.query.campaign_name);
+  if (campaignName) {
+    values.push(campaignName);
+    where.push(`EXISTS (
+      SELECT 1 FROM alliance_campaigns selected_campaign
+      WHERE selected_campaign.name = $${values.length}
+        AND (selected_campaign.id = p.campaign_id OR EXISTS (
+          SELECT 1 FROM alliance_campaign_prospects selected_cp
+          WHERE selected_cp.prospect_id = p.id AND selected_cp.campaign_id = selected_campaign.id
+        ))
+    )`);
+  }
+  if (req.query.status) add('p.status = ?', req.query.status);
+  if (req.query.channel && ['email', 'whatsapp'].includes(req.query.channel)) {
+    add(`p.channel IN (?, 'both')`, req.query.channel);
+  }
+  if (req.query.tag) {
+    values.push(req.query.tag);
+    where.push(`(
+      EXISTS (
+        SELECT 1 FROM alliance_prospect_tags apt
+        WHERE apt.prospect_id = p.id AND apt.tag_id = $${values.length}
+      ) OR EXISTS (
+        SELECT 1 FROM alliance_contact_tags act
+        JOIN alliance_inbox_contacts c ON c.id = act.contact_id
+        WHERE c.prospect_id = p.id AND act.tag_id = $${values.length}
+      )
+    )`);
+  }
+  if (req.query.search) {
+    values.push(req.query.search);
+    const searchParam = `$${values.length}`;
+    where.push(`(p.business_name ILIKE '%' || ${searchParam} || '%'
+      OR p.name ILIKE '%' || ${searchParam} || '%'
+      OR p.email ILIKE '%' || ${searchParam} || '%'
+      OR (REGEXP_REPLACE(${searchParam}, '[^0-9]', '', 'g') <> '' AND
+          REGEXP_REPLACE(COALESCE(p.phone, ''), '[^0-9]', '', 'g') LIKE '%' ||
+          REGEXP_REPLACE(${searchParam}, '[^0-9]', '', 'g') || '%'))`);
+  }
+  if (req.query.dateFrom) add(`(p.created_at AT TIME ZONE 'Asia/Kolkata')::date >= ?::date`, req.query.dateFrom);
+  if (req.query.dateTo) add(`(p.created_at AT TIME ZONE 'Asia/Kolkata')::date <= ?::date`, req.query.dateTo);
+
+  try {
+    const result = await db.query(
+      `SELECT p.id, p.name, p.business_name, p.location, p.industry, p.audience, p.channel,
+              p.status, p.current_touch, p.ai_score, p.email, p.phone, p.source,
+              p.consent, p.consent_source, p.custom_fields, p.updated_at,
+              p.campaign_id, linked_campaigns.campaign_name, p.created_at,
+              prospect_tags.tags
+       FROM alliance_prospects p
+       LEFT JOIN LATERAL (
+         SELECT STRING_AGG(DISTINCT linked.name, ', ' ORDER BY linked.name) AS campaign_name
+         FROM alliance_campaigns linked
+         WHERE linked.id = p.campaign_id OR EXISTS (
+           SELECT 1 FROM alliance_campaign_prospects linked_cp
+           WHERE linked_cp.prospect_id = p.id AND linked_cp.campaign_id = linked.id
+         )
+       ) linked_campaigns ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'color', t.color)), '[]'::json) AS tags
+         FROM (
+           SELECT tag_id FROM alliance_prospect_tags WHERE prospect_id = p.id
+           UNION
+           SELECT act.tag_id FROM alliance_contact_tags act
+           JOIN alliance_inbox_contacts c ON c.id = act.contact_id
+           WHERE c.prospect_id = p.id
+         ) combined_tags
+         JOIN alliance_inbox_tags t ON combined_tags.tag_id = t.id
+       ) prospect_tags ON TRUE
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY p.created_at DESC`,
+      values
+    );
+
+    const rows = result.rows.map(p => ({
+      'Business Name': p.business_name,
+      'Contact Name': p.name || '',
+      'Email': p.email || '',
+      'Phone': p.phone || '',
+      'Status': p.status || '',
+      'Audience': p.audience || '',
+      'Campaigns': p.campaign_name || '',
+      'Tags': (p.tags || []).map(t => t.name).join(', '),
+      'Source': p.source || '',
+      'Industry': p.industry || '',
+      'Location': p.location || '',
+      'Added On': p.created_at ? new Date(p.created_at).toLocaleString() : ''
+    }));
+
+    const workbook = xlsx.utils.book_new();
+    const worksheet = xlsx.utils.json_to_sheet(rows);
+    xlsx.utils.book_append_sheet(workbook, worksheet, 'Prospects');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="Prospects_Export.xlsx"');
+    res.send(buffer);
+  } catch (error) {
+    console.error('Alliance prospect export failed:', error);
+    res.status(500).json({ error: 'Failed to export prospects.' });
   }
 });
 
@@ -1340,6 +1473,32 @@ router.post('/prospects/bulk-delete', async (req, res) => {
   } catch (error) {
     console.error('Alliance bulk delete failed:', error);
     res.status(500).json({ error: 'Failed to delete prospects.' });
+  }
+});
+
+router.post('/prospects/:id/tags', async (req, res) => {
+  try {
+    const { tagId } = req.body;
+    if (!tagId) return res.status(400).json({ error: 'tagId is required' });
+    await db.query(
+      `INSERT INTO alliance_prospect_tags (prospect_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [req.params.id, tagId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to assign tag' });
+  }
+});
+
+router.delete('/prospects/:id/tags/:tagId', async (req, res) => {
+  try {
+    await db.query(
+      `DELETE FROM alliance_prospect_tags WHERE prospect_id = $1 AND tag_id = $2`,
+      [req.params.id, req.params.tagId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to remove tag' });
   }
 });
 

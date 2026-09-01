@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import toast from 'react-hot-toast';
-import { api } from '../../services/api.js';
+import { api, allianceInboxApi } from '../../services/api.js';
 import { DatePicker } from './DatePicker.jsx';
 import { ScoreBar } from '../../components/ui.jsx';
+import { Tag, Plus, X } from 'lucide-react';
 import './alliance.css';
 
 const PAGE_SIZE = 10;
@@ -30,6 +31,8 @@ export const LeadList = () => {
   const [campaigns, setCampaigns] = useState([]);
   const [audienceFilter, setAudienceFilter] = useState('');
   const [campaignFilter, setCampaignFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+  const [availableTags, setAvailableTags] = useState([]);
   const [status, setStatus] = useState('all');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -56,7 +59,7 @@ export const LeadList = () => {
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [status, audienceFilter, campaignFilter, debouncedSearch, dateFrom, dateTo]);
+  useEffect(() => { setPage(1); }, [status, audienceFilter, campaignFilter, tagFilter, debouncedSearch, dateFrom, dateTo]);
 
   const loadProspects = async () => {
     setLoading(true);
@@ -69,6 +72,7 @@ export const LeadList = () => {
         status: status === 'all' ? '' : status,
         audience: audienceFilter,
         campaign_name: campaignFilter,
+        tag: tagFilter,
         search: debouncedSearch,
         dateFrom,
         dateTo,
@@ -80,12 +84,13 @@ export const LeadList = () => {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { loadProspects(); }, [page, status, audienceFilter, campaignFilter, debouncedSearch, dateFrom, dateTo]);
+  useEffect(() => { loadProspects(); }, [page, status, audienceFilter, campaignFilter, tagFilter, debouncedSearch, dateFrom, dateTo]);
   useEffect(() => {
-    Promise.all([api.getAllianceAudiences(), api.getAllianceCampaigns({ limit: 5000 })])
-      .then(([audienceData, campaignData]) => {
+    Promise.all([api.getAllianceAudiences(), api.getAllianceCampaigns({ limit: 5000 }), allianceInboxApi.getTags()])
+      .then(([audienceData, campaignData, tagsData]) => {
         setAudiences(audienceData.audiences || []);
         setCampaigns(campaignData.campaigns || []);
+        setAvailableTags(tagsData || []);
       }).catch(() => {});
   }, []);
 
@@ -224,7 +229,7 @@ export const LeadList = () => {
       <div className="al-eyebrow">AllianceOS · Imported Leads</div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
         <div className="al-page-title">Prospects</div>
-        <div style={{ display: 'flex', gap: 8 }}><button className="al-btn ghost" type="button" onClick={() => setConfirmingRepair(true)}>Repair imported names</button><button className="al-btn" type="button" onClick={() => { setCreateForm(emptyCreate); setCreating(true); }}>+ Add prospect</button></div>
+        <div style={{ display: 'flex', gap: 8 }}><button className="al-btn ghost" type="button" onClick={() => api.exportAllianceProspects({ status: status === 'all' ? '' : status, audience: audienceFilter, campaign_name: campaignFilter, tag: tagFilter, search: debouncedSearch, dateFrom, dateTo })}>Export</button><button className="al-btn ghost" type="button" onClick={() => setConfirmingRepair(true)}>Repair imported names</button><button className="al-btn" type="button" onClick={() => { setCreateForm(emptyCreate); setCreating(true); }}>+ Add prospect</button></div>
       </div>
       <p className="al-page-desc">Review, edit, and remove imported prospect records. Showing 10 records per page.</p>
 
@@ -232,6 +237,7 @@ export const LeadList = () => {
         <div className="al-field" style={{ flex: 2 }}><label>Search</label><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search business, contact, or email" /></div>
         <div className="al-field"><label>Audience</label><select value={audienceFilter} onChange={(event) => { setAudienceFilter(event.target.value); setCampaignFilter(''); }}><option value="">All audiences</option>{audiences.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select></div>
         <div className="al-field"><label>Campaign</label><select value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value)}><option value="">All campaigns</option>{filterCampaigns.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></div>
+        <div className="al-field"><label>Tag</label><select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="">All tags</option>{availableTags.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
         <div className="al-field"><label>Status</label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="new">New</option><option value="pending">Pending</option><option value="in_process">In Process</option><option value="interested">Interested</option><option value="not_interested">Not Interested</option><option value="converted">Converted</option></select></div>
         <div className="al-field"><label>From date</label><DatePicker value={dateFrom} max={dateTo} onChange={setDateFrom} /></div>
         <div className="al-field"><label>To date</label><DatePicker value={dateTo} min={dateFrom} onChange={setDateTo} /></div>
@@ -248,12 +254,25 @@ export const LeadList = () => {
         )}
         {error ? <p style={{ padding: 24, color: '#EF9A9A' }}>{error}</p> : loading ? <p style={{ padding: 24, color: 'var(--al-muted)' }}>Loading imported leads…</p> : (
           <table className="al-table" style={{ minWidth: 1750 + dynamicFields.length * 150, whiteSpace: 'nowrap' }}>
-            <thead><tr><th style={{ width: 40 }}><input type="checkbox" checked={prospects.length > 0 && selectedIds.size === prospects.length} onChange={toggleAll} /></th><th>Business / Contact</th><th>Email</th><th>Phone</th><th>AI Score</th><th>Audience</th><th>Industry / Location</th><th>Source</th>{dynamicFields.map((field) => <th key={field.field_key}>{field.label || field.field_key.replaceAll('_', ' ')}</th>)}<th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Actions</th></tr></thead>
+            <thead><tr><th style={{ width: 40 }}><input type="checkbox" checked={prospects.length > 0 && selectedIds.size === prospects.length} onChange={toggleAll} /></th><th>Business / Contact</th><th>Tags</th><th>Email</th><th>Phone</th><th>AI Score</th><th>Audience</th><th>Industry / Location</th><th>Source</th>{dynamicFields.map((field) => <th key={field.field_key}>{field.label || field.field_key.replaceAll('_', ' ')}</th>)}<th>Channel</th><th>Consent</th><th>Campaign</th><th>Status</th><th>Date added</th><th>Actions</th></tr></thead>
             <tbody>
               {prospects.map((prospect) => (
                 <tr key={prospect.id}>
                   <td><input type="checkbox" checked={selectedIds.has(prospect.id)} onChange={() => toggleSelection(prospect.id)} /></td>
-                  <td>{prospect.business_name} <span style={{ color: 'var(--al-muted)' }}>· {prospect.name || 'No contact name'}</span></td>
+                  <td>
+                    {prospect.business_name} <span style={{ color: 'var(--al-muted)' }}>· {prospect.name || 'No contact name'}</span>
+                  </td>
+                  <td>
+                    {prospect.tags && prospect.tags.length > 0 ? (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {prospect.tags.map(tag => (
+                          <span key={tag.id} style={{ fontSize: 10, fontWeight: 600, color: tag.color, background: tag.color + '22', border: '1px solid ' + tag.color + '44', padding: '2px 6px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                            <Tag size={10} /> {tag.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : <span style={{ color: 'var(--al-muted)' }}>—</span>}
+                  </td>
                   <td>{prospect.email || '—'}</td><td>{prospect.phone || '—'}</td>
                   <td><ScoreBar score={Number(prospect.ai_score) || 10} /></td>
                   <td><span className={`al-tag ${prospect.audience}`}>{audienceLabel(prospect.audience)}</span></td>
@@ -284,6 +303,45 @@ export const LeadList = () => {
           <form onSubmit={saveEdit} onClick={(event) => event.stopPropagation()} style={{ width: 'min(760px, 100%)', maxHeight: '90vh', overflowY: 'auto', background: 'var(--al-panel2)', border: '1px solid var(--al-line)', borderRadius: 14, padding: 22 }}>
             <div className="al-page-title" style={{ fontSize: 21 }}>Edit prospect</div>
             <div className="al-fields"><div className="al-field"><label>Business name</label><input required value={editForm.business_name} onChange={(e) => setEditForm({ ...editForm, business_name: e.target.value })} /></div><div className="al-field"><label>Contact name</label><input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></div></div>
+            <div className="al-fields">
+               <div className="al-field" style={{ width: '100%' }}>
+                  <label>Tags</label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                    {(editing.tags || []).map(tag => (
+                      <span key={tag.id} style={{ fontSize: 11, fontWeight: 600, color: tag.color, background: tag.color + '22', border: '1px solid ' + tag.color + '44', padding: '2px 8px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <Tag size={10} /> {tag.name}
+                        <X size={12} style={{ cursor: 'pointer', opacity: 0.7, marginLeft: 2 }} onClick={async (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          try {
+                            await api.removeProspectTag(editing.id, tag.id);
+                            setEditing({ ...editing, tags: editing.tags.filter(t => t.id !== tag.id) });
+                            loadProspects();
+                          } catch(err) { console.error(err); }
+                        }} />
+                      </span>
+                    ))}
+                    {(editing.tags || []).length === 0 && <span style={{ color: 'var(--al-muted)', fontSize: 12, fontStyle: 'italic' }}>No tags assigned</span>}
+                  </div>
+                  <select onChange={async (e) => {
+                    const tagId = e.target.value;
+                    if (!tagId) return;
+                    e.target.value = '';
+                    const tag = availableTags.find(t => t.id === Number(tagId));
+                    if (!tag || (editing.tags || []).find(t => t.id === tag.id)) return;
+                    try {
+                      await api.assignProspectTag(editing.id, tag.id);
+                      setEditing({ ...editing, tags: [...(editing.tags || []), tag] });
+                      loadProspects();
+                    } catch(err) { console.error(err); }
+                  }} style={{ width: 'max-content', padding: '4px 8px', fontSize: 12 }}>
+                    <option value="">+ Assign tag...</option>
+                    {availableTags.filter(t => !(editing.tags || []).find(et => et.id === t.id)).map(tag => (
+                      <option key={tag.id} value={tag.id}>{tag.name}</option>
+                    ))}
+                  </select>
+               </div>
+            </div>
             <div className="al-fields"><div className="al-field"><label>Email {usesEmail(editForm.channel) ? '*' : ''}</label><input required={usesEmail(editForm.channel)} type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} /></div><div className="al-field"><label>Phone {usesWhatsApp(editForm.channel) ? '*' : ''}</label><input required={usesWhatsApp(editForm.channel)} value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} /></div></div>
             <div className="al-fields"><div className="al-field"><label>Audience</label><select value={editForm.audience} disabled title="Audience cannot be changed after import">{audiences.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select><div style={{ color: 'var(--al-muted)', fontSize: 11, marginTop: 5 }}>Audience is fixed after import.</div></div><div className="al-field"><label>Channel</label><select value={editForm.channel} onChange={(e) => setEditForm({ ...editForm, channel: e.target.value })}><option value="email">Email</option><option value="whatsapp">WhatsApp</option><option value="both">Email + WhatsApp</option></select></div></div>
             <div className="al-fields"><div className="al-field"><label>Industry</label><input value={editForm.industry} onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })} /></div><div className="al-field"><label>Location</label><input value={editForm.location} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })} /></div><div className="al-field"><label>Source</label><input value={editForm.source} onChange={(e) => setEditForm({ ...editForm, source: e.target.value })} /></div></div>

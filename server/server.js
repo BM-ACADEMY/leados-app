@@ -1499,10 +1499,11 @@ app.post('/api/messages/upload', auth, mediaUpload.single('file'), async (req, r
 
   let uploadedFile = req.file;
 
-  // MediaRecorder in Chrome produces audio/webm, which WhatsApp Cloud API does
+  // MediaRecorder in Chrome produces audio/webm (or sometimes video/webm), which WhatsApp Cloud API does
   // not accept. Convert browser-recorded voice notes to mono OGG/Opus before
   // exposing the URL that Meta downloads.
-  if (req.file.mimetype?.toLowerCase().startsWith('audio/webm')) {
+  const isWebm = req.file.mimetype?.toLowerCase().includes('webm') || req.file.originalname.toLowerCase().endsWith('.webm');
+  if (isWebm) {
     const outputFilename = `${path.parse(req.file.filename).name}.ogg`;
     const outputPath = path.join(req.file.destination, outputFilename);
 
@@ -2693,11 +2694,14 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
         const uploadData = await uploadRes.json();
         if (uploadRes.ok && uploadData.id) {
           waMediaId = uploadData.id;
+          fs.appendFileSync(path.join(__dirname, 'uploads', 'media_upload.log'), `[SUCCESS] ID: ${waMediaId}\n`);
         } else {
           console.warn('[WhatsApp Send] Direct media upload failed:', uploadData);
+          fs.appendFileSync(path.join(__dirname, 'uploads', 'media_upload.log'), `[FAILED API] ${JSON.stringify(uploadData)}\n`);
         }
       } catch (e) {
         console.warn('[WhatsApp Send] Failed to upload media directly:', e.message);
+        fs.appendFileSync(path.join(__dirname, 'uploads', 'media_upload.log'), `[FAILED EXCEPTION] ${e.message}\n`);
       }
     }
 

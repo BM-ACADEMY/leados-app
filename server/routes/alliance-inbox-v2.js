@@ -537,7 +537,10 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
   router.post('/media/upload', upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     let uploaded = req.file;
-    if (req.file.mimetype?.toLowerCase().startsWith('audio/webm')) {
+
+    // Convert webm to ogg (Opus) for WhatsApp voice messages
+    const isWebm = req.file.mimetype?.toLowerCase().includes('webm') || req.file.originalname.toLowerCase().endsWith('.webm');
+    if (isWebm) {
       const convertedName = `${path.parse(req.file.filename).name}.ogg`;
       const convertedPath = path.join(mediaDirectory, convertedName);
       try {

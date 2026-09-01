@@ -18,6 +18,7 @@ const cron = require('node-cron');
 const multer = require('multer');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const { convertToWhatsAppVoiceNote } = require('./services/voice-note-encoder');
 const xlsx = require('xlsx');
 const Jimp = require('jimp');
 const fs = require('fs');
@@ -1508,17 +1509,7 @@ app.post('/api/messages/upload', auth, mediaUpload.single('file'), async (req, r
     const outputPath = path.join(req.file.destination, outputFilename);
 
     try {
-      await new Promise((resolve, reject) => {
-        ffmpeg(req.file.path)
-          .noVideo()
-          .audioCodec('libopus')
-          .audioChannels(1)
-          .audioBitrate('32k')
-          .format('ogg')
-          .on('end', resolve)
-          .on('error', reject)
-          .save(outputPath);
-      });
+      await convertToWhatsAppVoiceNote(req.file.path, outputPath);
 
       await fs.promises.unlink(req.file.path).catch(() => {});
       uploadedFile = { ...req.file, filename: outputFilename, path: outputPath, mimetype: 'audio/ogg; codecs=opus' };

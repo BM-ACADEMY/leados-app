@@ -5,6 +5,7 @@ const fs = require('fs');
 const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
 ffmpeg.setFfmpegPath(require('@ffmpeg-installer/ffmpeg').path);
+const { convertToWhatsAppVoiceNote } = require('../services/voice-note-encoder');
 const db = require('../db/connection');
 const ensureAllianceSchema = require('../db/alliance-schema');
 const openRouter = require('../services/openrouter');
@@ -544,7 +545,7 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
       const convertedName = `${path.parse(req.file.filename).name}.ogg`;
       const convertedPath = path.join(mediaDirectory, convertedName);
       try {
-        await new Promise((resolve, reject) => ffmpeg(req.file.path).noVideo().audioCodec('libopus').audioChannels(1).audioBitrate('32k').format('ogg').on('end', resolve).on('error', reject).save(convertedPath));
+        await convertToWhatsAppVoiceNote(req.file.path, convertedPath);
         await fs.promises.unlink(req.file.path).catch(() => {});
         uploaded = { ...req.file, filename: convertedName, path: convertedPath, mimetype: 'audio/ogg; codecs=opus' };
       } catch (error) {

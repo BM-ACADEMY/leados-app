@@ -546,7 +546,7 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
       try {
         await new Promise((resolve, reject) => ffmpeg(req.file.path).noVideo().audioCodec('libopus').audioChannels(1).audioBitrate('32k').format('ogg').on('end', resolve).on('error', reject).save(convertedPath));
         await fs.promises.unlink(req.file.path).catch(() => {});
-        uploaded = { ...req.file, filename: convertedName, path: convertedPath, mimetype: 'audio/ogg' };
+        uploaded = { ...req.file, filename: convertedName, path: convertedPath, mimetype: 'audio/ogg; codecs=opus' };
       } catch (error) {
         await fs.promises.unlink(req.file.path).catch(() => {});
         await fs.promises.unlink(convertedPath).catch(() => {});
@@ -572,7 +572,10 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
         const fileBuffer = fs.readFileSync(uploaded.path);
         const fd = new FormData();
         fd.append('messaging_product', 'whatsapp');
-        const cleanMimeType = (uploaded.mimetype || 'application/octet-stream').split(';')[0].trim();
+        // WhatsApp requires the full "audio/ogg; codecs=opus" mime type for voice notes —
+        // stripping the codecs parameter ("audio/ogg" alone) is explicitly unsupported and
+        // makes Meta's server reject the upload during processing (error 131053).
+        const cleanMimeType = (uploaded.mimetype || 'application/octet-stream').trim();
         fd.append('file', new Blob([fileBuffer], { type: cleanMimeType }), uploaded.filename);
 
         const response = await fetch(`https://graph.facebook.com/v19.0/${settings.phone_number_id}/media`, {

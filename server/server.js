@@ -1521,7 +1521,7 @@ app.post('/api/messages/upload', auth, mediaUpload.single('file'), async (req, r
       });
 
       await fs.promises.unlink(req.file.path).catch(() => {});
-      uploadedFile = { ...req.file, filename: outputFilename, path: outputPath, mimetype: 'audio/ogg' };
+      uploadedFile = { ...req.file, filename: outputFilename, path: outputPath, mimetype: 'audio/ogg; codecs=opus' };
     } catch (err) {
       await fs.promises.unlink(req.file.path).catch(() => {});
       await fs.promises.unlink(outputPath).catch(() => {});
@@ -2679,7 +2679,9 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
         fd.append('messaging_product', 'whatsapp');
         const ext = path.extname(media_url).toLowerCase();
         let mimeType = 'application/octet-stream';
-        if (ext === '.ogg') mimeType = 'audio/ogg';
+        // WhatsApp explicitly rejects bare "audio/ogg" for voice notes — it requires the
+        // codecs parameter or the upload is rejected during processing (error 131053).
+        if (ext === '.ogg') mimeType = 'audio/ogg; codecs=opus';
         else if (ext === '.mp4') mimeType = 'video/mp4';
         else if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
         else if (ext === '.png') mimeType = 'image/png';

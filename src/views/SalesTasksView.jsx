@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { C } from '../constants/theme.js';
-import { api } from '../services/api.js';
-import { RefreshCw, User, Trash2, X, AlertTriangle, ChevronDown, ChevronUp, MessageSquare, Search, CalendarDays } from 'lucide-react';
+import { api, allianceInboxApi } from '../services/api.js';
+import { RefreshCw, User, Trash2, X, AlertTriangle, ChevronDown, ChevronUp, MessageSquare, Search, CalendarDays, Tag, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { io as socketIO } from 'socket.io-client';
@@ -17,8 +17,11 @@ export const SalesTasksView = () => {
   const [notesTask, setNotesTask] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [tagFilter, setTagFilter] = useState('');
+  const [availableTags, setAvailableTags] = useState([]);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [selectedTaskIds, setSelectedTaskIds] = useState([]);
@@ -57,6 +60,7 @@ export const SalesTasksView = () => {
     const initialLoad = window.setTimeout(() => {
       fetchTasks();
       fetchCalendarStatus();
+      allianceInboxApi.getTags().then(setAvailableTags).catch(console.error);
     }, 0);
     const socket = socketIO(api.baseUrl, { transports: ['websocket', 'polling'] });
     socket.on('sales_task_update', fetchTasks);
@@ -156,15 +160,45 @@ export const SalesTasksView = () => {
     if (!noteText.trim() || !notesTask) return toast.error('Enter a note');
     setSavingNote(true);
     try {
-      const res = await api.post(`/sales-tasks/lead/${notesTask.lead_id}/notes`, { note: noteText.trim() });
-      setTasks(current => current.map(task => task.lead_id === notesTask.lead_id ? {
-        ...task, ...res.lead, latest_sales_note: res.note.note, latest_sales_note_at: res.note.created_at,
+      if (editingNoteId) {
+        const res = await api.put(`/sales-tasks/notes/${editingNoteId}`, { note: noteText.trim() });
+        setTasks(current => current.map(task => task.lead_id === notesTask.lead_id ? {
+          ...task, latest_sales_note: res.note.note, latest_sales_note_at: res.note.created_at,
+        } : task));
+        toast.success('Note updated');
+      } else {
+        const res = await api.post(`/sales-tasks/lead/${notesTask.lead_id}/notes`, { note: noteText.trim() });
+        setTasks(current => current.map(task => task.lead_id === notesTask.lead_id ? {
+          ...task, ...res.lead, latest_sales_note: res.note.note, latest_sales_note_at: res.note.created_at, latest_sales_note_id: res.note.id
+        } : task));
+        toast.success(res.lead.sales_followup_stopped ? 'Note saved — automated follow-ups stopped' : res.lead.sales_followup_at ? 'Note saved — follow-up rescheduled' : 'Note saved');
+      }
+      setNotesTask(null);
+      setNoteText('');
+      setEditingNoteId(null);
+    } catch (err) { toast.error('Failed to save note: ' + err.message); }
+    finally { setSavingNote(false); }
+  };
+
+  const deleteNote = async (noteId, leadId) => {
+    try {
+      setSavingNote(true);
+      const res = await api.delete(`/sales-tasks/notes/${noteId}`);
+      setTasks(current => current.map(task => task.lead_id === leadId ? {
+        ...task,
+        latest_sales_note: res.latest_note?.note || null,
+        latest_sales_note_at: res.latest_note?.created_at || null,
+        latest_sales_note_id: res.latest_note?.id || null
       } : task));
       setNotesTask(null);
       setNoteText('');
-      toast.success(res.lead.sales_followup_stopped ? 'Note saved — automated follow-ups stopped' : res.lead.sales_followup_at ? 'Note saved — follow-up rescheduled' : 'Note saved');
-    } catch (err) { toast.error('Failed to save note: ' + err.message); }
-    finally { setSavingNote(false); }
+      setEditingNoteId(null);
+      toast.success('Note deleted');
+    } catch (err) {
+      toast.error('Failed to delete note: ' + err.message);
+    } finally {
+      setSavingNote(false);
+    }
   };
 
   const formatDateTime = (value) => value
@@ -175,6 +209,7 @@ export const SalesTasksView = () => {
   const searchDigits = search.replace(/\D/g, '');
   const filteredTasks = tasks.filter(task => {
     if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+    if (tagFilter && !(task.tags || []).some(t => t.id === Number(tagFilter))) return false;
     if (!normalizedSearch) return true;
     const nameMatches = String(task.name || '').toLowerCase().includes(normalizedSearch);
     const phoneDigits = String(task.phone || '').replace(/\D/g, '');
@@ -228,6 +263,24 @@ export const SalesTasksView = () => {
           {search && <button onClick={() => setSearch('')} title="Clear search" style={{ background: 'transparent', border: 0, padding: 2, cursor: 'pointer', display: 'flex' }}><X size={12} color={C.muted} /></button>}
         </div>
         <button
+          disabled={filteredTasks.length === 0}
+          onClick={() => {
+            if (filteredTasks.length === 0) return toast.error('No tasks to export');
+            toast.promise(
+              api.exportSalesTasks(filteredTasks.map(t => t.id)),
+              {
+                loading: 'Exporting tasks...',
+                success: 'Tasks exported successfully!',
+                error: 'Failed to export tasks'
+              }
+            );
+          }}
+          style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, padding: '9px 13px', borderRadius: 9, cursor: filteredTasks.length ? 'pointer' : 'not-allowed', opacity: filteredTasks.length ? 1 : 0.5, fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <Download size={13} />
+          Export
+        </button>
+        <button
           onClick={fetchTasks}
           style={{
             background: C.surface,
@@ -278,6 +331,15 @@ export const SalesTasksView = () => {
           </select>
         </label>
         <label style={{ display: 'grid', gap: 5, color: C.muted, fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>
+          Tag
+          <select value={tagFilter} onChange={e => { setTagFilter(e.target.value); setCurrentPage(1); }} style={{ minWidth: 140, height: 34, background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 7, padding: '0 9px', fontSize: 11 }}>
+            <option value="">All Tags</option>
+            {availableTags.map(tag => (
+              <option key={tag.id} value={tag.id}>{tag.name}</option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: 'grid', gap: 5, color: C.muted, fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>
           From date
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ height: 32, colorScheme: 'dark', background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 7, padding: '0 9px', fontSize: 11 }} />
         </label>
@@ -309,7 +371,7 @@ export const SalesTasksView = () => {
                 <th style={{ width: 36, padding: '12px 8px 12px 14px' }}>
                   <input type="checkbox" aria-label="Select tasks on this page" checked={allCurrentSelected} onChange={() => setSelectedTaskIds(current => allCurrentSelected ? current.filter(id => !currentTaskIds.includes(id)) : [...new Set([...current, ...currentTaskIds])])} />
                 </th>
-                {['Lead', 'Contact', 'Lead Status', 'Task Type', 'Task Date', 'Task Status', 'Notes', 'Details'].map((h) => (
+                {['Lead', 'Contact', 'Tags', 'Lead Status', 'Task Type', 'Task Date', 'Task Status', 'Notes', 'Details'].map((h) => (
                   <th key={h} style={{ padding: '12px 16px', fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8 }}>
                     {h}
                   </th>
@@ -357,7 +419,17 @@ export const SalesTasksView = () => {
                     {/* Contact Info */}
                     <td style={{ padding: '14px 16px' }}>
                       <p style={{ fontSize: 12, fontWeight: 500, color: C.text }}>{task.phone || '-'}</p>
-                      <p style={{ fontSize: 10, color: C.muted }}>{task.email || 'No Email'}</p>
+                    </td>
+
+                    {/* Tags */}
+                    <td style={{ padding: '14px 16px' }}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 140 }}>
+                        {task.tags && task.tags.length > 0 ? task.tags.map(tag => (
+                          <span key={tag.id} style={{ fontSize: 9, fontWeight: 700, background: tag.color + '22', color: tag.color, border: `1px solid ${tag.color}44`, padding: '2px 6px', borderRadius: 10, whiteSpace: 'nowrap' }}>
+                            {tag.name}
+                          </span>
+                        )) : <span style={{ fontSize: 10, color: C.dim }}>-</span>}
+                      </div>
                     </td>
 
                     {/* Task Type */}
@@ -433,7 +505,14 @@ export const SalesTasksView = () => {
                       </div>
                     </td>
                     <td style={{ padding: '14px 16px' }}>
-                      <button onClick={e => { e.stopPropagation(); setNotesTask(task); setNoteText(''); }} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, borderRadius: 7, padding: '6px 9px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: 10 }}><MessageSquare size={12} /> Add Note</button>
+                      {task.latest_sales_note ? (
+                        <div onClick={e => { e.stopPropagation(); setNotesTask(task); setNoteText(task.latest_sales_note || ''); setEditingNoteId(task.latest_sales_note_id || null); }} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', background: 'rgba(255,255,255,0.03)', padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.border}` }} title="Click to edit note">
+                          <MessageSquare size={12} color={C.blue} style={{ flexShrink: 0 }} />
+                          <span style={{ fontSize: 10, color: C.text, maxWidth: 100, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.latest_sales_note}</span>
+                        </div>
+                      ) : (
+                        <button onClick={e => { e.stopPropagation(); setNotesTask(task); setNoteText(''); }} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, borderRadius: 7, padding: '6px 9px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: 10 }}><MessageSquare size={12} /> Add Note</button>
+                      )}
                     </td>
                     <td style={{ padding: '14px 16px' }}>
                       <button
@@ -448,7 +527,7 @@ export const SalesTasksView = () => {
                   </tr>
                   {isExpanded && (
                     <tr style={{ background: 'rgba(255,255,255,0.018)', borderBottom: `1px solid ${C.border}` }}>
-                      <td colSpan={9} style={{ padding: '0 16px 16px' }}>
+                      <td colSpan={10} style={{ padding: '0 16px 16px' }}>
                         <div onClick={e => e.stopPropagation()} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))', gap: 12, padding: 16, borderRadius: 10, background: C.surface, border: `1px solid ${C.border}` }}>
                           {[
                             ['Brand', task.brand_name || '—'],
@@ -515,11 +594,20 @@ export const SalesTasksView = () => {
       {notesTask && (
         <div onClick={() => !savingNote && setNotesTask(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', backdropFilter: 'blur(4px)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 480, background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><h3 style={{ margin: 0, color: C.text, fontSize: 15 }}>Add Sales Note</h3><p style={{ margin: '3px 0 0', color: C.muted, fontSize: 10 }}>{notesTask.name}</p></div><button onClick={() => setNotesTask(null)} style={{ background: 'transparent', border: 0, cursor: 'pointer' }}><X size={16} color={C.muted} /></button></div>
-            {notesTask.latest_sales_note && <div style={{ marginTop: 14, padding: 10, background: C.surface, borderRadius: 8, color: C.muted, fontSize: 10 }}><strong style={{ color: C.text }}>Latest note:</strong> {notesTask.latest_sales_note}</div>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div><h3 style={{ margin: 0, color: C.text, fontSize: 15 }}>{editingNoteId ? 'Edit Sales Note' : 'Add Sales Note'}</h3><p style={{ margin: '3px 0 0', color: C.muted, fontSize: 10 }}>{notesTask.name}</p></div><button onClick={() => { setNotesTask(null); setEditingNoteId(null); }} style={{ background: 'transparent', border: 0, cursor: 'pointer' }}><X size={16} color={C.muted} /></button></div>
             <textarea autoFocus value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Example: Customer requested a callback tomorrow at 5 PM." rows={5} style={{ width: '100%', marginTop: 14, resize: 'vertical', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 9, color: C.text, padding: 12, fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
             <p style={{ color: C.dim, fontSize: 9, lineHeight: 1.5, marginTop: 7 }}>AI evaluates this note before future messages. “Already enrolled”, “Not interested”, or “Do not contact” stops automation. A future callback time reschedules it.</p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 15 }}><button onClick={() => setNotesTask(null)} disabled={savingNote} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, padding: '8px 14px', borderRadius: 8, cursor: 'pointer' }}>Cancel</button><button onClick={saveNote} disabled={savingNote} style={{ background: C.accent, border: 0, color: '#fff', padding: '8px 16px', borderRadius: 8, fontWeight: 700, cursor: savingNote ? 'wait' : 'pointer' }}>{savingNote ? 'Analyzing & Saving...' : 'Save Note'}</button></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 15 }}>
+              <div>
+                {editingNoteId && (
+                  <button onClick={() => { if(window.confirm('Delete this note?')) deleteNote(editingNoteId, notesTask.lead_id); }} disabled={savingNote} style={{ background: 'transparent', border: 'none', color: C.red, padding: '8px 14px', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}><Trash2 size={13} /> Delete</button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => { setNotesTask(null); setEditingNoteId(null); }} disabled={savingNote} style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.muted, padding: '8px 14px', borderRadius: 8, cursor: 'pointer' }}>Cancel</button>
+                <button onClick={saveNote} disabled={savingNote} style={{ background: C.accent, border: 0, color: '#fff', padding: '8px 16px', borderRadius: 8, fontWeight: 700, cursor: savingNote ? 'wait' : 'pointer' }}>{savingNote ? 'Saving...' : 'Save Note'}</button>
+              </div>
+            </div>
           </div>
         </div>
       )}

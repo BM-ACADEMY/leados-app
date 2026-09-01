@@ -2085,7 +2085,6 @@ return (
                 </div>
 
                 {/* --- TAGS SECTION --- */}
-                {alliance && (
                   <div style={{ marginTop: 20, borderTop: '1px solid ' + C.border, paddingTop: 16, paddingBottom: showTagMenu ? 260 : 20 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                       <span style={{ color: C.text, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2111,7 +2110,7 @@ return (
                                     setShowTagMenu(false);
                                     
                                     try {
-                                      await allianceInboxApi.assignTag(activeObj.id, tag.id);
+                                      await inboxApi.assignTag(activeObj.id, tag.id);
                                       refetchLeadsList(); // refresh the list to show tags in sidebar
                                     } catch(e) { console.error(e); }
                                   }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', flex: 1 }}>
@@ -2154,7 +2153,7 @@ return (
                                   setShowTagMenu(false);
                                   
                                   // Background assign & fetch
-                                  await allianceInboxApi.assignTag(activeObj.id, newTag.id);
+                                  await inboxApi.assignTag(activeObj.id, newTag.id);
                                   refetchLeadsList();
                                 } catch(e) { console.error(e); }
                               }} style={{ width: '100%', background: C.accent, color: '#fff', border: 'none', padding: '6px', borderRadius: 4, fontSize: 12, fontWeight: 600, cursor: newTagName.trim() ? 'pointer' : 'not-allowed', opacity: newTagName.trim() ? 1 : 0.5 }}>
@@ -2181,7 +2180,7 @@ return (
                               setTagUpdateTick(t => t + 1);
                             }
                             try {
-                              await allianceInboxApi.removeTag(activeObj.id, tag.id);
+                              await inboxApi.removeTag(activeObj.id, tag.id);
                               refetchLeadsList();
                             } catch(e) { console.error(e); }
                           }} />
@@ -2189,7 +2188,6 @@ return (
                       ))}
                     </div>
                   </div>
-                )}
                 {/* --- END TAGS SECTION --- */}
               </div>
 

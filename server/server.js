@@ -2176,7 +2176,7 @@ app.get('/api/leads/facebook-filter-options', auth, async (req, res) => {
 
 app.get('/api/leads', auth, async (req, res) => {
   try {
-    const { status, brand, search, source, campaign_name, ad_name, meta_page_id, from, to, limit = 100, offset = 0 } = req.query;
+    const { status, brand, search, source, campaign_name, ad_name, meta_page_id, from, to, tag_id, limit = 100, offset = 0 } = req.query;
     let q = `
       SELECT l.*, COUNT(*) OVER() AS filtered_total, c.name as brand_name, u.name as assigned_name,
         (
@@ -2203,10 +2203,17 @@ app.get('/api/leads', auth, async (req, res) => {
           WHERE cv.lead_id = l.id
           ORDER BY m.sent_at DESC, m.id DESC
           LIMIT 1
-        ) as last_msg
+        ) as last_msg,
+        lead_tags.tags
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
       LEFT JOIN users u ON l.assigned_to = u.id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'color', t.color)), '[]'::json) AS tags
+        FROM lead_tags lt
+        JOIN alliance_inbox_tags t ON lt.tag_id = t.id
+        WHERE lt.lead_id = l.id
+      ) lead_tags ON TRUE
       WHERE 1=1
     `;
     const params = [];
@@ -2280,6 +2287,10 @@ app.get('/api/leads', auth, async (req, res) => {
       params.push(toDate.toISOString());
       q += ` AND l.created_at <= $${params.length}`;
     }
+    if (tag_id) {
+      params.push(tag_id);
+      q += ` AND EXISTS (SELECT 1 FROM lead_tags WHERE lead_id = l.id AND tag_id = $${params.length})`;
+    }
     if (search) {
       params.push(`%${search}%`);
       const likeParam = `$${params.length}`;
@@ -2328,10 +2339,16 @@ app.get('/api/leads/:id', auth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT l.*, c.name as brand_name, c.phone_number_id, c.wa_access_token,
-             u.name as assigned_name
+             u.name as assigned_name, lead_tags.tags
       FROM leads l
       LEFT JOIN clients c ON l.client_id = c.id
       LEFT JOIN users u ON l.assigned_to = u.id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'color', t.color)), '[]'::json) AS tags
+        FROM lead_tags lt
+        JOIN alliance_inbox_tags t ON lt.tag_id = t.id
+        WHERE lt.lead_id = l.id
+      ) lead_tags ON TRUE
       WHERE l.id = $1
     `, [req.params.id]);
 
@@ -2478,6 +2495,35 @@ app.delete('/api/leads/:id', auth, async (req, res) => {
     res.json({ success: true, message: 'Lead deleted successfully' });
   } catch (err) {
     console.error('Delete lead error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/leads/:id/tags', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tagId } = req.body;
+    await pool.query(
+      `INSERT INTO lead_tags (lead_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [id, tagId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Add lead tag error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.delete('/api/leads/:id/tags/:tagId', auth, async (req, res) => {
+  try {
+    const { id, tagId } = req.params;
+    await pool.query(
+      `DELETE FROM lead_tags WHERE lead_id = $1 AND tag_id = $2`,
+      [id, tagId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Remove lead tag error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

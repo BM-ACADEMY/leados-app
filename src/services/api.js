@@ -125,8 +125,20 @@ class LeadOSAPI {
       ...(filters.metaPageId && { meta_page_id: filters.metaPageId }),
       ...(filters.from && { from: filters.from }),
       ...(filters.to && { to: filters.to }),
+      ...(filters.tagId && { tag_id: filters.tagId }),
     });
     return this.request(`/api/leads?${params}`);
+  }
+
+  async assignTag(leadId, tagId) {
+    return this.request(`/api/leads/${leadId}/tags`, {
+      method: 'POST',
+      body: JSON.stringify({ tagId })
+    });
+  }
+
+  async removeTag(leadId, tagId) {
+    return this.request(`/api/leads/${leadId}/tags/${tagId}`, { method: 'DELETE' });
   }
 
   async getLead(id) {
@@ -630,6 +642,36 @@ class LeadOSAPI {
       if (matches != null && matches[1]) { 
         filename = matches[1].replace(/['"]/g, '');
       }
+    }
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+
+  async exportSalesTasks(ids) {
+    const response = await fetch(`${API_URL}/api/sales-tasks/export`, {
+      method: 'POST',
+      headers: {
+        'Authorization': this.token ? `Bearer ${this.token}` : '',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ ids })
+    });
+
+    if (!response.ok) throw new Error('Failed to export sales tasks');
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    const disposition = response.headers.get('Content-Disposition');
+    let filename = 'Sales_Tasks_Export.xlsx';
+    if (disposition && disposition.indexOf('filename=') !== -1) {
+      const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+      const matches = filenameRegex.exec(disposition);
+      if (matches != null && matches[1]) { filename = matches[1].replace(/['"]/g, ''); }
     }
     a.download = filename;
     document.body.appendChild(a);

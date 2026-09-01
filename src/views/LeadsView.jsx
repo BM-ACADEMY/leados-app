@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { C } from '../constants/theme.js';
 import { Badge, ScoreBar } from '../components/ui.jsx';
 import { useLeads } from '../hooks/useLeads.js';
-import { api } from '../services/api.js';
+import { api, allianceInboxApi } from '../services/api.js';
 
 
 
@@ -501,6 +501,8 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const [campaignFilter, setCampaignFilter] = useState('');
   const [adFilter, setAdFilter] = useState('');
   const [metaPageFilter, setMetaPageFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+  const [availableTags, setAvailableTags] = useState([]);
   const [facebookFilterOptions, setFacebookFilterOptions] = useState([]);
   const [metaPageOptions, setMetaPageOptions] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -517,6 +519,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
     campaignName: campaignFilter || undefined,
     adName: adFilter || undefined,
     metaPageId: metaPageFilter || undefined,
+    tagId: tagFilter || undefined,
     limit: itemsPerPage,
     offset: (currentPage - 1) * itemsPerPage
   });
@@ -533,7 +536,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filter, search, sourceFilter, campaignFilter, adFilter, metaPageFilter]);
+  }, [filter, search, sourceFilter, campaignFilter, adFilter, metaPageFilter, tagFilter]);
 
   const totalPages = Math.ceil((total || 0) / itemsPerPage);
 
@@ -552,6 +555,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
       setFacebookFilterOptions(d.options || []);
       setMetaPageOptions(d.pages || []);
     }).catch(() => { });
+    allianceInboxApi.getTags().then(setAvailableTags).catch(console.error);
   }, []);
 
   const campaignNames = [...new Set(facebookFilterOptions.map(option => option.campaign_name).filter(Boolean))];
@@ -772,6 +776,14 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
               ))}
             </select>
           </div>
+          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 150 }}>
+            <select aria-label="Tag Filter" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} style={{ width: '100%', background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', cursor: 'pointer' }}>
+              <option value="" style={{ background: C.card, color: C.text }}>All Tags</option>
+              {availableTags.map(tag => (
+                <option key={tag.id} value={tag.id} style={{ background: C.card, color: C.text }}>{tag.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -779,7 +791,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid ' + C.border }}>
-              {['Lead', 'Phone', 'Source', 'Brand', 'Status', 'Score', 'Assigned', 'Date', ''].map((h) => (
+              {['Lead', 'Phone', 'Tags', 'Source', 'Brand', 'Status', 'Score', 'Assigned', 'Date', ''].map((h) => (
                 <th key={h} style={{ padding: '11px 14px', fontSize: 9, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'left' }}>{h}</th>
               ))}
             </tr>
@@ -797,6 +809,15 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
                   </div>
                 </td>
                 <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{l.phone}</td>
+                <td style={{ padding: '13px 14px' }}>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 120 }}>
+                    {l.tags && l.tags.length > 0 ? l.tags.map(tag => (
+                      <span key={tag.id} style={{ fontSize: 9, fontWeight: 700, background: tag.color + '22', color: tag.color, border: `1px solid ${tag.color}44`, padding: '2px 6px', borderRadius: 10, whiteSpace: 'nowrap' }}>
+                        {tag.name}
+                      </span>
+                    )) : <span style={{ fontSize: 10, color: C.dim }}>-</span>}
+                  </div>
+                </td>
                 <td style={{ padding: '13px 14px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

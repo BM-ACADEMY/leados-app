@@ -2830,17 +2830,25 @@ router.get('/sales-tasks', async (req, res) => {
              l.status AS lead_status, l.stage, l.source, l.interest, l.score,
              COALESCE(l.sales_status, 'new') AS sales_status,
              l.sales_followup_stopped, l.sales_followup_at,
+             (SELECT id FROM sales_lead_notes WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) AS latest_sales_note_id,
              (SELECT note FROM sales_lead_notes WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) AS latest_sales_note,
              (SELECT created_at FROM sales_lead_notes WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1) AS latest_sales_note_at,
              l.call_booked_at, l.next_followup_due, l.booking_status,
              l.calendar_event_url, l.google_meet_link,
              (SELECT MAX(conversation.last_message_at) FROM conversations conversation WHERE conversation.lead_id = l.id) AS last_contact,
              l.created_at AS lead_created_at,
-             c.name AS brand_name, u.name AS assigned_name
+             c.name AS brand_name, u.name AS assigned_name,
+             lead_tags.tags
       FROM sales_tasks st
       JOIN leads l ON st.lead_id = l.id
       LEFT JOIN clients c ON c.id = l.client_id
       LEFT JOIN users u ON u.id = l.assigned_to
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'color', t.color)), '[]'::json) AS tags
+        FROM lead_tags lt
+        JOIN alliance_inbox_tags t ON lt.tag_id = t.id
+        WHERE lt.lead_id = l.id
+      ) lead_tags ON TRUE
       WHERE st.status = 'completed'
         OR (
           COALESCE(l.sales_followup_stopped, FALSE) = FALSE
@@ -2855,6 +2863,77 @@ router.get('/sales-tasks', async (req, res) => {
     `);
     res.json({ success: true, tasks: result.rows });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/sales-tasks/export', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.ids)
+      ? [...new Set(req.body.ids.map(Number).filter(Number.isInteger))]
+      : [];
+      
+    if (ids.length === 0) {
+      return res.status(400).json({ error: 'No task IDs provided for export' });
+    }
+
+    const result = await pool.query(`
+      SELECT st.*, l.id AS lead_id, l.name, l.phone, l.email,
+             l.status AS lead_status, l.stage, l.source, l.interest, l.score,
+             COALESCE(l.sales_status, 'new') AS sales_status,
+             l.sales_followup_stopped, l.sales_followup_at,
+             l.call_booked_at, l.next_followup_due, l.booking_status,
+             l.calendar_event_url, l.google_meet_link,
+             (SELECT MAX(conversation.last_message_at) FROM conversations conversation WHERE conversation.lead_id = l.id) AS last_contact,
+             l.created_at AS lead_created_at,
+             c.name AS brand_name, u.name AS assigned_name,
+             lead_tags.tags
+      FROM sales_tasks st
+      JOIN leads l ON st.lead_id = l.id
+      LEFT JOIN clients c ON c.id = l.client_id
+      LEFT JOIN users u ON u.id = l.assigned_to
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'color', t.color)), '[]'::json) AS tags
+        FROM lead_tags lt
+        JOIN alliance_inbox_tags t ON lt.tag_id = t.id
+        WHERE lt.lead_id = l.id
+      ) lead_tags ON TRUE
+      WHERE st.id = ANY($1::int[])
+      ORDER BY st.created_at DESC, st.id DESC
+    `, [ids]);
+
+    const xlsx = require('xlsx');
+    const exportData = result.rows.map(t => {
+      const formatDateTime = (value) => value ? new Date(value).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+      return {
+        'Task Type': t.task_type === 'hot_lead' ? 'Hot Lead' : t.task_type === 'call' ? 'Scheduled Call' : t.task_type === 'followup' ? 'Follow-up' : t.task_type,
+        'Task Status': t.status,
+        'Lead Name': t.name || 'Unknown',
+        'Brand': t.brand_name || '',
+        'Phone': t.phone || '',
+        'Email': t.email || '',
+        'Tags': (t.tags || []).map(tag => tag.name).join(', '),
+        'Lead Stage': t.lead_status || 'New',
+        'Sales Status': t.sales_status,
+        'Assigned To': t.assigned_name || 'Unassigned',
+        'Lead Score': t.score || 0,
+        'Interest': t.interest || '',
+        'Task Created At': formatDateTime(t.created_at),
+        'Lead Created At': formatDateTime(t.lead_created_at),
+        'Last Contact': formatDateTime(t.last_contact)
+      };
+    });
+
+    const worksheet = xlsx.utils.json_to_sheet(exportData);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, worksheet, 'Sales Tasks');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Disposition', 'attachment; filename="Sales_Tasks_Export.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -2956,6 +3035,26 @@ Return only JSON: {"stop_followups":boolean,"followup_at":string|null}. Set stop
     `, [shouldStop, followupAt, note, req.params.leadId]);
     await emitSalesTaskUpdate(req, 'note_added', { lead_id: Number(req.params.leadId), note: noteResult.rows[0], ...leadResult.rows[0] });
     res.json({ success: true, note: noteResult.rows[0], lead: leadResult.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/sales-tasks/notes/:noteId', async (req, res) => {
+  try {
+    const note = String(req.body.note || '').trim();
+    if (!note) return res.status(400).json({ error: 'Note is required' });
+    const noteResult = await pool.query(`UPDATE sales_lead_notes SET note = $1 WHERE id = $2 RETURNING *`, [note, req.params.noteId]);
+    if (noteResult.rowCount === 0) return res.status(404).json({ error: 'Note not found' });
+    res.json({ success: true, note: noteResult.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.delete('/sales-tasks/notes/:noteId', async (req, res) => {
+  try {
+    const delRes = await pool.query(`DELETE FROM sales_lead_notes WHERE id = $1 RETURNING lead_id`, [req.params.noteId]);
+    if (delRes.rowCount === 0) return res.status(404).json({ error: 'Note not found' });
+    const leadId = delRes.rows[0].lead_id;
+    const latestRes = await pool.query(`SELECT id, note, created_at FROM sales_lead_notes WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 1`, [leadId]);
+    res.json({ success: true, latest_note: latestRes.rows[0] || null });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

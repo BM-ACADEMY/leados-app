@@ -482,6 +482,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
 
     let mediaUrl = null;
     let msgType = 'text';
+    let waMediaId = null;
 
     let optimisticId = null;
 
@@ -494,6 +495,8 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
           setUploadProgress(progress);
         });
         mediaUrl = uploadRes.fileUrl;
+        // Alliance inbox: prefer the Meta media_id so we don't need a public URL.
+        if (alliance && uploadRes.waMediaId) waMediaId = uploadRes.waMediaId;
         setUploadProgress(null);
 
         if (attachedFile.type.startsWith('image/')) msgType = 'image';
@@ -520,7 +523,7 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
       setAttachedFile(null);
 
       const sentMsg = alliance
-        ? await inboxApi.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id, false, allianceDraftSource)
+        ? await inboxApi.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id, false, allianceDraftSource, waMediaId)
         : await inboxApi.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
       setAllianceDraftSource('human');
 
@@ -1772,6 +1775,12 @@ return (
                 <input
                   value={msg}
                   onChange={(e) => setMsg(e.target.value)}
+                  onPaste={(e) => {
+                    if (e.clipboardData?.files?.length > 0) {
+                      e.preventDefault();
+                      setAttachedFile(e.clipboardData.files[0]);
+                    }
+                  }}
                   placeholder="Type a message"
                   style={{ flex: 1, background: '#2a3942', border: 'none', borderRadius: 24, padding: '9px 16px', color: '#d1d7db', fontSize: 14, outline: 'none' }}
                 />

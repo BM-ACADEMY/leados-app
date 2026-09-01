@@ -493,7 +493,41 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
        VALUES ($1,$2,$3,$4,$5,'outbound')`,
       [uploaded.path, fileUrl, uploaded.mimetype, req.file.originalname, req.file.size]
     );
-    res.json({ success: true, fileUrl, mimeType: uploaded.mimetype });
+
+    // Upload the file directly to Meta's media API so the send step can use
+    // a stable media_id instead of a URL. This works even when the server is
+    // not publicly reachable (local dev, private network, etc.).
+    // Uses manual multipart/form-data — no external 'form-data' package needed.
+    let waMediaId = null;
+    try {
+      const settings = await configuredPhoneId();
+      const token = accessToken(settings);
+      if (settings?.phone_number_id && token) {
+        const fileBuffer = fs.readFileSync(uploaded.path);
+        const fd = new FormData();
+        fd.append('messaging_product', 'whatsapp');
+        fd.append('file', new Blob([fileBuffer], { type: uploaded.mimetype }), uploaded.filename);
+
+        const response = await fetch(`https://graph.facebook.com/v19.0/${settings.phone_number_id}/media`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd,
+          signal: AbortSignal.timeout(30000)
+        });
+        
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(JSON.stringify(data));
+        }
+        waMediaId = data?.id || null;
+        console.log(`[Alliance Media] Uploaded to Meta. media_id=${waMediaId}`);
+      }
+    } catch (uploadError) {
+      // Non-fatal: fall back to URL-based send at message send time.
+      console.warn('[Alliance media upload to Meta failed]', uploadError.response?.data || uploadError.message);
+    }
+
+    res.json({ success: true, fileUrl, mimeType: uploaded.mimetype, waMediaId });
   });
 
   router.post('/contacts/:id/messages', async (req, res) => {
@@ -562,12 +596,25 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
     const payload = { messaging_product: 'whatsapp', recipient_type: 'individual', to: contact.phone, type };
     if (type === 'text') payload.text = { body: content };
     else {
+      const waMediaId = req.body.waMediaId ? String(req.body.waMediaId) : null;
       const mediaLink = String(req.body.mediaUrl || '');
-      if (!mediaLink) return res.status(400).json({ error: 'Media URL is required.' });
-      const link = mediaLink.startsWith('http') ? mediaLink : `${process.env.PUBLIC_API_URL || ''}${mediaLink}`;
-      payload[type] = { link };
+      if (!waMediaId && !mediaLink) return res.status(400).json({ error: 'Media URL or media ID is required.' });
+      if (waMediaId) {
+        // Preferred: use the Meta media_id obtained at upload time — no public URL needed.
+        payload[type] = { id: waMediaId };
+      } else {
+        // Fallback: URL-based send. Requires the server to be publicly reachable.
+        const baseUrl = process.env.PUBLIC_API_URL || '';
+        const link = mediaLink.startsWith('http') ? mediaLink : `${baseUrl}${mediaLink}`;
+        if (!link.startsWith('http')) {
+          return res.status(500).json({
+            error: 'Voice/media message could not be sent: no Meta media ID was returned at upload time and PUBLIC_API_URL is not configured. Please restart the server after setting PUBLIC_API_URL in server/.env.',
+          });
+        }
+        payload[type] = { link };
+      }
       if (content && ['image', 'video', 'document'].includes(type)) payload[type].caption = content;
-      if (type === 'document') payload.document.filename = path.basename(mediaLink);
+      if (type === 'document' && !waMediaId) payload.document.filename = path.basename(mediaLink);
     }
     if (req.body.replyToMessageId) payload.context = { message_id: req.body.replyToMessageId };
     try {

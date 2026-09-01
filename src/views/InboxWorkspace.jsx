@@ -1404,7 +1404,39 @@ return (
                               />
                             ) : m.type === 'video' ? <video src={fullMediaUrl} controls style={{ maxWidth: '100%', borderRadius: 6, backgroundColor: C.bg }} />
                                 : m.type === 'audio' ? <audio src={fullMediaUrl} controls style={{ maxWidth: '100%' }} />
-                                  : <a href={fullMediaUrl} target="_blank" rel="noreferrer" style={{ color: C.accent, fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }}><Paperclip size={12} /> Document</a>}
+                                  : (
+                                    <div
+                                      onClick={() => window.open(fullMediaUrl, '_blank')}
+                                      style={{
+                                        background: 'rgba(255, 255, 255, 0.05)',
+                                        borderRadius: 8,
+                                        padding: 12,
+                                        display: 'flex',
+                                        gap: 12,
+                                        alignItems: 'center',
+                                        cursor: 'pointer',
+                                        textDecoration: 'none',
+                                        transition: 'background 0.2s',
+                                        border: '1px solid rgba(255, 255, 255, 0.08)'
+                                      }}
+                                      onMouseOver={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
+                                      onMouseOut={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'}
+                                    >
+                                      <div style={{ background: '#027eb5', borderRadius: 6, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
+                                        <FileText size={20} />
+                                      </div>
+                                      <div style={{ flex: 1, overflow: 'hidden' }}>
+                                        <div style={{ fontWeight: 600, fontSize: 14, color: '#e9edef', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                          {fullMediaUrl.split('/').pop() || 'Document'}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: '#8696a0', marginTop: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
+                                          <span>{fullMediaUrl.split('.').pop().toUpperCase().substring(0,4)}</span>
+                                          <span>•</span>
+                                          <span>Open file</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
                           </div>
                         );
                       })()}
@@ -1679,29 +1711,39 @@ return (
             )}
 
             {attachedFile && (
-              <div style={{ padding: '8px 14px', background: C.card, borderTop: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {attachedFile.type.startsWith('image/') ? (
-                    <img src={URL.createObjectURL(attachedFile)} style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6, border: '1px solid ' + C.border }} alt="preview" />
-                  ) : attachedFile.type.startsWith('video/') ? (
-                    <div style={{ width: 40, height: 40, borderRadius: 6, background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Film size={18} color={C.muted} /></div>
-                  ) : attachedFile.type.startsWith('audio/') ? (
-                    <audio src={URL.createObjectURL(attachedFile)} controls style={{ height: 40, outline: 'none', maxWidth: 250 }} />
-                  ) : (
-                    <div style={{ width: 40, height: 40, borderRadius: 6, background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileText size={18} color={C.muted} /></div>
-                  )}
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontSize: 13, color: C.text, fontWeight: 500, wordBreak: 'break-all' }}>{attachedFile.name}</span>
-                    <span style={{ fontSize: 10, color: C.muted }}>{formatBytes(attachedFile.size)}</span>
-                  </div>
-                </div>
-                {uploadProgress !== null ? (
-                  <div style={{ padding: '0 5px', display: 'flex', alignItems: 'center' }}>
-                    <CircularProgress progress={uploadProgress} />
+              <div style={{ padding: '20px', background: C.card, borderTop: '1px solid ' + C.border, display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}>
+                {attachedFile.type.startsWith('image/') ? (
+                  <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center' }}>
+                    <img src={URL.createObjectURL(attachedFile)} style={{ maxHeight: 220, maxWidth: '100%', objectFit: 'contain', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', border: '1px solid ' + C.border }} alt="preview" />
                   </div>
                 ) : (
-                  <button onClick={() => setAttachedFile(null)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: C.muted, padding: 5 }}><X size={16} /></button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', maxWidth: 400, background: C.bg, padding: 12, borderRadius: 8, border: '1px solid ' + C.border }}>
+                    {attachedFile.type.startsWith('video/') ? (
+                      <div style={{ width: 44, height: 44, borderRadius: 8, background: C.card, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Film size={20} color={C.muted} /></div>
+                    ) : attachedFile.type.startsWith('audio/') ? (
+                      <audio src={URL.createObjectURL(attachedFile)} controls style={{ height: 44, outline: 'none', flex: 1 }} />
+                    ) : (
+                      <div style={{ width: 44, height: 44, borderRadius: 8, background: C.card, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileText size={20} color={C.muted} /></div>
+                    )}
+                    
+                    {!attachedFile.type.startsWith('audio/') && (
+                      <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1 }}>
+                        <span style={{ fontSize: 14, color: C.text, fontWeight: 500, wordBreak: 'break-all', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>{attachedFile.name}</span>
+                        <span style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{formatBytes(attachedFile.size)}</span>
+                      </div>
+                    )}
+                  </div>
                 )}
+                
+                <div style={{ position: 'absolute', top: 16, right: 20 }}>
+                  {uploadProgress !== null ? (
+                    <div style={{ background: C.card, borderRadius: '50%', padding: 4, boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }}>
+                      <CircularProgress progress={uploadProgress} />
+                    </div>
+                  ) : (
+                    <button onClick={() => setAttachedFile(null)} style={{ background: 'rgba(0,0,0,0.4)', border: 'none', cursor: 'pointer', color: '#fff', padding: 6, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s' }} onMouseOver={e => e.currentTarget.style.background = 'rgba(0,0,0,0.7)'} onMouseOut={e => e.currentTarget.style.background = 'rgba(0,0,0,0.4)'}><X size={16} /></button>
+                  )}
+                </div>
               </div>
             )}
             <form onSubmit={handleSend} style={{ padding: 14, borderTop: '1px solid ' + C.border, display: 'flex', gap: 9, position: 'relative' }}>

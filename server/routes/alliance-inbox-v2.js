@@ -506,7 +506,8 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
         const fileBuffer = fs.readFileSync(uploaded.path);
         const fd = new FormData();
         fd.append('messaging_product', 'whatsapp');
-        fd.append('file', new Blob([fileBuffer], { type: uploaded.mimetype }), uploaded.filename);
+        const cleanMimeType = (uploaded.mimetype || 'application/octet-stream').split(';')[0].trim();
+        fd.append('file', new Blob([fileBuffer], { type: cleanMimeType }), uploaded.filename);
 
         const response = await fetch(`https://graph.facebook.com/v19.0/${settings.phone_number_id}/media`, {
           method: 'POST',
@@ -614,7 +615,7 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
         payload[type] = { link };
       }
       if (content && ['image', 'video', 'document'].includes(type)) payload[type].caption = content;
-      if (type === 'document' && !waMediaId) payload.document.filename = path.basename(mediaLink);
+      if (type === 'document' && mediaLink) payload.document.filename = path.basename(mediaLink);
     }
     if (req.body.replyToMessageId) payload.context = { message_id: req.body.replyToMessageId };
     try {

@@ -2669,12 +2669,48 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
       payload.context = { message_id: reply_to_wa_id };
     }
 
+    let waMediaId = null;
+    if (type !== 'text' && media_url && media_url.startsWith('/uploads/')) {
+      try {
+        const filePath = path.join(__dirname, media_url);
+        const fileBuffer = fs.readFileSync(filePath);
+        const fd = new FormData();
+        fd.append('messaging_product', 'whatsapp');
+        const ext = path.extname(media_url).toLowerCase();
+        let mimeType = 'application/octet-stream';
+        if (ext === '.ogg') mimeType = 'audio/ogg';
+        else if (ext === '.mp4') mimeType = 'video/mp4';
+        else if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+        else if (ext === '.png') mimeType = 'image/png';
+        else if (ext === '.pdf') mimeType = 'application/pdf';
+        
+        fd.append('file', new Blob([fileBuffer], { type: mimeType }), path.basename(media_url));
+        const uploadRes = await fetch(`https://graph.facebook.com/v19.0/${phoneNumberId}/media`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${waAccessToken}` },
+          body: fd,
+        });
+        const uploadData = await uploadRes.json();
+        if (uploadRes.ok && uploadData.id) {
+          waMediaId = uploadData.id;
+        } else {
+          console.warn('[WhatsApp Send] Direct media upload failed:', uploadData);
+        }
+      } catch (e) {
+        console.warn('[WhatsApp Send] Failed to upload media directly:', e.message);
+      }
+    }
+
     if (type === 'text') {
       payload.text = { body: message };
     } else {
-      const fullMediaUrl = media_url && media_url.startsWith('http') ? media_url : `${process.env.API_URL || 'https://leados-api.abmgroups.org'}${media_url}`;
-      payload[type] = { link: fullMediaUrl };
-      if (message) payload[type].caption = message; // Optional caption for media
+      if (waMediaId) {
+        payload[type] = { id: waMediaId };
+      } else {
+        const fullMediaUrl = media_url && media_url.startsWith('http') ? media_url : `${process.env.API_URL || 'https://leados-api.abmgroups.org'}${media_url}`;
+        payload[type] = { link: fullMediaUrl };
+      }
+      if (message && type !== 'audio') payload[type].caption = message; // Audio doesn't support caption
     }
 
     const waRes = await axios.post(

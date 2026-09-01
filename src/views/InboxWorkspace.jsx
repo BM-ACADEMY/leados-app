@@ -188,10 +188,8 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
   }, [showTagMenu]);
 
   useEffect(() => {
-    if (alliance) {
-      allianceInboxApi.getTags().then(tags => setAvailableTags(tags)).catch(console.error);
-    }
-  }, [alliance]);
+    allianceInboxApi.getTags().then(tags => setAvailableTags(tags)).catch(console.error);
+  }, []);
   
   const [attachedFile, setAttachedFile] = useState(null);
   const [hoveredMessage, setHoveredMessage] = useState(null);
@@ -1429,9 +1427,9 @@ return (
                         return (
                           <div style={{ marginBottom: 6 }}>
                             {m.type === 'image' ? (
-                              <img
-                                src={fullMediaUrl}
-                                style={{ maxWidth: '100%', borderRadius: 6, minHeight: 100, backgroundColor: C.bg, cursor: 'pointer' }}
+                                <img
+                                  src={fullMediaUrl}
+                                  style={{ maxWidth: 280, maxHeight: 280, borderRadius: 6, minHeight: 100, backgroundColor: C.bg, cursor: 'pointer', objectFit: 'cover' }}
                                 alt="attachment"
                                 onClick={() => {
                                   const idx = chatImages.findIndex(img => img.id === m.id);

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
+import { useFloating, autoUpdate, offset, flip, shift, FloatingPortal, useDismiss, useInteractions } from '@floating-ui/react';
 import { Search, Send, ChevronLeft, ChevronRight, ChevronDown, Wifi, WifiOff, Check, Paperclip, Copy, Edit2, Trash2, X, MoreVertical, Image, Film, Music, FileText, Smile, Mic, Square, CornerUpLeft, CornerUpRight, Pin, Star, CheckSquare, Forward, Download, ZoomIn, ZoomOut, Phone, Video, User, Sparkles, ExternalLink, Plus, Tag } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 import { io as socketIO } from 'socket.io-client';
@@ -24,6 +25,46 @@ const CircularProgress = ({ progress, size = 30, strokeWidth = 3 }) => {
       <circle cx={size / 2} cy={size / 2} r={radius} stroke={C.accent} strokeWidth={strokeWidth} fill="none" strokeDasharray={circumference} strokeDashoffset={offset} style={{ transition: 'stroke-dashoffset 0.2s ease-out' }} />
       <text x="50%" y="50%" fill={C.text} fontSize="9" fontWeight="600" textAnchor="middle" dy=".3em" transform={`rotate(90 ${size / 2} ${size / 2})`}>{Math.round(progress)}</text>
     </svg>
+  );
+};
+
+// Floating-ui powered dropdown for per-message actions (Reply/Forward/etc). Unlike a
+// plain `position:absolute` menu, this flips upward and stays fully visible when the
+// message sits near the bottom of the (virtualized, scrolling) chat — the trigger button
+// and the panel it opens were previously clipped by the message list's scroll container.
+const MessageActionsMenu = ({ isOpen, onToggle, onClose, align = 'end', children }) => {
+  const { refs, floatingStyles, context } = useFloating({
+    open: isOpen,
+    onOpenChange: (open) => { if (!open) onClose(); },
+    placement: align === 'start' ? 'bottom-start' : 'bottom-end',
+    middleware: [offset(4), flip({ fallbackPlacements: ['top-start', 'top-end'] }), shift({ padding: 8 })],
+    whileElementsMounted: autoUpdate,
+    strategy: 'fixed',
+  });
+  const dismiss = useDismiss(context);
+  const { getReferenceProps, getFloatingProps } = useInteractions([dismiss]);
+
+  return (
+    <div style={{ position: 'absolute', top: 5, right: 5, zIndex: 10 }}>
+      <button
+        ref={refs.setReference}
+        {...getReferenceProps({ onClick: (e) => { e.stopPropagation(); onToggle(); } })}
+        style={{ background: 'rgba(11, 20, 26, 0.7)', border: 'none', cursor: 'pointer', padding: 2, borderRadius: 4, display: 'flex' }}
+      >
+        <ChevronDown size={14} color="#e9edef" />
+      </button>
+      {isOpen && (
+        <FloatingPortal>
+          <div
+            ref={refs.setFloating}
+            style={{ ...floatingStyles, background: C.card, border: '1px solid ' + C.border, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 1000, minWidth: 160, padding: '5px 0', display: 'flex', flexDirection: 'column' }}
+            {...getFloatingProps()}
+          >
+            {children}
+          </div>
+        </FloatingPortal>
+      )}
+    </div>
   );
 };
 
@@ -1291,7 +1332,6 @@ return (
                       boxShadow: '0 1px 0.5px rgba(11,20,26,.13)',
                       transition: 'all 0.3s ease'
                     }}
-                  onMouseLeave={() => { if (activeDropdownId === m.id) setActiveDropdownId(null); }}
                   onClick={() => {
                     if (isSelectMode) {
                       setSelectedMessageIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id]);
@@ -1299,68 +1339,62 @@ return (
                   }}
                 >
                   {(hoveredMessage === m.id || activeDropdownId === m.id) && !m.is_deleted && !isSelectMode && (
-                    <div style={{ position: 'absolute', top: 5, right: 5, zIndex: 10 }}>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setActiveDropdownId(activeDropdownId === m.id ? null : m.id); }}
-                        style={{ background: 'rgba(11, 20, 26, 0.7)', border: 'none', cursor: 'pointer', padding: 2, borderRadius: 4, display: 'flex' }}
-                      >
-                        <ChevronDown size={14} color="#e9edef" />
+                    <MessageActionsMenu
+                      isOpen={activeDropdownId === m.id}
+                      onToggle={() => setActiveDropdownId(activeDropdownId === m.id ? null : m.id)}
+                      onClose={() => setActiveDropdownId(null)}
+                      align={isLead ? 'start' : 'end'}
+                    >
+                      <button onClick={() => { setReplyingTo(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <CornerUpLeft size={16} color={C.muted} /> Reply
                       </button>
 
-                      {activeDropdownId === m.id && (
-                        <div style={{ position: 'absolute', top: '100%', left: isLead ? 0 : 'auto', right: isLead ? 'auto' : 0, background: C.card, border: '1px solid ' + C.border, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 100, minWidth: 160, padding: '5px 0', display: 'flex', flexDirection: 'column' }}>
-                          <button onClick={() => { setReplyingTo(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <CornerUpLeft size={16} color={C.muted} /> Reply
-                          </button>
-
-                          {((!m.type || m.type === 'text') || (!alliance && Boolean(getMessageText(m)))) && (
-                            <button onClick={() => { handleCopy(getMessageText(m)); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
-                              <Copy size={16} color={C.muted} /> Copy
-                            </button>
-                          )}
-
-                          <button onClick={() => { setForwardMessage(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <CornerUpRight size={16} color={C.muted} /> Forward
-                          </button>
-
-                          {m.media_url && (
-                            <button
-                              onClick={() => {
-                                handleDownloadMedia(m.media_url);
-                                setActiveDropdownId(null);
-                              }}
-                              style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}
-                            >
-                              <Download size={16} color={C.muted} /> Download
-                            </button>
-                          )}
-
-                          <button onClick={() => { setPinMessageModal(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <Pin size={16} color={C.muted} /> {m.pinned_until && new Date(m.pinned_until) > new Date() ? 'Unpin' : 'Pin'}
-                          </button>
-
-                          <button onClick={() => { handleStar(m.id, !m.is_starred); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <Star size={16} color={C.muted} /> {m.is_starred ? 'Unstar' : 'Star'}
-                          </button>
-
-                          <div style={{ height: 1, background: C.border, margin: '4px 0' }} />
-
-                          <button onClick={() => { setIsSelectMode(true); setSelectedMessageIds([m.id]); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <CheckSquare size={16} color={C.muted} /> Select
-                          </button>
-
-                          {!isLead && (!m.type || m.type === 'text') && (
-                            <button onClick={() => { startEdit(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
-                              <Edit2 size={16} color={C.muted} /> Edit
-                            </button>
-                          )}
-
-                          <button onClick={() => { setDeleteModalMsg(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: '#ef4444', padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <Trash2 size={16} color="#ef4444" /> Delete
-                          </button>
-                        </div>
+                      {((!m.type || m.type === 'text') || (!alliance && Boolean(getMessageText(m)))) && (
+                        <button onClick={() => { handleCopy(getMessageText(m)); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <Copy size={16} color={C.muted} /> Copy
+                        </button>
                       )}
-                    </div>
+
+                      <button onClick={() => { setForwardMessage(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <CornerUpRight size={16} color={C.muted} /> Forward
+                      </button>
+
+                      {m.media_url && (
+                        <button
+                          onClick={() => {
+                            handleDownloadMedia(m.media_url);
+                            setActiveDropdownId(null);
+                          }}
+                          style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}
+                        >
+                          <Download size={16} color={C.muted} /> Download
+                        </button>
+                      )}
+
+                      <button onClick={() => { setPinMessageModal(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <Pin size={16} color={C.muted} /> {m.pinned_until && new Date(m.pinned_until) > new Date() ? 'Unpin' : 'Pin'}
+                      </button>
+
+                      <button onClick={() => { handleStar(m.id, !m.is_starred); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <Star size={16} color={C.muted} /> {m.is_starred ? 'Unstar' : 'Star'}
+                      </button>
+
+                      <div style={{ height: 1, background: C.border, margin: '4px 0' }} />
+
+                      <button onClick={() => { setIsSelectMode(true); setSelectedMessageIds([m.id]); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <CheckSquare size={16} color={C.muted} /> Select
+                      </button>
+
+                      {!isLead && (!m.type || m.type === 'text') && (
+                        <button onClick={() => { startEdit(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: C.text, padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <Edit2 size={16} color={C.muted} /> Edit
+                        </button>
+                      )}
+
+                      <button onClick={() => { setDeleteModalMsg(m); setActiveDropdownId(null); }} style={{ background: 'transparent', border: 'none', color: '#ef4444', padding: '10px 16px', textAlign: 'left', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <Trash2 size={16} color="#ef4444" /> Delete
+                      </button>
+                    </MessageActionsMenu>
                   )}
 
                   {m.is_deleted ? (

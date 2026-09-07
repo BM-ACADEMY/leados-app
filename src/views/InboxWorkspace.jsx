@@ -1817,7 +1817,7 @@ return (
                 </div>
               </div>
             )}
-            <form onSubmit={handleSend} style={{ padding: 14, borderTop: '1px solid ' + C.border, display: 'flex', gap: 9, position: 'relative' }}>
+            <form onSubmit={handleSend} style={{ padding: 14, borderTop: '1px solid ' + C.border, display: 'flex', gap: 9, position: 'relative', alignItems: 'flex-end' }}>
               <input type="file" ref={fileInputRef} accept={attachAccept} style={{ display: 'none' }} onChange={handleFileChange} />
 
               <div style={{ position: 'relative' }}>
@@ -1885,9 +1885,22 @@ return (
                   <button type="button" onClick={stopRecording} style={{ background: 'transparent', border: 'none', color: '#f15c6d', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>STOP</button>
                 </div>
               ) : (
-                <input
+                <textarea
                   value={msg}
-                  onChange={(e) => setMsg(e.target.value)}
+                  onChange={(e) => {
+                    setMsg(e.target.value);
+                    e.target.style.height = '40px';
+                    e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px';
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (msg.trim() || attachedFile) {
+                        handleSend(e);
+                        e.target.style.height = '40px';
+                      }
+                    }
+                  }}
                   onPaste={(e) => {
                     if (e.clipboardData?.files?.length > 0) {
                       e.preventDefault();
@@ -1895,7 +1908,23 @@ return (
                     }
                   }}
                   placeholder="Type a message"
-                  style={{ flex: 1, background: '#2a3942', border: 'none', borderRadius: 24, padding: '9px 16px', color: '#d1d7db', fontSize: 14, outline: 'none' }}
+                  style={{ 
+                    flex: 1, 
+                    background: '#2a3942', 
+                    border: 'none', 
+                    borderRadius: 20, 
+                    padding: '10px 16px', 
+                    color: '#d1d7db', 
+                    fontSize: 14, 
+                    outline: 'none',
+                    resize: 'none',
+                    fontFamily: 'inherit',
+                    lineHeight: '20px',
+                    height: '40px',
+                    maxHeight: '150px',
+                    overflowY: 'auto',
+                    boxSizing: 'border-box'
+                  }}
                 />
               )}
 

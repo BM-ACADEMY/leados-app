@@ -2985,7 +2985,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
               value.contacts?.[0]?.profile?.name || phone,
               phone,
               referralAdId ? 'facebook' : 'WhatsApp',
-              (await getLeadOSBrand(pool)).id,
+              referralCampaign?.client_id || (await getLeadOSBrand(pool)).id,
               referralCampaign?.campaign_id || null,
               referralCampaign?.campaign_name || null,
               referralAdId,
@@ -3013,7 +3013,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
                 WHERE id = $6
                 RETURNING *
               `, [
-                (await getLeadOSBrand(pool)).id,
+                referralCampaign?.client_id || (await getLeadOSBrand(pool)).id,
                 referralCampaign?.campaign_id || null,
                 referralCampaign?.campaign_name || null,
                 referralAdId,

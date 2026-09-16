@@ -637,7 +637,7 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
           reason: 'window_closed', template_sent: false,
         });
         const meta = await axios.post(`https://graph.facebook.com/v19.0/${settings.phone_number_id}/messages`, {
-          messaging_product: 'whatsapp', recipient_type: 'individual', to: contact.phone, type: 'template',
+          messaging_product: 'whatsapp', recipient_type: 'individual', to: String(contact.phone || '').replace(/\D/g, ''), type: 'template',
           template: { name: reopenTemplate.name, language: { code: reopenTemplate.language || 'en' } },
         }, { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 20000 });
         const waMessageId = meta.data?.messages?.[0]?.id || null;
@@ -664,7 +664,7 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
     }
     const type = req.body.msgType || req.body.type || 'text';
     const content = String(req.body.message || req.body.content || '');
-    const payload = { messaging_product: 'whatsapp', recipient_type: 'individual', to: contact.phone, type };
+    const payload = { messaging_product: 'whatsapp', recipient_type: 'individual', to: String(contact.phone || '').replace(/\D/g, ''), type };
     if (type === 'text') payload.text = { body: content };
     else {
       const waMediaId = req.body.waMediaId ? String(req.body.waMediaId) : null;

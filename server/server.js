@@ -2830,7 +2830,8 @@ app.post('/webhook/whatsapp', async (req, res) => {
     }
 
     if (!hasValidPhoneNumber) {
-      console.log('🚫 Ignored webhook for unmanaged phone_number_id');
+      const seenIds = (body.entry || []).flatMap(e => (e.changes || []).map(c => c.value?.metadata?.phone_number_id)).filter(Boolean);
+      console.log(`🚫 Ignored webhook for unmanaged phone_number_id: ${seenIds.join(', ') || 'unknown'} (expected WA_PHONE_NUMBER_ID=${process.env.WA_PHONE_NUMBER_ID} or a row in clients.phone_number_id)`);
       return;
     }
 
@@ -3119,6 +3120,12 @@ app.post('/webhook/whatsapp', async (req, res) => {
             const shouldTriggerAI = ['text', 'button', 'interactive', 'audio'].includes(msg.type);
             // WF00 continues through its synchronous transcription request.
             // Do not call it again and create a duplicate AI response.
+            if (shouldTriggerAI && req.query.source === 'n8n') {
+              console.log(`[AI Trigger] Skipping backend's own N8N_WEBHOOK_URL call for lead ${lead.id} — relying on n8n WF00's own "Push To Sales Engine" node to trigger WF01 (request came in with ?source=n8n).`);
+            }
+            if (shouldTriggerAI && !process.env.N8N_WEBHOOK_URL) {
+              console.warn(`[AI Trigger] N8N_WEBHOOK_URL is not set — cannot auto-trigger AI reply for lead ${lead.id}.`);
+            }
             if (shouldTriggerAI && process.env.N8N_WEBHOOK_URL && req.query.source !== 'n8n') {
               // Clear any existing waiting queue for this lead
               if (aiReplyQueue.has(lead.id)) {
@@ -3140,7 +3147,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
                   message: text,
                   phone_number_id: lead.client_phone_number_id || phoneNumberId,
                   wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN
-                }).catch(e => console.error('[n8n forward error]', e.message));
+                }).catch(e => console.error(`[n8n forward error] Failed to trigger WF01 Sales Engine for lead ${lead.id} at ${process.env.N8N_WEBHOOK_URL}:`, e.response?.status, e.message));
               }, 60000); // 60 seconds delay
 
               aiReplyQueue.set(lead.id, timer);

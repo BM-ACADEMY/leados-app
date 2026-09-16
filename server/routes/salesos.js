@@ -1580,28 +1580,39 @@ router.post('/communication/send', async (req, res) => {
 
     // 2. Send real outbound message via Meta WhatsApp Cloud API (`https://graph.facebook.com/v18.0/${phoneNumberId}/messages`)
     let waMessageId = null;
-    if (channel === 'whatsapp' && lead && lead.phone && phoneNumberId && waAccessToken) {
-      try {
-        const phoneDigits = lead.phone.replace(/\D/g, '');
-        const payload = {
-          messaging_product: 'whatsapp',
-          to: phoneDigits,
-          type: 'text',
-          text: { body: safeContent }
-        };
+    let waSendError = null;
+    if (channel === 'whatsapp') {
+      if (!lead) {
+        waSendError = `Lead ${lead_id} not found`;
+        console.warn(`⚠️ [Send Communication] Skipped WhatsApp send — ${waSendError}`);
+      } else if (!lead.phone || !phoneNumberId || !waAccessToken) {
+        waSendError = `Missing ${!lead.phone ? 'lead.phone' : !phoneNumberId ? 'phone_number_id' : 'wa_access_token'} for lead ${lead_id}`;
+        console.warn(`⚠️ [Send Communication] Skipped WhatsApp send — ${waSendError}`);
+      } else {
+        try {
+          const phoneDigits = lead.phone.replace(/\D/g, '');
+          const payload = {
+            messaging_product: 'whatsapp',
+            to: phoneDigits,
+            type: 'text',
+            text: { body: safeContent }
+          };
 
-        console.log(`[Send Communication] Sending AI WhatsApp response to ${phoneDigits} via Meta API...`);
-        const waRes = await axios.post(
-          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
-          payload,
-          { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
-        );
-        waMessageId = waRes.data?.messages?.[0]?.id || null;
-        console.log(`✅ [Send Communication] Meta WhatsApp delivered successfully! Message ID: ${waMessageId}`);
-      } catch (waErr) {
-        console.error(`⚠️ [Send Communication] Meta Graph API Error:`, waErr.response?.data || waErr.message);
+          console.log(`[Send Communication] Sending AI WhatsApp response to ${phoneDigits} via Meta API...`);
+          const waRes = await axios.post(
+            `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+            payload,
+            { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+          );
+          waMessageId = waRes.data?.messages?.[0]?.id || null;
+          console.log(`✅ [Send Communication] Meta WhatsApp delivered successfully! Message ID: ${waMessageId}`);
+        } catch (waErr) {
+          waSendError = waErr.response?.data?.error?.message || waErr.message;
+          console.error(`⚠️ [Send Communication] Meta Graph API Error for lead ${lead_id}:`, waErr.response?.data || waErr.message);
+        }
       }
     }
+    const whatsappFailed = channel === 'whatsapp' && !waMessageId;
 
     // 3. Upsert conversation in DB and update last_message timestamp so it jumps to top of LeadOS Inbox!
     const conversation_id = await getOrUpsertConversation(lead_id);
@@ -1612,10 +1623,11 @@ router.post('/communication/send', async (req, res) => {
       WHERE id = $2
     `, [safeContent, conversation_id]);
 
-    // 4. Insert message into messages table
+    // 4. Insert message into messages table (mark as 'failed' when the WhatsApp send didn't actually go out,
+    // so the Inbox UI and DB reflect reality instead of showing a phantom "sent" message)
     const { rows: savedRows } = await pool.query(
-      `INSERT INTO messages (conversation_id, direction, msg_type, content, wa_msg_id, status, is_ai, sent_at) VALUES ($1, 'outbound', $2, $3, $4, 'sent', true, NOW()) RETURNING id, direction, content, msg_type as type, wa_msg_id, status, is_ai, sent_at as timestamp`,
-      [conversation_id, msgType, safeContent, waMessageId]
+      `INSERT INTO messages (conversation_id, direction, msg_type, content, wa_msg_id, status, is_ai, sent_at) VALUES ($1, 'outbound', $2, $3, $4, $5, true, NOW()) RETURNING id, direction, content, msg_type as type, wa_msg_id, status, is_ai, sent_at as timestamp`,
+      [conversation_id, msgType, safeContent, waMessageId, whatsappFailed ? 'failed' : 'sent']
     );
 
     // 5. Emit real-time Socket.IO event so LeadOS WhatsApp Inbox UI updates instantly without page refresh
@@ -1631,7 +1643,14 @@ router.post('/communication/send', async (req, res) => {
       console.warn('Socket emit warning:', ioErr.message);
     }
 
-    res.json({ ...req.body, success: true, delivered: true, content: safeContent, wa_msg_id: waMessageId });
+    res.json({
+      ...req.body,
+      success: !whatsappFailed,
+      delivered: !whatsappFailed,
+      content: safeContent,
+      wa_msg_id: waMessageId,
+      ...(whatsappFailed ? { error: waSendError } : {})
+    });
   } catch (err) {
     console.error('[Send Communication Error]', err);
     res.status(500).json({ error: err.message });

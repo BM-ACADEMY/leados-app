@@ -2541,6 +2541,115 @@ app.post('/api/leads/migrate-flow-step', auth, async (req, res) => {
 // WHATSAPP ROUTES
 // ══════════════════════════════════════════════════════════
 
+// Messages typed in the Inbox while a lead's 24h WhatsApp window is closed can't be sent as
+// free text — we send a wakeup template instead and hold the real message here until the
+// customer replies (see /webhook/whatsapp), at which point it's flushed automatically.
+const pendingManualMessages = new Map(); // lead_id -> [{ message, media_url, msg_type, reply_to_wa_id, is_forwarded }]
+
+// Shared by the direct send path (/api/whatsapp/send) and the queued-flush path
+// (webhook, once the 24h window reopens) so both send/save/emit identically.
+async function sendWhatsAppTextOrMedia({ lead, lead_id, phoneNumberId, waAccessToken, message, media_url, msg_type, reply_to_wa_id, is_forwarded }) {
+  const type = msg_type && msg_type !== 'text' ? msg_type : 'text';
+  const payload = {
+    messaging_product: 'whatsapp',
+    to: (lead.phone || '').replace(/\D/g, ''),
+    type: type,
+  };
+
+  if (reply_to_wa_id) {
+    payload.context = { message_id: reply_to_wa_id };
+  }
+
+  let waMediaId = null;
+  if (type !== 'text' && media_url && media_url.startsWith('/uploads/')) {
+    try {
+      const filePath = path.join(__dirname, media_url);
+      const fileBuffer = fs.readFileSync(filePath);
+      const fd = new FormData();
+      fd.append('messaging_product', 'whatsapp');
+      const ext = path.extname(media_url).toLowerCase();
+      let mimeType = 'application/octet-stream';
+      if (ext === '.ogg') mimeType = 'audio/ogg; codecs=opus';
+      else if (ext === '.mp4') mimeType = 'video/mp4';
+      else if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+      else if (ext === '.png') mimeType = 'image/png';
+      else if (ext === '.pdf') mimeType = 'application/pdf';
+
+      fd.append('file', new Blob([fileBuffer], { type: mimeType }), path.basename(media_url));
+      const uploadRes = await fetch(`https://graph.facebook.com/v19.0/${phoneNumberId}/media`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${waAccessToken}` },
+        body: fd,
+      });
+      const uploadData = await uploadRes.json();
+      if (uploadRes.ok && uploadData.id) {
+        waMediaId = uploadData.id;
+      } else {
+        console.warn('[WhatsApp Send] Direct media upload failed:', uploadData);
+      }
+    } catch (e) {
+      console.warn('[WhatsApp Send] Failed to upload media directly:', e.message);
+    }
+  }
+
+  if (type === 'text') {
+    payload.text = { body: message };
+  } else {
+    if (waMediaId) {
+      payload[type] = { id: waMediaId };
+    } else {
+      const fullMediaUrl = media_url && media_url.startsWith('http') ? media_url : `${process.env.API_URL || 'https://leados-api.abmgroups.org'}${media_url}`;
+      payload[type] = { link: fullMediaUrl };
+    }
+    if (message && type !== 'audio') payload[type].caption = message; // Audio doesn't support caption
+  }
+
+  const waRes = await axios.post(
+    `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+    payload,
+    { headers: { Authorization: `Bearer ${waAccessToken}`, 'Content-Type': 'application/json' } }
+  );
+
+  const waMessageId = waRes.data.messages?.[0]?.id;
+  const phone = lead.phone?.replace(/\D/g, '').slice(-10);
+
+  const convRes = await pool.query(`
+    INSERT INTO conversations (lead_id, tenant_id, phone, status, last_message, last_message_at, created_at)
+    VALUES ($1, $2, $3, 'open', $4, NOW(), NOW())
+    ON CONFLICT (phone, tenant_id) DO UPDATE
+      SET lead_id = EXCLUDED.lead_id,
+          last_message = EXCLUDED.last_message,
+          last_message_at = NOW()
+    RETURNING id
+  `, [lead_id, DEFAULT_TENANT_ID, phone, message]);
+  const conversationId = convRes.rows[0].id;
+
+  const { rows: savedRows } = await pool.query(`
+    INSERT INTO messages (conversation_id, direction, content, msg_type, media_url, wa_msg_id, status, sent_at, reply_to_wa_id, is_forwarded)
+    VALUES ($1, 'outbound', $2, $3, $4, $5, 'sent', NOW(), $6, $7)
+    RETURNING id, direction, content, msg_type as type, media_url, wa_msg_id, status, sent_at as timestamp, is_deleted, reply_to_wa_id, is_forwarded
+  `, [conversationId, message, type, media_url || null, waMessageId, reply_to_wa_id || null, is_forwarded || false]);
+
+  io.emit('outgoing_message', { lead_id: Number(lead_id), message: savedRows[0] });
+  return savedRows[0];
+}
+
+// Called from the webhook once an inbound message reopens a lead's 24h window —
+// sends anything the agent typed while the window was closed.
+async function flushPendingManualMessages(lead, phoneNumberId, waAccessToken) {
+  const queued = pendingManualMessages.get(lead.id);
+  if (!queued || !queued.length) return;
+  pendingManualMessages.delete(lead.id);
+  console.log(`[Pending Queue] Window reopened for lead ${lead.id} — flushing ${queued.length} queued message(s).`);
+  for (const item of queued) {
+    try {
+      await sendWhatsAppTextOrMedia({ lead, lead_id: lead.id, phoneNumberId, waAccessToken, ...item });
+    } catch (err) {
+      console.error(`[Pending Queue] Failed to flush queued message for lead ${lead.id}:`, err.response?.data || err.message);
+    }
+  }
+}
+
 // POST /api/whatsapp/send — manual send from CRM portal
 app.post('/api/whatsapp/send', auth, async (req, res) => {
   try {
@@ -2642,10 +2751,18 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
         console.log('[Template Wakeup] Skipped — already sent in last 30 min for lead', lead_id);
       }
 
-      // Return 200 OK so the frontend stays silent — the template was already sent
-      return res.status(200).json({ 
+      // Queue the agent's actual message so it goes out automatically the moment the
+      // customer replies to the wakeup template and the 24h window reopens.
+      if (message || media_url) {
+        if (!pendingManualMessages.has(lead_id)) pendingManualMessages.set(lead_id, []);
+        pendingManualMessages.get(lead_id).push({ message, media_url, msg_type, reply_to_wa_id, is_forwarded });
+      }
+
+      return res.status(200).json({
+        success: false,
         window_closed: true,
-        message: 'Template sent to reopen chat window. Please wait for the customer to reply.'
+        queued: true,
+        message: "WhatsApp's 24-hour reply window is closed for this customer. We sent a re-engagement template — your message has been queued and will be sent automatically once they reply."
       });
     }
     // ----------------------------
@@ -3115,6 +3232,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
             io.emit('incoming_message', { lead_id: String(lead.id), message: savedRows[0] });
             console.log(`[Webhook] ✅ Saved inbound ${msgType} from ${phone} → lead ${lead.id}, msg_id ${savedRows[0].id}`);
+
+            // This inbound message just reopened the 24h window — send anything an agent
+            // typed in the Inbox while it was closed.
+            if (pendingManualMessages.has(lead.id)) {
+              flushPendingManualMessages(
+                lead,
+                lead.client_phone_number_id || phoneNumberId,
+                lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN
+              ).catch(e => console.error(`[Pending Queue] Flush error for lead ${lead.id}:`, e.message));
+            }
 
             // ── Forward to n8n for AI auto-reply (only for text/button/interactive/audio) ──
             const shouldTriggerAI = ['text', 'button', 'interactive', 'audio'].includes(msg.type);

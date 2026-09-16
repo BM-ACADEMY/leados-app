@@ -46,8 +46,11 @@ export const LeadModal = ({lead, onClose, onUpdate}) => {
     if (!msg.trim() || sending) return;
     setSending(true);
     try {
-      await api.sendWhatsAppMessage(displayLead.id, msg);
+      const sentMsg = await api.sendWhatsAppMessage(displayLead.id, msg);
       setMsg('');
+      if (sentMsg?.window_closed) {
+        alert("WhatsApp's 24-hour window has expired. A template was sent to reopen the chat — your message is queued and will send automatically once they reply.");
+      }
       // Immediately refresh conversations
       const res = await api.getLead(lead.id);
       setConversations(res.conversations || []);

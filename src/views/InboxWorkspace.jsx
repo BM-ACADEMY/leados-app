@@ -594,12 +594,11 @@ export const InboxWorkspace = ({ mode = 'leados' }) => {
         : await inboxApi.sendWhatsAppMessage(activeLeadId, msg, mediaUrl, msgType, replyingTo?.wa_msg_id);
       setAllianceDraftSource('human');
 
-      // If window was closed, backend sent a template to reopen it silently.
-      // We must remove the optimistic message because WhatsApp API STRICTLY blocks
-      // arbitrary media/text outside the 24-hour window. The server never sent the video/text to Meta.
+      // If window was closed, backend sent a template to reopen it and queued this
+      // message server-side — it will go out automatically once the customer replies.
       if (sentMsg?.window_closed) {
         setLocalMessages((prev) => prev.filter(m => m.id !== optimisticId));
-        toast.error('Message not sent! The WhatsApp 24-hour window has expired. A standard template was sent automatically to reopen the chat. You can send files once they reply.', { duration: 6000 });
+        toast.error("WhatsApp's 24-hour window has expired. A template was sent to reopen the chat — your message is queued and will send automatically once they reply.", { duration: 6000 });
         return;
       }
 

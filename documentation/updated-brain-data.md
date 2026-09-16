@@ -9099,6 +9099,374 @@ Day 7: review request · Day 15: ads/SEO upsell · Day 30: referral offer (₹1,
 Internal Notes:
 Standard Plan (₹9,999 / 25 products) is the default recommendation. Starter (₹6,999 / 10 products) is offered as the alternative when a client asks for a discount — never discount the fixed price itself. Never quote below ₹9,999, never promise custom design/features/mobile app within ₹9,999, never promise faster than 7 working days, never promise Google page-1 ranking or guaranteed sales, never start work before payment is confirmed. Every ad-sourced lead must store its ctwa_clid against the lead record for attribution.
 
+===========================================
+SERVICE DETAILS
+===========================================
+
+Service ID:
+BMTECHX022
+
+Service Name:
+₹2,999 Single-Page Business Website
+
+Plan Name:
+Standard (Single Page)
+
+Category:
+Website Development
+
+Status:
+Active
+
+Alternative Names:
+- Single Page Website
+- One Page Website
+- Business Website
+- Landing Page Website
+- Website (Ad-referral: "₹2,999 single page website")
+===========================================
+OVERVIEW
+===========================================
+
+Short Description:
+A professional, custom-coded single-page business website delivered within 48 working hours, including domain and server (hosting) for the first year.
+
+Suitable For:
+Small and medium businesses across Pondicherry and Tamil Nadu wanting a fast, professional online presence — real estate, hospitality, retail, and services.
+
+Main Customer Problem Solved:
+No professional website presence; free/Google-based sites don't rank, don't look professional, and don't give the business ownership of its own domain.
+
+Key Benefits:
+- Delivered in 48 working hours
+- All-inclusive year-1 price (domain + server included)
+- Mobile-friendly design
+- WhatsApp + call buttons built in
+- Enquiry form included
+- Custom-coded — not a cheap template/WordPress build
+Unique Selling Points:
+- Custom-coded, not template WordPress — built fast without cutting quality
+Proof of delivery:
+BM TechX / Grow with Kamar has delivered websites, ecommerce stores, SEO, and ad campaigns for businesses across Pondicherry and Tamil Nadu — real estate, hospitality, retail, and services
+
+Domain is owned by the client, unlike free website builders
+
+Expected Business Outcome:
+A live, professional single-page website the business owns (domain + server), ready to receive enquiries via WhatsApp, call, and form within 48 working hours of content being provided.
+
+===========================================
+PRICING
+===========================================
+
+Setup Fee:
+Not Applicable (one-time project fee)
+
+Monthly Fee:
+Not Applicable (one-time; not a subscription)
+
+One-Time Fee:
+₹2,999 + GST (all-inclusive for Year 1: domain + server included)
+
+GST Included:
+No — GST is additional on top of ₹2,999
+
+Minimum Contract:
+Not Applicable (one-time project)
+
+Advance Required:
+Not Specified in source material — confirm payment terms before quoting to a lead
+
+Payment Schedule:
+Not Specified — the 48-hour delivery clock starts the day content (logo, photos) is provided, not necessarily the payment date; confirm this internally before communicating to leads
+
+Current Offer:
+₹2,999 + GST — domain + server included for Year 1
+
+Offer Expiry Date:
+Not Specified
+
+Renewal (Year 2 onward):
+Domain + server renewal is charged separately from Year 2. Exact renewal amount is Not Specified in source material — do not quote a figure to leads until confirmed internally.
+
+Scope / Customisation Ladder:
+Included:
+Single-page site, mobile-friendly design, WhatsApp + call buttons, enquiry form
+
+Multi-page website or ecommerce store:
+NOT included in ₹2,999 — separate plan, to be discussed on a call
+
+Never discount the fixed ₹2,999 + GST price
+
+Payment Gateway Charges:
+Not Applicable (no ecommerce/payment gateway in this plan)
+
+===========================================
+SERVICE FEATURES
+===========================================
+
+Services Included:
+- Single-page custom-coded website
+- Domain — included free for Year 1
+- Server/hosting — included free for Year 1
+- Mobile-friendly responsive design
+- WhatsApp button
+- Call button
+- Enquiry form
+Services Not Included:
+- Multi-page websites (separate plan — discuss on call)
+- Ecommerce store (separate plan — discuss on call)
+- Content, logo, and photos (client provides these)
+- Domain/server renewal from Year 2 (charged separately)
+Monthly Deliverables:
+Not Applicable — one-time delivery project
+
+Platforms Covered:
+Not Specified in source material
+
+Keywords/SEO Included:
+Not Specified — no ranking guarantee is given (see Results & Disclaimers)
+
+Priority Support Included:
+Not Specified
+
+===========================================
+CONTENT DETAILS
+===========================================
+
+Content Quantity:
+1 page (single-page website)
+
+Content Shoots Included:
+No — client provides logo and photos
+
+Ad Creatives Included:
+No
+
+===========================================
+ADVERTISEMENT
+===========================================
+
+Ad Spend Included:
+No
+
+Recommended Ad Budget:
+Not Applicable
+
+===========================================
+TIMELINE
+===========================================
+
+Setup Timeline:
+48-working-hour delivery clock starts the day the client shares content (logo, photos, business details) — not necessarily from payment date
+
+Expected Delivery Timeline:
+48 working hours from complete content submission
+
+Revision Limit:
+Not Specified in source material
+
+===========================================
+CLIENT REQUIREMENTS
+===========================================
+
+Client Must Provide:
+- Business/service details
+- Logo
+- Photos
+- Content for the page
+Business Name:
+Client to Provide
+
+Domain (if already owned):
+Client to confirm — ask during qualification whether they already have a domain
+
+===========================================
+OWNERSHIP
+===========================================
+
+Domain Owner:
+Client's own — free for Year 1, renews at a separately charged fee from Year 2
+
+Hosting/Server Owner:
+Included free for Year 1, renews at a separately charged fee from Year 2
+
+Website Maintenance Included:
+Not Specified beyond Year-1 domain/server inclusion
+
+===========================================
+RESULTS & DISCLAIMERS
+===========================================
+
+Results Guarantee:
+None. No guarantee of leads, ranking, or any specific outcome may ever be promised (see "Never Say" rules below).
+
+Approved Results Disclaimer:
+This is a single-page website only. It is not an SEO, ranking, or lead-generation guarantee. Multi-page and ecommerce needs are handled as a separate plan on a call.
+
+===========================================
+POLICIES
+===========================================
+
+Cancellation Policy:
+Not Specified in source material
+
+Refund Policy:
+Not Specified — no refund policy should be promised without confirmation
+
+Scope Limitation Policy:
+Single page only. Multi-page or ecommerce enquiries are escalated to a call, not quoted inline.
+
+Renewal Policy:
+Domain + server renewal from Year 2 onward is charged separately (amount to be confirmed internally).
+
+===========================================
+LINKS
+===========================================
+
+Demo:
+Not Specified — no demo link is provided in the script; live sample sites are shown on the booked call instead.
+
+Portfolio URL:
+Not Specified
+
+Case Study URL:
+Not Specified
+
+Booking URL:
+Not Applicable — calls are booked conversationally via the chatbot booking flow (see SALES section)
+
+===========================================
+FAQ
+===========================================
+
+Question 1:
+What's included for ₹2,999 + GST?
+
+Answer: All-inclusive for Year 1: single-page site, domain, server, mobile-friendly design, WhatsApp + call buttons, and an enquiry form. Delivered in 48 working hours.
+
+Question 2:
+Why is it so cheap — will the quality suffer?
+
+Answer: It's a productised single-page plan, so delivery is fast without cutting quality. Sites are custom-coded, not built on cheap templates. Live sample sites can be shown on a call.
+
+Question 3:
+Can't I just make a free website on Google?
+
+Answer: Free site builders don't rank well, don't look professional, and the business doesn't own the domain. With this plan, the domain belongs to the client.
+
+Question 4:
+Can I get a multi-page or ecommerce website instead?
+
+Answer: Not under this ₹2,999 plan — that's a separate plan, discussed on a booked call.
+
+Question 5:
+What happens after Year 1?
+
+Answer: Domain and server renewal from Year 2 onward is charged separately (exact renewal fee to be confirmed on the call/internally — do not quote a figure that isn't confirmed).
+
+===========================================
+SALES / CHATBOT SCRIPT
+===========================================
+
+Brand:
+BM TechX / Grow with Kamar
+
+First Reply:
+"Hi! 👋 Our single-page business website is ₹2,999 + GST — domain + server included. Delivered in 48 working hours. What's your business?"
+
+Qualification (ask one at a time):
+- What's your business / service?
+- Do you already have a domain?
+- Do you have logo and photos ready?
+If Asked Price / What's Included:
+"₹2,999 + GST — all inclusive for year 1. You get: single-page site, domain, server, mobile-friendly design, WhatsApp + call buttons, enquiry form. Delivered in 48 working hours. Shall I book a 10-min call to start?"
+
+Scope Clarifications (say clearly if asked):
+- One page only. Multi-page / ecommerce is a separate plan — discuss on call.
+- Renewal of domain + server from year 2 is charged separately.
+- Content, logo and photos to be shared by the client; BM TechX designs and builds.
+Objection Handling:
+- "Why so cheap? Quality varuma?" → "It's a productised single-page plan, so we build fast without cutting quality. We custom-code — no cheap templates. I can show you live sites we've built, on the call."
+- "Free la Google la site podalam la?" → "Those don't rank, don't look professional and you don't own the domain. Here the domain is yours."
+- "I'll think about it" → "Sure. Just so you don't lose time — the 48-hour delivery starts the day content is given. Shall I block a call slot and you decide after?"
+Close:
+"Perfect. Let's do a quick 10-min call — we'll show samples and start. Today 5 PM or tomorrow 11 AM?"
+
+Booking the Call (same flow for all brands) — ask in this order, one message each:
+- "What time suits you — today or tomorrow?"
+- "Morning or evening?" → offer 2 fixed slots only (e.g. 11 AM / 4 PM)
+- "Your name please?"
+- "Best number to call — same WhatsApp number?"
+Confirmation Message Template:
+"Confirmed ✅ 📞 Call: {Date}, {Time} 👤 {Name} — {Number} Our team will call you. If you need to change the time, just message here."
+
+Post-Booking Actions:
+Create calendar entry + log to sheet + schedule reminder to the lead 1 hour before the call.
+
+Lead Fields to Capture (every lead):
+name | number | brand | campaign | requirement | location | budget/plan | call date | call time | status
+
+Status Values:
+New → Qualified → Call Booked → Called → Won → Lost
+
+Follow-Up Ladder (No Reply):
++3 hours:
+"Hi {name}, just checking — shall I book the call for you?"
+
+Day 2:
+Brand-specific value line + "Want me to block a slot?" (e.g. "We published 6 job reels this week")
+
+Day 4:
+"Shall I keep a slot tomorrow 11 AM?"
+
+Day 7:
+"Closing your enquiry for now — message here anytime, I'll reopen it. 🙏"
+
+Stop follow-up immediately if the lead says no, stop, or not interested.
+
+Hand Over to Human When:
+- Lead asks for a discount or custom pricing
+- Lead has 3+ properties / 5+ job openings / wants multipage or ecommerce site
+- Lead is angry, confused, or asking about an existing order
+- Lead asks for GST bill, agreement, or legal terms
+- Same question asked twice and the bot has no answer
+Hand-Off Line:
+"Let me connect you with our team directly — they'll call you shortly. 👍"
+
+===========================================
+NEVER SAY (HARD RULES)
+===========================================
+
+Never say "I am an AI / bot"
+
+Never say "DM for price"
+
+Never give any guarantee:
+"you will definitely get X leads / X candidates / X ranking"
+
+Never quote any price other than:
+₹500 · 10% of rent + GST · ₹3,000/month · ₹2,999 + GST
+
+Never say "Sunday illa" to an NRI lead — for NRI calls, any day and any time they are free is fine
+
+===========================================
+INTERNAL NOTES
+===========================================
+
+Never discount the fixed ₹2,999 + GST price.
+
+Never promise multi-page, ecommerce, or custom features within the ₹2,999 plan — escalate to a call.
+
+Never promise faster than the 48-working-hour delivery window.
+
+Never promise Google ranking, guaranteed leads, or guaranteed sales.
+
+Domain/server Year-2 renewal fee must be confirmed internally before being quoted to any lead — it is not specified in the source brief.
+
+Every ad-sourced lead should store its campaign/attribution reference against the lead record, consistent with other BM TechX offers.
+
+
+
 ==================================================
 PART 5 — GENERAL POLICIES
 ==================================================

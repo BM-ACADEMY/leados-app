@@ -393,9 +393,10 @@ function MetaLeadDetailsModal({ lead, onClose }) {
   );
 }
 
-function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress }) {
+function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress, availableTags }) {
   const [mode, setMode] = useState('all');
   const [source, setSource] = useState('facebook');
+  const [tag, setTag] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [selectedCount, setSelectedCount] = useState(null);
@@ -424,6 +425,7 @@ function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress }
       try {
         const filters = { limit: 1, offset: 0 };
         if (mode === 'source') filters.source = source;
+        if (mode === 'tag') filters.tagId = tag;
         if (mode === 'date') {
           filters.from = new Date(from).toISOString();
           filters.to = new Date(to).toISOString();
@@ -455,7 +457,8 @@ function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress }
     e.preventDefault();
     if (mode === 'date' && (!from || !to)) return toast.error('Select both From and To date/time');
     if (mode === 'date' && new Date(from) > new Date(to)) return toast.error('From date must be before To date');
-    onExport({ mode, source, from, to });
+    if (mode === 'tag' && !tag) return toast.error('Select a tag to export');
+    onExport({ mode, source, from, to, tag });
   };
 
   return (
@@ -470,6 +473,11 @@ function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress }
           <label style={optionStyle(mode === 'source')}><input type="radio" name="exportMode" checked={mode === 'source'} onChange={() => setMode('source')} /> <span><strong>Export by Source</strong><small style={{ display: 'block', marginTop: 2 }}>Only leads from one selected source</small></span></label>
           {mode === 'source' && <select value={source} onChange={e => setSource(e.target.value)} style={{ ...inp, marginTop: -3 }}>
             {SOURCE_FILTERS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select>}
+          <label style={optionStyle(mode === 'tag')}><input type="radio" name="exportMode" checked={mode === 'tag'} onChange={() => setMode('tag')} /> <span><strong>Export by Tag</strong><small style={{ display: 'block', marginTop: 2 }}>Only leads with a specific tag</small></span></label>
+          {mode === 'tag' && <select value={tag} onChange={e => setTag(e.target.value)} style={{ ...inp, marginTop: -3 }}>
+            <option value="">— Select Tag —</option>
+            {(availableTags || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>}
           <label style={optionStyle(mode === 'date')}><input type="radio" name="exportMode" checked={mode === 'date'} onChange={() => setMode('date')} /> <span><strong>Export by Custom Date Range</strong><small style={{ display: 'block', marginTop: 2 }}>Leads created within a date/time period</small></span></label>
           {mode === 'date' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -531,8 +539,13 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
   const tabs = ['all', 'new', 'hot', 'warm', 'cold', 'converted'];
   // Deduplicate by id (safeguard against API returning duplicate rows)
   const leads = Array.from(new Map((apiLeads || []).map(l => [l.id, l])).values());
-  const filtered = leads;
-  const paginatedLeads = leads;
+  const filtered = leads.filter(l => {
+    if (tagFilter) {
+      return l.tags && l.tags.some(t => String(t.id) === String(tagFilter));
+    }
+    return true;
+  });
+  const paginatedLeads = filtered;
 
   useEffect(() => {
     setCurrentPage(1);
@@ -564,11 +577,11 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
     .map(option => option.ad_name)
     .filter(Boolean))];
 
-  const handleExport = async ({ mode, source, from, to }) => {
+  const handleExport = async ({ mode, source, from, to, tag }) => {
     setExporting(true);
     setExportProgress({ processed: 0, total: 0, percent: 0 });
     try {
-      const job = await api.createLeadExport({ mode, source, from, to });
+      const job = await api.createLeadExport({ mode, source, from, to, tag_id: tag });
       if (!job.total_records) throw new Error('No leads found for this export.');
       setExportProgress({ processed: 0, total: job.total_records, percent: 0 });
       toast.success(`Export scheduled for ${Number(job.total_records).toLocaleString()} leads`);
@@ -669,7 +682,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
       />
       <PaymentLinkModal lead={paymentLead} onClose={() => setPaymentLead(null)} />
       <MetaLeadDetailsModal lead={metaLeadDetails} onClose={() => setMetaLeadDetails(null)} />
-      <ExportLeadsModal open={showExportModal} onClose={() => setShowExportModal(false)} onExport={handleExport} exporting={exporting} exportProgress={exportProgress} />
+      <ExportLeadsModal open={showExportModal} onClose={() => setShowExportModal(false)} onExport={handleExport} exporting={exporting} exportProgress={exportProgress} availableTags={availableTags} />
 
       <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
         <div>

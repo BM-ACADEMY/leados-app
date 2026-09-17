@@ -1975,6 +1975,10 @@ function addLeadExportFilters(filter, params) {
     params.push(filter.to);
     sql += ` AND l.created_at <= $${params.length}`;
   }
+  if (filter.tag_id) {
+    params.push(filter.tag_id);
+    sql += ` AND EXISTS (SELECT 1 FROM lead_tags WHERE lead_id = l.id AND tag_id = $${params.length})`;
+  }
   return sql;
 }
 
@@ -2013,7 +2017,7 @@ async function processLeadExportJob(jobId) {
     fs.mkdirSync(LEAD_EXPORT_DIR, { recursive: true });
     const filePath = path.join(LEAD_EXPORT_DIR, `${jobId}.csv`);
     stream = fs.createWriteStream(filePath, { encoding: 'utf8' });
-    stream.write('\uFEFFName,Phone,Source,Brand,Status,Score,Assigned,Interest,Created At\n');
+    stream.write('\uFEFFName,Phone,Source,Brand,Status,Score,Assigned,Interest,Tags,Created At\n');
 
     const filter = job.filters || {};
     let lastId = 0;
@@ -2025,10 +2029,16 @@ async function processLeadExportJob(jobId) {
       params.push(batchSize);
       const batch = await pool.query(`
         SELECT l.id, l.name, l.phone, l.source, c.name AS brand_name, l.status,
-               l.score, u.name AS assigned_name, l.interest, l.created_at
+               l.score, u.name AS assigned_name, l.interest, l.created_at, lead_tags.tags AS tag_names
         FROM leads l
         LEFT JOIN clients c ON c.id = l.client_id
         LEFT JOIN users u ON u.id = l.assigned_to
+        LEFT JOIN (
+          SELECT lead_id, string_agg(t.name, ', ') AS tags
+          FROM lead_tags lt
+          JOIN alliance_inbox_tags t ON t.id = lt.tag_id
+          GROUP BY lead_id
+        ) lead_tags ON lead_tags.lead_id = l.id
         WHERE l.id > $1 ${where}
         ORDER BY l.id ASC
         LIMIT $${params.length}
@@ -2038,7 +2048,7 @@ async function processLeadExportJob(jobId) {
       for (const lead of batch.rows) {
         stream.write([
           lead.name, lead.phone, lead.source, lead.brand_name, lead.status, lead.score,
-          lead.assigned_name, lead.interest, formatLeadExportDate(lead.created_at),
+          lead.assigned_name, lead.interest, lead.tag_names, formatLeadExportDate(lead.created_at),
         ].map(csvCell).join(',') + '\n');
       }
       if (stream.writableNeedDrain) {
@@ -2071,13 +2081,14 @@ async function processLeadExportJob(jobId) {
 app.post('/api/leads/exports', auth, async (req, res) => {
   try {
     await leadExportReady;
-    const { mode = 'all', source, from, to } = req.body || {};
-    if (!['all', 'source', 'date'].includes(mode)) return res.status(400).json({ error: 'Invalid export mode' });
+    const { mode = 'all', source, from, to, tag_id } = req.body || {};
+    if (!['all', 'source', 'date', 'tag'].includes(mode)) return res.status(400).json({ error: 'Invalid export mode' });
     if (mode === 'source' && !['facebook', 'whatsapp', 'website', 'xls_sheet'].includes(source)) return res.status(400).json({ error: 'Invalid source' });
     if (mode === 'date' && (!from || !to || Number.isNaN(new Date(from).getTime()) || Number.isNaN(new Date(to).getTime()) || new Date(from) > new Date(to))) {
       return res.status(400).json({ error: 'Invalid date range' });
     }
-    const filters = mode === 'source' ? { source } : mode === 'date' ? { from: new Date(from).toISOString(), to: new Date(to).toISOString() } : {};
+    if (mode === 'tag' && !tag_id) return res.status(400).json({ error: 'Tag ID is required for tag export' });
+    const filters = mode === 'source' ? { source } : mode === 'date' ? { from: new Date(from).toISOString(), to: new Date(to).toISOString() } : mode === 'tag' ? { tag_id } : {};
     const countParams = [];
     const where = addLeadExportFilters(filters, countParams);
     const countResult = await pool.query(`SELECT COUNT(*)::int AS count FROM leads l WHERE 1=1 ${where}`, countParams);

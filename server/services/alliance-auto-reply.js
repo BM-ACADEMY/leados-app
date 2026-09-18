@@ -51,10 +51,7 @@ AUTHORITATIVE AI BRAIN (the only source for brand, course, service, price, durat
 Pre-matched administrator rules (mandatory; lower priority number wins if instructions conflict): ${promptRules}
 This contact's separate conversation memory, oldest to newest: ${JSON.stringify(history.rows.reverse())}
 Durable lead memory${durableLeadMemory ? ` keyed by ${durableLeadMemory.lead_key}` : ''}: ${JSON.stringify(durableLeadMemory || {})}
-Directly answer the latest inbound message using the detected brand only and continue naturally from this contact's own raw history and durable memory. Never restart the introduction when this is an ongoing conversation. End with at most one useful question.
-The message may name a specific price or item (e.g. "the ₹9,999 online store demo") that does not literally exist in exact_catalog. In that case, do NOT silently substitute the full catalog — say plainly that you don't have that exact package/price, then offer the 1-2 closest real entries from exact_catalog (with their real name and fee) as alternatives.
-Only send the FULL catalog list (every active entry in exact_catalog, exact names, with stored duration/fee) when the lead asks a genuinely general question like "what do you offer" / "what services do you have" — and only if the last message you sent this contact was not already that same full catalog (see conversation memory above); if you already sent it recently, do not repeat it — answer the new question directly instead.
-If suggested_questions is non-empty, use at most one question from that list. For a specific-offering match, answer only with relevant_offerings.${brain ? ` ${brain.instructions}` : ''}
+Directly answer the latest inbound message using the detected brand only and continue naturally from this contact's own raw history and durable memory. Never restart the introduction when this is an ongoing conversation. End with at most one useful question. If question_scope is "broad_catalog", list EVERY active entry in exact_catalog exactly once without renaming or omitting entries; include stored duration and fee when present. If suggested_questions is non-empty, use at most one question from that list. For a specific-offering match, answer only with relevant_offerings.${brain ? ` ${brain.instructions}` : ''}
 Merge the latest exchange into durable memory while preserving relevant prior facts. Return JSON only: {"suggestion":"message text","memory":{"summary":"concise cumulative conversation summary","requirements":[],"interests":[],"objections":[],"commitments":[],"next_step":"","relationship_stage":"new|engaged|evaluating|ready|closed"}}.`;
   const generated = await openRouter.generateContent({ contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.1, maxOutputTokens: 2000 } });
   let parsed;
@@ -64,6 +61,18 @@ Merge the latest exchange into durable memory while preserving relevant prior fa
   if (!suggestion) return null;
   if (brain?.internal?.escalation_phone && brain.internal.public_contact_phone) {
     suggestion = suggestion.replaceAll(brain.internal.escalation_phone, brain.internal.public_contact_phone);
+  }
+  if (brain?.question_scope === 'broad_catalog' && brain.exact_catalog?.length) {
+    const normalizeCatalogText = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const normalizedSuggestion = normalizeCatalogText(suggestion);
+    const missingOfferings = brain.exact_catalog.filter((offering) => !normalizedSuggestion.includes(normalizeCatalogText(offering.name)));
+    if (missingOfferings.length) {
+      const catalogLines = brain.exact_catalog.map((offering) => {
+        const facts = [offering.duration, offering.fee ? `₹${offering.fee}` : ''].filter(Boolean).join(', ');
+        return `• ${offering.name}${facts ? ` — ${facts}` : ''}`;
+      });
+      suggestion = `Thank you for your interest in ${brain.brand.name}. Here is our complete current catalog:\n\n${catalogLines.join('\n')}\n\n${brain.suggested_questions?.[0] || 'Which course would you like to explore in detail?'}`;
+    }
   }
   if (contact.rows[0].prospect_id && parsed.memory) {
     await saveAllianceLeadMemory(contact.rows[0].prospect_id, parsed.memory, 'whatsapp', latestInbound?.sent_at || new Date());

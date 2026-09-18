@@ -15,6 +15,7 @@ const { getAllianceBrainContext } = require('../services/alliance-brain-context'
 const { getAlliancePromptRules } = require('../services/alliance-prompt-rules');
 const { getAllianceLeadMemory, saveAllianceLeadMemory } = require('../services/alliance-lead-memory');
 const { scoreAllianceProspect } = require('../services/alliance-lead-scoring');
+const { queueAllianceAutoReply } = require('../services/alliance-auto-reply');
 
 function createAllianceInboxRouter({ auth, io }) {
   const router = express.Router();
@@ -310,7 +311,14 @@ function createAllianceInboxRouter({ auth, io }) {
                 }
               }
               await client.query('COMMIT');
-              if (saved.rowCount) io.emit('alliance_incoming_message', { lead_id: String(contact.id), message: { ...saved.rows[0], type, timestamp: saved.rows[0].sent_at } });
+              if (saved.rowCount) {
+                io.emit('alliance_incoming_message', { lead_id: String(contact.id), message: { ...saved.rows[0], type, timestamp: saved.rows[0].sent_at } });
+                // Auto-reply with AI, same as WF00/WF01 does for the main LeadOS number.
+                // Only for types that carry real text to respond to.
+                if (['text', 'button', 'interactive'].includes(type)) {
+                  queueAllianceAutoReply(contact.id, io);
+                }
+              }
             } catch (error) {
               await client.query('ROLLBACK');
               console.error('Alliance inbound message failed:', error);

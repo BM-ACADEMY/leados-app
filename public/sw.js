@@ -6,8 +6,8 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; } catch { data = { title: 'New message' }; }
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    // The open, focused tab already shows an in-app toast + beep.
-    if (windows.some((client) => client.focused && client.visibilityState === 'visible')) return;
+    // Skip only when the user is already looking at that exact inbox.
+    if (windows.some((client) => client.focused && client.visibilityState === 'visible' && new URL(client.url).pathname === data.url)) return;
     await self.registration.showNotification(data.title || 'New message', {
       body: data.body || '',
       icon: '/leadoslogo.png',

@@ -6,7 +6,6 @@ import { C } from '../../constants/theme.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
 import { api } from '../../services/api.js';
 import { enablePush } from '../../services/push.js';
-import toast from 'react-hot-toast';
 
 // Sidebar-scoped palette (indigo/purple, floating-card look). Kept local so it
 // doesn't affect the app's global orange accent theme used elsewhere (buttons, charts, etc).
@@ -78,24 +77,13 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
         osc.onended = () => ctx.close();
       } catch { /* sound is best-effort */ }
     };
-    const notifyInbound = (route, source) => (data) => {
-      const viewingThisInbox = window.location.pathname === route && document.hasFocus();
-      if (viewingThisInbox) return;
+    // Only the sound plays in-page; the visible alert is the OS push notification (see public/sw.js).
+    const notifyInbound = (route) => () => {
+      if (window.location.pathname === route && document.hasFocus()) return;
       beep();
-      const msg = data.message || {};
-      const body = msg.content || msg.text || (msg.type ? `[${msg.type}]` : 'New message');
-      toast(
-        (t) => (
-          <div style={{ cursor: 'pointer' }} onClick={() => { toast.dismiss(t.id); navigate(route, { state: { leadId: data.lead_id } }); }}>
-            <strong>{source}: {data.lead_name || 'New message'}</strong>
-            <div style={{ fontSize: 12, opacity: 0.85 }}>{String(body).slice(0, 100)}</div>
-          </div>
-        ),
-        { duration: 6000 }
-      );
     };
-    socket.on('incoming_message', notifyInbound('/inbox', 'LeadOS'));
-    socket.on('alliance_incoming_message', notifyInbound('/alliance-inbox', 'AllianceOS'));
+    socket.on('incoming_message', notifyInbound('/inbox'));
+    socket.on('alliance_incoming_message', notifyInbound('/alliance-inbox'));
 
     // Background push (works with the browser closed) — only registered while logged in.
     enablePush();

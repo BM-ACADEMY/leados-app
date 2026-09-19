@@ -66,24 +66,6 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
         };
       }
     });
-    const beep = () => {
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.frequency.value = 880; gain.gain.value = 0.08;
-        osc.start(); osc.stop(ctx.currentTime + 0.18);
-        osc.onended = () => ctx.close();
-      } catch { /* sound is best-effort */ }
-    };
-    // Only the sound plays in-page; the visible alert is the OS push notification (see public/sw.js).
-    const notifyInbound = (route) => () => {
-      if (window.location.pathname === route && document.hasFocus()) return;
-      beep();
-    };
-    socket.on('incoming_message', notifyInbound('/inbox'));
-    socket.on('alliance_incoming_message', notifyInbound('/alliance-inbox'));
 
     // Background push (works with the browser closed) — only registered while logged in.
     enablePush();

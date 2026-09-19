@@ -1025,6 +1025,7 @@ const knowledgeRoutes = require('./routes/knowledge');
 const uploadRoutes = require('./routes/upload');
 const allianceRoutes = require('./routes/alliance');
 const createAllianceInboxRouter = require('./routes/alliance-inbox-v2');
+const { createPushRouter, sendInboundPush } = require('./services/web-push');
 const createAllianceAutomationRouter = require('./routes/alliance-automation');
 const { startAllianceEmailWorker } = require('./services/alliance-email-worker');
 const { startAllianceEmailReplyPoller } = require('./services/alliance-email-replies');
@@ -1090,6 +1091,7 @@ const internalAuth = (req, res, next) => {
   return auth(req, res, next);
 };
 
+app.use('/api/push', createPushRouter({ auth }));
 app.use('/api/alliance', auth, allianceRoutes);
 app.use('/api/alliance-inbox', createAllianceInboxRouter({ auth, io }));
 app.use('/api/internal/alliance', internalAuth, createAllianceAutomationRouter({ io }));
@@ -3241,7 +3243,8 @@ app.post('/webhook/whatsapp', async (req, res) => {
               WHERE id = $1
             `, [conversationId]);
 
-            io.emit('incoming_message', { lead_id: String(lead.id), message: savedRows[0] });
+            io.emit('incoming_message', { lead_id: String(lead.id), lead_name: lead.name || phone, message: savedRows[0] });
+            sendInboundPush({ title: `LeadOS: ${lead.name || phone}`, body: String(text || `[${msgType}]`).slice(0, 140), url: '/inbox', leadId: String(lead.id) });
             console.log(`[Webhook] ✅ Saved inbound ${msgType} from ${phone} → lead ${lead.id}, msg_id ${savedRows[0].id}`);
 
             // This inbound message just reopened the 24h window — send anything an agent

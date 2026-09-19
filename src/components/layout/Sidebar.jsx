@@ -5,6 +5,8 @@ import { Home, Users, LineChart, Inbox, Zap, FileText, Brain, BarChart2, Buildin
 import { C } from '../../constants/theme.js';
 import { useClient } from '../../contexts/ClientContext.jsx';
 import { api } from '../../services/api.js';
+import { enablePush } from '../../services/push.js';
+import toast from 'react-hot-toast';
 
 // Sidebar-scoped palette (indigo/purple, floating-card look). Kept local so it
 // doesn't affect the app's global orange accent theme used elsewhere (buttons, charts, etc).
@@ -65,7 +67,61 @@ export const Sidebar = ({ onLogout, unreadCount = 0, mobileOpen, setMobileOpen }
         };
       }
     });
-    return () => socket.disconnect();
+    const beep = () => {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = 880; gain.gain.value = 0.08;
+        osc.start(); osc.stop(ctx.currentTime + 0.18);
+        osc.onended = () => ctx.close();
+      } catch { /* sound is best-effort */ }
+    };
+    const notifyInbound = (route, source) => (data) => {
+      const viewingThisInbox = window.location.pathname === route && document.hasFocus();
+      if (viewingThisInbox) return;
+      beep();
+      const msg = data.message || {};
+      const body = msg.content || msg.text || (msg.type ? `[${msg.type}]` : 'New message');
+      toast(
+        (t) => (
+          <div style={{ cursor: 'pointer' }} onClick={() => { toast.dismiss(t.id); navigate(route, { state: { leadId: data.lead_id } }); }}>
+            <strong>{source}: {data.lead_name || 'New message'}</strong>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>{String(body).slice(0, 100)}</div>
+          </div>
+        ),
+        { duration: 6000 }
+      );
+    };
+    socket.on('incoming_message', notifyInbound('/inbox', 'LeadOS'));
+    socket.on('alliance_incoming_message', notifyInbound('/alliance-inbox', 'AllianceOS'));
+
+    // Background push (works with the browser closed) — only registered while logged in.
+    enablePush();
+    const askPermission = () => {
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().then(enablePush).catch(() => {});
+      }
+    };
+    window.addEventListener('click', askPermission, { once: true });
+
+    // Notification click while the app is open, or opened fresh with ?lead=<id>.
+    const onSwMessage = (event) => {
+      if (event.data?.type === 'open-inbox') navigate(event.data.url, { state: { leadId: event.data.leadId } });
+    };
+    navigator.serviceWorker?.addEventListener('message', onSwMessage);
+    const params = new URLSearchParams(window.location.search);
+    const openLead = params.get('lead');
+    if (openLead && ['/inbox', '/alliance-inbox'].includes(window.location.pathname)) {
+      navigate(window.location.pathname, { replace: true, state: { leadId: openLead } });
+    }
+
+    return () => {
+      socket.disconnect();
+      window.removeEventListener('click', askPermission);
+      navigator.serviceWorker?.removeEventListener('message', onSwMessage);
+    };
   }, [navigate]);
 
   // Fetch unread rank drop alert count

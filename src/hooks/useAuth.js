@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api.js';
+import { disablePush } from '../services/push.js';
 
 export const useAuth = () => {
   const [user, setUser] = useState(null);
@@ -31,7 +32,8 @@ export const useAuth = () => {
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await disablePush();
     setUser(null);
     api.clearToken();
     localStorage.removeItem('leados_user');

@@ -15,6 +15,7 @@ const { getAllianceBrainContext } = require('../services/alliance-brain-context'
 const { getAlliancePromptRules } = require('../services/alliance-prompt-rules');
 const { getAllianceLeadMemory, saveAllianceLeadMemory } = require('../services/alliance-lead-memory');
 const { scoreAllianceProspect } = require('../services/alliance-lead-scoring');
+const { sendInboundPush } = require('../services/web-push');
 
 function createAllianceInboxRouter({ auth, io }) {
   const router = express.Router();
@@ -310,7 +311,10 @@ function createAllianceInboxRouter({ auth, io }) {
                 }
               }
               await client.query('COMMIT');
-              if (saved.rowCount) io.emit('alliance_incoming_message', { lead_id: String(contact.id), message: { ...saved.rows[0], type, timestamp: saved.rows[0].sent_at } });
+              if (saved.rowCount) {
+                io.emit('alliance_incoming_message', { lead_id: String(contact.id), lead_name: profileName, message: { ...saved.rows[0], type, timestamp: saved.rows[0].sent_at } });
+                sendInboundPush({ title: `AllianceOS: ${profileName}`, body: String(content || `[${type}]`).slice(0, 140), url: '/alliance-inbox', leadId: String(contact.id) });
+              }
             } catch (error) {
               await client.query('ROLLBACK');
               console.error('Alliance inbound message failed:', error);

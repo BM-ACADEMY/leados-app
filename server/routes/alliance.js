@@ -248,6 +248,10 @@ function parseCustomValue(value, type) {
     if (TRUTHY.has(raw.toLowerCase())) return true;
     if (['false', 'no', 'n', '0'].includes(raw.toLowerCase())) return false;
     if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) {
+      const parts = raw.split('-');
+      return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
     return raw;
   }
   if (type === 'integer') return /^-?\d+$/.test(raw) ? Number.parseInt(raw, 10) : undefined;
@@ -257,7 +261,14 @@ function parseCustomValue(value, type) {
     if (['false', 'no', 'n', '0'].includes(raw.toLowerCase())) return false;
     return undefined;
   }
-  if (type === 'date') return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : undefined;
+  if (type === 'date') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) {
+      const parts = raw.split('-');
+      return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
+    return undefined;
+  }
   return raw;
 }
 

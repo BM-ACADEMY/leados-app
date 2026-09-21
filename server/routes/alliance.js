@@ -242,17 +242,49 @@ function parseRows(buffer, originalName = '') {
 function parseCustomValue(value, type) {
   const raw = text(value);
   if (!raw) return null;
+  
+  const parseAsDate = (str) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    const m = str.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+    if (m) {
+      const p1 = m[1].padStart(2, '0');
+      const p2 = m[2].padStart(2, '0');
+      let year = parseInt(m[3], 10);
+      if (year < 100) year += year < 50 ? 2000 : 1900;
+      
+      let dd, mm;
+      if (Number(p1) > 12) {
+        dd = p1; mm = p2;
+      } else if (Number(p2) > 12) {
+        mm = p1; dd = p2;
+      } else {
+        dd = p1; mm = p2; // assume DD/MM/YYYY by default for ambiguous
+      }
+      return `${year}-${mm}-${dd}`;
+    }
+    const d = new Date(str);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toISOString().slice(0, 10);
+    }
+    // Handle excel serial dates if they somehow bleed through as string integers > 30000
+    if (/^\d{5}$/.test(str)) {
+      const excelEpoch = new Date(1899, 11, 30);
+      excelEpoch.setDate(excelEpoch.getDate() + parseInt(str, 10));
+      if (!Number.isNaN(excelEpoch.getTime())) {
+        return excelEpoch.toISOString().slice(0, 10);
+      }
+    }
+    return undefined;
+  };
+
   if (type === 'auto') {
-    if (/^-?\d+$/.test(raw)) return Number.parseInt(raw, 10);
+    if (/^-?\d+$/.test(raw) && raw.length < 5) return Number.parseInt(raw, 10); // avoid serial dates being int
     if (/^-?\d+\.\d+$/.test(raw)) return Number(raw);
     if (TRUTHY.has(raw.toLowerCase())) return true;
     if (['false', 'no', 'n', '0'].includes(raw.toLowerCase())) return false;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-    if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) {
-      const parts = raw.split('-');
-      return `${parts[2]}-${parts[1]}-${parts[0]}`;
-    }
-    return raw;
+    const d = parseAsDate(raw);
+    if (d) return d;
+    return /^-?\d+$/.test(raw) ? Number.parseInt(raw, 10) : raw;
   }
   if (type === 'integer') return /^-?\d+$/.test(raw) ? Number.parseInt(raw, 10) : undefined;
   if (type === 'number') return Number.isFinite(Number(raw)) ? Number(raw) : undefined;
@@ -261,14 +293,7 @@ function parseCustomValue(value, type) {
     if (['false', 'no', 'n', '0'].includes(raw.toLowerCase())) return false;
     return undefined;
   }
-  if (type === 'date') {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-    if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) {
-      const parts = raw.split('-');
-      return `${parts[2]}-${parts[1]}-${parts[0]}`;
-    }
-    return undefined;
-  }
+  if (type === 'date') return parseAsDate(raw);
   return raw;
 }
 

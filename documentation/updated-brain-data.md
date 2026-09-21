@@ -9388,6 +9388,201 @@ Scope Clarifications (say clearly if asked):
 Objection Handling:
 - "Why so cheap? Quality varuma?" → "It's a productised single-page plan, so we build fast without cutting quality. We custom-code — no cheap templates. I can show you live sites we've built, on the call."
 - "Free la Google la site podalam la?" → "Those don't rank, don't look professional and you don't own the domain. Here the domain is yours."
+NOT included in ₹2,999 — separate plan, to be discussed on a call
+
+Never discount the fixed ₹2,999 + GST price
+
+Payment Gateway Charges:
+Not Applicable (no ecommerce/payment gateway in this plan)
+
+===========================================
+SERVICE FEATURES
+===========================================
+
+Services Included:
+- Single-page custom-coded website
+- Domain — included free for Year 1
+- Server/hosting — included free for Year 1
+- Mobile-friendly responsive design
+- WhatsApp button
+- Call button
+- Enquiry form
+Services Not Included:
+- Multi-page websites (separate plan — discuss on call)
+- Ecommerce store (separate plan — discuss on call)
+- Content, logo, and photos (client provides these)
+- Domain/server renewal from Year 2 (charged separately)
+Monthly Deliverables:
+Not Applicable — one-time delivery project
+
+Platforms Covered:
+Not Specified in source material
+
+Keywords/SEO Included:
+Not Specified — no ranking guarantee is given (see Results & Disclaimers)
+
+Priority Support Included:
+Not Specified
+
+===========================================
+CONTENT DETAILS
+===========================================
+
+Content Quantity:
+1 page (single-page website)
+
+Content Shoots Included:
+No — client provides logo and photos
+
+Ad Creatives Included:
+No
+
+===========================================
+ADVERTISEMENT
+===========================================
+
+Ad Spend Included:
+No
+
+Recommended Ad Budget:
+Not Applicable
+
+===========================================
+TIMELINE
+===========================================
+
+Setup Timeline:
+48-working-hour delivery clock starts the day the client shares content (logo, photos, business details) — not necessarily from payment date
+
+Expected Delivery Timeline:
+48 working hours from complete content submission
+
+Revision Limit:
+Not Specified in source material
+
+===========================================
+CLIENT REQUIREMENTS
+===========================================
+
+Client Must Provide:
+- Business/service details
+- Logo
+- Photos
+- Content for the page
+Business Name:
+Client to Provide
+
+Domain (if already owned):
+Client to confirm — ask during qualification whether they already have a domain
+
+===========================================
+OWNERSHIP
+===========================================
+
+Domain Owner:
+Client's own — free for Year 1, renews at a separately charged fee from Year 2
+
+Hosting/Server Owner:
+Included free for Year 1, renews at a separately charged fee from Year 2
+
+Website Maintenance Included:
+Not Specified beyond Year-1 domain/server inclusion
+
+===========================================
+RESULTS & DISCLAIMERS
+===========================================
+
+Results Guarantee:
+None. No guarantee of leads, ranking, or any specific outcome may ever be promised (see "Never Say" rules below).
+
+Approved Results Disclaimer:
+This is a single-page website only. It is not an SEO, ranking, or lead-generation guarantee. Multi-page and ecommerce needs are handled as a separate plan on a call.
+
+===========================================
+POLICIES
+===========================================
+
+Cancellation Policy:
+Not Specified in source material
+
+Refund Policy:
+Not Specified — no refund policy should be promised without confirmation
+
+Scope Limitation Policy:
+Single page only. Multi-page or ecommerce enquiries are escalated to a call, not quoted inline.
+
+Renewal Policy:
+Domain + server renewal from Year 2 onward is charged separately (amount to be confirmed internally).
+
+===========================================
+LINKS
+===========================================
+
+Demo:
+Not Specified — no demo link is provided in the script; live sample sites are shown on the booked call instead.
+
+Portfolio URL:
+Not Specified
+
+Case Study URL:
+Not Specified
+
+Booking URL:
+Not Applicable — calls are booked conversationally via the chatbot booking flow (see SALES section)
+
+===========================================
+FAQ
+===========================================
+
+Question 1:
+What's included for ₹2,999 + GST?
+
+Answer: All-inclusive for Year 1: single-page site, domain, server, mobile-friendly design, WhatsApp + call buttons, and an enquiry form. Delivered in 48 working hours.
+
+Question 2:
+Why is it so cheap — will the quality suffer?
+
+Answer: It's a productised single-page plan, so delivery is fast without cutting quality. Sites are custom-coded, not built on cheap templates. Live sample sites can be shown on a call.
+
+Question 3:
+Can't I just make a free website on Google?
+
+Answer: Free site builders don't rank well, don't look professional, and the business doesn't own the domain. With this plan, the domain belongs to the client.
+
+Question 4:
+Can I get a multi-page or ecommerce website instead?
+
+Answer: Not under this ₹2,999 plan — that's a separate plan, discussed on a booked call.
+
+Question 5:
+What happens after Year 1?
+
+Answer: Domain and server renewal from Year 2 onward is charged separately (exact renewal fee to be confirmed on the call/internally — do not quote a figure that isn't confirmed).
+
+===========================================
+SALES / CHATBOT SCRIPT
+===========================================
+
+Brand:
+BM TechX / Grow with Kamar
+
+First Reply:
+"Hi! 👋 Our single-page business website is ₹2,999 + GST — domain + server included. Delivered in 48 working hours. What's your business?"
+
+Qualification (ask one at a time):
+- What's your business / service?
+- Do you already have a domain?
+- Do you have logo and photos ready?
+If Asked Price / What's Included:
+"₹2,999 + GST — all inclusive for year 1. You get: single-page site, domain, server, mobile-friendly design, WhatsApp + call buttons, enquiry form. Delivered in 48 working hours. Shall I book a 10-min call to start?"
+
+Scope Clarifications (say clearly if asked):
+- One page only. Multi-page / ecommerce is a separate plan — discuss on call.
+- Renewal of domain + server from year 2 is charged separately.
+- Content, logo and photos to be shared by the client; BM TechX designs and builds.
+Objection Handling:
+- "Why so cheap? Quality varuma?" → "It's a productised single-page plan, so we build fast without cutting quality. We custom-code — no cheap templates. I can show you live sites we've built, on the call."
+- "Free la Google la site podalam la?" → "Those don't rank, don't look professional and you don't own the domain. Here the domain is yours."
 - "I'll think about it" → "Sure. Just so you don't lose time — the 48-hour delivery starts the day content is given. Shall I block a call slot and you decide after?"
 Close:
 "Perfect. Let's do a quick 10-min call — we'll show samples and start. Today 5 PM or tomorrow 11 AM?"
@@ -9402,6 +9597,8 @@ Confirmation Message Template:
 
 Post-Booking Actions:
 Create calendar entry + log to sheet + schedule reminder to the lead 1 hour before the call.
+Free velaivaaipu.in listing is limited-availability — don't imply it's guaranteed for every opening.
+Every ad-sourced lead should store its campaign/attribution reference against the lead record.
 
 Lead Fields to Capture (every lead):
 name | number | brand | campaign | requirement | location | budget/plan | call date | call time | status
@@ -9466,17 +9663,309 @@ Domain/server Year-2 renewal fee must be confirmed internally before being quote
 Every ad-sourced lead should store its campaign/attribution reference against the lead record, consistent with other BM TechX offers.
 
 
+Service ID: BMTECHX023
+Service Name: Job Post Reel — ₹500 per Opening
+Brand: Velai Vaaippu (under BM TechX)
+Plan Name: Standard (per job opening)
+Category: Recruitment Marketing / Social Media
+Status: Active
+Alternative Names:
+Job Reel
+Job Posting Reel
+Instagram Job Post
+Hiring Reel
+=========================================== OVERVIEW
+Short Description: We shoot a reel for the client's job opening and publish it on Velai Vaaippu's Instagram page (13K+ job-seeker followers, mostly Tamil Nadu & Pondicherry), for ₹500 per opening.
+Suitable For: Businesses hiring in Tamil Nadu and Pondicherry across any role/industry.
+Main Customer Problem Solved: Reaching job seekers directly and quickly, at lower cost than traditional job portals.
+Key Benefits:
+Reel published within 24–48 hours of receiving job details
+Reaches 13K+ job-seeker followers, mostly Tamil Nadu & Pondicherry
+Bonus: free job listing on velaivaaipu.in for a limited number of openings
+Unique Selling Points:
+Reel format drives direct reach to an active job-seeker audience
+Free website listing bonus (limited availability) stacks with the paid reel
+Expected Business Outcome: Job opening reaches thousands of job seekers via reel + optional listing; applicants reach the business directly.
+=========================================== PRICING
+One-Time Fee: ₹500 per job opening
+Bonus (Conditional): Free job listing on velaivaaipu.in — available for a limited number of openings only
+Results Guarantee: None. No specific number of candidates or hires can ever be promised (see NEVER SAY below).
+=========================================== SERVICE FEATURES
+Services Included:
+Reel shoot for the job opening
+Reel published on Velai Vaaippu's Instagram page
+Free listing on velaivaaipu.in (limited openings only)
+Services Not Included:
+Guaranteed candidate volume or hires
+Job portal-style application management (not specified — confirm if asked)
+=========================================== TIMELINE
+Expected Delivery Timeline: Reel published within 24–48 hours of receiving complete job details
+=========================================== CLIENT REQUIREMENTS
+Client Must Provide (collected on qualifying call):
+Role / position
+Number of openings
+Location (Pondicherry, Cuddalore, Chennai, etc.)
+Salary and contact info (collected during the booked call)
+=========================================== FAQ
+Q: ₹500 la enna varum / is it worth it? A: One reel reaches thousands of job seekers. One good hire from ₹500 is cheaper than any job portal. Can show last week's reach on a call.
+Q: Will I really get candidates? A: Can't promise a specific number, but the page gets high job-seeker traffic daily and applicants reach the business directly. Best discussed on a quick call to see what suits the role.
+Q: Can I get the free listing first, before paying for the reel? A: Free listing is available for limited openings, but the paid reel is what actually drives reach. Best to do a call and start both together.
+=========================================== SALES SCRIPT
+First Reply: "Hi! 👋 Thanks for reaching out. We post your job opening as a reel on our page — 13K+ job seekers follow it. ₹500 per opening. Which role are you hiring for?"
+Qualify (one at a time):
+Which role / position?
+How many openings?
+Which location — Pondicherry, Cuddalore, Chennai…?
+If Asked Price: "₹500 for one job opening — we shoot the reel and publish it on the page. You also get a free listing on velaivaaipu.in for limited openings. Shall I book a 10-min call to take your job details?"
+Objections:
+"₹500 la enna varum / is it worth it?" → "One reel reaches thousands of job seekers. One good hire from ₹500 is cheaper than any job portal. Want me to show last week's reach on a call?"
+"Will I really get candidates?" → "We can't promise a specific number, but the page gets high job-seeker traffic daily and applicants reach you directly. Best is a quick call, we'll tell you what suits your role."
+"Free listing podunga first" → "Sure, free listing is available for limited openings. The paid reel is what actually pushes reach. Let's do a call and start both."
+Close: "Perfect. I'll book a quick call to collect job details, salary and contact info. Today evening or tomorrow morning — which works?"
+=========================================== BOOKING / FOLLOW-UP / HAND-OFF (shared ops this service uses)
+Booking the Call — ask in this order, one message each:
+"What time suits you — today or tomorrow?"
+"Morning or evening?" → offer 2 fixed slots only (e.g. 11 AM / 4 PM)
+"Your name please?"
+"Best number to call — same WhatsApp number?"
+Confirmation Message Template: "Confirmed ✅ 📞 Call: {Date}, {Time} 👤 {Name} — {Number} Our team will call you. If you need to change the time, just message here."
+Post-Booking Actions: Create calendar entry + log to sheet + schedule reminder to the lead 1 hour before the call.
+Lead Fields to Capture: name | number | brand | campaign | requirement | location | budget/plan | call date | call time | status
+Status Values: New → Qualified → Call Booked → Called → Won → Lost
+Follow-Up Ladder (if no reply):
++3 hours: "Hi {name}, just checking — shall I book the call for you?"
+Day 2: "We published 6 job reels this week" + "Want me to block a slot?"
+Day 4: "Shall I keep a slot tomorrow 11 AM?"
+Day 7: "Closing your enquiry for now — message here anytime, I'll reopen it. 🙏"
+Stop follow-up immediately if the lead says no, stop, or not interested.
+Hand Over to Human When:
+Lead asks for a discount or custom pricing
+Lead has 5+ job openings
+Lead is angry, confused, or asking about an existing order
+Lead asks for GST bill, agreement or legal terms
+Same question asked twice and the bot has no answer
+Hand-Off Line: "Let me connect you with our team directly — they'll call you shortly. 👍"
+=========================================== NEVER SAY
+"I am an AI / bot"
+"DM for price"
+Any guarantee: "you will definitely get X candidates / X leads"
+Any price other than: ₹500 · 10% of rent + GST · ₹3,000/month · ₹2,999 + GST
+"Sunday illa" to an NRI lead — for NRI calls, any day and any time they are free is fine
+=========================================== INTERNAL NOTES
+Never discount the fixed ₹500 price.
+Never promise a specific candidate count or guaranteed hire.
+Never promise faster than the 24–48 hour turnaround.
+Free velaivaaipu.in listing is limited-availability — don't imply it's guaranteed for every opening.
+Every ad-sourced lead should store its campaign/attribution reference against the lead record.
+
+
 
 ==================================================
-PART 5 — GENERAL POLICIES
+PART 1 — BRAND INFORMATION
 ==================================================
 
-General Payment Policy:60%, 30%,20%
-General Contract Policy: based on client requirnment
-General Cancellation Policy:no cancellation policy 
-General Refund Policy:no refund
-Complaint Escalation Process: Yes
+Brand Name: Namma Pondy Properties
+Brand Description: Manages rental properties in Pondicherry end-to-end (tenant handling, rent collection, follow-ups, maintenance coordination, documentation), and separately offers property care/rent management for Pondicherry owners living abroad.
+Primary Phone: needs_confirmation
+WhatsApp Number: needs_confirmation
+Email: needs_confirmation
+Website: needs_confirmation
+Office Address: needs_confirmation (source only confirms the office is in Pondicherry — exact address not given)
+Business Hours: needs_confirmation
+Service Areas: Pondicherry only (confirmed — properties outside Pondicherry are politely declined; source explicitly instructs the bot to decline these)
+Primary Contact Person: needs_confirmation
+Site Visit Contact: needs_confirmation
+Escalation Contact: Kamar (confirmed — GST/fee pushback is escalated to Kamar for final terms on the call)
+Escalation Phone: needs_confirmation
+Information Verified By: needs_confirmation
+Last Verified Date: needs_confirmation
 
-Approved By: Karthika
-Approval Date: 6-08-2026
+==================================================
+PART 2 — COMPLETE PROPERTY LIST
+==================================================
 
+Not Applicable. Source material describes two service offers (rental property management and NRI property care) — no individual property-for-sale/rent listings were provided. If Namma Pondy Properties also lists specific properties, those records need to be supplied separately using Part 3's format.
+
+==================================================
+PART 3 — INDIVIDUAL PROPERTY RECORD
+==================================================
+
+Not Applicable — see Part 2. In place of property records, the two service offers from the source are documented in full below as SERVICE RECORDS, since that is what the source data actually describes.
+
+==================================================
+PART 4 — GENERAL POLICIES
+==================================================
+
+Property Verification Process: needs_confirmation (not specified for the rental-management offer; NRI CARE plan has its own onboarding steps — see Service Record 2)
+Price Confirmation Process: needs_confirmation
+Site Visit Process: needs_confirmation (rental management offer); for NRI CARE, a physical visit with a condition report is step 2 of onboarding — see Service Record 2
+Booking Process:
+Rental Management: qualify → book a 10-min call → terms finalized on call
+NRI Property Care: WhatsApp video call → property visit + condition report → WhatsApp agreement + first month's fee → monthly report on the 1st
+Cancellation Policy: needs_confirmation
+Advance Refund Policy: needs_confirmation (confirmed: Rental Management has no advance fee and no setup fee — collected only as a % of rent actually received, but no refund policy is stated)
+Documentation Support: For NRI RENT plan specifically: a registered Power of Attorney is required to manage tenant + rent from abroad; team walks the owner through this on the call (confirmed). No other documentation support specified.
+Complaint Escalation Process: needs_confirmation beyond the confirmed GST/fee-pushback escalation to Kamar
+Approved By: needs_confirmation
+Approval Date: needs_confirmation
+
+###############################################
+SERVICE RECORD 1
+###############################################
+
+Service ID: NAMMAPONDY001
+Service Name: Property Management — 10% of Rent Collected
+Brand: Namma Pondy Properties
+Category: Property Management
+Status: Active
+Service Area: Pondicherry only. If the property is outside Pondicherry, politely decline and save the lead's number for when the service expands.
+
+===========================================
+OVERVIEW
+===========================================
+
+Short Description: End-to-end rental property management in Pondicherry — tenant handling, rent collection, follow-ups, maintenance coordination, documentation.
+Main Customer Problem Solved: Owners losing time/money to vacant months, late rent, tenant chasing, repairs, and paperwork when self-managing a rental.
+Key Benefits:
+- No collection, no fee — the fee is only charged on rent actually collected
+- No advance fee, no setup fee
+- Handles tenant chasing, late rent, repairs, and paperwork
+
+===========================================
+PRICING
+===========================================
+
+Fee: 10% of the monthly rent collected + GST
+Fee Model: No collection, no fee (only charged against rent actually received)
+Advance/Setup Fee: None
+New Tenant Placement Fee (if finding a new tenant): One month's rent — two months' rent if the lease is 3 years or more
+GST Handling: Bot does not negotiate GST. If pushed back on, escalate: "Fair enough — let's work out the final terms on the call, our team has some flexibility there. Tomorrow 11 AM or 4 PM?"
+
+===========================================
+SERVICE FEATURES
+===========================================
+
+Services Included:
+- Tenant handling
+- Rent collection
+- Follow-ups
+- Maintenance coordination
+- Documentation
+- New tenant placement (separate fee — see Pricing)
+
+===========================================
+CLIENT REQUIREMENTS
+===========================================
+
+Qualifying Info Needed:
+- Property type — shop / commercial building / house
+- Location in Pondicherry
+- Already rented, or looking for a tenant
+
+===========================================
+OBJECTION HANDLING
+===========================================
+
+- "10% is high" → "Fair point. But we handle chasing tenants, late rent, repairs and paperwork — most owners lose more than 10% in vacant months and delays. 10 mins on call and you'll see the exact scope."
+- "Naane manage panren" → "Many owners do, till the tenant stops paying. We only charge when rent is actually collected, so there's no risk in a conversation."
+- Outside Pondicherry → "Right now we manage properties only inside Pondicherry. I'll save your number and update you when we expand. 🙏"
+
+===========================================
+SALES SCRIPT
+===========================================
+
+First Reply: "Hi! 👋 We handle property management in Pondicherry — tenants, rent collection, follow-ups, everything. Our fee is 10% of the rent we collect. Is your property in Pondicherry?"
+Qualify (one at a time):
+- Property type — shop / commercial building / house?
+- Location in Pondicherry?
+- Is it already rented, or looking for a tenant?
+If Asked Price / What's Included: "10% of the monthly rent we collect + GST. No advance fee, no setup fee. Includes tenant handling, rent collection, follow-ups and maintenance coordination. Shall I book a 10-min call to check your property?"
+If Asked About Finding a New Tenant: "We do that too — one month's rent as tenant placement fee (two months if the lease is 3 years or more). Let's discuss on a call."
+Close: "Great. I'll book a short call — we'll check the property and tell you exactly what we'll handle. Tomorrow 11 AM or 4 PM?"
+
+###############################################
+SERVICE RECORD 2
+###############################################
+
+Service ID: NAMMAPONDY002
+Service Name: NRI Property Care (Pondicherry)
+Brand: Namma Pondy Properties
+Category: Property Care / Property Management (NRI-focused)
+Status: Active
+Who For: Pondicherry property owners living abroad (France, Singapore, Malaysia, Gulf, Canada).
+
+===========================================
+OVERVIEW
+===========================================
+
+Short Description: Property care/management for Pondicherry owners living abroad, with two plans only — no other plans should be offered.
+
+===========================================
+PLANS
+===========================================
+
+CARE Plan:
+For: House is empty
+Fee: ₹3,000/month
+Includes: Monthly visit with photos + video sent on WhatsApp, cleaning, EB and property tax payment, encroachment/security check, repairs arranged (material cost extra, with owner's approval)
+
+RENT Plan:
+For: House is rented
+Fee: 10% of rent collected + GST
+Includes: Tenant + rent management
+
+===========================================
+ONBOARDING — 4-STEP PROCESS
+===========================================
+
+(Say it exactly like this to the lead)
+1. WhatsApp video call — owner shows the property, team recommends the plan
+2. Team visits, takes photos, sends a condition report
+3. Simple agreement on WhatsApp + first month's fee
+4. Report reaches the owner on the 1st of every month
+
+===========================================
+CLIENT REQUIREMENTS
+===========================================
+
+Qualifying Info Needed:
+- Which country is the owner in now?
+- Where is the property in Pondicherry?
+- Is anyone currently checking on it?
+RENT Plan Specific Requirement: A registered Power of Attorney is required to manage tenant + rent from abroad — team walks the owner through this on the call.
+
+===========================================
+IMPORTANT — TIMEZONE HANDLING
+===========================================
+
+NRI leads are in other timezones. Never assume IST. Always ask their local time first, then confirm the call slot in their time.
+
+===========================================
+OBJECTION HANDLING
+===========================================
+
+- "How do I trust you?" → "Fair question — you've never met us. Start with one month. You'll get photos and video of your own property before you pay the second month. Our office is in Pondicherry and you can send any relative to verify."
+- "Can you handle tenant and rent from abroad?" → "Yes. For renting we'll need a registered Power of Attorney — our team will walk you through it on the call, it's a standard process."
+- "What about tax on the rent?" → "Rent paid to an owner abroad has its own TDS rule and our team handles that side with you. Best explained on a call."
+- "₹3,000 is high" → "One repair you didn't know about costs more than a year of this. And an empty house without checks is where encroachment problems start."
+
+===========================================
+SALES SCRIPT
+===========================================
+
+First Reply: "Hi! 👋 We look after Pondicherry properties for owners living abroad. Empty house — ₹3,000/month, monthly visit with photos and video. Rented — we manage tenant and rent for 10% + GST. Is your property empty or rented?"
+Qualify (one at a time):
+- Which country are you in now?
+- Where is the property in Pondicherry?
+- Is anyone checking on it currently?
+Close (timezone matters): "Happy to do a quick WhatsApp video call. What's your local time now? I'll fix a slot that suits you, not us."
+
+###############################################
+INTERNAL NOTES
+###############################################
+
+- Both Namma Pondy Properties services are Pondicherry-only — decline (politely) and save the lead's number if the property is outside the service area.
+- Fee percentages appeared as "1 0%" in the source (PDF extraction spacing) — normalized to 10% throughout this document; please confirm 10% is correct before use.
+- Bot must never negotiate GST directly — always escalate pricing pushback to a call/Kamar.
+- Only CARE and RENT should ever be offered for the NRI plan — no other plan variants.
+- Timezone handling is mandatory for all NRI leads — never assume IST.

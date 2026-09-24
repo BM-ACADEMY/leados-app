@@ -3746,7 +3746,8 @@ app.post('/api/templates/:id/submit', auth, async (req, res) => {
       components.push({ type: 'HEADER', format: 'TEXT', text: tpl.header });
     }
 
-    const bodyComp = { type: 'BODY', text: tpl.body };
+    const bodyTextFixed = tpl.body ? tpl.body.replace(/\\n{3,}/g, '\\n\\n') : tpl.body;
+    const bodyComp = { type: 'BODY', text: bodyTextFixed };
     if (tpl.samples && Array.isArray(tpl.samples) && tpl.samples.length > 0) {
       bodyComp.example = { body_text: [tpl.samples] };
     }
@@ -3776,9 +3777,11 @@ app.post('/api/templates/:id/submit', auth, async (req, res) => {
   } catch (err) {
     console.error('Template submit error:', err.response?.data || err.message);
     const metaErr = err.response?.data?.error;
-    const errMsg = metaErr
-      ? `Meta API Error (${metaErr.code}): ${metaErr.message}`
-      : err.message || 'Failed to submit template';
+    let errMsg = err.message || 'Failed to submit template';
+    if (metaErr) {
+      errMsg = `Meta Error: ${metaErr.error_user_title || metaErr.message}`;
+      if (metaErr.error_user_msg) errMsg += ` - ${metaErr.error_user_msg}`;
+    }
     res.status(500).json({ error: errMsg, meta_error: metaErr || null });
   }
 });

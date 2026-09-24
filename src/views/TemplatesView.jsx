@@ -69,10 +69,10 @@ const WaPreview = ({ form }) => {
   const timeStr = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   const renderBody = (text) => {
-    if (!text) return <span style={{ color: '#667781' }}>Your message body will appear here...</span>;
+    if (!text) return <span style={{ color: '#8696a0' }}>Your message body will appear here...</span>;
     return text.split(/(\{\{[^}]+\}\})/g).map((part, i) =>
       /^\{\{[^}]+\}\}$/.test(part)
-        ? <span key={i} style={{ background: '#dcf8c6', color: '#075e54', borderRadius: 3, padding: '0 3px', fontWeight: 600 }}>{part}</span>
+        ? <span key={i} style={{ color: '#008069', fontWeight: 600 }}>{part}</span>
         : part
     );
   };
@@ -82,125 +82,155 @@ const WaPreview = ({ form }) => {
 
   return (
     <div style={{
-      background: 'linear-gradient(180deg, #0d1b2a 0%, #1a2e4a 100%)',
-      borderRadius: 14, padding: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
-      border: `1px solid ${C.border}`, position: 'sticky', top: 20
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+      position: 'sticky', top: 20
     }}>
-      <p style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>Live Preview</p>
+      <p style={{ fontSize: 11, color: C.text, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 700 }}>Mobile Preview</p>
 
-      {/* Phone frame */}
+      {/* Realistic iPhone Frame */}
       <div style={{
-        width: 260, background: '#111b21', borderRadius: 22, padding: '12px 6px',
-        boxShadow: '0 0 0 2px #1a2e4a, 0 30px 60px rgba(0,0,0,0.5)'
+        position: 'relative', width: 280, height: 560,
+        background: '#efeae2', // WhatsApp default chat background color
+        borderRadius: 36, border: '10px solid #1a1a1a',
+        boxShadow: '0 0 0 1px #333, 0 20px 40px rgba(0,0,0,0.5)',
+        overflow: 'hidden', display: 'flex', flexDirection: 'column'
       }}>
-        {/* Status bar */}
-        <div style={{ background: '#202c33', borderRadius: '16px 16px 0 0', padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#2a3942', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Smartphone size={14} color="#8696a0" />
+        {/* Notch */}
+        <div style={{
+          position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+          width: 120, height: 24, background: '#1a1a1a',
+          borderBottomLeftRadius: 16, borderBottomRightRadius: 16, zIndex: 10
+        }} />
+
+        {/* WhatsApp Header */}
+        <div style={{
+          background: '#008069', paddingTop: 28, paddingBottom: 10, paddingLeft: 12, paddingRight: 12,
+          display: 'flex', alignItems: 'center', gap: 8, color: '#fff', zIndex: 5
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: 18, fontWeight: 600, display: 'flex', alignItems: 'center' }}>‹</span>
+            <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#ffca28', overflow: 'hidden' }}>
+              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{color: '#fff', fontSize: 14, fontWeight: 'bold'}}>B</span>
+              </div>
             </div>
-            <div>
-              <p style={{ fontSize: 10, color: '#e9edef', fontWeight: 600 }}>{form.name || 'Template Name'}</p>
-              <p style={{ fontSize: 8, color: '#8696a0' }}>Business Account</p>
-            </div>
+          </div>
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            <p style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{form.name || 'Business Account'}</p>
+          </div>
+          <div style={{ display: 'flex', gap: 14 }}>
+            <Video size={16} fill="#fff" stroke="none" />
+            <Phone size={16} fill="#fff" stroke="none" />
           </div>
         </div>
 
-        {/* Chat area */}
+        {/* Chat Area */}
         <div style={{
-          background: '#0b141a',
-          backgroundImage: 'radial-gradient(circle at 1px 1px, #1a2833 1px, transparent 0)',
-          backgroundSize: '20px 20px',
-          minHeight: 320, padding: '12px 8px', display: 'flex', flexDirection: 'column', gap: 8
+          flex: 1, padding: '12px 12px 0 12px', display: 'flex', flexDirection: 'column', gap: 8,
+          overflowY: 'auto', background: '#e5ddd5'
         }}>
           {/* Date chip */}
-          <div style={{ textAlign: 'center' }}>
-            <span style={{ background: '#182229', color: '#8696a0', fontSize: 10, padding: '3px 10px', borderRadius: 8 }}>Today</span>
+          <div style={{ textAlign: 'center', margin: '4px 0' }}>
+            <span style={{ background: '#d4eaf5', color: '#555', fontSize: 10, padding: '4px 10px', borderRadius: 6, fontWeight: 500 }}>TODAY</span>
           </div>
 
-          {/* Message bubble */}
-          <div style={{ alignSelf: 'flex-end', maxWidth: '90%' }}>
-            <div style={{ background: '#005c4b', borderRadius: '12px 12px 0 12px', overflow: 'hidden' }}>
+          {/* Encryption Warning */}
+          <div style={{ textAlign: 'center', marginBottom: 6 }}>
+            <div style={{ background: '#fceeb5', color: '#7d6928', fontSize: 9, padding: '6px 12px', borderRadius: 8, display: 'inline-block', maxWidth: '90%', lineHeight: 1.4 }}>
+              🔒 Messages and calls are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them. Tap to learn more.
+            </div>
+          </div>
+
+          {/* Incoming Message Bubble */}
+          <div style={{ alignSelf: 'flex-start', maxWidth: '90%', marginBottom: 12 }}>
+            <div style={{
+              background: '#fff', borderRadius: '0 8px 8px 8px',
+              boxShadow: '0 1px 1px rgba(0,0,0,0.1)', overflow: 'hidden'
+            }}>
               {/* Header */}
               {form.header_format === 'IMAGE' && (
                 form.media_preview ? (
-                  <img src={form.media_preview} alt="Header" style={{ width: '100%', height: 120, objectFit: 'cover' }} />
+                  <img src={form.media_preview} alt="Header" style={{ width: '100%', height: 130, objectFit: 'cover' }} />
                 ) : (
-                  <div style={{ background: '#0d2a25', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Image size={24} color="#34d399" />
-                    <span style={{ fontSize: 10, color: '#34d399', marginLeft: 6 }}>Image</span>
+                  <div style={{ background: '#e0e0e0', height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Image size={24} color="#008069" />
                   </div>
                 )
               )}
               {form.header_format === 'VIDEO' && (
                 form.media_preview ? (
-                  <div style={{ position: 'relative', width: '100%', height: 120, background: '#000' }}>
+                  <div style={{ position: 'relative', width: '100%', height: 130, background: '#000' }}>
                     <video src={form.media_preview} style={{ width: '100%', height: '100%', objectFit: 'cover' }} autoPlay loop muted playsInline />
                   </div>
                 ) : (
-                  <div style={{ background: '#1a1a2e', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Video size={24} color="#818cf8" />
-                    <span style={{ fontSize: 10, color: '#818cf8', marginLeft: 6 }}>Video</span>
+                  <div style={{ background: '#e0e0e0', height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Video size={24} color="#008069" />
                   </div>
                 )
               )}
               {form.header_format === 'DOCUMENT' && (
-                <div style={{ background: '#1e2a3a', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <FileText size={22} color="#60a5fa" />
-                  <span style={{ fontSize: 10, color: '#60a5fa', marginLeft: 6 }}>Document</span>
+                <div style={{ background: '#e0e0e0', height: 70, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <FileText size={22} color="#008069" />
+                  <span style={{ fontSize: 11, color: '#008069', marginLeft: 6 }}>Document</span>
                 </div>
               )}
               {form.header_format === 'TEXT' && form.header && (
-                <div style={{ padding: '8px 10px 4px' }}>
-                  <p style={{ fontSize: 12, fontWeight: 700, color: '#e9edef' }}>{form.header}</p>
+                <div style={{ padding: '6px 10px 0' }}>
+                  <p style={{ fontSize: 13, fontWeight: 700, color: '#111b21' }}>{form.header}</p>
                 </div>
               )}
 
               {/* Body */}
-              <div style={{ padding: '6px 10px 4px' }}>
-                <p style={{ fontSize: 11, color: '#e9edef', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{renderBody(form.body)}</p>
+              <div style={{ padding: '4px 10px 2px' }}>
+                <p style={{ fontSize: 13, color: '#111b21', lineHeight: 1.4, whiteSpace: 'pre-wrap' }}>{renderBody(form.body)}</p>
               </div>
 
               {/* Footer */}
               {form.footer && (
-                <div style={{ padding: '0 10px 6px' }}>
-                  <p style={{ fontSize: 9, color: '#8696a0' }}>{form.footer}</p>
+                <div style={{ padding: '0 10px 2px' }}>
+                  <p style={{ fontSize: 11, color: '#667781' }}>{form.footer}</p>
                 </div>
               )}
 
               {/* Timestamp */}
               <div style={{ padding: '0 10px 6px', textAlign: 'right' }}>
-                <span style={{ fontSize: 8, color: '#8696a0' }}>{timeStr} ✓✓</span>
+                <span style={{ fontSize: 9, color: '#999' }}>{timeStr}</span>
               </div>
             </div>
 
-            {/* Buttons */}
+            {/* Template Buttons attached below the bubble */}
             {hasButtons && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
                 {form.buttons.map((btn, i) => {
                   const PreviewTag = btn.type === 'URL' || btn.type === 'PHONE_NUMBER' ? 'a' : 'div';
                   const previewHref = btn.type === 'URL' ? btn.url : btn.type === 'PHONE_NUMBER' ? `tel:${btn.phone_number || ''}` : undefined;
                   return <PreviewTag key={i} href={previewHref} target={btn.type === 'URL' ? '_blank' : undefined} rel={btn.type === 'URL' ? 'noopener noreferrer' : undefined} style={{
-                    background: '#005c4b', borderRadius: 8, padding: '7px 10px',
-                    textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, textDecoration: 'none'
+                    background: '#fff', borderRadius: 8, padding: '10px 10px',
+                    textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    textDecoration: 'none', boxShadow: '0 1px 1px rgba(0,0,0,0.1)'
                   }}>
-                    {btn.type === 'URL' ? <Link size={10} color="#53bdeb" /> : btn.type === 'PHONE_NUMBER' ? <Phone size={10} color="#53bdeb" /> : <MessageSquare size={10} color="#53bdeb" />}
-                    <span style={{ fontSize: 11, color: '#53bdeb', fontWeight: 600 }}>{btn.text || 'Button'}</span>
+                    {btn.type === 'URL' ? <Link size={14} color="#00a884" /> : btn.type === 'PHONE_NUMBER' ? <Phone size={14} color="#00a884" /> : <MessageSquare size={14} color="#00a884" />}
+                    <span style={{ fontSize: 13, color: '#00a884', fontWeight: 500 }}>{btn.text || 'Button'}</span>
                   </PreviewTag>;
                 })}
               </div>
             )}
           </div>
         </div>
+
+        {/* WhatsApp Input Bar */}
+        <div style={{ background: '#f0f0f0', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1, background: '#fff', borderRadius: 20, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ color: '#8696a0', fontSize: 16 }}>😊</span>
+            <span style={{ color: '#8696a0', fontSize: 13, flex: 1 }}>Type a message</span>
+            <span style={{ color: '#8696a0' }}><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"></path></svg></span>
+          </div>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#00a884', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#fff" d="M11.999 14.942c2.001 0 3.531-1.53 3.531-3.531V4.35c0-2.001-1.53-3.531-3.531-3.531S8.469 2.349 8.469 4.35v7.061c0 2.001 1.53 3.531 3.53 3.531zm6.238-3.53c0 3.531-2.942 6.002-6.237 6.002s-6.237-2.471-6.237-6.002H3.761c0 4.001 3.178 7.297 7.061 7.885v3.884h2.354v-3.884c3.884-.588 7.061-3.884 7.061-7.885h-2z"></path></svg>
+          </div>
+        </div>
       </div>
 
-      {/* Category badge */}
-      <div style={{
-        background: C.card, border: `1px solid ${C.border}`, borderRadius: 20,
-        padding: '4px 14px', fontSize: 10, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8
-      }}>
-        {form.category || 'No Category'}
-      </div>
     </div>
   );
 };
@@ -861,79 +891,93 @@ export const TemplatesView = () => {
         </button>
         <span style={{ color: C.muted, fontSize: 10 }}>Use Workspace column below to verify where each template will appear.</span>
       </div>
-      <div className="table-responsive" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <div className="table-responsive" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, overflowX: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', borderSpacing: 0 }}>
           <thead>
-            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              <th style={{ padding: '11px 10px', textAlign: 'center' }}>
+            <tr style={{ background: 'rgba(255,255,255,0.02)', borderBottom: `1px solid ${C.border}` }}>
+              <th style={{ padding: '16px 14px', textAlign: 'center', width: 40 }}>
                 <input type="checkbox" checked={currentTemplates.length > 0 && currentTemplates.every((template) => selectedTemplateIds.includes(template.id))} onChange={(e) => {
                   const pageIds = currentTemplates.map((template) => template.id);
                   setSelectedTemplateIds((current) => e.target.checked ? [...new Set([...current, ...pageIds])] : current.filter((id) => !pageIds.includes(id)));
-                }} style={{ accentColor: C.accent }} title="Select all templates on this page" />
+                }} style={{ accentColor: C.accent, cursor: 'pointer', width: 14, height: 14 }} title="Select all templates on this page" />
               </th>
               {['Template Name', 'Workspace', 'Category', 'Brand', 'Status', 'Submitted', 'Approved', 'Uses', 'Actions'].map(h => (
-                <th key={h} style={{ padding: '11px 14px', fontSize: 9, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'left' }}>{h}</th>
+                <th key={h} style={{ padding: '16px 14px', fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {currentTemplates.map(t => (
-              <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                <td style={{ padding: '13px 10px', textAlign: 'center' }}><input type="checkbox" checked={selectedTemplateIds.includes(t.id)} onChange={(e) => setSelectedTemplateIds((current) => e.target.checked ? [...new Set([...current, t.id])] : current.filter((id) => id !== t.id))} style={{ accentColor: C.accent }} /></td>
-                <td style={{ padding: '13px 14px' }}>
-                  <span style={{ fontFamily: 'monospace', fontSize: 11, color: C.accent, background: C.accent + '10', padding: '2px 7px', borderRadius: 5 }}>{t.name}</span>
+            {currentTemplates.map((t, idx) => (
+              <tr key={t.id} style={{ borderBottom: idx === currentTemplates.length - 1 ? 'none' : `1px solid ${C.border}`, transition: 'background 0.2s', background: 'transparent' }} className="hover-highlight-light">
+                <td style={{ padding: '10px 8px', textAlign: 'center', verticalAlign: 'middle' }}>
+                  <input type="checkbox" checked={selectedTemplateIds.includes(t.id)} onChange={(e) => setSelectedTemplateIds((current) => e.target.checked ? [...new Set([...current, t.id])] : current.filter((id) => id !== t.id))} style={{ accentColor: C.accent, cursor: 'pointer', width: 14, height: 14 }} />
                 </td>
-                <td style={{ padding: '13px 14px', fontSize: 10, color: t.template_scope === 'alliance' ? C.purple : t.template_scope === 'shared' ? C.muted : C.accent, fontWeight: 700, textTransform: 'capitalize' }}>{t.template_scope || 'shared'}</td>
-                <td style={{ padding: '13px 14px' }}>
-                  <span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 7px', borderRadius: 10 }}>{t.category || t.cat}</span>
+                <td style={{ padding: '10px 8px', verticalAlign: 'middle' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: t.status === 'approved' ? C.green : t.status === 'draft' ? C.dim : t.status === 'rejected' ? C.red : C.accent, flexShrink: 0 }} />
+                    <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: '#f8fafc', fontWeight: 600 }}>{t.name}</span>
+                  </div>
                 </td>
-                <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{t.brand_name || t.brand || '—'}</td>
-                <td style={{ padding: '13px 14px' }}><TBadge status={t.status} /></td>
-                <td style={{ padding: '13px 14px', fontSize: 10, color: C.dim }}>{t.submitted_at ? new Date(t.submitted_at).toLocaleDateString() : '—'}</td>
-                <td style={{ padding: '13px 14px', fontSize: 10, color: t.approved_at ? C.green : C.dim }}>{t.approved_at ? new Date(t.approved_at).toLocaleDateString() : '—'}</td>
-                <td style={{ padding: '13px 14px', fontSize: 12, color: C.text, fontWeight: 600 }}>{t.uses || 0}</td>
-                <td style={{ padding: '13px 14px' }}>
-                  <div style={{ display: 'flex', gap: 5 }}>
+                <td style={{ padding: '10px 8px', fontSize: 11, color: t.template_scope === 'alliance' ? '#c084fc' : t.template_scope === 'shared' ? C.muted : C.accent, fontWeight: 600, textTransform: 'capitalize', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', background: t.template_scope === 'alliance' ? 'rgba(192, 132, 252, 0.1)' : t.template_scope === 'shared' ? 'rgba(148, 163, 184, 0.1)' : 'rgba(129, 140, 248, 0.1)', padding: '3px 8px', borderRadius: 20 }}>
+                    {t.template_scope || 'shared'}
+                  </div>
+                </td>
+                <td style={{ padding: '10px 8px', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 10, color: '#38bdf8', background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.2)', padding: '3px 8px', borderRadius: 20, fontWeight: 600, letterSpacing: 0.5 }}>{t.category || t.cat}</span>
+                </td>
+                <td style={{ padding: '10px 8px', fontSize: 12, color: '#cbd5e1', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>{t.brand_name || t.brand || <span style={{color: C.dim}}>—</span>}</td>
+                <td style={{ padding: '10px 8px', verticalAlign: 'middle' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                    <TBadge status={t.status} />
+                  </div>
+                </td>
+                <td style={{ padding: '10px 8px', fontSize: 11, color: C.dim, verticalAlign: 'middle', whiteSpace: 'nowrap' }}>{t.submitted_at ? new Date(t.submitted_at).toLocaleDateString(undefined, {month:'short', day:'numeric'}) : '—'}</td>
+                <td style={{ padding: '10px 8px', fontSize: 11, color: t.approved_at ? C.green : C.dim, verticalAlign: 'middle', whiteSpace: 'nowrap' }}>{t.approved_at ? new Date(t.approved_at).toLocaleDateString(undefined, {month:'short', day:'numeric'}) : '—'}</td>
+                <td style={{ padding: '10px 8px', fontSize: 13, color: C.text, fontWeight: 700, verticalAlign: 'middle' }}>{t.uses || 0}</td>
+                <td style={{ padding: '10px 8px', verticalAlign: 'middle' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', maxWidth: 280 }}>
                     {t.status === 'draft' && (
                       <button
                         onClick={() => handleSubmitTemplate(t.id)}
                         disabled={submitLoading === t.id}
-                        style={{ background: C.accent + '20', border: `1px solid ${C.accentDim}`, borderRadius: 5, color: C.accent, padding: '3px 9px', fontSize: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                        style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', border: 'none', borderRadius: 5, color: '#fff', padding: '4px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, boxShadow: '0 2px 10px rgba(245, 158, 11, 0.2)', transition: 'all 0.2s', whiteSpace: 'nowrap' }}
                       >
-                        {submitLoading === t.id ? <Loader2 size={9} style={{ animation: 'spin 1s linear infinite' }} /> : null}
+                        {submitLoading === t.id ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={10} />}
                         Submit
                       </button>
                     )}
                     {t.status === 'rejected' && (
-                      <button onClick={() => handleEditTemplate(t)} style={{ background: 'transparent', border: `1px solid ${C.red}40`, borderRadius: 5, color: C.red, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}>Edit & Resubmit</button>
+                      <button onClick={() => handleEditTemplate(t)} style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: 5, color: '#ef4444', padding: '3px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Resubmit</button>
                     )}
                     {t.status !== 'draft' && (
                       <button
                         onClick={() => handleSyncTemplate(t.id)}
                         disabled={syncLoading === t.id}
-                        style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 5, color: C.text, padding: '3px 9px', fontSize: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                        style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 5, color: C.text, padding: '3px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.2s', whiteSpace: 'nowrap' }}
                       >
-                        {syncLoading === t.id ? <Loader2 size={9} style={{ animation: 'spin 1s linear infinite' }} /> : null}
-                        Check Status
+                        {syncLoading === t.id ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={10} />}
+                        Sync
                       </button>
                     )}
                     <button
                       onClick={() => setPreviewTemplate(t)}
-                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.muted, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}
-                    >Preview</button>
+                      title="Preview"
+                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: '#94a3b8', padding: '4px 6px', fontSize: 10, fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 3, whiteSpace: 'nowrap' }}
+                    ><Smartphone size={10} /> View</button>
                     <a
                       href={`${api.baseUrl}/api/templates/${t.id}/campaign-sheet`}
                       download
-                      title="Download an Excel recipient sheet with columns matching this template's parameters"
-                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.green, padding: '3px 9px', fontSize: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3, textDecoration: 'none' }}
-                    ><Download size={9} /> Excel</a>
+                      title="Download Excel"
+                      style={{ background: 'transparent', border: `1px solid rgba(16, 185, 129, 0.3)`, borderRadius: 5, color: '#10b981', padding: '4px 6px', fontSize: 10, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3, textDecoration: 'none', transition: 'all 0.2s', whiteSpace: 'nowrap' }}
+                    ><Download size={10} /> Sheet</a>
                     <button
                       onClick={() => handleEditTemplate(t)}
-                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.blue, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}
+                      style={{ background: 'transparent', border: `1px solid rgba(56, 189, 248, 0.3)`, borderRadius: 5, color: '#38bdf8', padding: '4px 8px', fontSize: 10, fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}
                     >Edit</button>
                     <button
                       onClick={() => handleOpenDeleteModal(t)}
-                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 5, color: C.red, padding: '3px 9px', fontSize: 9, cursor: 'pointer' }}
+                      style={{ background: 'transparent', border: `1px solid rgba(239, 68, 68, 0.3)`, borderRadius: 5, color: '#ef4444', padding: '4px 8px', fontSize: 10, fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}
                     >Delete</button>
                   </div>
                 </td>
@@ -1102,83 +1146,89 @@ export const TemplatesView = () => {
             onClick={e => e.stopPropagation()}
             style={{
               background: '#0c1525', border: `1px solid ${C.border}`, borderRadius: 18,
-              width: '100%', maxWidth: 520, maxHeight: '90vh',
-              animation: 'fadeIn 0.2s ease', overflowY: 'auto'
+              width: '100%', maxWidth: 850, maxHeight: '90vh',
+              animation: 'fadeIn 0.2s ease', display: 'flex', flexDirection: 'column', overflow: 'hidden'
             }}
           >
             {/* Modal header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: `1px solid ${C.border}` }}>
               <div>
-                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 14, fontWeight: 700, color: C.text }}>
+                <h3 style={{ fontFamily: "'Syne',sans-serif", fontSize: 16, fontWeight: 700, color: C.text }}>
                   <span style={{ fontFamily: 'monospace', color: C.accent }}>{previewTemplate.name}</span>
                 </h3>
-                <div style={{ display: 'flex', gap: 8, marginTop: 5 }}>
-                  <span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 8px', borderRadius: 10 }}>{previewTemplate.category}</span>
-                  <span style={{ fontSize: 10, color: C.muted, background: C.card, padding: '2px 8px', borderRadius: 10 }}>{previewTemplate.language || 'en'}</span>
-                  <TBadge status={previewTemplate.status} />
-                </div>
               </div>
-              <button onClick={() => setPreviewTemplate(null)} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.muted, padding: '6px 10px' }}>
+              <button onClick={() => setPreviewTemplate(null)} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.muted, padding: '6px 10px', cursor: 'pointer' }}>
                 <X size={15} />
               </button>
             </div>
 
-            {/* Preview content */}
-            <div style={{ padding: 24, display: 'flex', justifyContent: 'center' }}>
-              <WaPreview form={{
-                name: previewTemplate.name,
-                category: previewTemplate.category,
-                header_format: previewTemplate.header_format || 'NONE',
-                header: previewTemplate.header || '',
-                body: previewTemplate.body || '',
-                footer: previewTemplate.footer || '',
-                buttons: (() => { try { return typeof previewTemplate.buttons === 'string' ? JSON.parse(previewTemplate.buttons) : (previewTemplate.buttons || []); } catch { return []; } })()
-              }} />
-            </div>
+            {/* Split Content */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', flex: 1, overflowY: 'auto' }}>
+              {/* Left Side: Info */}
+              <div style={{ flex: '1 1 300px', minWidth: 300, padding: '24px 30px', borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 20 }}>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 11, color: C.blue, background: '#0f1e38', padding: '4px 10px', borderRadius: 20, fontWeight: 600 }}>{previewTemplate.category}</span>
+                  <span style={{ fontSize: 11, color: C.muted, background: C.card, padding: '4px 10px', borderRadius: 20, fontWeight: 600, border: `1px solid ${C.border}` }}>Language: {previewTemplate.language || 'en'}</span>
+                  <TBadge status={previewTemplate.status} />
+                </div>
 
-            {/* Template details */}
-            <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {previewTemplate.brand_name && (
-                <div style={{ display: 'flex', gap: 8, fontSize: 11, alignItems: 'center' }}>
-                  <span style={{ color: C.muted, minWidth: 80 }}>Brand:</span>
-                  <span style={{ color: C.text }}>{previewTemplate.brand_name}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+                  {previewTemplate.brand_name && (
+                    <div style={{ display: 'flex', gap: 8, fontSize: 12, alignItems: 'center' }}>
+                      <span style={{ color: C.muted, minWidth: 90 }}>Brand:</span>
+                      <span style={{ color: C.text, fontWeight: 600 }}>{previewTemplate.brand_name}</span>
+                    </div>
+                  )}
+                  {previewTemplate.submitted_at && (
+                    <div style={{ display: 'flex', gap: 8, fontSize: 12 }}>
+                      <span style={{ color: C.muted, minWidth: 90 }}>Submitted:</span>
+                      <span style={{ color: C.text, fontWeight: 500 }}>{new Date(previewTemplate.submitted_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                  {previewTemplate.approved_at && (
+                    <div style={{ display: 'flex', gap: 8, fontSize: 12 }}>
+                      <span style={{ color: C.green, minWidth: 90 }}>Approved:</span>
+                      <span style={{ color: C.green, fontWeight: 600 }}>{new Date(previewTemplate.approved_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                  {previewTemplate.meta_template_id && (
+                    <div style={{ display: 'flex', gap: 8, fontSize: 12 }}>
+                      <span style={{ color: C.muted, minWidth: 90 }}>Meta ID:</span>
+                      <span style={{ color: C.dim, fontFamily: 'monospace', background: '#0a101d', padding: '2px 6px', borderRadius: 4 }}>{previewTemplate.meta_template_id}</span>
+                    </div>
+                  )}
                 </div>
-              )}
-              {previewTemplate.submitted_at && (
-                <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
-                  <span style={{ color: C.muted, minWidth: 80 }}>Submitted:</span>
-                  <span style={{ color: C.text }}>{new Date(previewTemplate.submitted_at).toLocaleString()}</span>
-                </div>
-              )}
-              {previewTemplate.approved_at && (
-                <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
-                  <span style={{ color: C.green, minWidth: 80 }}>Approved:</span>
-                  <span style={{ color: C.green }}>{new Date(previewTemplate.approved_at).toLocaleString()}</span>
-                </div>
-              )}
-              {previewTemplate.meta_template_id && (
-                <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
-                  <span style={{ color: C.muted, minWidth: 80 }}>Meta ID:</span>
-                  <span style={{ color: C.dim, fontFamily: 'monospace' }}>{previewTemplate.meta_template_id}</span>
-                </div>
-              )}
-            </div>
 
-            <div style={{ padding: '12px 20px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              {previewTemplate.status === 'draft' && (
-                <button
-                  onClick={() => { handleSubmitTemplate(previewTemplate.id); setPreviewTemplate(null); }}
-                  style={{ background: C.accent, border: 'none', color: '#fff', padding: '8px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}
-                >
-                  Submit to Meta
-                </button>
-              )}
-              <button
-                onClick={() => setPreviewTemplate(null)}
-                style={{ background: C.card, border: `1px solid ${C.border}`, color: C.muted, padding: '8px 18px', borderRadius: 8, fontSize: 12, fontWeight: 600 }}
-              >
-                Close
-              </button>
+                <div style={{ marginTop: 'auto', display: 'flex', gap: 12, paddingTop: 20, flexWrap: 'wrap' }}>
+                  {previewTemplate.status === 'draft' && (
+                    <button
+                      onClick={() => { handleSubmitTemplate(previewTemplate.id); setPreviewTemplate(null); }}
+                      style={{ background: C.accent, border: 'none', color: '#fff', padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1, justifyContent: 'center', minWidth: 140 }}
+                    >
+                      Submit to Meta
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setPreviewTemplate(null)}
+                    style={{ background: C.card, border: `1px solid ${C.border}`, color: C.text, padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', flex: previewTemplate.status === 'draft' ? 'none' : 1, justifyContent: 'center', display: 'flex', minWidth: 140 }}
+                  >
+                    Close Preview
+                  </button>
+                </div>
+              </div>
+
+              {/* Right Side: Phone Preview */}
+              <div style={{ flex: '1 1 350px', minWidth: 320, padding: 30, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#08101e' }}>
+                <WaPreview form={{
+                  name: previewTemplate.name,
+                  category: previewTemplate.category,
+                  header_format: previewTemplate.header_format || 'NONE',
+                  header: previewTemplate.header || '',
+                  body: previewTemplate.body || '',
+                  footer: previewTemplate.footer || '',
+                  buttons: (() => { try { return typeof previewTemplate.buttons === 'string' ? JSON.parse(previewTemplate.buttons) : (previewTemplate.buttons || []); } catch { return []; } })()
+                }} />
+              </div>
             </div>
           </div>
         </div>

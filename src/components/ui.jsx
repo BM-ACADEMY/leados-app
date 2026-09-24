@@ -30,7 +30,7 @@ export const TBadge = ({status}) => {
     draft: {i: '○', c: '#64748b', b: '#1a2744'},
   };
   const s = M[status] || M.draft;
-  return <span style={{background:s.b,color:s.c,padding:'3px 9px',borderRadius:20,fontSize:11,fontWeight:600}}>{s.i} {status.charAt(0).toUpperCase()+status.slice(1)}</span>;
+  return <span style={{background:s.b,color:s.c,padding:'4px 10px',borderRadius:20,fontSize:11,fontWeight:600,display:'inline-flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}>{s.i} {status.charAt(0).toUpperCase()+status.slice(1)}</span>;
 };
 
 export const ScoreBar = ({score}) => {

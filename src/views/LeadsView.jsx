@@ -835,7 +835,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 7px', borderRadius: 10 }}>{l.source || 'Manual'}</span>
-                      {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && (
+                      {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('whatsapp') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setMetaLeadDetails(l); }}
                           title="View Campaign Details"
@@ -845,10 +845,10 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
                         </button>
                       )}
                     </div>
-                    {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.campaign_name && (
+                    {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('whatsapp') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.campaign_name && (
                       <span title={l.campaign_name} style={{ maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.muted, fontSize: 9 }}>Campaign: {l.campaign_name}</span>
                     )}
-                    {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.facebook_page_name && (
+                    {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('whatsapp') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.facebook_page_name && (
                       <span title={l.facebook_page_name} style={{ maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.blue, fontSize: 9 }}>Page: {l.facebook_page_name}</span>
                     )}
                   </div>

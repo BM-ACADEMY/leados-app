@@ -3045,6 +3045,11 @@ app.post('/webhook/whatsapp', async (req, res) => {
           const phoneNumberId = value.metadata.phone_number_id;
           const isForwarded = msg.context?.forwarded || msg.context?.frequently_forwarded || false;
           const waMessageId = msg.id;
+          // Find matching client by phone_number_id
+          const client = (await pool.query(
+            'SELECT * FROM clients WHERE phone_number_id = $1', [phoneNumberId]
+          )).rows[0];
+
           const referralAdId = msg.referral?.source_id ? String(msg.referral.source_id) : null;
           let referralCampaign = null;
 
@@ -3058,6 +3063,26 @@ app.post('/webhook/whatsapp', async (req, res) => {
               ORDER BY campaign_name IS NULL, updated_at DESC
               LIMIT 1
             `, [referralAdId])).rows[0] || null;
+
+            // Fallback: fetch from Meta API if campaign_name is still null (e.g., pure messaging campaign with no Lead Forms)
+            if (!referralCampaign || !referralCampaign.campaign_name) {
+              try {
+                const token = client?.wa_access_token || process.env.META_PAGE_ACCESS_TOKEN;
+                if (token) {
+                  const adRes = await axios.get(`https://graph.facebook.com/v18.0/${referralAdId}?fields=campaign_id,name,campaign{name}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                  });
+                  referralCampaign = referralCampaign || { ad_id: referralAdId, client_id: client?.id || null };
+                  if (adRes.data) {
+                    referralCampaign.campaign_id = adRes.data.campaign_id || referralCampaign.campaign_id;
+                    referralCampaign.campaign_name = adRes.data.campaign?.name || referralCampaign.campaign_name;
+                    referralCampaign.ad_name = adRes.data.name || referralCampaign.ad_name;
+                  }
+                }
+              } catch (err) {
+                console.warn(`[Webhook] Could not fetch Ad details for ${referralAdId} from Meta API:`, err.response?.data || err.message);
+              }
+            }
           }
 
           // Extract text and media info based on message type
@@ -3087,11 +3112,6 @@ app.post('/webhook/whatsapp', async (req, res) => {
             console.log(`[Webhook] Message type: ${msg.type} from ${phone}`);
             text = `[${msg.type}]`;
           }
-
-          // Find matching client by phone_number_id
-          const client = (await pool.query(
-            'SELECT * FROM clients WHERE phone_number_id = $1', [phoneNumberId]
-          )).rows[0];
 
           // Find or auto-create lead by phone number
           const phoneDigits = phone.replace(/\D/g, '');

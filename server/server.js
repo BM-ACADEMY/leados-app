@@ -2155,7 +2155,7 @@ app.get('/api/leads/facebook-filter-options', auth, async (req, res) => {
       pool.query(`
         SELECT DISTINCT campaign_name, ad_name
         FROM leads
-        WHERE LOWER(TRIM(COALESCE(source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'
+        WHERE LOWER(TRIM(COALESCE(source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads|whatsapp)%'
           AND (NULLIF(TRIM(campaign_name), '') IS NOT NULL OR NULLIF(TRIM(ad_name), '') IS NOT NULL)
         ORDER BY campaign_name NULLS LAST, ad_name NULLS LAST
       `),
@@ -2257,17 +2257,17 @@ app.get('/api/leads', auth, async (req, res) => {
     }
     if (campaign_name) {
       params.push(campaign_name);
-      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'`;
+      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads|whatsapp)%'`;
       q += ` AND l.campaign_name = $${params.length}`;
     }
     if (ad_name) {
       params.push(ad_name);
-      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'`;
+      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads|whatsapp)%'`;
       q += ` AND l.ad_name = $${params.length}`;
     }
     if (meta_page_id) {
       params.push(meta_page_id);
-      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads)%'`;
+      q += ` AND LOWER(TRIM(COALESCE(l.source, ''))) SIMILAR TO '%(facebook|instagram|meta[_ ]?ads|whatsapp)%'`;
       q += ` AND EXISTS (
         SELECT 1
         FROM brand_social_accounts page_account

@@ -14,6 +14,83 @@ const inp = {
   outline: 'none', boxSizing: 'border-box', transition: 'border-color .2s',
 };
 
+function SearchableDropdown({ options, value, onChange, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const ref = useRef(null);
+  
+  useEffect(() => {
+    const handleClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+  
+  const filteredOptions = options.filter(o => (o.label || o).toLowerCase().includes(search.toLowerCase()));
+  const selectedLabel = options.find(o => (o.value || o) === value)?.label || value || placeholder;
+
+  return (
+    <div ref={ref} style={{ position: 'relative', width: '100%', minWidth: 190 }}>
+      <div 
+        onClick={() => setOpen(!open)}
+        style={{ width: '100%', background: 'transparent', border: 'none', color: value ? C.text : C.muted, fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedLabel}</span>
+        <span style={{ fontSize: 10, opacity: 0.5, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>▼</span>
+      </div>
+      
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 5px)', left: 0, minWidth: 260, background: '#13151f', border: '1px solid #2a2a3a', borderRadius: 10, zIndex: 1000, boxShadow: '0 12px 40px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
+          <div style={{ padding: '10px', background: '#0d1117', borderBottom: '1px solid #2a2a3a' }}>
+            <div style={{ position: 'relative' }}>
+              <Search size={12} color="#64748b" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+              <input 
+                autoFocus
+                type="text" 
+                placeholder="Search campaigns..." 
+                value={search} 
+                onChange={e => setSearch(e.target.value)} 
+                style={{ width: '100%', background: '#161b22', border: '1px solid #30363d', color: '#e2e8f0', padding: '8px 10px 8px 30px', borderRadius: 6, fontSize: 11, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+          
+          <div style={{ maxHeight: 220, overflowY: 'auto', padding: '6px 0' }}>
+            <div 
+              onClick={() => { onChange(''); setOpen(false); setSearch(''); }}
+              style={{ padding: '9px 16px', fontSize: 11, fontWeight: value === '' ? 600 : 400, color: value === '' ? '#38bdf8' : '#e2e8f0', cursor: 'pointer', background: value === '' ? 'rgba(56,189,248,0.1)' : 'transparent', display: 'flex', alignItems: 'center', gap: 8 }}
+              onMouseEnter={e => e.currentTarget.style.background = value === '' ? 'rgba(56,189,248,0.1)' : 'rgba(255,255,255,0.05)'}
+              onMouseLeave={e => e.currentTarget.style.background = value === '' ? 'rgba(56,189,248,0.1)' : 'transparent'}
+            >
+              {placeholder}
+            </div>
+            
+            {filteredOptions.length === 0 && <div style={{ padding: '16px', fontSize: 11, color: '#64748b', textAlign: 'center' }}>No campaigns found</div>}
+            
+            {filteredOptions.map((opt, i) => {
+              const val = opt.value || opt;
+              const lbl = opt.label || opt;
+              const isActive = value === val;
+              
+              return (
+                <div 
+                  key={i}
+                  title={lbl}
+                  onClick={() => { onChange(val); setOpen(false); setSearch(''); }}
+                  style={{ padding: '9px 16px', fontSize: 11, fontWeight: isActive ? 600 : 400, color: isActive ? '#38bdf8' : '#e2e8f0', cursor: 'pointer', background: isActive ? 'rgba(56,189,248,0.1)' : 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                  onMouseEnter={e => e.currentTarget.style.background = isActive ? 'rgba(56,189,248,0.1)' : 'rgba(255,255,255,0.05)'}
+                  onMouseLeave={e => e.currentTarget.style.background = isActive ? 'rgba(56,189,248,0.1)' : 'transparent'}
+                >
+                  {lbl}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SOURCE_FILTERS = [
   { value: 'facebook', label: 'Facebook' },
   { value: 'whatsapp', label: 'WhatsApp' },
@@ -744,12 +821,18 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18, alignItems: 'stretch' }}>
-        <div className="w-full-mobile table-responsive" style={{ display: 'flex', background: C.card, border: '1px solid ' + C.border, borderRadius: 9, overflow: 'hidden', alignSelf: 'flex-start' }}>
-          {tabs.map((t) => (
-            <button key={t} onClick={() => setFilter(t)} style={{ padding: '7px 13px', fontSize: 11, fontWeight: 600, border: 'none', background: filter === t ? C.accent : 'transparent', color: filter === t ? '#fff' : C.muted, textTransform: 'capitalize' }}>
-              {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
-            </button>
-          ))}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+          <div className="w-full-mobile table-responsive" style={{ display: 'flex', background: C.card, border: '1px solid ' + C.border, borderRadius: 9, overflow: 'hidden', alignSelf: 'flex-start' }}>
+            {tabs.map((t) => (
+              <button key={t} onClick={() => setFilter(t)} style={{ padding: '7px 13px', fontSize: 11, fontWeight: 600, border: 'none', background: filter === t ? C.accent : 'transparent', color: filter === t ? '#fff' : C.muted, textTransform: 'capitalize' }}>
+                {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+          <div style={{ background: C.card, padding: '7px 14px', borderRadius: 8, border: '1px solid ' + C.border, color: '#e2e8f0', fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7, boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8', display: 'inline-block', boxShadow: '0 0 8px #38bdf8' }}></span>
+            {total ? total.toLocaleString() : 0} {total === 1 ? 'Lead' : 'Leads'} Found {loading && <span style={{ opacity: 0.6 }}>(...)</span>}
+          </div>
         </div>
         <div className="w-full-mobile" style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36, flex: 1 }}>
@@ -765,11 +848,12 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
             </select>
           </div>
           <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 190 }}>
-            <select aria-label="Campaign Name" value={campaignFilter} onChange={(e) => { setCampaignFilter(e.target.value); setAdFilter(''); if (e.target.value) setSourceFilter('facebook'); }} style={{ width: '100%', background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', cursor: 'pointer' }}>
-              <option value="" style={{ background: C.card, color: C.text }}>All Facebook Campaigns</option>
-              {campaignNames.length === 0 && <option disabled style={{ background: C.card, color: C.muted }}>No campaign names found</option>}
-              {campaignNames.map(name => <option key={name} value={name} style={{ background: C.card, color: C.text }}>{name}</option>)}
-            </select>
+            <SearchableDropdown 
+              placeholder="All Campaigns"
+              options={campaignNames}
+              value={campaignFilter}
+              onChange={(val) => { setCampaignFilter(val); setAdFilter(''); }}
+            />
           </div>
           <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 170 }}>
             <select aria-label="Ad Name" value={adFilter} onChange={(e) => { setAdFilter(e.target.value); if (e.target.value) setSourceFilter('facebook'); }} style={{ width: '100%', background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', cursor: 'pointer' }}>

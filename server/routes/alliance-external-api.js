@@ -75,19 +75,20 @@ router.all('/whatsapp/send', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Either text or template is required' });
     }
 
-    // Get active WhatsApp number
+    // Get active WhatsApp number from DB
     let settingsResult = await db.query('SELECT phone_number_id, access_token_env FROM alliance_inbox_settings WHERE active = true LIMIT 1');
     if (!settingsResult.rowCount) {
-      // Fallback: Just grab any configured number if none are marked "active"
       settingsResult = await db.query('SELECT phone_number_id, access_token_env FROM alliance_inbox_settings LIMIT 1');
     }
     
-    if (!settingsResult.rowCount) {
-      throw new Error('No active Alliance WhatsApp number found in DB');
-    }
+    // Fallback to Environment Variables if DB is completely empty
+    const dbSettings = settingsResult.rowCount ? settingsResult.rows[0] : null;
+    const phone_number_id = dbSettings?.phone_number_id || process.env.ALLIANCE_WA_PHONE_NUMBER_ID;
+    const token = process.env[dbSettings?.access_token_env || 'ALLIANCE_WA_ACCESS_TOKEN'];
 
-    const { phone_number_id, access_token_env } = settingsResult.rows[0];
-    const token = process.env[access_token_env || 'ALLIANCE_WA_ACCESS_TOKEN'];
+    if (!phone_number_id) {
+      throw new Error('No Alliance WhatsApp phone number ID found in DB or Environment');
+    }
 
     if (!token) {
       throw new Error('WhatsApp Access Token is missing in environment');

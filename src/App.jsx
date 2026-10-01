@@ -6,6 +6,7 @@ import { STYLE } from './constants/theme.js';
 import { PrivacyPolicy } from './views/PrivacyPolicy.jsx';
 import { TermsAndConditions } from './views/TermsAndConditions.jsx';
 import { LandingPage } from './views/LandingPage.jsx';
+import { ApiTrackerView } from './views/ApiTrackerView.jsx';
 import { Sidebar } from './components/layout/Sidebar.jsx';
 import { Header } from './components/layout/Header.jsx';
 import { useAuth } from './hooks/useAuth.js';
@@ -494,6 +495,7 @@ export default function App() {
         <Route path="/privacy-policy" element={<PrivacyPolicy />} />
         <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
         <Route path="/landing" element={<LandingPage />} />
+        <Route path="/alliance-tracker" element={<ApiTrackerView />} />
         <Route
           path="/login"
           element={

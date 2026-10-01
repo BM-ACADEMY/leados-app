@@ -4,8 +4,11 @@ const db = require('../db/connection');
 
 const router = express.Router();
 
+let isTableCreated = false;
+
 // Auto-create tracking table if it doesn't exist
 const initTrackerTable = async () => {
+  if (isTableCreated) return;
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS alliance_external_api_logs (
@@ -28,15 +31,16 @@ const initTrackerTable = async () => {
     } catch (e) {
       // Ignore error if column already exists
     }
+    isTableCreated = true;
   } catch (err) {
     console.error('Failed to create alliance_external_api_logs table:', err);
   }
 };
-initTrackerTable();
-
 
 // 1. SEND WHATSAPP ROUTE
 router.all('/whatsapp/send', async (req, res) => {
+  await initTrackerTable();
+
   let project = 'Unknown';
   let phone_number = '';
   let msgType = 'text';
@@ -148,6 +152,7 @@ router.all('/whatsapp/send', async (req, res) => {
 
 // 2. TRACKER ROUTE
 router.get('/apitracker', async (req, res) => {
+  await initTrackerTable();
   try {
     // Basic stats
     const statsResult = await db.query(`

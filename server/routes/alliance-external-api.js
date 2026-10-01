@@ -76,7 +76,12 @@ router.all('/whatsapp/send', async (req, res) => {
     }
 
     // Get active WhatsApp number
-    const settingsResult = await db.query('SELECT phone_number_id, access_token_env FROM alliance_inbox_settings WHERE active = true LIMIT 1');
+    let settingsResult = await db.query('SELECT phone_number_id, access_token_env FROM alliance_inbox_settings WHERE active = true LIMIT 1');
+    if (!settingsResult.rowCount) {
+      // Fallback: Just grab any configured number if none are marked "active"
+      settingsResult = await db.query('SELECT phone_number_id, access_token_env FROM alliance_inbox_settings LIMIT 1');
+    }
+    
     if (!settingsResult.rowCount) {
       throw new Error('No active Alliance WhatsApp number found in DB');
     }

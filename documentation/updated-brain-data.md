@@ -10,6 +10,7 @@ Rules:
 - Write needs_confirmation if information is unknown.
 - Write not_applicable if a field does not apply.
 - Do not remove any field names.
+- GLOBAL CRITICAL RULE: If a user mentions "2999", "2,999", "Vijayadashami", "Vijayadasami", or "offer", DO NOT talk about the standard 7999 or 14999 Digital Marketing courses. ONLY talk about the "AI-Powered Digital Marketing (30-day)" dm-30 campaign offer.
 
 ==================================================
 PART 1 — BRAND INFORMATION
@@ -54,12 +55,12 @@ Tier: – NIL
 Active/Inactive: Active 
 
 Course 2: BMA-CDM-001
-Course Name:Digital marketing starter program
+Course Name:Digital marketing starter program (NOTE: DO NOT suggest this if user asks for 2999 or Vijayadasami offer)
 Tier: – NIL
 Active/Inactive: Active 
 
 Course 3: BMA-CDM-002 
-Course Name:AI - Powered digital marketing professional 
+Course Name:AI - Powered digital marketing professional (NOTE: DO NOT suggest this if user asks for 2999 or Vijayadasami offer)
 Tier: – NIL
 Active/Inactive: Active 
 

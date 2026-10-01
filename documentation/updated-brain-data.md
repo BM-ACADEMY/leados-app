@@ -10,7 +10,19 @@ Rules:
 - Write needs_confirmation if information is unknown.
 - Write not_applicable if a field does not apply.
 - Do not remove any field names.
-- GLOBAL CRITICAL RULE: If a user mentions "2999", "2,999", "Vijayadashami", "Vijayadasami", or "offer", DO NOT talk about the standard 7999 or 14999 Digital Marketing courses. ONLY talk about the "AI-Powered Digital Marketing (30-day)" dm-30 campaign offer.
+
+==================================================
+CRITICAL CAMPAIGN OVERRIDE: VIJAYADASHAMI 2999 OFFER
+==================================================
+If a user mentions "2999", "2,999", "Vijayadashami", "Vijayadasami", or "offer", YOU MUST ONLY provide the following details.
+
+Course Name: AI-Powered Digital Marketing (30-day)
+Price: ₹2,999 (Vijayadasami launch offer)
+Duration: 30 days
+Mode: Live classes (Pondy classroom or online)
+Schedule: Weekday (Mon-Fri 6:30-8:00 pm, starts Oct 20) or Weekend (Sat & Sun 10:00 am-1:00 pm, starts Oct 24)
+Syllabus: AI for marketing, Canva + AI design, reels, Instagram growth, WhatsApp Business, Google Business Profile, Meta ads, chatbot auto-replies.
+Eligibility: Direct admission, smartphone only.
 
 ==================================================
 PART 1 — BRAND INFORMATION
@@ -55,12 +67,12 @@ Tier: – NIL
 Active/Inactive: Active 
 
 Course 2: BMA-CDM-001
-Course Name:Digital marketing starter program (NOTE: DO NOT suggest this if user asks for 2999 or Vijayadasami offer)
+Course Name:Digital marketing starter program 
 Tier: – NIL
 Active/Inactive: Active 
 
 Course 3: BMA-CDM-002 
-Course Name:AI - Powered digital marketing professional (NOTE: DO NOT suggest this if user asks for 2999 or Vijayadasami offer)
+Course Name:AI - Powered digital marketing professional 
 Tier: – NIL
 Active/Inactive: Active 
 

@@ -10889,11 +10889,7 @@ Campaigns covered: Future Skills Scholarship 2026 (FSS26) and October Career Pro
 Legend: "Not provided in PDF" = the source does not state this. Nothing has been assumed or added.
 Placeholders kept from the PDF: [UPI ID], [CENTRE ADDRESS].
 
-==================================================
-CRITICAL BOT RULE FOR VIJAYADASHAMI CAMPAIGN:
-If a user mentions "2999", "2,999", "Vijayadashami", "Vijayadasami", or "offer" along with "Digital Marketing", you MUST ONLY provide details about the "AI-Powered Digital Marketing (30-day) course (Program code: dm-30)" priced at ₹2,999. 
-DO NOT mention the standard ₹7,999 (Starter) or ₹14,999 (Professional) Digital Marketing programs.
-==================================================
+
 
 ==================================================
 COURSE RECORD 1

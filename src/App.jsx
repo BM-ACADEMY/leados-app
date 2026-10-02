@@ -7,6 +7,7 @@ import { PrivacyPolicy } from './views/PrivacyPolicy.jsx';
 import { TermsAndConditions } from './views/TermsAndConditions.jsx';
 import { LandingPage } from './views/LandingPage.jsx';
 import { ApiTrackerView } from './views/ApiTrackerView.jsx';
+import { ApiDocumentationView } from './views/ApiDocumentationView.jsx';
 import { Sidebar } from './components/layout/Sidebar.jsx';
 import { Header } from './components/layout/Header.jsx';
 import { useAuth } from './hooks/useAuth.js';
@@ -496,6 +497,7 @@ export default function App() {
         <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
         <Route path="/landing" element={<LandingPage />} />
         <Route path="/alliance-tracker" element={<ApiTrackerView />} />
+        <Route path="/alliance-tracker/docs" element={<ApiDocumentationView />} />
         <Route
           path="/login"
           element={

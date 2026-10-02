@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { Search, Activity, CheckCircle2, XCircle, Send, MessageSquare, BarChart3, AlertCircle, Terminal, Copy, X, Download, FileJson } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell, PieChart, Pie } from "recharts";
 
+const API_URL = import.meta.env.VITE_API_URL || '';
+
 export function ApiTrackerView() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
@@ -33,7 +35,7 @@ export function ApiTrackerView() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/alliance/external/apitracker");
+      const res = await fetch(`${API_URL}/api/alliance/external/apitracker`);
       const json = await res.json();
       if (json.success) {
         setData(json);

@@ -159,8 +159,23 @@ router.all('/whatsapp/send', async (req, res) => {
       );
       const conversationId = conversationResult.rows[0].id;
       
-      const paramStr = parameters ? (Array.isArray(parameters) ? parameters.join(', ') : String(parameters)) : '';
-      const msgContent = template ? `[Template: ${template}] ${paramStr}`.trim() : String(text);
+      let msgContent = String(text);
+      if (template) {
+        const templateData = await db.query('SELECT body FROM templates WHERE name = $1 LIMIT 1', [template]);
+        if (templateData.rowCount > 0 && templateData.rows[0].body) {
+          let body = templateData.rows[0].body;
+          if (parameters) {
+            const paramsArray = Array.isArray(parameters) ? parameters : String(parameters).split(',');
+            paramsArray.forEach((val, idx) => {
+              body = body.replace(new RegExp(`\\{\\{${idx + 1}\\}\\}`, 'g'), String(val).trim());
+            });
+          }
+          msgContent = body;
+        } else {
+          const paramStr = parameters ? (Array.isArray(parameters) ? parameters.join(', ') : String(parameters)) : '';
+          msgContent = `[Template: ${template}] ${paramStr}`.trim();
+        }
+      }
       
       const msgResult = await db.query(
         `INSERT INTO alliance_inbox_messages

@@ -139,6 +139,45 @@ router.all('/whatsapp/send', async (req, res) => {
       [project, phone_number, msgType, tplName, sender, msgId]
     );
 
+    // Sync to Alliance Inbox
+    try {
+      const cleanPhone = String(number).replace(/\D/g, '');
+      const defaultName = cleanPhone;
+      
+      const contactResult = await db.query(
+        `INSERT INTO alliance_inbox_contacts (wa_id, phone, name, profile_name)
+         VALUES ($1,$1,$2,$2)
+         ON CONFLICT (wa_id) DO UPDATE SET updated_at = NOW()
+         RETURNING id`, [cleanPhone, defaultName]
+      );
+      const contactId = contactResult.rows[0].id;
+      
+      const conversationResult = await db.query(
+        `INSERT INTO alliance_inbox_conversations (contact_id, phone_number_id)
+         VALUES ($1,$2) ON CONFLICT (contact_id) DO UPDATE SET updated_at = NOW() RETURNING id`,
+        [contactId, phone_number_id]
+      );
+      const conversationId = conversationResult.rows[0].id;
+      
+      const paramStr = parameters ? (Array.isArray(parameters) ? parameters.join(', ') : String(parameters)) : '';
+      const msgContent = template ? `[Template: ${template}] ${paramStr}`.trim() : String(text);
+      
+      const msgResult = await db.query(
+        `INSERT INTO alliance_inbox_messages
+          (conversation_id, contact_id, wa_msg_id, direction, msg_type, content, status, sent_at)
+         VALUES ($1, $2, $3, 'outbound', $4, $5, 'sent', NOW()) RETURNING *`,
+        [conversationId, contactId, msgId, msgType, msgContent]
+      );
+      
+      await db.query(
+        `UPDATE alliance_inbox_conversations SET last_message=$1, last_message_at=NOW(), updated_at=NOW() WHERE id=$2`,
+        [msgContent, conversationId]
+      );
+
+    } catch (inboxErr) {
+      console.error('Failed to sync external message to alliance inbox:', inboxErr);
+    }
+
     res.json({ success: true, message_id: msgId, data: response.data });
 
   } catch (error) {

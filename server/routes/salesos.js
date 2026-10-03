@@ -1252,7 +1252,6 @@ router.post('/ai/response', async (req, res) => {
       - "Digital marketing" alone never switches brands. Under BM Academy it means the course; under BM TechX it means the service.
       - Academy learning signals: course, class, syllabus, batch, fees, training, placement, certification.
       - TechX service signals: marketing service/agency, run ads, business growth, website, branding service, lead generation, GMB or SEO service.
-      - For a greeting, reply only: "${firstName ? `Hey ${firstName}! 👋 How can I help you today?` : 'Hey! 👋 How can I help you today?'}"
       - Never recite ABM Groups and its brand list as a default greeting.
       - Never reset the conversation or ask again for information already present in chat history.
       - Use chat history for topic and selection memory only. Previous assistant messages are not a factual source; never reuse an old fee, duration, claim, or URL unless it also appears in the current approved KNOWLEDGE BASE REFERENCE.

@@ -770,24 +770,26 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
       <MetaLeadDetailsModal lead={metaLeadDetails} onClose={() => setMetaLeadDetails(null)} />
       <ExportLeadsModal open={showExportModal} onClose={() => setShowExportModal(false)} onExport={handleExport} exporting={exporting} exportProgress={exportProgress} availableTags={availableTags} campaignNames={campaignNames} currentCampaign={campaignFilter} />
 
-      <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
+      <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontFamily: "'Syne',sans-serif", fontSize: 21, fontWeight: 800, color: C.text }}>Lead Management</h1>
-          <p style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>{total || 0} total leads {loading && '(loading...)'}</p>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: '#f8fafc', margin: 0, letterSpacing: '-0.3px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ background: 'linear-gradient(135deg, #38bdf8, #818cf8)', WebkitBackgroundClip: 'text', color: 'transparent' }}>Leads Directory</span>
+          </h1>
+          <p style={{ color: '#94a3b8', fontSize: 13, margin: '6px 0 0 0' }}>Manage, filter, and track all your incoming leads in one place.</p>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <input type="file" accept=".csv,.xlsx,.xls" ref={fileInputRef} onChange={handleImport} style={{ display: 'none' }} />
-          <button
-            onClick={handleDownloadTemplate}
-            title="Download CSV template with sample data"
-            style={{ background: 'linear-gradient(135deg,#1a3a1a,#0d2b0d)', border: '1px solid #2d6a2d', color: '#4ade80', padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontWeight: 600, transition: 'opacity .2s' }}
-            onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
-            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-          >
-            <FileSpreadsheet size={12} /> Template
-          </button>
-          <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', opacity: importing ? 0.6 : 1 }}><Upload size={12} />{importing ? 'Importing...' : 'Import CSV'}</button>
-          <button onClick={() => setShowExportModal(true)} style={{ background: C.card, border: '1px solid ' + C.border, color: C.muted, padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}><Download size={12} />Export</button>
+          
+          <button onClick={() => setShowExportModal(true)} style={{ background: 'transparent', border: '1px solid #334155', color: '#cbd5e1', padding: '8px 14px', borderRadius: 8, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', transition: 'all .2s' }} onMouseEnter={e => e.currentTarget.style.background = '#1e293b'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}><Download size={14} />Export</button>
+          
+          <div style={{ width: 1, height: 24, background: '#334155', margin: '0 4px' }}></div>
+          
+          <button onClick={handleDownloadTemplate} title="Download CSV template with sample data" style={{ background: 'transparent', border: '1px solid #334155', color: '#cbd5e1', padding: '8px 14px', borderRadius: 8, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', transition: 'all .2s' }} onMouseEnter={e => e.currentTarget.style.background = '#1e293b'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}><FileSpreadsheet size={14} /> Template</button>
+          
+          <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={{ background: 'transparent', border: '1px solid #334155', color: '#cbd5e1', padding: '8px 14px', borderRadius: 8, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', opacity: importing ? 0.6 : 1, transition: 'all .2s' }} onMouseEnter={e => !importing && (e.currentTarget.style.background = '#1e293b')} onMouseLeave={e => !importing && (e.currentTarget.style.background = 'transparent')}><Upload size={14} />{importing ? 'Importing...' : 'Import CSV'}</button>
+          
+          <div style={{ width: 1, height: 24, background: '#334155', margin: '0 4px' }}></div>
+          
           <button
             onClick={async () => {
               if (syncingFB) return;
@@ -808,183 +810,211 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
             }}
             title="Sync all historical Facebook Leads"
             disabled={syncingFB}
-            style={{ background: 'linear-gradient(135deg,#3b5998,#1e2e50)', border: '1px solid #4c70ba', color: '#fff', padding: '7px 12px', borderRadius: 7, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, cursor: syncingFB ? 'default' : 'pointer', fontWeight: 600, transition: 'opacity .2s', opacity: syncingFB ? 0.7 : 1 }}
-            onMouseEnter={e => !syncingFB && (e.currentTarget.style.opacity = '0.8')}
-            onMouseLeave={e => !syncingFB && (e.currentTarget.style.opacity = '1')}
+            style={{ background: '#1e3a8a', border: '1px solid #1e40af', color: '#bfdbfe', padding: '8px 14px', borderRadius: 8, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: syncingFB ? 'default' : 'pointer', fontWeight: 500, transition: 'all .2s', opacity: syncingFB ? 0.7 : 1 }}
+            onMouseEnter={e => !syncingFB && (e.currentTarget.style.background = '#1e40af')}
+            onMouseLeave={e => !syncingFB && (e.currentTarget.style.background = '#1e3a8a')}
           >
-            <RefreshCw size={12} className={syncingFB ? "spin-animation" : ""} /> {syncingFB ? 'Syncing...' : 'Sync FB Leads'}
+            <RefreshCw size={14} className={syncingFB ? "spin-animation" : ""} /> {syncingFB ? 'Syncing...' : 'Sync FB'}
           </button>
+          
           <button
             onClick={() => setShowAddModal(true)}
-            style={{ background: C.accent, border: 'none', color: '#fff', padding: '7px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}
+            style={{ background: C.accent, border: 'none', color: '#fff', padding: '9px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', boxShadow: '0 4px 12px rgba(234,88,12,0.3)', transition: 'transform .1s' }}
+            onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.02)'}
+            onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
           >
-            <Plus size={12} />Add Lead
+            <Plus size={15} strokeWidth={2.5} />Add Lead
           </button>
         </div>
       </div>
 
       {error && (
-        <div style={{ background: '#2d1010', border: '1px solid #7c2d12', borderRadius: 7, padding: 12, marginBottom: 18, color: '#ef4444', fontSize: 12 }}>
-          Error loading leads: {error}
+        <div style={{ background: '#2d1010', border: '1px solid #7c2d12', borderRadius: 8, padding: '12px 16px', marginBottom: 24, color: '#ef4444', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Info size={16} /> Error loading leads: {error}
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18, alignItems: 'stretch' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-          <div className="w-full-mobile table-responsive" style={{ display: 'flex', background: C.card, border: '1px solid ' + C.border, borderRadius: 9, overflow: 'hidden', alignSelf: 'flex-start' }}>
+      {/* Tabs and Filters Section */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, marginBottom: 24, boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginBottom: 20, paddingBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+          
+          {/* Tabs */}
+          <div style={{ display: 'flex', background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, padding: 4 }}>
             {tabs.map((t) => (
-              <button key={t} onClick={() => setFilter(t)} style={{ padding: '7px 13px', fontSize: 11, fontWeight: 600, border: 'none', background: filter === t ? C.accent : 'transparent', color: filter === t ? '#fff' : C.muted, textTransform: 'capitalize' }}>
+              <button 
+                key={t} 
+                onClick={() => setFilter(t)} 
+                style={{ 
+                  padding: '7px 16px', fontSize: 13, fontWeight: filter === t ? 600 : 500, border: 'none', 
+                  background: filter === t ? '#334155' : 'transparent', 
+                  color: filter === t ? '#f8fafc' : '#94a3b8', 
+                  borderRadius: 6, cursor: 'pointer', textTransform: 'capitalize', transition: 'all 0.2s' 
+                }}
+              >
                 {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
           </div>
-          <div style={{ background: C.card, padding: '7px 14px', borderRadius: 8, border: '1px solid ' + C.border, color: '#e2e8f0', fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7, boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8', display: 'inline-block', boxShadow: '0 0 8px #38bdf8' }}></span>
-            {total ? total.toLocaleString() : 0} {total === 1 ? 'Lead' : 'Leads'} Found {loading && <span style={{ opacity: 0.6 }}>(...)</span>}
+          
+          {/* Total Count */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#0f172a', padding: '8px 16px', borderRadius: 8, border: '1px solid #1e293b' }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 10px #38bdf8' }}></span>
+            <span style={{ color: '#cbd5e1', fontSize: 13, fontWeight: 500 }}>
+              <strong style={{ color: '#f8fafc' }}>{total ? total.toLocaleString() : 0}</strong> leads found
+              {loading && <span style={{ opacity: 0.6, marginLeft: 4 }}>(...)</span>}
+            </span>
           </div>
         </div>
-        <div className="w-full-mobile" style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36, flex: 1 }}>
-            <Search size={12} color={C.muted} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or phone..." style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', width: '100%' }} />
+
+        {/* Filters */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          {/* Search */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, padding: '0 12px', height: 40 }}>
+            <Search size={15} color="#94a3b8" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or phone..." style={{ background: 'transparent', border: 'none', color: '#f8fafc', fontSize: 13, outline: 'none', width: '100%' }} />
           </div>
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 12px', height: 36, display: 'flex', alignItems: 'center' }}>
-            <select value={sourceFilter} onChange={(e) => { const source = e.target.value; setSourceFilter(source); if (source !== 'facebook') { setCampaignFilter(''); setAdFilter(''); setMetaPageFilter(''); } }} style={{ background: 'transparent', border: 'none', color: C.text, fontSize: 12, outline: 'none', cursor: 'pointer', textTransform: 'capitalize' }}>
-              <option value="all" style={{ background: C.card, color: C.text }}>All Sources</option>
-              {SOURCE_FILTERS.map(source => (
-                <option key={source.value} value={source.value} style={{ background: C.card, color: C.text }}>{source.label}</option>
-              ))}
+          
+          {/* Source */}
+          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, padding: '0 12px', height: 40, display: 'flex', alignItems: 'center' }}>
+            <select value={sourceFilter} onChange={(e) => { const source = e.target.value; setSourceFilter(source); if (source !== 'facebook') { setCampaignFilter(''); setAdFilter(''); setMetaPageFilter(''); } }} style={{ width: '100%', background: 'transparent', border: 'none', color: sourceFilter === 'all' ? '#94a3b8' : '#f8fafc', fontSize: 13, outline: 'none', cursor: 'pointer', textTransform: 'capitalize' }}>
+              <option value="all" style={{ background: '#0f172a' }}>All Sources</option>
+              {SOURCE_FILTERS.map(source => <option key={source.value} value={source.value} style={{ background: '#0f172a' }}>{source.label}</option>)}
             </select>
           </div>
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 190 }}>
-            <SearchableDropdown 
-              placeholder="All Campaigns"
-              options={campaignNames}
-              value={campaignFilter}
-              onChange={(val) => { setCampaignFilter(val); setAdFilter(''); }}
-            />
+          
+          {/* Campaign */}
+          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, padding: '0 12px', height: 40, display: 'flex', alignItems: 'center' }}>
+            <SearchableDropdown placeholder="All Campaigns" options={campaignNames} value={campaignFilter} onChange={(val) => { setCampaignFilter(val); setAdFilter(''); }} />
           </div>
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 170 }}>
-            <select aria-label="Ad Name" value={adFilter} onChange={(e) => { setAdFilter(e.target.value); if (e.target.value) setSourceFilter('facebook'); }} style={{ width: '100%', background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', cursor: 'pointer' }}>
-              <option value="" style={{ background: C.card, color: C.text }}>All Facebook Ads</option>
-              {adNames.length === 0 && <option disabled style={{ background: C.card, color: C.muted }}>No ad names found</option>}
-              {adNames.map(name => <option key={name} value={name} style={{ background: C.card, color: C.text }}>{name}</option>)}
+          
+          {/* Ad Name */}
+          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, padding: '0 12px', height: 40, display: 'flex', alignItems: 'center' }}>
+            <select value={adFilter} onChange={(e) => { setAdFilter(e.target.value); if (e.target.value) setSourceFilter('facebook'); }} style={{ width: '100%', background: 'transparent', border: 'none', color: adFilter === '' ? '#94a3b8' : '#f8fafc', fontSize: 13, outline: 'none', cursor: 'pointer' }}>
+              <option value="" style={{ background: '#0f172a' }}>All Facebook Ads</option>
+              {adNames.map(name => <option key={name} value={name} style={{ background: '#0f172a' }}>{name}</option>)}
             </select>
           </div>
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 190 }}>
-            <select aria-label="Facebook or Instagram Page" value={metaPageFilter} onChange={(e) => { setMetaPageFilter(e.target.value); if (e.target.value) setSourceFilter('facebook'); }} style={{ width: '100%', background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', cursor: 'pointer' }}>
-              <option value="" style={{ background: C.card, color: C.text }}>All Facebook & Instagram Pages</option>
-              {metaPageOptions.length === 0 && <option disabled style={{ background: C.card, color: C.muted }}>No connected pages found</option>}
+
+          {/* Page Name */}
+          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, padding: '0 12px', height: 40, display: 'flex', alignItems: 'center' }}>
+            <select value={metaPageFilter} onChange={(e) => { setMetaPageFilter(e.target.value); if (e.target.value) setSourceFilter('facebook'); }} style={{ width: '100%', background: 'transparent', border: 'none', color: metaPageFilter === '' ? '#94a3b8' : '#f8fafc', fontSize: 13, outline: 'none', cursor: 'pointer' }}>
+              <option value="" style={{ background: '#0f172a' }}>All Social Pages</option>
               {metaPageOptions.map(page => (
-                <option key={`${page.platform}-${page.page_id}-${page.brand_name}`} value={page.page_id} style={{ background: C.card, color: C.text }}>
-                  [{page.platform === 'instagram' ? 'Instagram' : 'Facebook'}] {page.page_name}
+                <option key={`${page.platform}-${page.page_id}-${page.brand_name}`} value={page.page_id} style={{ background: '#0f172a' }}>
+                  [{page.platform === 'instagram' ? 'IG' : 'FB'}] {page.page_name}
                 </option>
               ))}
             </select>
           </div>
-          <div style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 9, padding: '0 10px', height: 36, display: 'flex', alignItems: 'center', minWidth: 150 }}>
-            <select aria-label="Tag Filter" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} style={{ width: '100%', background: 'transparent', border: 'none', color: C.text, fontSize: 11, outline: 'none', cursor: 'pointer' }}>
-              <option value="" style={{ background: C.card, color: C.text }}>All Tags</option>
-              {availableTags.map(tag => (
-                <option key={tag.id} value={tag.id} style={{ background: C.card, color: C.text }}>{tag.name}</option>
-              ))}
+
+          {/* Tags */}
+          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, padding: '0 12px', height: 40, display: 'flex', alignItems: 'center' }}>
+            <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} style={{ width: '100%', background: 'transparent', border: 'none', color: tagFilter === '' ? '#94a3b8' : '#f8fafc', fontSize: 13, outline: 'none', cursor: 'pointer' }}>
+              <option value="" style={{ background: '#0f172a' }}>All Tags</option>
+              {availableTags.map(tag => <option key={tag.id} value={tag.id} style={{ background: '#0f172a' }}>{tag.name}</option>)}
             </select>
           </div>
         </div>
       </div>
 
-      <div className="table-responsive" style={{ background: C.card, border: '1px solid ' + C.border, borderRadius: 14, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <div className="table-responsive" style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflowX: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1050 }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid ' + C.border }}>
-              {['Lead', 'Phone', 'Tags', 'Source', 'Brand', 'Status', 'Score', 'Assigned', 'Date', ''].map((h) => (
-                <th key={h} style={{ padding: '11px 14px', fontSize: 9, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'left' }}>{h}</th>
+            <tr style={{ borderBottom: `1px solid ${C.border}`, background: '#0f172a' }}>
+              {['Lead', 'Phone', 'Tags', 'Source', 'Brand', 'Status', 'Score', 'Assigned', 'Date', 'Actions'].map((h) => (
+                <th key={h} style={{ padding: '14px 16px', fontSize: 11, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, textAlign: h === 'Actions' ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h === 'Actions' ? '' : h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {paginatedLeads.map((l, i) => (
-              <tr key={l.id} onClick={() => onLeadClick(l)} style={{ borderBottom: '1px solid ' + C.border, cursor: 'pointer', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
-                <td style={{ padding: '13px 14px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                    <div style={{ width: 30, height: 30, borderRadius: '50%', background: C.accent + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: C.accent, flexShrink: 0 }}>{l.name[0]}</div>
-                    <div>
-                      <p style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{l.name}</p>
-                      <p style={{ fontSize: 10, color: C.muted }}>{l.interest || 'N/A'}</p>
+              <tr key={l.id} onClick={() => onLeadClick(l)} style={{ borderBottom: `1px solid ${C.border}`, cursor: 'pointer', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)', transition: 'background 0.2s' }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'} onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'}>
+                <td style={{ padding: '16px', minWidth: 200, maxWidth: 220 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: C.accent + '22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, color: C.accent, flexShrink: 0 }}>{l.name[0]}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ fontSize: 14, fontWeight: 600, color: '#f8fafc', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={l.name}>{l.name}</p>
+                      <p style={{ fontSize: 12, color: '#94a3b8', margin: '2px 0 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={l.interest}>{l.interest || 'N/A'}</p>
                     </div>
                   </div>
                 </td>
-                <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{l.phone}</td>
-                <td style={{ padding: '13px 14px' }}>
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 120 }}>
+                <td style={{ padding: '16px', fontSize: 13, color: '#cbd5e1', whiteSpace: 'nowrap' }}>{l.phone}</td>
+                <td style={{ padding: '16px', minWidth: 100 }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {l.tags && l.tags.length > 0 ? l.tags.map(tag => (
-                      <span key={tag.id} style={{ fontSize: 9, fontWeight: 700, background: tag.color + '22', color: tag.color, border: `1px solid ${tag.color}44`, padding: '2px 6px', borderRadius: 10, whiteSpace: 'nowrap' }}>
+                      <span key={tag.id} style={{ fontSize: 10, fontWeight: 600, background: tag.color + '22', color: tag.color, border: `1px solid ${tag.color}44`, padding: '3px 8px', borderRadius: 12, whiteSpace: 'nowrap' }}>
                         {tag.name}
                       </span>
-                    )) : <span style={{ fontSize: 10, color: C.dim }}>-</span>}
+                    )) : <span style={{ fontSize: 12, color: '#64748b' }}>-</span>}
                   </div>
                 </td>
-                <td style={{ padding: '13px 14px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 10, color: C.blue, background: '#0f1e38', padding: '2px 7px', borderRadius: 10 }}>{l.source || 'Manual'}</span>
+                <td style={{ padding: '16px', minWidth: 220, maxWidth: 240 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: '#60a5fa', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', padding: '3px 10px', borderRadius: 12, textTransform: 'capitalize', fontWeight: 500 }}>{l.source || 'Manual'}</span>
                       {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('whatsapp') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setMetaLeadDetails(l); }}
                           title="View Campaign Details"
-                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted }}
+                          style={{ background: '#1e293b', border: '1px solid #334155', cursor: 'pointer', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', transition: 'all 0.2s' }}
+                          onMouseEnter={e => e.currentTarget.style.color = '#f8fafc'}
+                          onMouseLeave={e => e.currentTarget.style.color = '#94a3b8'}
                         >
-                          <Info size={12} />
+                          <Info size={13} />
                         </button>
                       )}
                     </div>
                     {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('whatsapp') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.campaign_name && (
-                      <span title={l.campaign_name} style={{ maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.muted, fontSize: 9 }}>Campaign: {l.campaign_name}</span>
+                      <span title={l.campaign_name} style={{ display: 'block', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#94a3b8', fontSize: 11 }}>Camp: {l.campaign_name}</span>
                     )}
                     {(l.source?.toLowerCase().includes('facebook') || l.source?.toLowerCase().includes('whatsapp') || l.source?.toLowerCase().includes('meta ads') || l.source?.toLowerCase().includes('meta_ads')) && l.facebook_page_name && (
-                      <span title={l.facebook_page_name} style={{ maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.blue, fontSize: 9 }}>Page: {l.facebook_page_name}</span>
+                      <span title={l.facebook_page_name} style={{ display: 'block', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#60a5fa', fontSize: 11 }}>Page: {l.facebook_page_name}</span>
                     )}
                   </div>
                 </td>
-                <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{l.brand_name || 'N/A'}</td>
-                <td style={{ padding: '13px 14px' }}><Badge status={l.status} /></td>
-                <td style={{ padding: '13px 14px' }}><ScoreBar score={l.score || 0} /></td>
-                <td style={{ padding: '13px 14px', fontSize: 11, color: C.muted }}>{l.assigned_name || 'Unassigned'}</td>
-                <td style={{ padding: '13px 14px', fontSize: 10, color: C.dim }}>
+                <td style={{ padding: '16px', fontSize: 13, color: '#cbd5e1', whiteSpace: 'nowrap' }}>{l.brand_name || 'N/A'}</td>
+                <td style={{ padding: '16px', whiteSpace: 'nowrap' }}><Badge status={l.status} /></td>
+                <td style={{ padding: '16px', minWidth: 100 }}><ScoreBar score={l.score || 0} /></td>
+                <td style={{ padding: '16px', fontSize: 13, color: '#cbd5e1', whiteSpace: 'nowrap' }}>{l.assigned_name || 'Unassigned'}</td>
+                <td style={{ padding: '16px', fontSize: 13, color: '#94a3b8', whiteSpace: 'nowrap' }}>
                   {l.created_at ? new Date(l.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : (l.last_contact || 'N/A')}
                 </td>
-                <td style={{ padding: '13px 14px' }}>
-                  <div style={{ display: 'flex', gap: 5 }}>
-                    <button title="View lead" style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); onLeadClick(l); }}><Eye size={11} color={C.muted} /></button>
-                    <button title="Call" style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); window.open(`tel:${l.phone}`, '_self'); }}><Phone size={11} color={C.muted} /></button>
-                    <button title="Generate Payment Link" style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); setPaymentLead(l); }}><CreditCard size={11} color="#f97316" /></button>
-                    <button title="Delete" style={{ width: 26, height: 26, borderRadius: 6, background: 'transparent', border: '1px solid ' + C.border, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); handleDelete(l.id); }}><Trash size={11} color="#ef4444" /></button>
+                <td style={{ padding: '16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <button title="View lead" style={{ width: 32, height: 32, borderRadius: 8, background: '#1e293b', border: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' }} onMouseEnter={e => e.currentTarget.style.background = '#334155'} onMouseLeave={e => e.currentTarget.style.background = '#1e293b'} onClick={(e) => { e.stopPropagation(); onLeadClick(l); }}><Eye size={15} color="#cbd5e1" /></button>
+                    <button title="Call" style={{ width: 32, height: 32, borderRadius: 8, background: '#1e293b', border: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' }} onMouseEnter={e => e.currentTarget.style.background = '#334155'} onMouseLeave={e => e.currentTarget.style.background = '#1e293b'} onClick={(e) => { e.stopPropagation(); window.open(`tel:${l.phone}`, '_self'); }}><Phone size={15} color="#cbd5e1" /></button>
+                    <button title="Generate Payment Link" style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(249,115,22,0.2)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(249,115,22,0.1)'} onClick={(e) => { e.stopPropagation(); setPaymentLead(l); }}><CreditCard size={15} color="#f97316" /></button>
+                    <button title="Delete" style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.2)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'} onClick={(e) => { e.stopPropagation(); handleDelete(l.id); }}><Trash size={15} color="#ef4444" /></button>
                   </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {filtered.length === 0 && !loading && <div style={{ textAlign: 'center', padding: 32, color: C.muted }}>No leads match this filter</div>}
-        {loading && <div style={{ textAlign: 'center', padding: 32, color: C.muted }}>Loading leads...</div>}
+        {filtered.length === 0 && !loading && <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8', fontSize: 14 }}>No leads match this filter</div>}
+        {loading && <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8', fontSize: 14 }}>Loading leads...</div>}
         {filtered.length > 0 && (
-          <div style={{ padding: '12px 14px', borderTop: '1px solid ' + C.border, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: C.muted }}>Showing {total > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} to {Math.min(currentPage * itemsPerPage, total || 0)} of {total || 0} entries</span>
-            <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ padding: '16px 20px', borderTop: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0f172a' }}>
+            <span style={{ fontSize: 13, color: '#94a3b8' }}>Showing {total > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} to {Math.min(currentPage * itemsPerPage, total || 0)} of <strong style={{ color: '#f8fafc' }}>{total || 0}</strong> entries</span>
+            <div style={{ display: 'flex', gap: 8 }}>
               <button
                 disabled={currentPage === 1}
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                style={{ background: 'transparent', border: '1px solid ' + C.border, color: currentPage === 1 ? C.dim : C.text, padding: '5px 10px', borderRadius: 6, fontSize: 11, cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+                style={{ background: '#1e293b', border: '1px solid #334155', color: currentPage === 1 ? '#475569' : '#cbd5e1', padding: '6px 14px', borderRadius: 6, fontSize: 13, cursor: currentPage === 1 ? 'not-allowed' : 'pointer', transition: 'all 0.2s' }}
+                onMouseEnter={e => currentPage !== 1 && (e.currentTarget.style.background = '#334155')}
+                onMouseLeave={e => currentPage !== 1 && (e.currentTarget.style.background = '#1e293b')}
               >
                 Previous
               </button>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px', fontSize: 11, fontWeight: 600, color: C.text }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 12px', fontSize: 13, fontWeight: 600, color: '#f8fafc' }}>
                 Page {currentPage} of {totalPages > 0 ? totalPages : 1}
               </div>
               <button
                 disabled={currentPage === totalPages || totalPages === 0}
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                style={{ background: 'transparent', border: '1px solid ' + C.border, color: currentPage === totalPages || totalPages === 0 ? C.dim : C.text, padding: '5px 10px', borderRadius: 6, fontSize: 11, cursor: currentPage === totalPages || totalPages === 0 ? 'not-allowed' : 'pointer' }}
+                style={{ background: '#1e293b', border: '1px solid #334155', color: currentPage === totalPages || totalPages === 0 ? '#475569' : '#cbd5e1', padding: '6px 14px', borderRadius: 6, fontSize: 13, cursor: currentPage === totalPages || totalPages === 0 ? 'not-allowed' : 'pointer', transition: 'all 0.2s' }}
+                onMouseEnter={e => (currentPage !== totalPages && totalPages !== 0) && (e.currentTarget.style.background = '#334155')}
+                onMouseLeave={e => (currentPage !== totalPages && totalPages !== 0) && (e.currentTarget.style.background = '#1e293b')}
               >
                 Next
               </button>

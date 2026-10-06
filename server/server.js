@@ -1971,6 +1971,10 @@ function addLeadExportFilters(filter, params) {
   } else if (source === 'xls_sheet') {
     sql += ` AND (LOWER(TRIM(COALESCE(l.source, ''))) IN ('xls sheet', 'xlsx sheet', 'excel sheet', 'csv import') OR LOWER(TRIM(COALESCE(l.source, ''))) LIKE 'csv\\_%' ESCAPE '\\')`;
   }
+  if (filter.campaign_name) {
+    params.push(filter.campaign_name);
+    sql += ` AND l.campaign_name = $${params.length}`;
+  }
   if (filter.from) {
     params.push(filter.from);
     sql += ` AND l.created_at >= $${params.length}`;
@@ -2085,14 +2089,15 @@ async function processLeadExportJob(jobId) {
 app.post('/api/leads/exports', auth, async (req, res) => {
   try {
     await leadExportReady;
-    const { mode = 'all', source, from, to, tag_id } = req.body || {};
-    if (!['all', 'source', 'date', 'tag'].includes(mode)) return res.status(400).json({ error: 'Invalid export mode' });
+    const { mode = 'all', source, from, to, tag_id, campaign_name } = req.body || {};
+    if (!['all', 'source', 'date', 'tag', 'campaign'].includes(mode)) return res.status(400).json({ error: 'Invalid export mode' });
     if (mode === 'source' && !['facebook', 'whatsapp', 'website', 'xls_sheet'].includes(source)) return res.status(400).json({ error: 'Invalid source' });
     if (mode === 'date' && (!from || !to || Number.isNaN(new Date(from).getTime()) || Number.isNaN(new Date(to).getTime()) || new Date(from) > new Date(to))) {
       return res.status(400).json({ error: 'Invalid date range' });
     }
     if (mode === 'tag' && !tag_id) return res.status(400).json({ error: 'Tag ID is required for tag export' });
-    const filters = mode === 'source' ? { source } : mode === 'date' ? { from: new Date(from).toISOString(), to: new Date(to).toISOString() } : mode === 'tag' ? { tag_id } : {};
+    if (mode === 'campaign' && !campaign_name) return res.status(400).json({ error: 'Campaign name is required for campaign export' });
+    const filters = mode === 'source' ? { source } : mode === 'date' ? { from: new Date(from).toISOString(), to: new Date(to).toISOString() } : mode === 'tag' ? { tag_id } : mode === 'campaign' ? { campaign_name } : {};
     const countParams = [];
     const where = addLeadExportFilters(filters, countParams);
     const countResult = await pool.query(`SELECT COUNT(*)::int AS count FROM leads l WHERE 1=1 ${where}`, countParams);

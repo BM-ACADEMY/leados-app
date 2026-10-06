@@ -470,10 +470,11 @@ function MetaLeadDetailsModal({ lead, onClose }) {
   );
 }
 
-function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress, availableTags }) {
+function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress, availableTags, campaignNames, currentCampaign }) {
   const [mode, setMode] = useState('all');
   const [source, setSource] = useState('facebook');
   const [tag, setTag] = useState('');
+  const [campaign, setCampaign] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [selectedCount, setSelectedCount] = useState(null);
@@ -485,8 +486,9 @@ function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress, 
       setSource('facebook');
       setFrom('');
       setTo('');
+      setCampaign(currentCampaign || '');
     }
-  }, [open]);
+  }, [open, currentCampaign]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -503,6 +505,7 @@ function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress, 
         const filters = { limit: 1, offset: 0 };
         if (mode === 'source') filters.source = source;
         if (mode === 'tag') filters.tagId = tag;
+        if (mode === 'campaign') filters.campaignName = campaign;
         if (mode === 'date') {
           filters.from = new Date(from).toISOString();
           filters.to = new Date(to).toISOString();
@@ -520,7 +523,7 @@ function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress, 
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [open, mode, source, from, to]);
+  }, [open, mode, source, from, to, campaign, tag]);
 
   if (!open) return null;
 
@@ -535,7 +538,8 @@ function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress, 
     if (mode === 'date' && (!from || !to)) return toast.error('Select both From and To date/time');
     if (mode === 'date' && new Date(from) > new Date(to)) return toast.error('From date must be before To date');
     if (mode === 'tag' && !tag) return toast.error('Select a tag to export');
-    onExport({ mode, source, from, to, tag });
+    if (mode === 'campaign' && !campaign) return toast.error('Select a campaign to export');
+    onExport({ mode, source, from, to, tag, campaign_name: campaign });
   };
 
   return (
@@ -555,6 +559,11 @@ function ExportLeadsModal({ open, onClose, onExport, exporting, exportProgress, 
           {mode === 'tag' && <select value={tag} onChange={e => setTag(e.target.value)} style={{ ...inp, marginTop: -3 }}>
             <option value="">— Select Tag —</option>
             {(availableTags || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>}
+          <label style={optionStyle(mode === 'campaign')}><input type="radio" name="exportMode" checked={mode === 'campaign'} onChange={() => setMode('campaign')} /> <span><strong>Export by Campaign</strong><small style={{ display: 'block', marginTop: 2 }}>Only leads from a specific campaign</small></span></label>
+          {mode === 'campaign' && <select value={campaign} onChange={e => setCampaign(e.target.value)} style={{ ...inp, marginTop: -3 }}>
+            <option value="">— Select Campaign —</option>
+            {(campaignNames || []).map(c => <option key={c} value={c}>{c}</option>)}
           </select>}
           <label style={optionStyle(mode === 'date')}><input type="radio" name="exportMode" checked={mode === 'date'} onChange={() => setMode('date')} /> <span><strong>Export by Custom Date Range</strong><small style={{ display: 'block', marginTop: 2 }}>Leads created within a date/time period</small></span></label>
           {mode === 'date' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -654,11 +663,11 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
     .map(option => option.ad_name)
     .filter(Boolean))];
 
-  const handleExport = async ({ mode, source, from, to, tag }) => {
+  const handleExport = async ({ mode, source, from, to, tag, campaign_name }) => {
     setExporting(true);
     setExportProgress({ processed: 0, total: 0, percent: 0 });
     try {
-      const job = await api.createLeadExport({ mode, source, from, to, tag_id: tag });
+      const job = await api.createLeadExport({ mode, source, from, to, tag_id: tag, campaign_name });
       if (!job.total_records) throw new Error('No leads found for this export.');
       setExportProgress({ processed: 0, total: job.total_records, percent: 0 });
       toast.success(`Export scheduled for ${Number(job.total_records).toLocaleString()} leads`);
@@ -759,7 +768,7 @@ export const LeadsView = ({ onLeadClick, refreshTrigger }) => {
       />
       <PaymentLinkModal lead={paymentLead} onClose={() => setPaymentLead(null)} />
       <MetaLeadDetailsModal lead={metaLeadDetails} onClose={() => setMetaLeadDetails(null)} />
-      <ExportLeadsModal open={showExportModal} onClose={() => setShowExportModal(false)} onExport={handleExport} exporting={exporting} exportProgress={exportProgress} availableTags={availableTags} />
+      <ExportLeadsModal open={showExportModal} onClose={() => setShowExportModal(false)} onExport={handleExport} exporting={exporting} exportProgress={exportProgress} availableTags={availableTags} campaignNames={campaignNames} currentCampaign={campaignFilter} />
 
       <div className="flex-col-mobile" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 22 }}>
         <div>

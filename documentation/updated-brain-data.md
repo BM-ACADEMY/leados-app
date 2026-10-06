@@ -40,7 +40,7 @@ Primary Phone: 9944940051
 WhatsApp Number:9944940051
 Email: bmacademypondy@gmail.com 
 Website:thebmacademy.com
-Address:252 ,2nd floor, MG Road, Kottakuppam, Vanur, Puducherry, 605104 
+Address:78, Lenin Street, Kosapalayam, Puducherry – 605013 
 Business Hours: 10:00 AM - 8:00 PM 
 Supported Languages: English 
 
@@ -2437,7 +2437,7 @@ WhatsApp Number:9944940051
 Email:Admin@bmtechx.in 
 Website:https://www.bmtechx.in/
 Instagram: growwithkamar
-Address:252,2nd floor,M.G Road ,Kottakuppam,Vanur , taluk,villupuram district 
+Address:78, Lenin Street, Kosapalayam, Puducherry – 605013 
 
 Business Hours:10AM-8PM
 Service Locations:Location
@@ -11039,7 +11039,7 @@ Question 6: Certificate?
 Answer: Yes, with 80% attendance and the final project submitted. Anything else? Or reply CALL to talk to our counsellor.
 
 Question 7: Where are you?
-Answer: BM Academy, Pondicherry. [CENTRE ADDRESS – not provided in PDF] Anything else? Or reply CALL to talk to our counsellor.
+Answer: BM Academy, Pondicherry. 78, Lenin Street, Kosapalayam, Puducherry – 605013 Anything else? Or reply CALL to talk to our counsellor.
 
 Question 8: Can I pay in parts?
 Answer: Scholarship: ₹1,500 + ₹1,499 if needed. Career programs: 2 or 3 parts. Anything else? Or reply CALL to talk to our counsellor.
@@ -11226,7 +11226,7 @@ Question 6: Certificate?
 Answer: Yes, with 80% attendance and the final project submitted. Anything else? Or reply CALL to talk to our counsellor.
 
 Question 7: Where are you?
-Answer: BM Academy, Pondicherry. [CENTRE ADDRESS – not provided in PDF] Anything else? Or reply CALL to talk to our counsellor.
+Answer: BM Academy, Pondicherry. 78, Lenin Street, Kosapalayam, Puducherry – 605013 Anything else? Or reply CALL to talk to our counsellor.
 
 Question 8: Can I pay in parts?
 Answer: Scholarship: ₹1,500 + ₹1,499 if needed. Career programs: 2 or 3 parts. Anything else? Or reply CALL to talk to our counsellor.
@@ -11419,7 +11419,7 @@ Question 6: Certificate?
 Answer: Yes, with 80% attendance and the final project submitted. Anything else? Or reply CALL to talk to our counsellor.
 
 Question 7: Where are you?
-Answer: BM Academy, Pondicherry. [CENTRE ADDRESS – not provided in PDF] Anything else? Or reply CALL to talk to our counsellor.
+Answer: BM Academy, Pondicherry. 78, Lenin Street, Kosapalayam, Puducherry – 605013 Anything else? Or reply CALL to talk to our counsellor.
 
 Question 8: Can I pay in parts?
 Answer: Scholarship: ₹1,500 + ₹1,499 if needed. Career programs: 2 or 3 parts. Anything else? Or reply CALL to talk to our counsellor.
@@ -11599,7 +11599,7 @@ Question 6: Certificate?
 Answer: Yes, with 80% attendance and the final project submitted. Anything else? Or reply CALL to talk to our counsellor.
 
 Question 7: Where are you?
-Answer: BM Academy, Pondicherry. [CENTRE ADDRESS – not provided in PDF] Anything else? Or reply CALL to talk to our counsellor.
+Answer: BM Academy, Pondicherry. 78, Lenin Street, Kosapalayam, Puducherry – 605013 Anything else? Or reply CALL to talk to our counsellor.
 
 Question 8: Can I pay in parts?
 Answer: Scholarship: ₹1,500 + ₹1,499 if needed. Career programs: 2 or 3 parts. Anything else? Or reply CALL to talk to our counsellor.
@@ -11773,7 +11773,7 @@ Question 6: Certificate?
 Answer: Yes, with 80% attendance and the final project submitted. Anything else? Or reply CALL to talk to our counsellor.
 
 Question 7: Where are you?
-Answer: BM Academy, Pondicherry. [CENTRE ADDRESS – not provided in PDF] Anything else? Or reply CALL to talk to our counsellor.
+Answer: BM Academy, Pondicherry. 78, Lenin Street, Kosapalayam, Puducherry – 605013 Anything else? Or reply CALL to talk to our counsellor.
 
 Question 8: Can I pay in parts?
 Answer: Scholarship: ₹1,500 + ₹1,499 if needed. Career programs: 2 or 3 parts. Anything else? Or reply CALL to talk to our counsellor.
@@ -11952,7 +11952,7 @@ Question 6: Certificate?
 Answer: Yes, with 80% attendance and the final project submitted. Anything else? Or reply CALL to talk to our counsellor.
 
 Question 7: Where are you?
-Answer: BM Academy, Pondicherry. [CENTRE ADDRESS – not provided in PDF] Anything else? Or reply CALL to talk to our counsellor.
+Answer: BM Academy, Pondicherry. 78, Lenin Street, Kosapalayam, Puducherry – 605013 Anything else? Or reply CALL to talk to our counsellor.
 
 Question 8: Can I pay in parts?
 Answer: Scholarship: ₹1,500 + ₹1,499 if needed. Career programs: 2 or 3 parts. Anything else? Or reply CALL to talk to our counsellor.
@@ -12130,7 +12130,7 @@ Question 6: Certificate?
 Answer: Yes, with 80% attendance and the final project submitted. Anything else? Or reply CALL to talk to our counsellor.
 
 Question 7: Where are you?
-Answer: BM Academy, Pondicherry. [CENTRE ADDRESS – not provided in PDF] Anything else? Or reply CALL to talk to our counsellor.
+Answer: BM Academy, Pondicherry. 78, Lenin Street, Kosapalayam, Puducherry – 605013 Anything else? Or reply CALL to talk to our counsellor.
 
 Question 8: Can I pay in parts?
 Answer: Scholarship: ₹1,500 + ₹1,499 if needed. Career programs: 2 or 3 parts. Anything else? Or reply CALL to talk to our counsellor.

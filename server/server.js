@@ -3303,7 +3303,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
               // Let the Inbox show a waiting indicator while the AI is in queue
               io.emit('ai_typing', { lead_id: String(lead.id), typing: true, status: 'waiting' });
 
-              // Queue the new message with a 60 second wait period
+              // Queue the new message with a 3 second wait period
               const timer = setTimeout(() => {
                 aiReplyQueue.delete(lead.id);
                 // Update indicator to 'composing' once we actually forward to n8n
@@ -3316,7 +3316,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
                   phone_number_id: lead.client_phone_number_id || phoneNumberId,
                   wa_access_token: lead.client_wa_token || process.env.META_PAGE_ACCESS_TOKEN
                 }).catch(e => console.error(`[n8n forward error] Failed to trigger WF01 Sales Engine for lead ${lead.id} at ${process.env.N8N_WEBHOOK_URL}:`, e.response?.status, e.message));
-              }, 60000); // 60 seconds delay
+              }, 3000); // 3 seconds delay
 
               aiReplyQueue.set(lead.id, timer);
             }
